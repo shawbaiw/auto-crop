@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RetroMenu, isRetroMenuCommand, type RetroMenuCommand, type RetroMenuEntry, type RetroMenuGroup } from "./RetroMenu";
+import {
+  RetroMenu,
+  hasRetroSubmenu,
+  isRetroMenuCommand,
+  type RetroMenuCommand,
+  type RetroMenuEntry,
+  type RetroMenuGroup,
+} from "./RetroMenu";
 
 export type RetroMenuBarProps = {
   groups: RetroMenuGroup[];
@@ -17,13 +24,22 @@ function firstEnabledItemIndex(group: RetroMenuGroup) {
 }
 
 function nextEnabledItemIndex(group: RetroMenuGroup, currentIndex: number, delta: number) {
-  if (group.items.length === 0) {
+  return nextEnabledEntryIndex(group.items, currentIndex, delta);
+}
+
+function firstEnabledEntryIndex(items: RetroMenuEntry[]) {
+  const index = items.findIndex((item) => isRetroMenuCommand(item) && !item.disabled);
+  return Math.max(0, index);
+}
+
+function nextEnabledEntryIndex(items: RetroMenuEntry[], currentIndex: number, delta: number) {
+  if (items.length === 0) {
     return 0;
   }
 
-  for (let offset = 1; offset <= group.items.length; offset += 1) {
-    const nextIndex = (currentIndex + offset * delta + group.items.length) % group.items.length;
-    const item = group.items[nextIndex];
+  for (let offset = 1; offset <= items.length; offset += 1) {
+    const nextIndex = (currentIndex + offset * delta + items.length) % items.length;
+    const item = items[nextIndex];
     if (isRetroMenuCommand(item) && !item.disabled) {
       return nextIndex;
     }
@@ -35,9 +51,12 @@ function nextEnabledItemIndex(group: RetroMenuGroup, currentIndex: number, delta
 function MenuStrip({ groups, namespace }: MenuStripProps) {
   const [openGroupIndex, setOpenGroupIndex] = useState<number | null>(null);
   const [activeItemIndex, setActiveItemIndex] = useState(0);
+  const [activeSubItemIndex, setActiveSubItemIndex] = useState<number | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const openGroup = openGroupIndex === null ? null : groups[openGroupIndex];
+  const activeItem = openGroup?.items[activeItemIndex];
+  const activeSubItems = activeItem && hasRetroSubmenu(activeItem) ? activeItem.children : null;
 
   useEffect(() => {
     if (openGroupIndex === null) {
@@ -57,10 +76,12 @@ function MenuStrip({ groups, namespace }: MenuStripProps) {
   function openGroupAt(index: number) {
     setOpenGroupIndex(index);
     setActiveItemIndex(firstEnabledItemIndex(groups[index]));
+    setActiveSubItemIndex(null);
   }
 
   function closeMenu() {
     setOpenGroupIndex(null);
+    setActiveSubItemIndex(null);
   }
 
   function moveGroup(delta: number) {
@@ -72,6 +93,20 @@ function MenuStrip({ groups, namespace }: MenuStripProps) {
 
   function selectItem(item: RetroMenuCommand) {
     if (item.disabled) {
+      return;
+    }
+
+    if (hasRetroSubmenu(item)) {
+      setActiveSubItemIndex(firstEnabledEntryIndex(item.children));
+      return;
+    }
+
+    item.onSelect?.();
+    closeMenu();
+  }
+
+  function selectSubItem(item: RetroMenuCommand) {
+    if (item.disabled || hasRetroSubmenu(item)) {
       return;
     }
 
@@ -137,29 +172,53 @@ function MenuStrip({ groups, namespace }: MenuStripProps) {
                 onKeyDown={(event) => {
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
-                    setActiveItemIndex((current) => nextEnabledItemIndex(openGroup, current, 1));
+                    if (activeSubItems && activeSubItemIndex !== null) {
+                      setActiveSubItemIndex((current) => nextEnabledEntryIndex(activeSubItems, current ?? 0, 1));
+                    } else {
+                      setActiveItemIndex((current) => nextEnabledItemIndex(openGroup, current, 1));
+                      setActiveSubItemIndex(null);
+                    }
                     return;
                   }
                   if (event.key === "ArrowUp") {
                     event.preventDefault();
-                    setActiveItemIndex((current) => nextEnabledItemIndex(openGroup, current, -1));
+                    if (activeSubItems && activeSubItemIndex !== null) {
+                      setActiveSubItemIndex((current) => nextEnabledEntryIndex(activeSubItems, current ?? 0, -1));
+                    } else {
+                      setActiveItemIndex((current) => nextEnabledItemIndex(openGroup, current, -1));
+                      setActiveSubItemIndex(null);
+                    }
                     return;
                   }
                   if (event.key === "ArrowRight") {
                     event.preventDefault();
+                    if (activeSubItems && activeSubItemIndex === null) {
+                      setActiveSubItemIndex(firstEnabledEntryIndex(activeSubItems));
+                      return;
+                    }
                     moveGroup(1);
                     return;
                   }
                   if (event.key === "ArrowLeft") {
                     event.preventDefault();
+                    if (activeSubItemIndex !== null) {
+                      setActiveSubItemIndex(null);
+                      return;
+                    }
                     moveGroup(-1);
                     return;
                   }
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    const item = openGroup.items[activeItemIndex];
-                    if (item && isRetroMenuCommand(item)) {
-                      selectItem(item);
+                    if (activeSubItems && activeSubItemIndex !== null) {
+                      const subItem = activeSubItems[activeSubItemIndex];
+                      if (subItem && isRetroMenuCommand(subItem)) {
+                        selectSubItem(subItem);
+                      }
+                      return;
+                    }
+                    if (activeItem && isRetroMenuCommand(activeItem)) {
+                      selectItem(activeItem);
                     }
                     return;
                   }
@@ -172,10 +231,17 @@ function MenuStrip({ groups, namespace }: MenuStripProps) {
               >
                 <RetroMenu
                   activeItemIndex={activeItemIndex}
+                  activeSubItemIndex={activeSubItemIndex}
                   group={openGroup}
                   menuId={menuId}
-                  onItemHover={setActiveItemIndex}
+                  onItemHover={(index) => {
+                    setActiveItemIndex(index);
+                    const item = openGroup.items[index];
+                    setActiveSubItemIndex(hasRetroSubmenu(item) ? firstEnabledEntryIndex(item.children) : null);
+                  }}
                   onItemSelect={selectItem}
+                  onSubItemHover={setActiveSubItemIndex}
+                  onSubItemSelect={selectSubItem}
                 />
               </div>
             ) : null}
@@ -193,7 +259,7 @@ function makeMobileGroup(groups: RetroMenuGroup[], mobileLabel: string): RetroMe
       id: `${group.id}-mobile-heading`,
       label: group.label,
     },
-    ...group.items,
+    ...flattenMobileEntries(group.items),
     ...(groupIndex === groups.length - 1 ? [] : [{ id: `${group.id}-mobile-separator`, type: "separator" as const }]),
   ]);
 
@@ -202,6 +268,23 @@ function makeMobileGroup(groups: RetroMenuGroup[], mobileLabel: string): RetroMe
     items,
     label: mobileLabel,
   };
+}
+
+function flattenMobileEntries(items: RetroMenuEntry[]) {
+  return items.flatMap<RetroMenuEntry>((item) => {
+    if (!hasRetroSubmenu(item)) {
+      return [item];
+    }
+
+    return [
+      {
+        disabled: true,
+        id: `${item.id}-mobile-subheading`,
+        label: item.label,
+      },
+      ...item.children,
+    ];
+  });
 }
 
 export function RetroMenuBar({ groups, mobileLabel = "Menu" }: RetroMenuBarProps) {

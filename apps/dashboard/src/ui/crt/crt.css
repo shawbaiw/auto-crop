@@ -1,6 +1,7 @@
 .crt-viewport {
   --crt-frame-inset: clamp(6px, 1.1vw, 16px);
   --crt-edge-radius: clamp(18px, 4vw, 56px);
+  --crt-geometry-scale: 0.992;
   --crt-scanline-size: 5px;
   --crt-scanline-ink: color-mix(in srgb, var(--ink) 12%, transparent);
   --crt-face-edge: color-mix(in srgb, var(--ink) 42%, transparent);
@@ -11,6 +12,12 @@
   min-height: 100vh;
   padding: var(--crt-frame-inset);
   position: relative;
+}
+
+.crt-filter-defs {
+  height: 0;
+  position: absolute;
+  width: 0;
 }
 
 .crt-viewport--frame-frameless {
@@ -30,6 +37,29 @@
   position: relative;
 }
 
+.crt-geometry-shell {
+  min-height: calc(100vh - var(--crt-frame-inset) * 2);
+  overflow: hidden;
+  position: relative;
+  transform-origin: center;
+}
+
+.crt-viewport--quality-full .crt-geometry-shell {
+  filter: url("#crt-soft-barrel-filter") contrast(1.035) brightness(1.01);
+  transform: perspective(1200px) rotateX(0.28deg) scale(var(--crt-geometry-scale));
+}
+
+.crt-viewport--quality-reduced .crt-geometry-shell {
+  filter: contrast(1.015);
+  transform: scale(0.997);
+}
+
+.crt-viewport--quality-static .crt-geometry-shell,
+.crt-viewport--quality-off .crt-geometry-shell {
+  filter: none;
+  transform: none;
+}
+
 .crt-viewport--frame-frameless .crt-screen-face {
   border-radius: 0;
   box-shadow: none;
@@ -43,6 +73,10 @@
 }
 
 .crt-viewport--frame-frameless .crt-viewport__content {
+  min-height: 100vh;
+}
+
+.crt-viewport--frame-frameless .crt-geometry-shell {
   min-height: 100vh;
 }
 
@@ -88,9 +122,28 @@
   opacity: 0.72;
 }
 
+.crt-viewport--quality-full .crt-viewport__content {
+  text-shadow:
+    var(--rgb-misregistration) 0 color-mix(in srgb, #ff0033 14%, transparent),
+    calc(var(--rgb-misregistration) * -1) 0 color-mix(in srgb, #00e5ff 12%, transparent);
+}
+
+.crt-viewport--quality-reduced .crt-fringe-overlay {
+  opacity: 0.42;
+}
+
+.crt-viewport--quality-static .crt-fringe-overlay {
+  animation: none;
+  opacity: 0.5;
+}
+
 .crt-viewport--off .crt-static-overlay,
 .crt-viewport--off .crt-fringe-overlay {
   display: none;
+}
+
+.crt-viewport--off .crt-viewport__content {
+  text-shadow: none;
 }
 
 @keyframes crt-signal-flicker {

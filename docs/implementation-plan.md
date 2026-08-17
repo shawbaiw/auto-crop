@@ -424,9 +424,9 @@ type Approval = {
 - [x] Observe mock agent task execution through SSE.
 - [x] View proof and review.
 - [x] Trigger kill switch and verify active work pauses.
-- [ ] Verify with `pnpm --filter @auto-crop/dashboard e2e`.
+- [x] Verify with `pnpm --filter @auto-crop/dashboard e2e`.
 
-Local verification note: the E2E spec is implemented, but this machine currently blocks Playwright browser launch with macOS `bootstrap_check_in` permission errors. Run after installing a compatible Playwright Chromium browser in an unrestricted environment.
+Local verification note: Playwright Chromium may need an unrestricted local run on macOS; the E2E suite now passes when allowed to launch the browser.
 
 ## Task 18: Documentation
 
@@ -464,18 +464,18 @@ Local verification note: the E2E spec is implemented, but this machine currently
 - [x] Extract reusable layout/data components for app shell, page header, workspaces, key/value metadata, and Videotex logs.
 - [x] Implement first-pass lightweight global CSS CRT display layer with scanlines, noise, bloom/fringe, restrained flicker, pointer-event safety, reduced-motion behavior, and `?crt=off` developer mode.
 - [x] Migrate onboarding and company dashboard to the reusable component system.
-- [ ] Add a stronger full CRT geometry implementation after the component system is stable: evaluate SVG filter, WebGL shader, or a maintained CRT shader package for curvature, barrel compression, edge compression, persistence, and RGB misregistration.
-- [ ] Keep shader/geometry code isolated behind `ui/crt/` and never duplicate CRT math in feature components.
-- [ ] Add visual regression screenshots for Mono plus the eight named skins at desktop and mobile widths.
-- [ ] Measure CPU/GPU impact with CRT effects enabled, then add quality levels if needed: full, reduced, static, off.
-- [ ] Verify final rendered contrast after CRT post-processing, not only source CSS token contrast.
+- [x] Add a stronger full CRT geometry implementation after the component system is stable: evaluated SVG filter, WebGL shader, and maintained CRT shader package options; implemented a DOM-safe CSS/SVG hybrid for curvature pressure, subtle displacement, persistence, and RGB misregistration.
+- [x] Keep shader/geometry code isolated behind `ui/crt/` and never duplicate CRT math in feature components.
+- [x] Add visual regression screenshots for Mono plus the eight named skins at desktop and mobile widths.
+- [x] Measure CPU/GPU impact with CRT effects enabled, then add quality levels if needed: full, reduced, static, off.
+- [x] Verify final rendered contrast after CRT post-processing, not only source CSS token contrast.
 
 ## Verification Checklist
 
 - [x] `pnpm install`
 - [x] `pnpm test`
 - [x] `pnpm typecheck`
-- [ ] `pnpm --filter @auto-crop/dashboard e2e`
+- [x] `pnpm --filter @auto-crop/dashboard e2e`
 - [x] Manual smoke test with mock agent: create company, activate tasks, view proof, run review, trigger kill switch.
 - [x] Manual smoke test with one real local agent when available: create isolated workspace, run one low-risk task, confirm proof is captured.
 

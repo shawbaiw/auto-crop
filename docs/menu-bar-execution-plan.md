@@ -45,10 +45,11 @@ Proof
   Open Evidence disabled
 
 View
-  Mono
-  Skin 01...
+  Skin
+    Mono
+    Skin 01...
   CRT Effect: Horizontal + Vignette checked
-  Fullscreen disabled
+  Fullscreen
 
 Help
   Documentation disabled
@@ -66,6 +67,10 @@ Help
 - `View` skin items call the existing theme context.
 - `Work > View Tasks` and `Work > View Departments` focus the matching dashboard sections when a company is active.
 - `Proof > Load Proof` and `Proof > Load Review` focus their matching dashboard sections before loading data.
+- `View > Skin` uses a reusable submenu rather than listing every skin in the top-level `View` menu.
+- `View > Fullscreen` calls the browser Fullscreen API when supported.
+- `Proof > Open Evidence` focuses the first loaded evidence row.
+- Visible shortcut labels are attached to real shortcut handlers.
 
 ## Implementation Steps
 
@@ -80,10 +85,15 @@ Help
 
 ## Follow-Up Todo
 
-- [ ] Add second-level submenus when the menu system needs nested groups such as `View > Skin`.
-- [ ] Add visible keyboard shortcut glyphs once real shortcuts exist.
-- [ ] Implement real fullscreen behavior for `View > Fullscreen`.
+- [x] Add second-level submenus when the menu system needs nested groups such as `View > Skin`.
+- [x] Add visible keyboard shortcut glyphs once real shortcuts exist.
+- [x] Implement real fullscreen behavior for `View > Fullscreen`.
 - [x] Add focus targets for `Work > View Tasks`, `Work > View Departments`, `Proof > Load Proof`, and `Proof > Load Review`.
-- [ ] Add proof evidence navigation after evidence has a real opening target.
-- [ ] Revisit menu labels after the dashboard has more mature information architecture.
-- [ ] Consider command-palette reuse if the menu action model grows beyond classic menu interactions.
+- [x] Add proof evidence navigation after evidence has a real opening target.
+- [x] Revisit menu labels after the dashboard has more mature information architecture.
+- [x] Consider command-palette reuse if the menu action model grows beyond classic menu interactions.
+
+## Closed Notes
+
+- Menu labels remain `Auto-Crop`, `Company`, `Agents`, `Work`, `Proof`, `View`, and `Help`; this still matches the current product information architecture.
+- `RetroMenuCommand` now carries submenu, shortcut, checked, disabled, and selection metadata, so a future command palette can consume the same action model instead of rebuilding commands.

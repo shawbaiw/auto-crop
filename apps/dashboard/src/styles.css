@@ -46,7 +46,8 @@ textarea:focus-visible {
 }
 
 .retro-panel:focus-visible,
-.workspace:focus-visible {
+.workspace:focus-visible,
+.proof-evidence-row:focus-visible {
   outline: var(--border-px) solid var(--accent-primary);
   outline-offset: var(--pixel-unit);
 }
@@ -144,6 +145,15 @@ p {
   z-index: 40;
 }
 
+.retro-menu-popover--submenu {
+  left: calc(100% - 2px);
+  top: -7px;
+}
+
+.retro-menu-item-wrap {
+  position: relative;
+}
+
 .retro-menu-item {
   align-items: center;
   background: var(--surface);
@@ -154,7 +164,7 @@ p {
   font-size: 0.78rem;
   font-weight: 700;
   gap: 8px;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
   min-height: 28px;
   padding: 4px 12px 4px 9px;
   text-align: left;
@@ -177,6 +187,13 @@ p {
 .retro-menu-item__check {
   display: inline-flex;
   justify-content: center;
+}
+
+.retro-menu-item__shortcut,
+.retro-menu-item__submenu {
+  color: inherit;
+  font-size: 0.72rem;
+  justify-self: end;
 }
 
 .retro-menu-separator {

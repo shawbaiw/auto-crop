@@ -2,7 +2,7 @@
 import "./test/setup";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { ApiClient, ServerEvent } from "./api/client";
 
@@ -77,6 +77,7 @@ describe("Dashboard App", () => {
 
     await screen.findByRole("heading", { name: "CEO Office" });
     await user.click(screen.getByRole("menuitem", { name: "View" }));
+    await user.click(screen.getByRole("menuitem", { name: "Skin" }));
     await user.click(screen.getByRole("menuitem", { name: "极客02" }));
 
     expect(document.querySelector(".theme-root")).toHaveAttribute("data-skin", "geek02");
@@ -124,6 +125,49 @@ describe("Dashboard App", () => {
     await user.click(screen.getByRole("menuitem", { name: "Load Review" }));
     await waitFor(() => expect(document.activeElement).toHaveAttribute("id", "review"));
     expect(await screen.findByText("Ready for next cycle")).toBeInTheDocument();
+  });
+
+  it("opens evidence and supports visible command shortcuts", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createAndActivateCompany(user);
+
+    await user.click(screen.getByRole("menuitem", { name: "Proof" }));
+    await expect(screen.getByRole("menuitem", { name: /Open Evidence/ })).toBeDisabled();
+    expect(screen.getByText("Cmd+3")).toBeInTheDocument();
+
+    await user.keyboard("{Meta>}3{/Meta}");
+    expect(await screen.findByText("agent.log")).toBeInTheDocument();
+
+    await user.keyboard("{Meta>}5{/Meta}");
+    await waitFor(() => expect(document.activeElement).toHaveAttribute("id", "first-evidence"));
+  });
+
+  it("toggles real fullscreen from the View menu when the browser supports it", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    let fullscreenElement: Element | null = null;
+    const requestFullscreen = vi.fn(async () => {
+      fullscreenElement = document.documentElement;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    const exitFullscreen = vi.fn(async () => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    Object.defineProperty(document.documentElement, "requestFullscreen", { configurable: true, value: requestFullscreen });
+    Object.defineProperty(document, "exitFullscreen", { configurable: true, value: exitFullscreen });
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => fullscreenElement });
+
+    render(<App apiClient={api} />);
+
+    await screen.findByRole("heading", { name: "CEO Office" });
+    await user.click(screen.getByRole("menuitem", { name: "View" }));
+    await user.click(screen.getByRole("menuitem", { name: "Fullscreen" }));
+
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
   });
 });
 

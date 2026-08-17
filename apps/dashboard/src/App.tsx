@@ -12,7 +12,7 @@ import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget
 import { Onboarding } from "./pages/Onboarding";
 import { CRTViewport } from "./ui/crt";
 import { DashboardMenuBar } from "./ui/menu/DashboardMenuBar";
-import { ThemeProvider } from "./ui/theme";
+import { isPaletteId, ThemeProvider, type PaletteId } from "./ui/theme";
 import "./styles.css";
 
 export type AppProps = {
@@ -21,6 +21,7 @@ export type AppProps = {
 
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
+  const defaultSkin = useMemo(() => getInitialSkin(), []);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentLoadState, setAgentLoadState] = useState<"loading" | "ready" | "failed">("loading");
   const [selectedAgentId, setSelectedAgentId] = useState("codex");
@@ -33,6 +34,7 @@ export default function App({ apiClient }: AppProps) {
   const [proof, setProof] = useState<ProofSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [isPaused, setIsPaused] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [view, setView] = useState<"onboarding" | "dashboard">("onboarding");
   const [dashboardFocusTarget, setDashboardFocusTarget] = useState<DashboardFocusTarget | null>(null);
 
@@ -69,6 +71,78 @@ export default function App({ apiClient }: AppProps) {
       setEvents((current) => [...current.slice(-49), event]);
     });
   }, [client]);
+
+  useEffect(() => {
+    function handleFullscreenChange() {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!isCommandShortcut(event) || isEditingText(event.target)) {
+        return;
+      }
+
+      if (event.key === "Enter" && event.shiftKey && blueprint) {
+        event.preventDefault();
+        void handleActivateCompany();
+        return;
+      }
+
+      if (event.key === "Enter" && view === "onboarding" && !isCreating) {
+        event.preventDefault();
+        void handleCreateCompany();
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "b" && view === "dashboard") {
+        event.preventDefault();
+        handleBackToSetup();
+        return;
+      }
+
+      if (key === "k" && event.shiftKey && view === "dashboard" && blueprint) {
+        event.preventDefault();
+        void handleKillSwitch();
+        return;
+      }
+
+      if (key === "f" && event.ctrlKey) {
+        event.preventDefault();
+        void handleToggleFullscreen();
+        return;
+      }
+
+      if (view !== "dashboard" || !blueprint) {
+        return;
+      }
+
+      if (event.key === "1") {
+        event.preventDefault();
+        focusDashboardSection("tasks");
+      } else if (event.key === "2") {
+        event.preventDefault();
+        focusDashboardSection("departments");
+      } else if (event.key === "3") {
+        event.preventDefault();
+        void handleMenuLoadProof();
+      } else if (event.key === "4") {
+        event.preventDefault();
+        void handleMenuLoadReviews();
+      } else if (event.key === "5") {
+        event.preventDefault();
+        void handleOpenEvidence();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
 
   async function handleCreateCompany() {
     setIsCreating(true);
@@ -145,21 +219,43 @@ export default function App({ apiClient }: AppProps) {
     }));
   }
 
-  function handleMenuLoadProof() {
+  async function handleMenuLoadProof() {
     focusDashboardSection("proof");
-    void handleLoadProof();
+    await handleLoadProof();
   }
 
-  function handleMenuLoadReviews() {
+  async function handleMenuLoadReviews() {
     focusDashboardSection("review");
-    void handleLoadReviews();
+    await handleLoadReviews();
+  }
+
+  async function handleOpenEvidence() {
+    if (proof.length === 0) {
+      await handleLoadProof();
+    }
+    focusDashboardSection("evidence");
+  }
+
+  async function handleToggleFullscreen() {
+    if (!isFullscreenAvailable()) {
+      return;
+    }
+
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      await document.documentElement.requestFullscreen();
+    }
   }
 
   const menuBar = (
     <DashboardMenuBar
       agents={agents}
+      fullscreenAvailable={isFullscreenAvailable()}
       hasBlueprint={Boolean(blueprint)}
+      hasProof={proof.length > 0}
       isCreating={isCreating}
+      isFullscreen={isFullscreen}
       isPaused={isPaused}
       onActivateCompany={handleActivateCompany}
       onBackToSetup={handleBackToSetup}
@@ -167,7 +263,9 @@ export default function App({ apiClient }: AppProps) {
       onKillSwitch={handleKillSwitch}
       onLoadProof={handleMenuLoadProof}
       onLoadReviews={handleMenuLoadReviews}
+      onOpenEvidence={handleOpenEvidence}
       onSelectAgent={setSelectedAgentId}
+      onToggleFullscreen={handleToggleFullscreen}
       onViewDepartments={() => focusDashboardSection("departments")}
       onViewTasks={() => focusDashboardSection("tasks")}
       selectedAgentId={selectedAgentId}
@@ -177,7 +275,7 @@ export default function App({ apiClient }: AppProps) {
 
   if (view === "dashboard" && blueprint) {
     return (
-      <ThemeProvider defaultSkin="mono">
+      <ThemeProvider defaultSkin={defaultSkin}>
         <CRTViewport>
           <CompanyDashboard
             company={blueprint.company}
@@ -200,7 +298,7 @@ export default function App({ apiClient }: AppProps) {
   }
 
   return (
-    <ThemeProvider defaultSkin="mono">
+    <ThemeProvider defaultSkin={defaultSkin}>
       <CRTViewport>
         <Onboarding
           agents={agents}
@@ -221,4 +319,30 @@ export default function App({ apiClient }: AppProps) {
       </CRTViewport>
     </ThemeProvider>
   );
+}
+
+function getInitialSkin(): PaletteId {
+  if (typeof window === "undefined") {
+    return "mono";
+  }
+
+  const requestedSkin = new URLSearchParams(window.location.search).get("skin");
+  return requestedSkin && isPaletteId(requestedSkin) ? requestedSkin : "mono";
+}
+
+function isCommandShortcut(event: KeyboardEvent) {
+  return event.metaKey || event.ctrlKey;
+}
+
+function isEditingText(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || target.isContentEditable;
+}
+
+function isFullscreenAvailable() {
+  return typeof document !== "undefined" && typeof document.documentElement.requestFullscreen === "function";
 }

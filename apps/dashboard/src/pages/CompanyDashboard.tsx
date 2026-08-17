@@ -13,7 +13,7 @@ import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroPanel } from "../ui/retro";
 
-export type DashboardFocusSection = "tasks" | "departments" | "proof" | "review";
+export type DashboardFocusSection = "tasks" | "departments" | "proof" | "review" | "evidence";
 
 export type DashboardFocusTarget = {
   section: DashboardFocusSection;
@@ -39,6 +39,7 @@ export type CompanyDashboardProps = {
 export function CompanyDashboard(props: CompanyDashboardProps) {
   const sectionRefs = {
     departments: useRef<HTMLElement>(null),
+    evidence: useRef<HTMLParagraphElement>(null),
     proof: useRef<HTMLElement>(null),
     review: useRef<HTMLElement>(null),
     tasks: useRef<HTMLElement>(null),
@@ -53,7 +54,10 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
       return;
     }
 
-    const section = sectionRefs[props.focusTarget.section].current;
+    const section =
+      props.focusTarget.section === "evidence"
+        ? (sectionRefs.evidence.current ?? sectionRefs.proof.current)
+        : sectionRefs[props.focusTarget.section].current;
     section?.scrollIntoView?.({ behavior: "smooth", block: "center" });
     section?.focus({ preventScroll: true });
   }, [props.focusTarget?.version]);
@@ -115,8 +119,14 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
             Load Proof
           </RetroButton>
           {props.proof.length === 0 ? <p className="muted">Work evidence will appear here after task review.</p> : null}
-          {props.proof.map((proof) => (
-            <p key={proof.id}>
+          {props.proof.map((proof, index) => (
+            <p
+              className="proof-evidence-row"
+              id={index === 0 ? "first-evidence" : undefined}
+              key={proof.id}
+              ref={index === 0 ? sectionRefs.evidence : undefined}
+              tabIndex={index === 0 ? -1 : undefined}
+            >
               {proof.uri} <span className="muted">{proof.summary}</span>
             </p>
           ))}
