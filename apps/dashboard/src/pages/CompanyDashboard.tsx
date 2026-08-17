@@ -1,4 +1,5 @@
 import { Activity, Building2, ClipboardCheck, FileCheck2, Flag, ListChecks, ShieldAlert, TimerReset } from "lucide-react";
+import type { ReactNode } from "react";
 import type {
   CompanySummary,
   DepartmentSummary,
@@ -21,6 +22,7 @@ export type CompanyDashboardProps = {
   proof: ProofSummary[];
   reviews: ReviewSummary[];
   isPaused: boolean;
+  menuBar?: ReactNode;
   onLoadProof(): void;
   onLoadReviews(): void;
   onKillSwitch(): void;
@@ -33,7 +35,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
   }
 
   return (
-    <AppShell>
+    <AppShell menuBar={props.menuBar}>
       <PageHeader
         eyebrow={props.company.name}
         status={props.company.status}

@@ -70,6 +70,7 @@ p {
 }
 
 .app-shell {
+  align-content: start;
   display: grid;
   gap: 14px;
   margin: 0 auto;
@@ -78,27 +79,104 @@ p {
   padding: 28px;
 }
 
-.app-shell__utility {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.skin-switcher {
-  align-items: center;
+.retro-menu-bar {
+  align-self: start;
   background: var(--surface);
   border: var(--border-px) solid var(--border);
-  display: inline-flex;
-  gap: 8px;
-  min-height: 36px;
-  padding: 4px 4px 4px 10px;
-  width: fit-content;
+  color: var(--ink);
+  height: 34px;
+  min-height: 34px;
+  overflow: visible;
+  position: sticky;
+  top: 0;
+  z-index: 30;
 }
 
-.skin-switcher > span {
-  color: var(--accent-secondary);
-  font-size: 0.68rem;
+.retro-menu-bar__mobile {
+  display: none;
+}
+
+.retro-menu-strip {
+  align-items: stretch;
+  display: flex;
+  min-height: 30px;
+}
+
+.retro-menu-root {
+  position: relative;
+}
+
+.retro-menu-trigger {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.82rem;
   font-weight: 700;
-  text-transform: uppercase;
+  height: 100%;
+  min-height: 30px;
+  padding: 0 14px;
+  text-transform: none;
+}
+
+.retro-menu-trigger:hover,
+.retro-menu-trigger.is-open {
+  background: var(--selected-bg);
+  color: var(--selected-fg);
+}
+
+.retro-menu-popover {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--ink) 34%, transparent);
+  display: grid;
+  left: 0;
+  min-width: 264px;
+  padding: 5px 0;
+  position: absolute;
+  top: calc(100% + var(--border-px));
+  z-index: 40;
+}
+
+.retro-menu-item {
+  align-items: center;
+  background: var(--surface);
+  border: 0;
+  color: var(--ink);
+  cursor: pointer;
+  display: grid;
+  font-size: 0.78rem;
+  font-weight: 700;
+  gap: 8px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  min-height: 28px;
+  padding: 4px 12px 4px 9px;
+  text-align: left;
+  text-transform: none;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.retro-menu-item.is-active:not(:disabled),
+.retro-menu-item:hover:not(:disabled) {
+  background: var(--selected-bg);
+  color: var(--selected-fg);
+}
+
+.retro-menu-item:disabled {
+  color: color-mix(in srgb, var(--ink) 36%, var(--surface));
+  cursor: default;
+}
+
+.retro-menu-item__check {
+  display: inline-flex;
+  justify-content: center;
+}
+
+.retro-menu-separator {
+  border-top: 1px solid color-mix(in srgb, var(--ink) 40%, transparent);
+  height: 1px;
+  margin: 5px 0;
 }
 
 .page-header {
@@ -582,13 +660,26 @@ h3 {
     padding: 16px;
   }
 
-  .app-shell__utility {
-    justify-content: stretch;
+  .retro-menu-bar__desktop {
+    display: none;
   }
 
-  .skin-switcher,
-  .skin-switcher .retro-select,
-  .skin-switcher .retro-select-trigger {
+  .retro-menu-bar__mobile {
+    display: block;
+  }
+
+  .retro-menu-root,
+  .retro-menu-trigger {
+    width: 100%;
+  }
+
+  .retro-menu-trigger {
+    text-align: left;
+  }
+
+  .retro-menu-popover {
+    max-height: min(70vh, 520px);
+    overflow: auto;
     width: 100%;
   }
 

@@ -20,7 +20,7 @@ describe("Dashboard App", () => {
     expect(screen.getByText("OKR System")).toBeInTheDocument();
     expect(screen.getByText("Engineering")).toBeInTheDocument();
     expect(screen.getByText("Active Tasks")).toBeInTheDocument();
-    expect(screen.getByText("Proof")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Proof" })).toBeInTheDocument();
     expect(screen.getByText("Approvals")).toBeInTheDocument();
     expect(screen.getByText("Review")).toBeInTheDocument();
   });
@@ -67,6 +67,46 @@ describe("Dashboard App", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("CEO agent failed to create company blueprint");
     expect(screen.getByRole("button", { name: /create company/i })).toBeEnabled();
+  });
+
+  it("switches skins from the reusable View menu", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await screen.findByRole("heading", { name: "CEO Office" });
+    await user.click(screen.getByRole("menuitem", { name: "View" }));
+    await user.click(screen.getByRole("menuitem", { name: "极客02" }));
+
+    expect(document.querySelector(".theme-root")).toHaveAttribute("data-skin", "geek02");
+  });
+
+  it("selects detected agents from the reusable Agents menu", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await screen.findByRole("heading", { name: "CEO Office" });
+    await user.click(screen.getByRole("menuitem", { name: "Agents" }));
+    await user.click(screen.getByRole("menuitem", { name: "Claude Code" }));
+    await user.click(screen.getByRole("menuitem", { name: "Agents" }));
+
+    expect(screen.getByRole("menuitemcheckbox", { name: "Claude Code" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("keeps disabled menu commands visible without triggering actions", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await screen.findByRole("heading", { name: "CEO Office" });
+    await user.click(screen.getByRole("menuitem", { name: "Company" }));
+
+    expect(screen.getByRole("menuitem", { name: "Back to Setup" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Kill Switch" })).toBeDisabled();
   });
 });
 

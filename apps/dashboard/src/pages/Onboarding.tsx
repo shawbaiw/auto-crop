@@ -1,4 +1,5 @@
 import { Building2, CheckCircle2, Play, ShieldCheck } from "lucide-react";
+import type { ReactNode } from "react";
 import type { AgentSummary, CreateCompanyResponse } from "../api/client";
 import { RetroButton, RetroField, RetroListRow, RetroPanel, RetroSelect, RetroStatus, RetroTextarea } from "../ui/retro";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
@@ -11,6 +12,7 @@ export type OnboardingProps = {
   permissionMode: string;
   blueprint: CreateCompanyResponse | null;
   isCreating: boolean;
+  menuBar?: ReactNode;
   createError: string | null;
   onSelectAgent(agentId: string): void;
   onVisionChange(value: string): void;
@@ -27,7 +29,7 @@ const permissionOptions = [
 
 export function Onboarding(props: OnboardingProps) {
   return (
-    <AppShell>
+    <AppShell menuBar={props.menuBar}>
       <PageHeader
         eyebrow="Founder Setup"
         status="Local Agent Company"

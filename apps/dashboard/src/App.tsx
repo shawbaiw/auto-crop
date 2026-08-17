@@ -11,6 +11,7 @@ import {
 import { CompanyDashboard } from "./pages/CompanyDashboard";
 import { Onboarding } from "./pages/Onboarding";
 import { CRTViewport } from "./ui/crt";
+import { DashboardMenuBar } from "./ui/menu/DashboardMenuBar";
 import { ThemeProvider } from "./ui/theme";
 import "./styles.css";
 
@@ -132,6 +133,28 @@ export default function App({ apiClient }: AppProps) {
     });
   }
 
+  function handleBackToSetup() {
+    setView("onboarding");
+  }
+
+  const menuBar = (
+    <DashboardMenuBar
+      agents={agents}
+      hasBlueprint={Boolean(blueprint)}
+      isCreating={isCreating}
+      isPaused={isPaused}
+      onActivateCompany={handleActivateCompany}
+      onBackToSetup={handleBackToSetup}
+      onCreateCompany={handleCreateCompany}
+      onKillSwitch={handleKillSwitch}
+      onLoadProof={handleLoadProof}
+      onLoadReviews={handleLoadReviews}
+      onSelectAgent={setSelectedAgentId}
+      selectedAgentId={selectedAgentId}
+      view={view}
+    />
+  );
+
   if (view === "dashboard" && blueprint) {
     return (
       <ThemeProvider defaultSkin="mono">
@@ -141,6 +164,7 @@ export default function App({ apiClient }: AppProps) {
             departments={blueprint.departments}
             events={events}
             isPaused={isPaused}
+            menuBar={menuBar}
             onKillSwitch={handleKillSwitch}
             onLoadProof={handleLoadProof}
             onLoadReviews={handleLoadReviews}
@@ -157,21 +181,22 @@ export default function App({ apiClient }: AppProps) {
   return (
     <ThemeProvider defaultSkin="mono">
       <CRTViewport>
-      <Onboarding
-        agents={agents}
-        agentLoadState={agentLoadState}
-        blueprint={blueprint}
-        createError={createError}
-        founderVision={founderVision}
-        isCreating={isCreating}
-        onActivateCompany={handleActivateCompany}
-        onCreateCompany={handleCreateCompany}
-        onPermissionModeChange={setPermissionMode}
-        onSelectAgent={setSelectedAgentId}
-        onVisionChange={setFounderVision}
-        permissionMode={permissionMode}
-        selectedAgentId={selectedAgentId}
-      />
+        <Onboarding
+          agents={agents}
+          agentLoadState={agentLoadState}
+          blueprint={blueprint}
+          createError={createError}
+          founderVision={founderVision}
+          isCreating={isCreating}
+          menuBar={menuBar}
+          onActivateCompany={handleActivateCompany}
+          onCreateCompany={handleCreateCompany}
+          onPermissionModeChange={setPermissionMode}
+          onSelectAgent={setSelectedAgentId}
+          onVisionChange={setFounderVision}
+          permissionMode={permissionMode}
+          selectedAgentId={selectedAgentId}
+        />
       </CRTViewport>
     </ThemeProvider>
   );

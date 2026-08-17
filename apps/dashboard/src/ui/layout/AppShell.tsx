@@ -1,19 +1,17 @@
 import type { ReactNode } from "react";
-import { SkinSwitcher } from "../theme";
 
 export type AppShellProps = {
   children: ReactNode;
   className?: string;
+  menuBar?: ReactNode;
 };
 
-export function AppShell({ children, className }: AppShellProps) {
+export function AppShell({ children, className, menuBar }: AppShellProps) {
   const classes = ["app-shell", className].filter(Boolean).join(" ");
 
   return (
     <main className={classes}>
-      <div className="app-shell__utility">
-        <SkinSwitcher />
-      </div>
+      {menuBar}
       {children}
     </main>
   );
