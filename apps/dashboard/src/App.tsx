@@ -19,11 +19,13 @@ export type AppProps = {
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [agentLoadState, setAgentLoadState] = useState<"loading" | "ready" | "failed">("loading");
   const [selectedAgentId, setSelectedAgentId] = useState("codex");
   const [founderVision, setFounderVision] = useState("");
   const [permissionMode, setPermissionMode] = useState("balanced");
   const [blueprint, setBlueprint] = useState<CreateCompanyResponse | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [events, setEvents] = useState<ServerEvent[]>([]);
   const [proof, setProof] = useState<ProofSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
@@ -32,15 +34,26 @@ export default function App({ apiClient }: AppProps) {
 
   useEffect(() => {
     let active = true;
-    client.listAgents().then((response) => {
-      if (!active) {
-        return;
-      }
-      setAgents(response.agents);
-      const detectedCodex = response.agents.find((agent) => agent.id === "codex" && agent.detected);
-      const firstDetected = response.agents.find((agent) => agent.detected);
-      setSelectedAgentId((detectedCodex ?? firstDetected ?? response.agents[0])?.id ?? "codex");
-    });
+    setAgentLoadState("loading");
+    client
+      .listAgents()
+      .then((response) => {
+        if (!active) {
+          return;
+        }
+        setAgents(response.agents);
+        setAgentLoadState("ready");
+        const detectedCodex = response.agents.find((agent) => agent.id === "codex" && agent.detected);
+        const firstDetected = response.agents.find((agent) => agent.detected);
+        setSelectedAgentId((detectedCodex ?? firstDetected ?? response.agents[0])?.id ?? "codex");
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setAgents([]);
+        setAgentLoadState("failed");
+      });
 
     return () => {
       active = false;
@@ -55,6 +68,7 @@ export default function App({ apiClient }: AppProps) {
 
   async function handleCreateCompany() {
     setIsCreating(true);
+    setCreateError(null);
     try {
       const response = await client.createCompany({
         founderVision,
@@ -63,6 +77,8 @@ export default function App({ apiClient }: AppProps) {
         assets: [],
       });
       setBlueprint(response);
+    } catch (error) {
+      setCreateError((error as Error).message);
     } finally {
       setIsCreating(false);
     }
@@ -116,35 +132,41 @@ export default function App({ apiClient }: AppProps) {
 
   if (view === "dashboard" && blueprint) {
     return (
-      <CompanyDashboard
-        company={blueprint.company}
-        departments={blueprint.departments}
-        events={events}
-        isPaused={isPaused}
-        onKillSwitch={handleKillSwitch}
-        onLoadProof={handleLoadProof}
-        onLoadReviews={handleLoadReviews}
-        objectives={blueprint.objectives}
-        proof={proof}
-        reviews={reviews}
-        tasks={blueprint.tasks}
-      />
+      <div className="crt-viewport palette-game02">
+        <CompanyDashboard
+          company={blueprint.company}
+          departments={blueprint.departments}
+          events={events}
+          isPaused={isPaused}
+          onKillSwitch={handleKillSwitch}
+          onLoadProof={handleLoadProof}
+          onLoadReviews={handleLoadReviews}
+          objectives={blueprint.objectives}
+          proof={proof}
+          reviews={reviews}
+          tasks={blueprint.tasks}
+        />
+      </div>
     );
   }
 
   return (
-    <Onboarding
+    <div className="crt-viewport palette-game02">
+      <Onboarding
       agents={agents}
+      agentLoadState={agentLoadState}
       blueprint={blueprint}
+      createError={createError}
       founderVision={founderVision}
-      isCreating={isCreating}
-      onActivateCompany={handleActivateCompany}
-      onCreateCompany={handleCreateCompany}
-      onPermissionModeChange={setPermissionMode}
-      onSelectAgent={setSelectedAgentId}
-      onVisionChange={setFounderVision}
-      permissionMode={permissionMode}
-      selectedAgentId={selectedAgentId}
-    />
+        isCreating={isCreating}
+        onActivateCompany={handleActivateCompany}
+        onCreateCompany={handleCreateCompany}
+        onPermissionModeChange={setPermissionMode}
+        onSelectAgent={setSelectedAgentId}
+        onVisionChange={setFounderVision}
+        permissionMode={permissionMode}
+        selectedAgentId={selectedAgentId}
+      />
+    </div>
   );
 }

@@ -57,7 +57,7 @@ describe("mock agent adapter", () => {
       output: "created file: index.html",
     });
 
-    const result = await adapter.run(request);
+    const result = await adapter.run({ ...request, workspacePath: process.cwd() });
 
     expect(result.status).toBe("complete");
     expect(result.exitCode).toBe(0);
@@ -129,4 +129,5 @@ describe("CLI command template adapter", () => {
 
     await expect(adapter.detect()).resolves.toBe(true);
   });
+
 });

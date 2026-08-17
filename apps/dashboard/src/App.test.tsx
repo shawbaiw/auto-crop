@@ -39,13 +39,43 @@ describe("Dashboard App", () => {
 
     expect(await screen.findByText("Generated landing page")).toBeInTheDocument();
   });
+
+  it("shows a styled empty state when the local API is not connected", async () => {
+    const api = createMockApiClient();
+    api.listAgents = async () => {
+      throw new Error("offline");
+    };
+
+    render(<App apiClient={api} />);
+
+    expect(await screen.findByText(/local api is not connected/i)).toBeInTheDocument();
+  });
+
+  it("shows create-company errors instead of leaving the button loading", async () => {
+    const api = createMockApiClient();
+    api.createCompany = async () => {
+      throw new Error("CEO agent failed to create company blueprint");
+    };
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /codex/i }));
+    await user.type(screen.getByLabelText("Founder vision"), "Build an AI SaaS that creates pricing pages.");
+    await user.click(screen.getByRole("button", { name: /create company/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("CEO agent failed to create company blueprint");
+    expect(screen.getByRole("button", { name: /create company/i })).toBeEnabled();
+  });
 });
 
 async function createAndActivateCompany(user: ReturnType<typeof userEvent.setup>) {
   expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /codex/i }));
   await user.type(screen.getByLabelText("Founder vision"), "Build an AI SaaS that creates pricing pages.");
-  await user.selectOptions(screen.getByLabelText("Permission mode"), "balanced");
+  await user.click(screen.getByRole("button", { name: /permission mode/i }));
+  await user.click(screen.getByRole("option", { name: "Balanced" }));
   await user.click(screen.getByRole("button", { name: /create company/i }));
 
   expect(await screen.findByText("Pricing Page Studio")).toBeInTheDocument();

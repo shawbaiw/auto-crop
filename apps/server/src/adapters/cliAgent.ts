@@ -6,6 +6,8 @@ export type CliAgentOptions = {
   name: string;
   capabilities: string[];
   commandTemplate: string;
+  timeoutMs?: number;
+  log?: (line: string) => void;
 };
 
 export type InterpolatedCommand = {
@@ -40,7 +42,14 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
         promptPath: request.promptPath,
       });
 
-      return runCommand(command, args, request.workspacePath);
+      options.log?.(`Agent ${options.name} starting task ${request.taskId}`);
+      const result = await runCommand(command, args, request.workspacePath, {
+        timeoutMs: options.timeoutMs ?? Number(process.env.AUTO_CROP_AGENT_TIMEOUT_MS ?? 120_000),
+        log: options.log,
+        agentName: options.name,
+      });
+      options.log?.(`Agent ${options.name} finished task ${request.taskId} with status ${result.status}`);
+      return result;
     },
 
     commandPreview(request: AgentRunRequest): InterpolatedCommand {
@@ -53,21 +62,23 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
   };
 }
 
-export function createClaudeCodeAdapter(): CliAgentAdapter {
+export function createClaudeCodeAdapter(options: Pick<CliAgentOptions, "timeoutMs" | "log"> = {}): CliAgentAdapter {
   return createCliAgentAdapter({
     id: "claude-code",
     name: "Claude Code",
     capabilities: ["code", "frontend", "research", "writing"],
     commandTemplate: "claude -p --permission-mode acceptEdits --no-session-persistence -- {prompt}",
+    ...options,
   });
 }
 
-export function createCodexAdapter(): CliAgentAdapter {
+export function createCodexAdapter(options: Pick<CliAgentOptions, "timeoutMs" | "log"> = {}): CliAgentAdapter {
   return createCliAgentAdapter({
     id: "codex",
     name: "Codex",
     capabilities: ["code", "frontend", "test", "refactor"],
     commandTemplate: "codex exec -C {workspace} --skip-git-repo-check --sandbox workspace-write --ephemeral {prompt}",
+    ...options,
   });
 }
 
@@ -105,18 +116,51 @@ function quoteShell(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function runCommand(command: string, args: string[], cwd: string): Promise<AgentRunResult> {
+function runCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  options: { timeoutMs: number; log?: (line: string) => void; agentName: string },
+): Promise<AgentRunResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
       shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
     });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.kill("SIGTERM");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      options.log?.(`Agent ${options.agentName} timed out after ${options.timeoutMs}ms.`);
+      resolve({
+        status: "failed",
+        exitCode: null,
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: [stderr, `Agent command timed out after ${options.timeoutMs}ms.`].filter(Boolean).join("\n"),
+      });
+    }, options.timeoutMs);
 
-    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+      options.log?.(`Agent ${options.agentName} stdout: ${chunk.toString("utf8").trimEnd()}`);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      options.log?.(`Agent ${options.agentName} stderr: ${chunk.toString("utf8").trimEnd()}`);
+    });
     child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
       resolve({
         status: "failed",
         exitCode: null,
@@ -125,6 +169,11 @@ function runCommand(command: string, args: string[], cwd: string): Promise<Agent
       });
     });
     child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
       resolve({
         status: code === 0 ? "complete" : "failed",
         exitCode: code,

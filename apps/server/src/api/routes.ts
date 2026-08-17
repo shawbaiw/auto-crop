@@ -10,6 +10,7 @@ export type ApiServerOptions = {
   projectRoot: string;
   repositories: ReturnType<typeof createRepositories>;
   agents: AgentAdapter[];
+  log?: (line: string) => void;
   now?: () => Date;
   createId?: (prefix: string) => string;
 };
@@ -29,8 +30,12 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         response.end();
         return;
       }
+      if (request.url !== "/api/events") {
+        options.log?.(`${request.method ?? "GET"} ${request.url ?? "/"}`);
+      }
       await routeRequest(request, response, options, events);
     } catch (error) {
+      options.log?.(`Request failed: ${(error as Error).message}`);
       sendJson(response, 500, { error: (error as Error).message });
     }
   });
@@ -79,6 +84,7 @@ async function routeRequest(
       return;
     }
 
+    options.log?.(`Creating company with CEO agent ${selectedCeoAgent.name}`);
     const result = await createCompany({
       projectRoot: options.projectRoot,
       founderVision: body.founderVision,

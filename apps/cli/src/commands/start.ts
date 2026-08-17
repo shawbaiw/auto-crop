@@ -34,7 +34,7 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
   const database = createDatabaseClient(join(stateDir, "state.sqlite"));
   migrate(database);
   const repositories = createRepositories(database);
-  const agents = options.agents ?? [createClaudeCodeAdapter(), createCodexAdapter()];
+  const agents = options.agents ?? [createClaudeCodeAdapter({ log }), createCodexAdapter({ log })];
 
   for (const agent of agents) {
     const detected = await agent.detect();
@@ -45,6 +45,7 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
     projectRoot: options.projectRoot,
     repositories,
     agents,
+    log,
   });
 
   await new Promise<void>((resolve) => {

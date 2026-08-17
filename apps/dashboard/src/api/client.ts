@@ -121,7 +121,7 @@ async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    throw new Error(await formatRequestError(response));
   }
 
   return (await response.json()) as T;
@@ -135,8 +135,19 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    throw new Error(await formatRequestError(response));
   }
 
   return (await response.json()) as T;
+}
+
+async function formatRequestError(response: Response): Promise<string> {
+  const fallback = `Request failed: ${response.status}`;
+
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    return typeof body.error === "string" && body.error.length > 0 ? body.error : fallback;
+  } catch {
+    return fallback;
+  }
 }
