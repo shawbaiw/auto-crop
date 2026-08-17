@@ -1,2 +1,2 @@
 export { crtPresets, type CRTPreset } from "./crtPresets";
-export { CRTViewport } from "./CRTViewport";
+export { CRTViewport, type CRTFrame } from "./CRTViewport";

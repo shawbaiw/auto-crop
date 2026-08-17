@@ -1,5 +1,8 @@
 export const crtPresets = {
-  horizontalVignette: "crt-viewport--horizontal-vignette",
+  horizontalVignette: {
+    className: "crt-viewport--horizontal-vignette",
+    label: "Horizontal scanlines with CRT vignette",
+  },
 } as const;
 
 export type CRTPreset = keyof typeof crtPresets;
