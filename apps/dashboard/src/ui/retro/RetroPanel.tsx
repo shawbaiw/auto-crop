@@ -1,20 +1,22 @@
-import type { ReactNode } from "react";
+import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
 
-export type RetroPanelProps = {
+export type RetroPanelProps = Omit<ComponentPropsWithoutRef<"section">, "title"> & {
   children: ReactNode;
-  className?: string;
   icon?: ReactNode;
   title: string;
   variant?: "default" | "inverted";
 };
 
-export function RetroPanel({ children, className, icon, title, variant = "default" }: RetroPanelProps) {
+export const RetroPanel = forwardRef<HTMLElement, RetroPanelProps>(function RetroPanel(
+  { children, className, icon, title, variant = "default", ...sectionProps },
+  ref,
+) {
   const classes = ["retro-panel", variant === "inverted" ? "retro-panel--inverted" : "", className]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <section className={classes}>
+    <section className={classes} ref={ref} {...sectionProps}>
       <div className="retro-title-rail">
         {icon ? <span className="retro-title-rail__icon">{icon}</span> : null}
         <h2>{title}</h2>
@@ -22,4 +24,4 @@ export function RetroPanel({ children, className, icon, title, variant = "defaul
       <div className="retro-panel__body">{children}</div>
     </section>
   );
-}
+});

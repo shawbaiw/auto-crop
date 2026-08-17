@@ -108,6 +108,23 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("menuitem", { name: "Back to Setup" })).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "Kill Switch" })).toBeDisabled();
   });
+
+  it("focuses dashboard sections from Work and Proof menu commands", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createAndActivateCompany(user);
+
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Tasks" }));
+    await waitFor(() => expect(document.activeElement).toHaveAttribute("id", "active-tasks"));
+
+    await user.click(screen.getByRole("menuitem", { name: "Proof" }));
+    await user.click(screen.getByRole("menuitem", { name: "Load Review" }));
+    await waitFor(() => expect(document.activeElement).toHaveAttribute("id", "review"));
+    expect(await screen.findByText("Ready for next cycle")).toBeInTheDocument();
+  });
 });
 
 async function createAndActivateCompany(user: ReturnType<typeof userEvent.setup>) {

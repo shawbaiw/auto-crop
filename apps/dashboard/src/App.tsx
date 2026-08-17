@@ -8,7 +8,7 @@ import {
   type ReviewSummary,
   type ServerEvent,
 } from "./api/client";
-import { CompanyDashboard } from "./pages/CompanyDashboard";
+import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
 import { Onboarding } from "./pages/Onboarding";
 import { CRTViewport } from "./ui/crt";
 import { DashboardMenuBar } from "./ui/menu/DashboardMenuBar";
@@ -34,6 +34,7 @@ export default function App({ apiClient }: AppProps) {
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [isPaused, setIsPaused] = useState(false);
   const [view, setView] = useState<"onboarding" | "dashboard">("onboarding");
+  const [dashboardFocusTarget, setDashboardFocusTarget] = useState<DashboardFocusTarget | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -137,6 +138,23 @@ export default function App({ apiClient }: AppProps) {
     setView("onboarding");
   }
 
+  function focusDashboardSection(section: DashboardFocusSection) {
+    setDashboardFocusTarget((current) => ({
+      section,
+      version: (current?.version ?? 0) + 1,
+    }));
+  }
+
+  function handleMenuLoadProof() {
+    focusDashboardSection("proof");
+    void handleLoadProof();
+  }
+
+  function handleMenuLoadReviews() {
+    focusDashboardSection("review");
+    void handleLoadReviews();
+  }
+
   const menuBar = (
     <DashboardMenuBar
       agents={agents}
@@ -147,9 +165,11 @@ export default function App({ apiClient }: AppProps) {
       onBackToSetup={handleBackToSetup}
       onCreateCompany={handleCreateCompany}
       onKillSwitch={handleKillSwitch}
-      onLoadProof={handleLoadProof}
-      onLoadReviews={handleLoadReviews}
+      onLoadProof={handleMenuLoadProof}
+      onLoadReviews={handleMenuLoadReviews}
       onSelectAgent={setSelectedAgentId}
+      onViewDepartments={() => focusDashboardSection("departments")}
+      onViewTasks={() => focusDashboardSection("tasks")}
       selectedAgentId={selectedAgentId}
       view={view}
     />
@@ -163,6 +183,7 @@ export default function App({ apiClient }: AppProps) {
             company={blueprint.company}
             departments={blueprint.departments}
             events={events}
+            focusTarget={dashboardFocusTarget}
             isPaused={isPaused}
             menuBar={menuBar}
             onKillSwitch={handleKillSwitch}

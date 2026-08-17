@@ -1,12 +1,15 @@
-import type { ReactNode } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
-export type WorkspaceProps = {
+export type WorkspaceProps = ComponentPropsWithoutRef<"section"> & {
   children: ReactNode;
-  className?: string;
 };
 
-export function Workspace({ children, className }: WorkspaceProps) {
+export function Workspace({ children, className, ...sectionProps }: WorkspaceProps) {
   const classes = ["workspace", className].filter(Boolean).join(" ");
 
-  return <section className={classes}>{children}</section>;
+  return (
+    <section className={classes} {...sectionProps}>
+      {children}
+    </section>
+  );
 }

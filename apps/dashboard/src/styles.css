@@ -45,6 +45,12 @@ textarea:focus-visible {
   outline-offset: var(--pixel-unit);
 }
 
+.retro-panel:focus-visible,
+.workspace:focus-visible {
+  outline: var(--border-px) solid var(--accent-primary);
+  outline-offset: var(--pixel-unit);
+}
+
 h1,
 h2,
 h3,

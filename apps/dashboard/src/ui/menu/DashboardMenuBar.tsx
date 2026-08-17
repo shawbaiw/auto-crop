@@ -18,6 +18,8 @@ export type DashboardMenuBarProps = {
   onLoadProof(): void;
   onLoadReviews(): void;
   onSelectAgent(agentId: string): void;
+  onViewDepartments(): void;
+  onViewTasks(): void;
   selectedAgentId: string;
   view: DashboardMenuView;
 };
@@ -34,6 +36,8 @@ export function DashboardMenuBar({
   onLoadProof,
   onLoadReviews,
   onSelectAgent,
+  onViewDepartments,
+  onViewTasks,
   selectedAgentId,
   view,
 }: DashboardMenuBarProps) {
@@ -99,8 +103,18 @@ export function DashboardMenuBar({
         id: "work",
         label: "Work",
         items: [
-          { disabled: true, id: "view-tasks", label: "View Tasks" },
-          { disabled: true, id: "view-departments", label: "View Departments" },
+          {
+            disabled: view !== "dashboard" || !hasBlueprint,
+            id: "view-tasks",
+            label: "View Tasks",
+            onSelect: onViewTasks,
+          },
+          {
+            disabled: view !== "dashboard" || !hasBlueprint,
+            id: "view-departments",
+            label: "View Departments",
+            onSelect: onViewDepartments,
+          },
           { checked: isPaused, disabled: true, id: "pause-status", label: "Pause Status" },
         ],
       },
@@ -164,6 +178,8 @@ export function DashboardMenuBar({
       onLoadProof,
       onLoadReviews,
       onSelectAgent,
+      onViewDepartments,
+      onViewTasks,
       selectedAgentId,
       setSkin,
       skin,

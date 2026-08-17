@@ -1,5 +1,5 @@
 import { Activity, Building2, ClipboardCheck, FileCheck2, Flag, ListChecks, ShieldAlert, TimerReset } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type {
   CompanySummary,
   DepartmentSummary,
@@ -13,12 +13,20 @@ import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroPanel } from "../ui/retro";
 
+export type DashboardFocusSection = "tasks" | "departments" | "proof" | "review";
+
+export type DashboardFocusTarget = {
+  section: DashboardFocusSection;
+  version: number;
+};
+
 export type CompanyDashboardProps = {
   company: CompanySummary;
   departments: DepartmentSummary[];
   objectives: ObjectiveSummary[];
   tasks: TaskSummary[];
   events: ServerEvent[];
+  focusTarget: DashboardFocusTarget | null;
   proof: ProofSummary[];
   reviews: ReviewSummary[];
   isPaused: boolean;
@@ -29,10 +37,26 @@ export type CompanyDashboardProps = {
 };
 
 export function CompanyDashboard(props: CompanyDashboardProps) {
+  const sectionRefs = {
+    departments: useRef<HTMLElement>(null),
+    proof: useRef<HTMLElement>(null),
+    review: useRef<HTMLElement>(null),
+    tasks: useRef<HTMLElement>(null),
+  };
   const tasksByDepartment = new Map(props.departments.map((department) => [department.id, [] as TaskSummary[]]));
   for (const task of props.tasks) {
     tasksByDepartment.get(task.departmentId)?.push(task);
   }
+
+  useEffect(() => {
+    if (!props.focusTarget) {
+      return;
+    }
+
+    const section = sectionRefs[props.focusTarget.section].current;
+    section?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    section?.focus({ preventScroll: true });
+  }, [props.focusTarget?.version]);
 
   return (
     <AppShell menuBar={props.menuBar}>
@@ -52,7 +76,13 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
         <RetroPanel icon={<Flag size={18} aria-hidden="true" />} title="OKR System">
           <VideotexLog emptyMessage="No objectives queued." rows={props.objectives.map((objective) => objective.title)} />
         </RetroPanel>
-        <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title="Active Tasks">
+        <RetroPanel
+          icon={<ListChecks size={18} aria-hidden="true" />}
+          id="active-tasks"
+          ref={sectionRefs.tasks}
+          tabIndex={-1}
+          title="Active Tasks"
+        >
           <VideotexLog
             emptyMessage="No active tasks."
             rows={props.tasks.map((task) => `${task.title} / ${task.status.toUpperCase()}`)}
@@ -60,9 +90,15 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
         </RetroPanel>
       </Workspace>
 
-      <Workspace className="department-band">
+      <Workspace className="department-band" id="departments">
         {props.departments.map((department) => (
-          <RetroPanel icon={<ClipboardCheck size={18} aria-hidden="true" />} key={department.id} title={department.name}>
+          <RetroPanel
+            icon={<ClipboardCheck size={18} aria-hidden="true" />}
+            key={department.id}
+            ref={department.id === props.departments[0]?.id ? sectionRefs.departments : undefined}
+            tabIndex={department.id === props.departments[0]?.id ? -1 : undefined}
+            title={department.name}
+          >
             <p>{department.responsibility}</p>
             {(tasksByDepartment.get(department.id) ?? []).map((task) => (
               <RetroBadge key={task.id} tone="signal">
@@ -74,7 +110,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
       </Workspace>
 
       <Workspace className="control-grid">
-        <RetroPanel icon={<FileCheck2 size={18} aria-hidden="true" />} title="Proof">
+        <RetroPanel icon={<FileCheck2 size={18} aria-hidden="true" />} id="proof" ref={sectionRefs.proof} tabIndex={-1} title="Proof">
           <RetroButton onClick={props.onLoadProof}>
             Load Proof
           </RetroButton>
@@ -91,7 +127,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
             Kill Switch
           </RetroButton>
         </RetroPanel>
-        <RetroPanel icon={<TimerReset size={18} aria-hidden="true" />} title="Review">
+        <RetroPanel icon={<TimerReset size={18} aria-hidden="true" />} id="review" ref={sectionRefs.review} tabIndex={-1} title="Review">
           <RetroButton onClick={props.onLoadReviews}>
             Load Review
           </RetroButton>

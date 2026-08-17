@@ -64,7 +64,8 @@ Help
 - `Kill Switch` reuses the dashboard handler and is enabled only when a company exists.
 - `Agents` menu items call the same selected-agent state setter as the CEO cards.
 - `View` skin items call the existing theme context.
-- Menu-only navigation commands such as `View Tasks` and `View Departments` are disabled in version one until there is a real focus or scroll target.
+- `Work > View Tasks` and `Work > View Departments` focus the matching dashboard sections when a company is active.
+- `Proof > Load Proof` and `Proof > Load Review` focus their matching dashboard sections before loading data.
 
 ## Implementation Steps
 
@@ -82,6 +83,7 @@ Help
 - [ ] Add second-level submenus when the menu system needs nested groups such as `View > Skin`.
 - [ ] Add visible keyboard shortcut glyphs once real shortcuts exist.
 - [ ] Implement real fullscreen behavior for `View > Fullscreen`.
-- [ ] Add focus or scroll targets for `Work > View Tasks`, `Work > View Departments`, and proof evidence navigation.
+- [x] Add focus targets for `Work > View Tasks`, `Work > View Departments`, `Proof > Load Proof`, and `Proof > Load Review`.
+- [ ] Add proof evidence navigation after evidence has a real opening target.
 - [ ] Revisit menu labels after the dashboard has more mature information architecture.
 - [ ] Consider command-palette reuse if the menu action model grows beyond classic menu interactions.
