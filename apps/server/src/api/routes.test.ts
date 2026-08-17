@@ -1,0 +1,210 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import type { Proof } from "@auto-crop/core";
+import { createMockAgentAdapter } from "../adapters/mockAgent";
+import { createDatabaseClient } from "../db/client";
+import { createRepositories, type ReviewRecord } from "../db/repositories";
+import { migrate } from "../db/schema";
+import { aiSaasPlaybook } from "../playbooks/aiSaas";
+import { createApiServer } from "./routes";
+
+const createdDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of createdDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe("API routes", () => {
+  it("detects agents, creates a company, activates it, exposes proof/reviews, cancels tasks, and triggers kill switch", async () => {
+    const fixture = await startFixtureServer();
+
+    const agents = await getJson<{ agents: Array<{ id: string; detected: boolean }> }>(
+      `${fixture.baseUrl}/api/agents`,
+    );
+    expect(agents.agents).toContainEqual({ id: "codex", name: "Codex", capabilities: ["code", "frontend", "test"], detected: true });
+
+    const created = await postJson<{ company: { id: string; status: string }; editable: { companyName: string } }>(
+      `${fixture.baseUrl}/api/companies`,
+      {
+        founderVision: "Build an AI SaaS that creates pricing pages.",
+        selectedCeoAgentId: "codex",
+        permissionMode: "balanced",
+        assets: ["README.md"],
+      },
+    );
+    expect(created.company.status).toBe("draft");
+    expect(created.editable.companyName).toBe("Pricing Page Studio");
+
+    const activated = await postJson<{ company: { status: string } }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/activate`,
+      {},
+    );
+    expect(activated.company.status).toBe("active");
+
+    const task = fixture.repositories.fetchQueuedTasks(1)[0];
+    expect(task).toBeDefined();
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: task.id,
+      type: "file",
+      uri: "README.md",
+      summary: "Proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.createReview({
+      id: "review_1",
+      companyId: created.company.id,
+      summary: "Review exists.",
+      reviewPath: ".auto-crop/reviews/review_1.md",
+      createdAt: "2026-08-17T00:00:00.000Z",
+    } satisfies ReviewRecord);
+
+    const proofs = await getJson<{ proof: Proof[] }>(`${fixture.baseUrl}/api/tasks/${task.id}/proof`);
+    expect(proofs.proof).toHaveLength(1);
+
+    const reviews = await getJson<{ reviews: ReviewRecord[] }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/reviews`,
+    );
+    expect(reviews.reviews).toHaveLength(1);
+
+    const cancelled = await postJson<{ task: { status: string } }>(
+      `${fixture.baseUrl}/api/tasks/${task.id}/cancel`,
+      {},
+    );
+    expect(cancelled.task.status).toBe("cancelled");
+
+    fixture.repositories.updateTaskStatus(task.id, "running");
+    fixture.repositories.createAgentRun({
+      id: "agent_run_1",
+      taskId: task.id,
+      agentId: "codex",
+      status: "running",
+      logPath: "agent.log",
+      startedAt: "2026-08-17T00:00:00.000Z",
+      finishedAt: null,
+    });
+    const killed = await postJson<{ paused: boolean; company: { status: string } }>(
+      `${fixture.baseUrl}/api/kill-switch`,
+      { companyId: created.company.id },
+    );
+    expect(killed.paused).toBe(true);
+    expect(killed.company.status).toBe("review");
+
+    await fixture.close();
+  });
+
+  it("streams server-sent events", async () => {
+    const fixture = await startFixtureServer();
+    const response = await fetch(`${fixture.baseUrl}/api/events`);
+    const firstChunk = response.body?.getReader();
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+    fixture.events.publish({ type: "task_log", taskId: "task_1", message: "hello" });
+
+    const text = await readUntil(firstChunk, "event: task_log");
+    expect(text).toContain("event: task_log");
+    expect(text).toContain("hello");
+
+    await firstChunk?.cancel();
+    await fixture.close();
+  });
+});
+
+async function startFixtureServer() {
+  const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-api-"));
+  createdDirs.push(projectRoot);
+  const client = createDatabaseClient(":memory:");
+  migrate(client);
+  const repositories = createRepositories(client);
+  const blueprint = aiSaasPlaybook.createBlueprint({
+    companyName: "Pricing Page Studio",
+    founderVision: "Build an AI SaaS that creates pricing pages.",
+    preferredEngineeringAgentId: "codex",
+    preferredStrategyAgentId: "codex",
+  });
+  const codex = createMockAgentAdapter({
+    id: "codex",
+    name: "Codex",
+    capabilities: ["code", "frontend", "test"],
+    output: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
+  });
+  const server = createApiServer({
+    projectRoot,
+    repositories,
+    agents: [codex],
+    now: () => new Date("2026-08-17T00:00:00.000Z"),
+    createId: createSequentialIdFactory(),
+  });
+
+  await new Promise<void>((resolve) => server.httpServer.listen(0, resolve));
+  const address = server.httpServer.address();
+
+  if (!address || typeof address === "string") {
+    throw new Error("Expected TCP server address.");
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    repositories,
+    events: server.events,
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+      client.close();
+    },
+  };
+}
+
+async function getJson<T>(url: string): Promise<T> {
+  const response = await fetch(url);
+  expect(response.ok).toBe(true);
+  return (await response.json()) as T;
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  expect(response.ok).toBe(true);
+  return (await response.json()) as T;
+}
+
+function createSequentialIdFactory(): (prefix: string) => string {
+  const counts = new Map<string, number>();
+
+  return (prefix) => {
+    const next = (counts.get(prefix) ?? 0) + 1;
+    counts.set(prefix, next);
+    return `${prefix}_${next}`;
+  };
+}
+
+async function readUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array> | undefined,
+  pattern: string,
+): Promise<string> {
+  if (!reader) {
+    throw new Error("Missing stream reader.");
+  }
+
+  let text = "";
+
+  while (!text.includes(pattern)) {
+    const chunk = await reader.read();
+
+    if (chunk.done) {
+      break;
+    }
+
+    text += new TextDecoder().decode(chunk.value);
+  }
+
+  return text;
+}

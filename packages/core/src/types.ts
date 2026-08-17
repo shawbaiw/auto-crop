@@ -1,0 +1,150 @@
+export type CompanyStatus = "draft" | "active" | "paused" | "review";
+export type ObjectiveStatus = "active" | "complete" | "paused";
+export type KeyResultStatus = "active" | "met" | "missed";
+export type TaskStatus =
+  | "queued"
+  | "running"
+  | "blocked"
+  | "review"
+  | "complete"
+  | "failed"
+  | "cancelled";
+export type RiskLevel = "low" | "medium" | "high";
+export type ProofType =
+  | "file"
+  | "diff"
+  | "url"
+  | "screenshot"
+  | "command_output"
+  | "test_result"
+  | "deployment";
+export type AgentRunStatus = "queued" | "running" | "complete" | "failed" | "cancelled";
+export type ApprovalStatus = "pending" | "approved" | "denied";
+
+export type Company = {
+  id: string;
+  name: string;
+  founderVision: string;
+  selectedCeoAgentId: string;
+  playbookId: string;
+  status: CompanyStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Department = {
+  id: string;
+  companyId: string;
+  name: string;
+  responsibility: string;
+  leadAgentId: string;
+  memoryPath: string;
+};
+
+export type Objective = {
+  id: string;
+  companyId: string;
+  title: string;
+  status: ObjectiveStatus;
+  priority: number;
+};
+
+export type KeyResult = {
+  id: string;
+  objectiveId: string;
+  title: string;
+  metricName: string;
+  targetValue: string;
+  currentValue: string;
+  status: KeyResultStatus;
+};
+
+export type Task = {
+  id: string;
+  companyId: string;
+  departmentId: string;
+  keyResultId: string | null;
+  title: string;
+  description: string;
+  assigneeAgentId: string;
+  requiredCapabilities: string[];
+  proofSchemaId: string;
+  workspacePath: string | null;
+  status: TaskStatus;
+  riskLevel: RiskLevel;
+};
+
+export type Proof = {
+  id: string;
+  taskId: string;
+  type: ProofType;
+  uri: string;
+  summary: string;
+  verifiedAt: string | null;
+};
+
+export type AgentRun = {
+  id: string;
+  taskId: string;
+  agentId: string;
+  status: AgentRunStatus;
+  logPath: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+export type Approval = {
+  id: string;
+  companyId: string;
+  taskId: string | null;
+  actionType: string;
+  riskLevel: RiskLevel;
+  status: ApprovalStatus;
+  requestedAt: string;
+};
+
+export type ProofSchema = {
+  id: string;
+  description: string;
+  acceptedTypes: ProofType[];
+};
+
+export type BlueprintTask = {
+  departmentName: string;
+  title: string;
+  description: string;
+  assigneeAgentId: string;
+  requiredCapabilities: string[];
+  proofSchemaId: string;
+  riskLevel: RiskLevel;
+};
+
+export type CompanyBlueprint = {
+  company: {
+    name: string;
+    founderVision: string;
+    playbookId: string;
+  };
+  departments: Array<{
+    name: string;
+    responsibility: string;
+    leadAgentId: string;
+  }>;
+  objectives: Array<{
+    title: string;
+    priority: number;
+    keyResults: Array<{
+      title: string;
+      metricName: string;
+      targetValue: string;
+      currentValue: string;
+    }>;
+  }>;
+  proofSchemas: ProofSchema[];
+  tasks: BlueprintTask[];
+};
+
+export type CeoResponse = {
+  brief: string;
+  blueprint: CompanyBlueprint;
+};

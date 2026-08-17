@@ -1,0 +1,22 @@
+node_modules/
+.pnpm-store/
+dist/
+.auto-crop/
+.env
+.env.*
+!.env.example
+
+# Test and browser artifacts
+coverage/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System files
+.DS_Store

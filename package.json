@@ -1,0 +1,22 @@
+{
+  "name": "auto-crop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel --if-present dev",
+    "smoke:mock": "tsx scripts/mock-smoke.ts",
+    "smoke:real-agent": "tsx scripts/real-agent-smoke.ts",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "pnpm -r --if-present lint"
+  },
+  "devDependencies": {
+    "@auto-crop/core": "workspace:*",
+    "@auto-crop/server": "workspace:*",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

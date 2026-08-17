@@ -1,0 +1,206 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AgentAdapter } from "../adapters/types";
+import type { createRepositories } from "../db/repositories";
+import { EventStream } from "../events/sse";
+import type { PolicyMode } from "../policies/policy";
+import { createCompany } from "../runtime/createCompany";
+import { triggerKillSwitch } from "../runtime/killSwitch";
+
+export type ApiServerOptions = {
+  projectRoot: string;
+  repositories: ReturnType<typeof createRepositories>;
+  agents: AgentAdapter[];
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+};
+
+export type ApiServer = {
+  httpServer: Server;
+  events: EventStream;
+};
+
+export function createApiServer(options: ApiServerOptions): ApiServer {
+  const events = new EventStream();
+  const httpServer = createServer(async (request, response) => {
+    try {
+      applyCors(response);
+      if (request.method === "OPTIONS") {
+        response.writeHead(204);
+        response.end();
+        return;
+      }
+      await routeRequest(request, response, options, events);
+    } catch (error) {
+      sendJson(response, 500, { error: (error as Error).message });
+    }
+  });
+
+  return { httpServer, events };
+}
+
+async function routeRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: ApiServerOptions,
+  events: EventStream,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", "http://localhost");
+  const method = request.method ?? "GET";
+
+  if (method === "GET" && url.pathname === "/api/events") {
+    events.connect(response);
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/agents") {
+    const agents = await Promise.all(
+      options.agents.map(async (agent) => ({
+        id: agent.id,
+        name: agent.name,
+        capabilities: agent.capabilities,
+        detected: await agent.detect(),
+      })),
+    );
+    sendJson(response, 200, { agents });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/companies") {
+    const body = await readJson<{
+      founderVision: string;
+      selectedCeoAgentId: string;
+      permissionMode: PolicyMode;
+      assets?: string[];
+    }>(request);
+    const selectedCeoAgent = options.agents.find((agent) => agent.id === body.selectedCeoAgentId);
+
+    if (!selectedCeoAgent) {
+      sendJson(response, 404, { error: `Agent not found: ${body.selectedCeoAgentId}` });
+      return;
+    }
+
+    const result = await createCompany({
+      projectRoot: options.projectRoot,
+      founderVision: body.founderVision,
+      selectedCeoAgent,
+      availableAgents: options.agents,
+      permissionMode: body.permissionMode,
+      assets: body.assets ?? [],
+      repositories: options.repositories,
+      now: options.now,
+      createId: options.createId,
+    });
+    sendJson(response, 201, result);
+    return;
+  }
+
+  const activateMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/activate$/);
+  if (method === "POST" && activateMatch) {
+    const companyId = activateMatch[1];
+    options.repositories.updateCompanyStatus(
+      companyId,
+      "active",
+      (options.now ?? (() => new Date()))().toISOString(),
+    );
+    sendJson(response, 200, { company: options.repositories.getCompany(companyId) });
+    return;
+  }
+
+  const blueprintMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/blueprint$/);
+  if (method === "PATCH" && blueprintMatch) {
+    const companyId = blueprintMatch[1];
+    const body = await readJson<{ companyName?: string }>(request);
+    const company = options.repositories.getCompany(companyId);
+
+    if (!company) {
+      sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      return;
+    }
+
+    sendJson(response, 200, {
+      company: {
+        ...company,
+        name: body.companyName ?? company.name,
+      },
+    });
+    return;
+  }
+
+  const reviewsMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/reviews$/);
+  if (method === "GET" && reviewsMatch) {
+    sendJson(response, 200, { reviews: options.repositories.listReviews(reviewsMatch[1]) });
+    return;
+  }
+
+  const proofMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/proof$/);
+  if (method === "GET" && proofMatch) {
+    sendJson(response, 200, { proof: options.repositories.listProofsForTask(proofMatch[1]) });
+    return;
+  }
+
+  const cancelMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
+  if (method === "POST" && cancelMatch) {
+    const taskId = cancelMatch[1];
+    options.repositories.updateTaskStatus(taskId, "cancelled");
+    sendJson(response, 200, { task: options.repositories.getTask(taskId) });
+    return;
+  }
+
+  const approvalMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)$/);
+  if (method === "POST" && approvalMatch) {
+    const body = await readJson<{ decision: "approved" | "denied" }>(request);
+    sendJson(response, 200, { approval: { id: approvalMatch[1], status: body.decision } });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/kill-switch") {
+    const body = await readJson<{ companyId: string }>(request);
+    const result = triggerKillSwitch({
+      companyId: body.companyId,
+      repositories: options.repositories,
+      now: options.now,
+      cancelActiveRun: () => undefined,
+    });
+    sendJson(response, 200, {
+      ...result,
+      paused: options.repositories.isGlobalPaused(),
+      company: options.repositories.getCompany(body.companyId),
+    });
+    return;
+  }
+
+  sendJson(response, 404, { error: "Not found" });
+}
+
+function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
+  response.writeHead(statusCode, { "content-type": "application/json", ...corsHeaders() });
+  response.end(JSON.stringify(body));
+}
+
+function applyCors(response: ServerResponse): void {
+  for (const [key, value] of Object.entries(corsHeaders())) {
+    response.setHeader(key, value);
+  }
+}
+
+function corsHeaders(): Record<string, string> {
+  return {
+    "access-control-allow-headers": "content-type",
+    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+    "access-control-allow-origin": "*",
+  };
+}
+
+async function readJson<T>(request: IncomingMessage): Promise<T> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  if (chunks.length === 0) {
+    return {} as T;
+  }
+
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+}

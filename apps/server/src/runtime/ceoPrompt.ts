@@ -1,0 +1,115 @@
+import type { PolicyMode } from "../policies/policy";
+import type { Playbook } from "../playbooks/types";
+
+export type CeoPromptAgent = {
+  id: string;
+  name: string;
+  capabilities: string[];
+};
+
+export type BuildCeoPromptInput = {
+  founderVision: string;
+  playbook: Playbook;
+  availableAgents: CeoPromptAgent[];
+  permissionMode: PolicyMode;
+  assets: string[];
+};
+
+export function buildCeoPrompt(input: BuildCeoPromptInput): string {
+  return [
+    "# CEO Office",
+    "",
+    "You are the CEO Office for a local agent company runtime.",
+    "Turn the founder vision into an executable company blueprint.",
+    "",
+    "## Founder Vision",
+    input.founderVision,
+    "",
+    "## Selected Playbook",
+    `ID: ${input.playbook.id}`,
+    `Name: ${input.playbook.name}`,
+    `Suitable for: ${input.playbook.suitableFor.join(", ")}`,
+    "",
+    "## Allowed Departments",
+    ...input.playbook.defaultDepartments.map(
+      (department) => `- ${department.name}: ${department.responsibility}`,
+    ),
+    "",
+    "## Allowed Proof Schemas",
+    ...input.playbook.proofSchemas.map(
+      (proofSchema) =>
+        `- ${proofSchema.id}: ${proofSchema.description} (${proofSchema.acceptedTypes.join(", ")})`,
+    ),
+    "",
+    "## Available Agents",
+    ...input.availableAgents.map(
+      (agent) => `- ${agent.id} (${agent.name}): ${agent.capabilities.join(", ")}`,
+    ),
+    "",
+    "## Permission Mode",
+    input.permissionMode,
+    "",
+    "## Founder Assets",
+    ...(input.assets.length > 0 ? input.assets.map((asset) => `- ${asset}`) : ["- None"]),
+    "",
+    "## Output Contract",
+    "Return exactly two sections:",
+    "",
+    "## Human CEO Brief",
+    "A concise explanation for the founder.",
+    "",
+    "## Strict JSON",
+    "A fenced JSON block. The runtime will parse only this block.",
+    "Do not include departments or proof schemas outside the selected playbook.",
+    "",
+    "```json",
+    JSON.stringify(
+      {
+        brief: "Founder-facing summary.",
+        blueprint: {
+          company: {
+            name: "Company name",
+            founderVision: input.founderVision,
+            playbookId: input.playbook.id,
+          },
+          departments: [
+            {
+              name: "Product",
+              responsibility: "Department responsibility.",
+              leadAgentId: "agent-id",
+            },
+          ],
+          objectives: [
+            {
+              title: "Objective title",
+              priority: 1,
+              keyResults: [
+                {
+                  title: "Key result title",
+                  metricName: "metric_name",
+                  targetValue: "target",
+                  currentValue: "current",
+                },
+              ],
+            },
+          ],
+          proofSchemas: input.playbook.proofSchemas,
+          tasks: [
+            {
+              departmentName: "Product",
+              title: "Task title",
+              description: "Task description",
+              assigneeAgentId: "agent-id",
+              requiredCapabilities: ["writing"],
+              proofSchemaId: input.playbook.proofSchemas[0]?.id ?? "proof-schema-id",
+              riskLevel: "low",
+            },
+          ],
+        },
+      },
+      null,
+      2,
+    ),
+    "```",
+  ].join("\n");
+}
