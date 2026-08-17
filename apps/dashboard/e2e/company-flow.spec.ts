@@ -31,11 +31,12 @@ test("creates and operates a mock agent company through the dashboard", async ({
   await expect(page.getByRole("heading", { name: "CEO Office" })).toBeVisible();
   await page.getByRole("button", { name: /codex/i }).click();
   await page.getByLabel("Founder vision").fill("Build an AI SaaS that creates pricing pages.");
-  await page.getByLabel("Permission mode").selectOption("balanced");
+  await page.getByRole("button", { name: /permission mode/i }).click();
+  await page.getByRole("option", { name: "Balanced" }).click();
   await page.getByRole("button", { name: /create company/i }).click();
 
   await expect(page.getByText("Pricing Page Studio")).toBeVisible();
-  await expect(page.getByText("Validate first wedge")).toBeVisible();
+  await expect(page.getByText("Validate the first AI SaaS wedge")).toBeVisible();
   await page.getByRole("button", { name: /activate company/i }).click();
   await expect(page.getByRole("heading", { name: "Company Operating Dashboard" })).toBeVisible();
 
@@ -60,7 +61,7 @@ test("creates and operates a mock agent company through the dashboard", async ({
     emit: (event) => fixture.events.publish(event),
   });
 
-  await expect(page.getByText(/Mock agent codex completed task/i)).toBeVisible();
+  await expect(page.getByText("Task is ready for review.")).toBeVisible();
   await page.getByRole("button", { name: /load proof/i }).click();
   await expect(page.getByText("agent.log")).toBeVisible();
 
@@ -77,11 +78,11 @@ test("creates and operates a mock agent company through the dashboard", async ({
   });
 
   await page.getByRole("button", { name: /load review/i }).click();
-  await expect(page.getByText(/Ready for next cycle/i)).toBeVisible();
+  await expect(page.getByText("Completed 1 task(s), 0 missing proof.")).toBeVisible();
 
   await page.getByRole("button", { name: /kill switch/i }).click();
   await expect(page.getByText("Global pause active")).toBeVisible();
-  await expect(page.getByText("review")).toBeVisible();
+  await expect(page.locator(".page-header").getByText("review")).toBeVisible();
 });
 
 async function startFixtureServer() {

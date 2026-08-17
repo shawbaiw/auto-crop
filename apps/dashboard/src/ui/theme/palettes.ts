@@ -1,0 +1,257 @@
+export const paletteOrder = [
+  "mono",
+  "classic",
+  "powder",
+  "geek01",
+  "geek02",
+  "retro01",
+  "retro02",
+  "game01",
+  "game02",
+] as const;
+
+export type PaletteId = (typeof paletteOrder)[number];
+
+export type Palette = {
+  id: PaletteId;
+  label: string;
+  colors: {
+    field: string;
+    ink: string;
+    surface: string;
+    surfaceAlt: string;
+    border: string;
+    titlebar: string;
+    titlebarInk: string;
+    selectedBg: string;
+    selectedFg: string;
+    accentPrimary: string;
+    accentSecondary: string;
+    signal: string;
+    danger: string;
+    mutedPatternA: string;
+    mutedPatternB: string;
+    chart1: string;
+    chart2: string;
+    chart3: string;
+  };
+};
+
+export const palettes: Record<PaletteId, Palette> = {
+  mono: {
+    id: "mono",
+    label: "Mono / 1-bit",
+    colors: {
+      field: "#ffffff",
+      ink: "#000000",
+      surface: "#ffffff",
+      surfaceAlt: "#f2f2f2",
+      border: "#000000",
+      titlebar: "#000000",
+      titlebarInk: "#ffffff",
+      selectedBg: "#000000",
+      selectedFg: "#ffffff",
+      accentPrimary: "#000000",
+      accentSecondary: "#000000",
+      signal: "#ffffff",
+      danger: "#000000",
+      mutedPatternA: "#ffffff",
+      mutedPatternB: "#000000",
+      chart1: "#000000",
+      chart2: "#ffffff",
+      chart3: "#000000",
+    },
+  },
+  classic: {
+    id: "classic",
+    label: "经典",
+    colors: {
+      field: "#dee4e0",
+      ink: "#2e382d",
+      surface: "#f6faf7",
+      surfaceAlt: "#cbd4ce",
+      border: "#2e382d",
+      titlebar: "#2e382d",
+      titlebarInk: "#dee4e0",
+      selectedBg: "#2e382d",
+      selectedFg: "#dee4e0",
+      accentPrimary: "#2e382d",
+      accentSecondary: "#566454",
+      signal: "#dee4e0",
+      danger: "#2e382d",
+      mutedPatternA: "#dee4e0",
+      mutedPatternB: "#2e382d",
+      chart1: "#2e382d",
+      chart2: "#dee4e0",
+      chart3: "#566454",
+    },
+  },
+  powder: {
+    id: "powder",
+    label: "粉黛",
+    colors: {
+      field: "#f2d1d7",
+      ink: "#7a3f43",
+      surface: "#fff0f3",
+      surfaceAlt: "#e7b7c0",
+      border: "#7a3f43",
+      titlebar: "#7a3f43",
+      titlebarInk: "#f2d1d7",
+      selectedBg: "#7a3f43",
+      selectedFg: "#f2d1d7",
+      accentPrimary: "#7a3f43",
+      accentSecondary: "#9d555c",
+      signal: "#f2d1d7",
+      danger: "#7a3f43",
+      mutedPatternA: "#f2d1d7",
+      mutedPatternB: "#7a3f43",
+      chart1: "#7a3f43",
+      chart2: "#f2d1d7",
+      chart3: "#9d555c",
+    },
+  },
+  geek01: {
+    id: "geek01",
+    label: "极客01",
+    colors: {
+      field: "#f2fcf6",
+      ink: "#111e16",
+      surface: "#f2fcf6",
+      surfaceAlt: "#d7e9dc",
+      border: "#111e16",
+      titlebar: "#111e16",
+      titlebarInk: "#f2fcf6",
+      selectedBg: "#13f81f",
+      selectedFg: "#111e16",
+      accentPrimary: "#13f81f",
+      accentSecondary: "#485446",
+      signal: "#13f81f",
+      danger: "#111e16",
+      mutedPatternA: "#f2fcf6",
+      mutedPatternB: "#485446",
+      chart1: "#13f81f",
+      chart2: "#485446",
+      chart3: "#111e16",
+    },
+  },
+  geek02: {
+    id: "geek02",
+    label: "极客02",
+    colors: {
+      field: "#e8e5df",
+      ink: "#0d3d2d",
+      surface: "#f6f4ef",
+      surfaceAlt: "#cdd7cf",
+      border: "#0d3d2d",
+      titlebar: "#0d3d2d",
+      titlebarInk: "#e8e5df",
+      selectedBg: "#2ca770",
+      selectedFg: "#e8e5df",
+      accentPrimary: "#2ca770",
+      accentSecondary: "#3e6a9e",
+      signal: "#2ca770",
+      danger: "#0d3d2d",
+      mutedPatternA: "#e8e5df",
+      mutedPatternB: "#0d3d2d",
+      chart1: "#2ca770",
+      chart2: "#3e6a9e",
+      chart3: "#0d3d2d",
+    },
+  },
+  retro01: {
+    id: "retro01",
+    label: "复古01",
+    colors: {
+      field: "#bbb8a5",
+      ink: "#49473c",
+      surface: "#efca54",
+      surfaceAlt: "#bbb8a5",
+      border: "#49473c",
+      titlebar: "#49473c",
+      titlebarInk: "#efca54",
+      selectedBg: "#5d9f58",
+      selectedFg: "#49473c",
+      accentPrimary: "#5d9f58",
+      accentSecondary: "#e870a1",
+      signal: "#efca54",
+      danger: "#e870a1",
+      mutedPatternA: "#bbb8a5",
+      mutedPatternB: "#49473c",
+      chart1: "#5d9f58",
+      chart2: "#e870a1",
+      chart3: "#efca54",
+    },
+  },
+  retro02: {
+    id: "retro02",
+    label: "复古02",
+    colors: {
+      field: "#e5e2be",
+      ink: "#35342f",
+      surface: "#e5e2be",
+      surfaceAlt: "#d7c99b",
+      border: "#35342f",
+      titlebar: "#35342f",
+      titlebarInk: "#e5e2be",
+      selectedBg: "#317e50",
+      selectedFg: "#e5e2be",
+      accentPrimary: "#317e50",
+      accentSecondary: "#ef8a45",
+      signal: "#ef8a45",
+      danger: "#8e6442",
+      mutedPatternA: "#e5e2be",
+      mutedPatternB: "#35342f",
+      chart1: "#317e50",
+      chart2: "#ef8a45",
+      chart3: "#8e6442",
+    },
+  },
+  game01: {
+    id: "game01",
+    label: "游戏01",
+    colors: {
+      field: "#22e6da",
+      ink: "#1d2c6b",
+      surface: "#fabf37",
+      surfaceAlt: "#22e6da",
+      border: "#1d2c6b",
+      titlebar: "#1d2c6b",
+      titlebarInk: "#fabf37",
+      selectedBg: "#e90cbe",
+      selectedFg: "#1d2c6b",
+      accentPrimary: "#2a4ac5",
+      accentSecondary: "#e90cbe",
+      signal: "#fabf37",
+      danger: "#e90cbe",
+      mutedPatternA: "#22e6da",
+      mutedPatternB: "#1d2c6b",
+      chart1: "#fabf37",
+      chart2: "#e90cbe",
+      chart3: "#2a4ac5",
+    },
+  },
+  game02: {
+    id: "game02",
+    label: "游戏02",
+    colors: {
+      field: "#e7f5fe",
+      ink: "#29383a",
+      surface: "#f8fcff",
+      surfaceAlt: "#d7eef5",
+      border: "#29383a",
+      titlebar: "#29383a",
+      titlebarInk: "#e7f5fe",
+      selectedBg: "#7bd699",
+      selectedFg: "#29383a",
+      accentPrimary: "#3bc4c4",
+      accentSecondary: "#c97979",
+      signal: "#7bd699",
+      danger: "#c97979",
+      mutedPatternA: "#e7f5fe",
+      mutedPatternB: "#29383a",
+      chart1: "#7bd699",
+      chart2: "#3bc4c4",
+      chart3: "#c97979",
+    },
+  },
+};

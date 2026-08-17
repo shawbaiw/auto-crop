@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { Building2, CheckCircle2, ChevronDown, Play, ShieldCheck } from "lucide-react";
+import { Building2, CheckCircle2, Play, ShieldCheck } from "lucide-react";
 import type { AgentSummary, CreateCompanyResponse } from "../api/client";
+import { RetroButton, RetroField, RetroListRow, RetroPanel, RetroSelect, RetroStatus, RetroTextarea } from "../ui/retro";
+import { AppShell, PageHeader, Workspace } from "../ui/layout";
 
 export type OnboardingProps = {
   agents: AgentSummary[];
@@ -25,140 +26,82 @@ const permissionOptions = [
 ];
 
 export function Onboarding(props: OnboardingProps) {
-  const [permissionOpen, setPermissionOpen] = useState(false);
-  const permissionSelectorRef = useRef<HTMLDivElement>(null);
-  const selectedPermission =
-    permissionOptions.find((option) => option.value === props.permissionMode) ?? permissionOptions[0];
-
-  useEffect(() => {
-    if (!permissionOpen) {
-      return;
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      if (!permissionSelectorRef.current?.contains(event.target as Node)) {
-        setPermissionOpen(false);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [permissionOpen]);
-
-  function selectPermissionMode(value: string) {
-    props.onPermissionModeChange(value);
-    setPermissionOpen(false);
-  }
-
   return (
-    <main className="page-shell">
-      <section className="topline">
-        <div>
-          <span className="eyebrow">Founder Setup</span>
-          <h1>CEO Office</h1>
-        </div>
-        <div className="status-pill">
-          <Building2 size={16} aria-hidden="true" />
-          Local Agent Company
-        </div>
-      </section>
+    <AppShell>
+      <PageHeader
+        eyebrow="Founder Setup"
+        status="Local Agent Company"
+        statusIcon={<Building2 size={16} aria-hidden="true" />}
+        title="CEO Office"
+      />
 
-      <section className="setup-grid">
-        <div className="panel">
-          <h2>Choose CEO</h2>
+      <Workspace className="setup-grid">
+        <RetroPanel title="Choose CEO">
           <div className="agent-grid">
             {props.agentLoadState === "loading" ? (
-              <div className="agent-empty" role="status">
+              <div className="system-message" role="status">
                 Scanning local agent registry...
               </div>
             ) : null}
             {props.agentLoadState === "failed" ? (
-              <div className="agent-empty alert" role="status">
+              <div className="system-message system-message--danger" role="status">
                 Local API is not connected. Start auto-crop or open the dashboard URL printed by the CLI.
               </div>
             ) : null}
             {props.agentLoadState === "ready" && props.agents.length === 0 ? (
-              <div className="agent-empty" role="status">
+              <div className="system-message" role="status">
                 No local agents reported by the API.
               </div>
             ) : null}
             {props.agents.map((agent) => (
-              <button
-                className={agent.id === props.selectedAgentId ? "agent-button selected" : "agent-button"}
+              <RetroListRow
                 key={agent.id}
+                meta={agent.detected ? "available" : "unavailable"}
                 onClick={() => props.onSelectAgent(agent.id)}
-                type="button"
-              >
-                <strong>{agent.name}</strong>
-                <span>{agent.detected ? "available" : "unavailable"}</span>
-              </button>
+                selected={agent.id === props.selectedAgentId}
+                title={agent.name}
+              />
             ))}
           </div>
-        </div>
+        </RetroPanel>
 
-        <div className="panel">
-          <h2>Founder Vision</h2>
-          <label className="field">
-            <span>Founder vision</span>
-            <textarea
+        <RetroPanel title="Founder Vision">
+          <RetroField htmlFor="founder-vision" label="Founder vision">
+            <RetroTextarea
               aria-label="Founder vision"
+              id="founder-vision"
               onChange={(event) => props.onVisionChange(event.target.value)}
               placeholder="Build an AI SaaS that creates pricing pages."
               value={props.founderVision}
             />
-          </label>
-          <div className="field" ref={permissionSelectorRef}>
-            <span id="permission-mode-label">Permission mode</span>
-            <div className="retro-select">
-              <button
-                aria-controls="permission-mode-options"
-                aria-expanded={permissionOpen}
-                aria-haspopup="listbox"
-                aria-labelledby="permission-mode-label permission-mode-value"
-                className="retro-select-trigger"
-                onClick={() => setPermissionOpen((current) => !current)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    setPermissionOpen(false);
-                  }
-                }}
-                type="button"
-              >
-                <span id="permission-mode-value">{selectedPermission.label}</span>
-                <ChevronDown size={16} aria-hidden="true" />
-              </button>
-              {permissionOpen ? (
-                <div className="retro-select-popover" id="permission-mode-options" role="listbox">
-                  {permissionOptions.map((option) => (
-                    <button
-                      aria-selected={option.value === props.permissionMode}
-                      className={option.value === props.permissionMode ? "retro-option selected" : "retro-option"}
-                      key={option.value}
-                      onClick={() => selectPermissionMode(option.value)}
-                      role="option"
-                      type="button"
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
-          <button className="primary-action" disabled={props.isCreating} onClick={props.onCreateCompany} type="button">
-            <Play size={16} aria-hidden="true" />
+          </RetroField>
+          <RetroField htmlFor="permission-mode" label="Permission mode">
+            <RetroSelect
+              id="permission-mode"
+              label="Permission mode"
+              onValueChange={props.onPermissionModeChange}
+              options={permissionOptions}
+              value={props.permissionMode}
+            />
+          </RetroField>
+          <RetroButton
+            disabled={props.isCreating}
+            icon={<Play size={16} aria-hidden="true" />}
+            onClick={props.onCreateCompany}
+            variant="primary"
+          >
             {props.isCreating ? "Creating..." : "Create Company"}
-          </button>
+          </RetroButton>
           {props.createError ? (
-            <div className="agent-empty alert" role="alert">
+            <div className="system-message system-message--danger" role="alert">
               {props.createError}
             </div>
           ) : null}
-        </div>
-      </section>
+        </RetroPanel>
+      </Workspace>
 
       {props.blueprint ? (
-        <section className="blueprint-band">
+        <RetroPanel className="blueprint-band" title="Blueprint Review">
           <div>
             <span className="eyebrow">Blueprint Review</span>
             <h2>{props.blueprint.editable.companyName}</h2>
@@ -177,17 +120,19 @@ export function Onboarding(props: OnboardingProps) {
               ))}
             </div>
           </div>
-          <button className="primary-action" onClick={props.onActivateCompany} type="button">
-            <CheckCircle2 size={16} aria-hidden="true" />
+          <RetroButton
+            icon={<CheckCircle2 size={16} aria-hidden="true" />}
+            onClick={props.onActivateCompany}
+            variant="primary"
+          >
             Activate Company
-          </button>
-        </section>
+          </RetroButton>
+        </RetroPanel>
       ) : null}
 
-      <section className="policy-strip">
-        <ShieldCheck size={16} aria-hidden="true" />
-        <span>{props.permissionMode} execution policy</span>
-      </section>
-    </main>
+      <RetroStatus icon={<ShieldCheck size={16} aria-hidden="true" />}>
+        {props.permissionMode} execution policy
+      </RetroStatus>
+    </AppShell>
   );
 }

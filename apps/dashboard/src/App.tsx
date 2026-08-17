@@ -10,6 +10,8 @@ import {
 } from "./api/client";
 import { CompanyDashboard } from "./pages/CompanyDashboard";
 import { Onboarding } from "./pages/Onboarding";
+import { CRTViewport } from "./ui/crt";
+import { ThemeProvider } from "./ui/theme";
 import "./styles.css";
 
 export type AppProps = {
@@ -132,32 +134,35 @@ export default function App({ apiClient }: AppProps) {
 
   if (view === "dashboard" && blueprint) {
     return (
-      <div className="crt-viewport palette-game02">
-        <CompanyDashboard
-          company={blueprint.company}
-          departments={blueprint.departments}
-          events={events}
-          isPaused={isPaused}
-          onKillSwitch={handleKillSwitch}
-          onLoadProof={handleLoadProof}
-          onLoadReviews={handleLoadReviews}
-          objectives={blueprint.objectives}
-          proof={proof}
-          reviews={reviews}
-          tasks={blueprint.tasks}
-        />
-      </div>
+      <ThemeProvider defaultSkin="mono">
+        <CRTViewport>
+          <CompanyDashboard
+            company={blueprint.company}
+            departments={blueprint.departments}
+            events={events}
+            isPaused={isPaused}
+            onKillSwitch={handleKillSwitch}
+            onLoadProof={handleLoadProof}
+            onLoadReviews={handleLoadReviews}
+            objectives={blueprint.objectives}
+            proof={proof}
+            reviews={reviews}
+            tasks={blueprint.tasks}
+          />
+        </CRTViewport>
+      </ThemeProvider>
     );
   }
 
   return (
-    <div className="crt-viewport palette-game02">
+    <ThemeProvider defaultSkin="mono">
+      <CRTViewport>
       <Onboarding
-      agents={agents}
-      agentLoadState={agentLoadState}
-      blueprint={blueprint}
-      createError={createError}
-      founderVision={founderVision}
+        agents={agents}
+        agentLoadState={agentLoadState}
+        blueprint={blueprint}
+        createError={createError}
+        founderVision={founderVision}
         isCreating={isCreating}
         onActivateCompany={handleActivateCompany}
         onCreateCompany={handleCreateCompany}
@@ -167,6 +172,7 @@ export default function App({ apiClient }: AppProps) {
         permissionMode={permissionMode}
         selectedAgentId={selectedAgentId}
       />
-    </div>
+      </CRTViewport>
+    </ThemeProvider>
   );
 }

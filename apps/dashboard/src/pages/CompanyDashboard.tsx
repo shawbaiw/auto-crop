@@ -8,6 +8,9 @@ import type {
   ServerEvent,
   TaskSummary,
 } from "../api/client";
+import { VideotexKeyValue, VideotexLog } from "../ui/data";
+import { AppShell, PageHeader, Workspace } from "../ui/layout";
+import { RetroBadge, RetroButton, RetroPanel } from "../ui/retro";
 
 export type CompanyDashboardProps = {
   company: CompanySummary;
@@ -30,100 +33,76 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
   }
 
   return (
-    <main className="page-shell dashboard-shell">
-      <section className="topline">
-        <div>
-          <span className="eyebrow">{props.company.name}</span>
-          <h1>Company Operating Dashboard</h1>
-        </div>
-        <div className="status-pill">
-          <Activity size={16} aria-hidden="true" />
-          {props.company.status}
-        </div>
-      </section>
-      {props.isPaused ? <section className="alert-strip">Global pause active</section> : null}
+    <AppShell>
+      <PageHeader
+        eyebrow={props.company.name}
+        status={props.company.status}
+        statusIcon={<Activity size={16} aria-hidden="true" />}
+        title="Company Operating Dashboard"
+      />
+      {props.isPaused ? <section className="system-message system-message--danger">Global pause active</section> : null}
 
-      <section className="operations-grid">
-        <div className="ops-panel ceo-panel">
-          <Building2 size={18} aria-hidden="true" />
-          <h2>CEO Office</h2>
+      <Workspace className="operations-grid">
+        <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title="CEO Office" variant="inverted">
           <p>Sets objectives, routes work, and reviews proof.</p>
-        </div>
-        <div className="ops-panel">
-          <Flag size={18} aria-hidden="true" />
-          <h2>OKR System</h2>
-          {props.objectives.map((objective) => (
-            <p key={objective.id}>{objective.title}</p>
-          ))}
-        </div>
-        <div className="ops-panel">
-          <ListChecks size={18} aria-hidden="true" />
-          <h2>Active Tasks</h2>
-          {props.tasks.map((task) => (
-            <p key={task.id}>
-              {task.title} <span className="muted">({task.status})</span>
-            </p>
-          ))}
-        </div>
-      </section>
+          <VideotexKeyValue items={[{ label: "STATE", value: props.company.status }, { label: "PLAYBOOK", value: props.company.playbookId }]} />
+        </RetroPanel>
+        <RetroPanel icon={<Flag size={18} aria-hidden="true" />} title="OKR System">
+          <VideotexLog emptyMessage="No objectives queued." rows={props.objectives.map((objective) => objective.title)} />
+        </RetroPanel>
+        <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title="Active Tasks">
+          <VideotexLog
+            emptyMessage="No active tasks."
+            rows={props.tasks.map((task) => `${task.title} / ${task.status.toUpperCase()}`)}
+          />
+        </RetroPanel>
+      </Workspace>
 
-      <section className="department-band">
+      <Workspace className="department-band">
         {props.departments.map((department) => (
-          <article className="department-tile" key={department.id}>
-            <ClipboardCheck size={18} aria-hidden="true" />
-            <h2>{department.name}</h2>
+          <RetroPanel icon={<ClipboardCheck size={18} aria-hidden="true" />} key={department.id} title={department.name}>
             <p>{department.responsibility}</p>
             {(tasksByDepartment.get(department.id) ?? []).map((task) => (
-              <span className="task-chip" key={task.id}>
+              <RetroBadge key={task.id} tone="signal">
                 {task.title}
-              </span>
+              </RetroBadge>
             ))}
-          </article>
+          </RetroPanel>
         ))}
-      </section>
+      </Workspace>
 
-      <section className="control-grid">
-        <div className="ops-panel">
-          <FileCheck2 size={18} aria-hidden="true" />
-          <h2>Proof</h2>
-          <button className="secondary-action" onClick={props.onLoadProof} type="button">
+      <Workspace className="control-grid">
+        <RetroPanel icon={<FileCheck2 size={18} aria-hidden="true" />} title="Proof">
+          <RetroButton onClick={props.onLoadProof}>
             Load Proof
-          </button>
+          </RetroButton>
           {props.proof.length === 0 ? <p className="muted">Work evidence will appear here after task review.</p> : null}
           {props.proof.map((proof) => (
             <p key={proof.id}>
               {proof.uri} <span className="muted">{proof.summary}</span>
             </p>
           ))}
-        </div>
-        <div className="ops-panel">
-          <ShieldAlert size={18} aria-hidden="true" />
-          <h2>Approvals</h2>
+        </RetroPanel>
+        <RetroPanel icon={<ShieldAlert size={18} aria-hidden="true" />} title="Approvals">
           <p className="muted">Permission requests will pause here before risky actions.</p>
-          <button className="danger-action" onClick={props.onKillSwitch} type="button">
+          <RetroButton onClick={props.onKillSwitch} variant="danger">
             Kill Switch
-          </button>
-        </div>
-        <div className="ops-panel">
-          <TimerReset size={18} aria-hidden="true" />
-          <h2>Review</h2>
-          <button className="secondary-action" onClick={props.onLoadReviews} type="button">
+          </RetroButton>
+        </RetroPanel>
+        <RetroPanel icon={<TimerReset size={18} aria-hidden="true" />} title="Review">
+          <RetroButton onClick={props.onLoadReviews}>
             Load Review
-          </button>
+          </RetroButton>
           {props.reviews.length === 0 ? <p className="muted">CEO Office review notes and OKR updates will appear here.</p> : null}
           {props.reviews.map((review) => (
             <p key={review.id}>{review.summary}</p>
           ))}
-        </div>
-      </section>
+        </RetroPanel>
+      </Workspace>
 
-      <section className="event-log">
-        <h2>Live Events</h2>
-        {props.events.length === 0 ? <p className="muted">Waiting for agent activity.</p> : null}
-        {props.events.map((event, index) => (
-          <p key={`${event.type}-${event.taskId ?? "system"}-${index}`}>{event.message}</p>
-        ))}
-      </section>
-    </main>
+      <RetroPanel title="Live Events">
+        <VideotexLog emptyMessage="Waiting for agent activity." rows={props.events.map((event) => event.message)} />
+      </RetroPanel>
+    </AppShell>
   );
 }

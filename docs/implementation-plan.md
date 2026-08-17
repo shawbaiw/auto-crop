@@ -443,6 +443,33 @@ Local verification note: the E2E spec is implemented, but this machine currently
 - [x] Document the CEO Office, OKR System, departments, proof, review, playbooks, adapter interface, and kill switch.
 - [x] Update README whenever functionality changes.
 
+## Task 19: TaiT CRT UI Design System
+
+**Files:**
+- Create: `apps/dashboard/src/ui/theme/`
+- Create: `apps/dashboard/src/ui/crt/`
+- Create: `apps/dashboard/src/ui/retro/`
+- Create: `apps/dashboard/src/ui/data/`
+- Create: `apps/dashboard/src/ui/layout/`
+- Modify: `apps/dashboard/src/App.tsx`
+- Modify: `apps/dashboard/src/pages/Onboarding.tsx`
+- Modify: `apps/dashboard/src/pages/CompanyDashboard.tsx`
+- Modify: `apps/dashboard/src/styles.css`
+
+- [x] Keep the existing modern onboarding/dashboard information architecture.
+- [x] Create reusable semantic palette tokens with default Mono / 1-bit skin.
+- [x] Add all eight TaiT named palette skins as token mappings.
+- [x] Add a reusable `ThemeProvider` and `SkinSwitcher` so skins change tokens only.
+- [x] Extract reusable retro components for buttons, fields, select, panels, status, badges, and list rows.
+- [x] Extract reusable layout/data components for app shell, page header, workspaces, key/value metadata, and Videotex logs.
+- [x] Implement first-pass lightweight global CSS CRT display layer with scanlines, noise, bloom/fringe, restrained flicker, pointer-event safety, reduced-motion behavior, and `?crt=off` developer mode.
+- [x] Migrate onboarding and company dashboard to the reusable component system.
+- [ ] Add a stronger full CRT geometry implementation after the component system is stable: evaluate SVG filter, WebGL shader, or a maintained CRT shader package for curvature, barrel compression, edge compression, persistence, and RGB misregistration.
+- [ ] Keep shader/geometry code isolated behind `ui/crt/` and never duplicate CRT math in feature components.
+- [ ] Add visual regression screenshots for Mono plus the eight named skins at desktop and mobile widths.
+- [ ] Measure CPU/GPU impact with CRT effects enabled, then add quality levels if needed: full, reduced, static, off.
+- [ ] Verify final rendered contrast after CRT post-processing, not only source CSS token contrast.
+
 ## Verification Checklist
 
 - [x] `pnpm install`
