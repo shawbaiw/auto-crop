@@ -75,6 +75,7 @@ export default function App({ apiClient }: AppProps) {
   useEffect(() => {
     return client.subscribeEvents((event) => {
       setEvents((current) => [...current.slice(-49), event]);
+      setBlueprint((current) => updateBlueprintTaskStatus(current, event));
     });
   }, [client]);
 
@@ -409,6 +410,7 @@ export default function App({ apiClient }: AppProps) {
             departments={blueprint.departments}
             menuBar={menuBar}
             objectives={blueprint.objectives}
+            events={events}
             selectedCeoAgentId={selectedAgentId}
             tasks={blueprint.tasks}
           />
@@ -498,4 +500,43 @@ function isEditingText(target: EventTarget | null) {
 
 function isFullscreenAvailable() {
   return typeof document !== "undefined" && typeof document.documentElement.requestFullscreen === "function";
+}
+
+function updateBlueprintTaskStatus(blueprint: CreateCompanyResponse | null, event: ServerEvent) {
+  if (!blueprint || !event.taskId) {
+    return blueprint;
+  }
+
+  const nextStatus = taskStatusFromEvent(event.type);
+
+  if (!nextStatus) {
+    return blueprint;
+  }
+
+  let changed = false;
+  const tasks = blueprint.tasks.map((task) => {
+    if (task.id !== event.taskId || task.status === nextStatus) {
+      return task;
+    }
+
+    changed = true;
+    return { ...task, status: nextStatus };
+  });
+
+  return changed ? { ...blueprint, tasks } : blueprint;
+}
+
+function taskStatusFromEvent(eventType: string) {
+  switch (eventType) {
+    case "task_started":
+      return "running";
+    case "task_review":
+      return "review";
+    case "task_failed":
+      return "failed";
+    case "task_blocked":
+      return "blocked";
+    default:
+      return null;
+  }
 }

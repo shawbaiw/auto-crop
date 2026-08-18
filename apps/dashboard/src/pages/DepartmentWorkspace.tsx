@@ -1,6 +1,13 @@
 import { Building2, ClipboardCheck, Crown, ListChecks } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
-import type { AgentSummary, CompanySummary, DepartmentSummary, ObjectiveSummary, TaskSummary } from "../api/client";
+import type {
+  AgentSummary,
+  CompanySummary,
+  DepartmentSummary,
+  ObjectiveSummary,
+  ServerEvent,
+  TaskSummary,
+} from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroListRow, RetroPanel } from "../ui/retro";
@@ -13,6 +20,7 @@ export type DepartmentWorkspaceProps = {
   objectives: ObjectiveSummary[];
   selectedCeoAgentId: string;
   tasks: TaskSummary[];
+  events: ServerEvent[];
 };
 
 const ceoRoleId = "ceo";
@@ -25,6 +33,7 @@ export function DepartmentWorkspace({
   objectives,
   selectedCeoAgentId,
   tasks,
+  events,
 }: DepartmentWorkspaceProps) {
   const [selectedRoleId, setSelectedRoleId] = useState(ceoRoleId);
   const selectedDepartment = departments.find((department) => department.id === selectedRoleId) ?? null;
@@ -106,11 +115,14 @@ export function DepartmentWorkspace({
                   <VideotexLog emptyMessage="No tasks queued." rows={tasks.map((task) => `${task.title} / ${task.status}`)} />
                 </div>
                 <p className="muted">
-                  Department execution is queued. Scheduler, proof, and review views are available from the menu.
+                  Scheduler, proof, and review views are available from the menu.
                 </p>
               </div>
             </RetroPanel>
           )}
+          <RetroPanel title="Agent Activity">
+            <VideotexLog emptyMessage="Waiting for agent activity." rows={events.map((event) => event.message)} />
+          </RetroPanel>
         </section>
       </Workspace>
     </AppShell>

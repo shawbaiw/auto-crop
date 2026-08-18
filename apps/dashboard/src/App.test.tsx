@@ -198,6 +198,45 @@ describe("Dashboard App", () => {
     expect(await screen.findByText("Generated landing page")).toBeInTheDocument();
   });
 
+  it("updates task status in the Department Workspace from SSE", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    await waitFor(() => expect(api.lastEventHandler).toBeDefined());
+    act(() => {
+      api.lastEventHandler?.({
+        type: "task_started",
+        taskId: "task_1",
+        message: "Task started: Create landing page (codex).",
+      });
+    });
+
+    expect(await screen.findByText("Create landing page / running")).toBeInTheDocument();
+    expect(screen.getByText("Task started: Create landing page (codex).")).toBeInTheDocument();
+  });
+
+  it("updates task status in the operating dashboard from SSE", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompanyAndOpenDashboard(user);
+
+    await waitFor(() => expect(api.lastEventHandler).toBeDefined());
+    act(() => {
+      api.lastEventHandler?.({
+        type: "task_review",
+        taskId: "task_1",
+        message: "Task is ready for review.",
+      });
+    });
+
+    expect(await screen.findByText("Create landing page / REVIEW")).toBeInTheDocument();
+  });
+
   it("shows a styled empty state when the local API is not connected", async () => {
     const api = createMockApiClient();
     api.listAgents = async () => {
