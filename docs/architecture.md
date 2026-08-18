@@ -25,6 +25,28 @@ The user starts with an intent and assets. The CEO Office converts that input in
 - `@auto-crop/cli`: local entrypoint for starting the runtime.
 - `@auto-crop/dashboard`: React dashboard for onboarding, activation, monitoring, proof, review, and kill switch controls.
 
+## Dashboard Interface
+
+The dashboard uses a reusable flat CRT / Classic Macintosh interface layer rather than page-specific controls. Shared UI lives under `apps/dashboard/src/ui/`:
+
+- `crt/`: global CRT viewport, display presets, and quality handling.
+- `layout/`: shell, page header, and workspace layout primitives.
+- `menu/`: reusable application menu components.
+- `retro/`: hard-edged form, button, panel, badge, textarea, select, and status primitives.
+- `theme/`: palette skins and theme state.
+
+The application menu is inside the CRT screen face at the top of the dashboard. `DashboardMenuBar` maps runtime state to reusable menu groups:
+
+- `Auto-Crop`: product-level commands.
+- `Company`: create company, activate company, return to setup, and kill switch.
+- `Agents`: detected CEO agents, current-agent checked state, and disabled unavailable agents.
+- `Work`: task and department navigation.
+- `Proof`: load proof, load review, and evidence navigation.
+- `View`: skin submenu, CRT/fullscreen controls.
+- `Help`: visible disabled placeholders for documentation-oriented commands.
+
+The menu model is shared across onboarding and dashboard pages. Desktop shows the full menu strip; mobile collapses the same command model into one `Menu` entry. Disabled commands stay visible, command items expose checked and shortcut metadata, and submenu state is reusable so future command-palette work can consume the same action model.
+
 ## Storage
 
 Structured state is stored in SQLite:
