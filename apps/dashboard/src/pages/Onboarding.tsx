@@ -1,22 +1,33 @@
-import { Building2, CheckCircle2, Play, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, CheckCircle2, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { AgentSummary, CreateCompanyResponse } from "../api/client";
 import { RetroButton, RetroField, RetroListRow, RetroPanel, RetroSelect, RetroStatus, RetroTextarea } from "../ui/retro";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 
+export type OnboardingStep = "company" | "agents" | "vision";
+
 export type OnboardingProps = {
+  step: OnboardingStep;
+  companyName: string;
+  companyNameError: string | null;
   agents: AgentSummary[];
-  agentLoadState: "loading" | "ready" | "failed";
+  agentLoadState: "idle" | "loading" | "ready" | "failed";
+  agentSelectionError: string | null;
   selectedAgentId: string;
   founderVision: string;
+  founderVisionError: string | null;
   permissionMode: string;
   blueprint: CreateCompanyResponse | null;
   isCreating: boolean;
   menuBar?: ReactNode;
   createError: string | null;
+  onCompanyNameChange(value: string): void;
+  onRetryAgents(): void;
   onSelectAgent(agentId: string): void;
   onVisionChange(value: string): void;
   onPermissionModeChange(value: string): void;
+  onBack(): void;
+  onNext(): void;
   onCreateCompany(): void;
   onActivateCompany(): void;
 };
@@ -28,6 +39,8 @@ const permissionOptions = [
 ];
 
 export function Onboarding(props: OnboardingProps) {
+  const selectedAgent = props.agents.find((agent) => agent.id === props.selectedAgentId);
+
   return (
     <AppShell menuBar={props.menuBar}>
       <PageHeader
@@ -37,8 +50,38 @@ export function Onboarding(props: OnboardingProps) {
         title="CEO Office"
       />
 
-      <Workspace className="setup-grid">
-        <RetroPanel title="Choose CEO">
+      <Workspace className="onboarding-wizard">
+        {props.step === "company" ? (
+          <RetroPanel title="Step 1 / Company Name">
+            <RetroField htmlFor="company-name" label="Company name">
+              <input
+                aria-label="Company name"
+                className="retro-input"
+                id="company-name"
+                onChange={(event) => props.onCompanyNameChange(event.target.value)}
+                placeholder="Pricing Page Studio"
+                value={props.companyName}
+              />
+            </RetroField>
+            {props.companyNameError ? (
+              <div className="system-message system-message--danger" role="alert">
+                {props.companyNameError}
+              </div>
+            ) : null}
+            <div className="onboarding-wizard__actions">
+              <RetroButton
+                icon={<ArrowRight size={16} aria-hidden="true" />}
+                onClick={props.onNext}
+                variant="primary"
+              >
+                Next
+              </RetroButton>
+            </div>
+          </RetroPanel>
+        ) : null}
+
+        {props.step === "agents" ? (
+          <RetroPanel title="Step 2 / Choose CEO">
           <div className="agent-grid">
             {props.agentLoadState === "loading" ? (
               <div className="system-message" role="status">
@@ -57,6 +100,7 @@ export function Onboarding(props: OnboardingProps) {
             ) : null}
             {props.agents.map((agent) => (
               <RetroListRow
+                disabled={!agent.detected}
                 key={agent.id}
                 meta={agent.detected ? "available" : "unavailable"}
                 onClick={() => props.onSelectAgent(agent.id)}
@@ -65,9 +109,34 @@ export function Onboarding(props: OnboardingProps) {
               />
             ))}
           </div>
+          {props.agentSelectionError ? (
+            <div className="system-message system-message--danger" role="alert">
+              {props.agentSelectionError}
+            </div>
+          ) : null}
+          <div className="onboarding-wizard__actions">
+            <RetroButton icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
+              Back
+            </RetroButton>
+            {props.agentLoadState === "failed" ? (
+              <RetroButton icon={<RefreshCw size={16} aria-hidden="true" />} onClick={props.onRetryAgents}>
+                Retry
+              </RetroButton>
+            ) : null}
+            <RetroButton
+              icon={<ArrowRight size={16} aria-hidden="true" />}
+              onClick={props.onNext}
+              variant="primary"
+            >
+              Next
+            </RetroButton>
+          </div>
         </RetroPanel>
+        ) : null}
 
-        <RetroPanel title="Founder Vision">
+        {props.step === "vision" ? (
+          <RetroPanel title="Step 3 / Founder Vision">
+          {selectedAgent ? <p className="muted">CEO Agent: {selectedAgent.name}</p> : null}
           <RetroField htmlFor="founder-vision" label="Founder vision">
             <RetroTextarea
               aria-label="Founder vision"
@@ -77,6 +146,11 @@ export function Onboarding(props: OnboardingProps) {
               value={props.founderVision}
             />
           </RetroField>
+          {props.founderVisionError ? (
+            <div className="system-message system-message--danger" role="alert">
+              {props.founderVisionError}
+            </div>
+          ) : null}
           <RetroField htmlFor="permission-mode" label="Permission mode">
             <RetroSelect
               id="permission-mode"
@@ -86,23 +160,29 @@ export function Onboarding(props: OnboardingProps) {
               value={props.permissionMode}
             />
           </RetroField>
-          <RetroButton
-            disabled={props.isCreating}
-            icon={<Play size={16} aria-hidden="true" />}
-            onClick={props.onCreateCompany}
-            variant="primary"
-          >
-            {props.isCreating ? "Creating..." : "Create Company"}
-          </RetroButton>
           {props.createError ? (
             <div className="system-message system-message--danger" role="alert">
               {props.createError}
             </div>
           ) : null}
+          <div className="onboarding-wizard__actions">
+            <RetroButton disabled={props.isCreating} icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
+              Back
+            </RetroButton>
+            <RetroButton
+              disabled={props.isCreating}
+              icon={<Play size={16} aria-hidden="true" />}
+              onClick={props.onCreateCompany}
+              variant="primary"
+            >
+              {props.isCreating ? "Creating..." : "Create Company"}
+            </RetroButton>
+          </div>
         </RetroPanel>
+        ) : null}
       </Workspace>
 
-      {props.blueprint ? (
+      {props.step === "vision" && props.blueprint ? (
         <RetroPanel className="blueprint-band" title="Blueprint Review">
           <div>
             <span className="eyebrow">Blueprint Review</span>

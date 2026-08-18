@@ -4,6 +4,11 @@
 
 Change the user flow so startup opens a sequential onboarding wizard, creates the company through a CRT-styled loading page, and lands on a department workspace layout with the existing menu bar and company header preserved.
 
+## Execution Status
+
+- 2026-08-18: Completed the first vertical slice covering backend `companyName` persistence, CEO prompt name-locking, and the frontend three-step onboarding wizard. The dedicated `creating` view is still pending in Task 5. Verified with `pnpm --filter @auto-crop/server test`, `pnpm --filter @auto-crop/dashboard test`, and `pnpm --filter @auto-crop/dashboard typecheck`.
+- Next handoff point: implement Task 5 `CompanyCreationLoading`, then Task 6 `DepartmentWorkspace`, and update menu behavior/docs around those new post-creation views.
+
 ## Hard Constraints
 
 - Reuse existing UI primitives as much as possible: `AppShell`, `PageHeader`, `Workspace`, `RetroPanel`, `RetroButton`, `RetroField`, `RetroTextarea`, `RetroSelect`, `RetroListRow`, `RetroBadge`, `RetroStatus`, `VideotexLog`, and `VideotexKeyValue`.
@@ -76,18 +81,18 @@ Make `companyName` a real create-company input and persist it.
 
 ### Steps
 
-- [ ] Update API/client shared type surfaces to include `companyName`.
-- [ ] Update `apps/server/src/api/routes.ts` to read `body.companyName`.
-- [ ] Update `apps/server/src/runtime/createCompany.ts` input type with `companyName`.
-- [ ] Pass `companyName` into `buildCeoPrompt`.
-- [ ] Store `company.name` as `input.companyName.trim()`.
-- [ ] Reject empty `companyName` with a clear API error.
+- [x] Update API/client shared type surfaces to include `companyName`.
+- [x] Update `apps/server/src/api/routes.ts` to read `body.companyName`.
+- [x] Update `apps/server/src/runtime/createCompany.ts` input type with `companyName`.
+- [x] Pass `companyName` into `buildCeoPrompt`.
+- [x] Store `company.name` as `input.companyName.trim()`.
+- [x] Reject empty `companyName` with a clear API error.
 
 ### Tests
 
-- [ ] In `apps/server/src/runtime/createCompany.test.ts`, assert the stored company name equals the user-provided name even if mock CEO output contains a different name.
-- [ ] In `apps/server/src/api/routes.test.ts`, assert `POST /api/companies` requires `companyName`.
-- [ ] Run `pnpm --filter @auto-crop/server test`.
+- [x] In `apps/server/src/runtime/createCompany.test.ts`, assert the stored company name equals the user-provided name even if mock CEO output contains a different name.
+- [x] In `apps/server/src/api/routes.test.ts`, assert `POST /api/companies` requires `companyName`.
+- [x] Run `pnpm --filter @auto-crop/server test`.
 
 ## Task 2: CEO Prompt Honors Company Name
 
@@ -97,15 +102,15 @@ Make the CEO Agent understand that company name is user-specified.
 
 ### Steps
 
-- [ ] Update `BuildCeoPromptInput` in `apps/server/src/runtime/ceoPrompt.ts`.
-- [ ] Add a `## Company Name` section to the prompt.
-- [ ] In `## Output Contract`, instruct: use the provided company name exactly.
-- [ ] Keep `Founder Vision`, playbook, agents, permission mode, and assets unchanged.
+- [x] Update `BuildCeoPromptInput` in `apps/server/src/runtime/ceoPrompt.ts`.
+- [x] Add a `## Company Name` section to the prompt.
+- [x] In `## Output Contract`, instruct: use the provided company name exactly.
+- [x] Keep `Founder Vision`, playbook, agents, permission mode, and assets unchanged.
 
 ### Tests
 
-- [ ] Update `apps/server/src/runtime/ceoParser.test.ts` or the nearest prompt test to assert the prompt includes the company name rule.
-- [ ] Run `pnpm --filter @auto-crop/server test`.
+- [x] Update `apps/server/src/runtime/ceoParser.test.ts` or the nearest prompt test to assert the prompt includes the company name rule.
+- [x] Run `pnpm --filter @auto-crop/server test`.
 
 ## Task 3: Onboarding Wizard State Machine
 
@@ -136,24 +141,25 @@ permissionMode: string;
 
 ### Steps
 
-- [ ] Add `companyName` state to `App.tsx`.
-- [ ] Add `onboardingStep` state with default `"company"`.
-- [ ] Change initial `agentLoadState` to `"idle"` so detection does not run before Step 2.
-- [ ] Move agent detection into a callable `detectAgents()` function.
-- [ ] When entering Step 2, call `detectAgents()` automatically.
-- [ ] Add `goToNextStep()` validation:
+- [x] Add `companyName` state to `App.tsx`.
+- [x] Add `onboardingStep` state with default `"company"`.
+- [x] Change initial `agentLoadState` to `"idle"` so detection does not run before Step 2.
+- [x] Move agent detection into a callable `detectAgents()` function.
+- [x] When entering Step 2, call `detectAgents()` automatically.
+- [x] Add `goToNextStep()` validation:
   - Step 1 requires non-empty company name.
   - Step 2 requires at least one detected selected CEO Agent.
   - Step 3 requires non-empty Founder Vision before create.
-- [ ] Add Back behavior for Step 2 and Step 3.
-- [ ] Lock navigation while `isCreating` or `view === "creating"`.
+- [x] Add Back behavior for Step 2 and Step 3.
+- [x] Lock wizard navigation while `isCreating`.
+- [ ] Extend the lock to `view === "creating"` when Task 5 adds the dedicated creating page.
 
 ### Tests
 
-- [ ] Update `apps/dashboard/src/App.test.tsx` to assert Step 1 appears first and Step 2/3 content is absent.
-- [ ] Assert empty company name blocks Next with a styled error.
-- [ ] Assert entering Step 2 triggers agent detection.
-- [ ] Assert Step 3 appears only after choosing a detected CEO.
+- [x] Update `apps/dashboard/src/App.test.tsx` to assert Step 1 appears first and Step 2/3 content is absent.
+- [x] Assert empty company name blocks Next with a styled error.
+- [x] Assert entering Step 2 triggers agent detection.
+- [x] Assert Step 3 appears only after choosing a detected CEO.
 
 ## Task 4: Sequential Onboarding UI
 
@@ -201,10 +207,10 @@ type OnboardingProps = {
 
 ### Tests
 
-- [ ] Assert Step 1 renders company name input and Next.
+- [x] Assert Step 1 renders company name input and Next.
 - [ ] Assert Step 2 renders loading, failed, empty, and detected-agent states.
-- [ ] Assert Step 3 renders Founder Vision, Permission Mode, Back, and Create Company.
-- [ ] Assert only one step body is present at a time.
+- [x] Assert Step 3 renders Founder Vision, Permission Mode, Back, and Create Company.
+- [x] Assert only one step body is present at a time.
 
 ## Task 5: Creation Loading Page
 

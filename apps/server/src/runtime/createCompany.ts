@@ -10,6 +10,7 @@ import { selectPlaybook } from "../playbooks/selectPlaybook";
 
 export type CreateCompanyInput = {
   projectRoot: string;
+  companyName: string;
   founderVision: string;
   selectedCeoAgent: AgentAdapter;
   availableAgents: AgentAdapter[];
@@ -34,12 +35,19 @@ export type CreateCompanyResult = {
 };
 
 export async function createCompany(input: CreateCompanyInput): Promise<CreateCompanyResult> {
+  const companyName = input.companyName.trim();
+
+  if (!companyName) {
+    throw new Error("Company name is required.");
+  }
+
   const now = (input.now ?? (() => new Date()))().toISOString();
   const createId = input.createId ?? defaultCreateId;
   const playbook = selectPlaybook(input.founderVision);
   const companyId = createId("company");
   const companyWorkspace = createCompanyWorkspace(input.projectRoot, companyId);
   const prompt = buildCeoPrompt({
+    companyName,
     founderVision: input.founderVision,
     playbook,
     availableAgents: input.availableAgents.map((agent) => ({
@@ -71,7 +79,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   const ceoResponse = parseCeoOutput(agentResult.stdout, playbook);
   const company: Company = {
     id: companyId,
-    name: ceoResponse.blueprint.company.name,
+    name: companyName,
     founderVision: ceoResponse.blueprint.company.founderVision,
     selectedCeoAgentId: input.selectedCeoAgent.id,
     playbookId: ceoResponse.blueprint.company.playbookId,

@@ -70,6 +70,7 @@ export type ServerEvent = {
 export type ApiClient = {
   listAgents(): Promise<{ agents: AgentSummary[] }>;
   createCompany(input: {
+    companyName: string;
     founderVision: string;
     selectedCeoAgentId: string;
     permissionMode: string;

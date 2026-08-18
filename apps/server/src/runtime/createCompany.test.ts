@@ -24,7 +24,7 @@ describe("createCompany", () => {
     migrate(client);
     const repositories = createRepositories(client);
     const blueprint = aiSaasPlaybook.createBlueprint({
-      companyName: "Pricing Page Studio",
+      companyName: "CEO Renamed Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       preferredEngineeringAgentId: "codex",
       preferredStrategyAgentId: "claude-code",
@@ -41,6 +41,7 @@ describe("createCompany", () => {
 
     const result = await createCompany({
       projectRoot,
+      companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       selectedCeoAgent: ceoAgent,
       availableAgents: [
@@ -59,6 +60,7 @@ describe("createCompany", () => {
     });
 
     expect(result.editable.companyName).toBe("Pricing Page Studio");
+    expect(result.company.name).toBe("Pricing Page Studio");
     expect(result.editable.objectives).toEqual(["Validate the first AI SaaS wedge"]);
     expect(result.editable.firstTasks.length).toBeGreaterThan(0);
     expect(result.company.playbookId).toBe("ai-saas");

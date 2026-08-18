@@ -13,6 +13,7 @@ const validBlueprint = aiSaasPlaybook.createBlueprint({
 describe("buildCeoPrompt", () => {
   it("includes founder vision, selected playbook, agents, permission mode, assets, and strict JSON instructions", () => {
     const prompt = buildCeoPrompt({
+      companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       playbook: aiSaasPlaybook,
       availableAgents: [
@@ -24,6 +25,9 @@ describe("buildCeoPrompt", () => {
     });
 
     expect(prompt).toContain("Build an AI SaaS that creates pricing pages.");
+    expect(prompt).toContain("## Company Name");
+    expect(prompt).toContain("Use the provided company name exactly");
+    expect(prompt).toContain("Pricing Page Studio");
     expect(prompt).toContain("AI SaaS");
     expect(prompt).toContain("codex");
     expect(prompt).toContain("claude-code");

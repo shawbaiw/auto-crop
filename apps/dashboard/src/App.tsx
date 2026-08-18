@@ -9,7 +9,7 @@ import {
   type ServerEvent,
 } from "./api/client";
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
-import { Onboarding } from "./pages/Onboarding";
+import { Onboarding, type OnboardingStep } from "./pages/Onboarding";
 import { CRTViewport } from "./ui/crt";
 import { DashboardMenuBar } from "./ui/menu/DashboardMenuBar";
 import { isPaletteId, ThemeProvider, type PaletteId } from "./ui/theme";
@@ -19,13 +19,19 @@ export type AppProps = {
   apiClient?: ApiClient;
 };
 
+type AgentLoadState = "idle" | "loading" | "ready" | "failed";
+
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
   const defaultSkin = useMemo(() => getInitialSkin(), []);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
-  const [agentLoadState, setAgentLoadState] = useState<"loading" | "ready" | "failed">("loading");
-  const [selectedAgentId, setSelectedAgentId] = useState("codex");
+  const [agentLoadState, setAgentLoadState] = useState<AgentLoadState>("idle");
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [companyNameError, setCompanyNameError] = useState<string | null>(null);
+  const [agentSelectionError, setAgentSelectionError] = useState<string | null>(null);
   const [founderVision, setFounderVision] = useState("");
+  const [founderVisionError, setFounderVisionError] = useState<string | null>(null);
   const [permissionMode, setPermissionMode] = useState("balanced");
   const [blueprint, setBlueprint] = useState<CreateCompanyResponse | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -36,35 +42,32 @@ export default function App({ apiClient }: AppProps) {
   const [isPaused, setIsPaused] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [view, setView] = useState<"onboarding" | "dashboard">("onboarding");
+  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("company");
   const [dashboardFocusTarget, setDashboardFocusTarget] = useState<DashboardFocusTarget | null>(null);
 
   useEffect(() => {
-    let active = true;
-    setAgentLoadState("loading");
-    client
-      .listAgents()
-      .then((response) => {
-        if (!active) {
-          return;
-        }
-        setAgents(response.agents);
-        setAgentLoadState("ready");
-        const detectedCodex = response.agents.find((agent) => agent.id === "codex" && agent.detected);
-        const firstDetected = response.agents.find((agent) => agent.detected);
-        setSelectedAgentId((detectedCodex ?? firstDetected ?? response.agents[0])?.id ?? "codex");
-      })
-      .catch(() => {
-        if (!active) {
-          return;
-        }
-        setAgents([]);
-        setAgentLoadState("failed");
-      });
+    if (view === "onboarding" && onboardingStep === "agents" && agentLoadState === "idle") {
+      void detectAgents();
+    }
+  }, [agentLoadState, onboardingStep, view]);
 
-    return () => {
-      active = false;
-    };
-  }, [client]);
+  async function detectAgents() {
+    setAgentLoadState("loading");
+    setAgentSelectionError(null);
+
+    try {
+      const response = await client.listAgents();
+      setAgents(response.agents);
+      setAgentLoadState("ready");
+      const detectedCodex = response.agents.find((agent) => agent.id === "codex" && agent.detected);
+      const firstDetected = response.agents.find((agent) => agent.detected);
+      setSelectedAgentId((current) => current || ((detectedCodex ?? firstDetected)?.id ?? ""));
+    } catch {
+      setAgents([]);
+      setSelectedAgentId("");
+      setAgentLoadState("failed");
+    }
+  }
 
   useEffect(() => {
     return client.subscribeEvents((event) => {
@@ -95,7 +98,11 @@ export default function App({ apiClient }: AppProps) {
 
       if (event.key === "Enter" && view === "onboarding" && !isCreating) {
         event.preventDefault();
-        void handleCreateCompany();
+        if (onboardingStep === "vision") {
+          void handleCreateCompany();
+        } else {
+          goToNextStep();
+        }
         return;
       }
 
@@ -145,11 +152,16 @@ export default function App({ apiClient }: AppProps) {
   });
 
   async function handleCreateCompany() {
+    if (!validateCompanyName() || !validateSelectedAgent() || !validateFounderVision()) {
+      return;
+    }
+
     setIsCreating(true);
     setCreateError(null);
     try {
       const response = await client.createCompany({
-        founderVision,
+        companyName: companyName.trim(),
+        founderVision: founderVision.trim(),
         selectedCeoAgentId: selectedAgentId,
         permissionMode,
         assets: [],
@@ -159,6 +171,92 @@ export default function App({ apiClient }: AppProps) {
       setCreateError((error as Error).message);
     } finally {
       setIsCreating(false);
+    }
+  }
+
+  function handleCompanyNameChange(value: string) {
+    setCompanyName(value);
+    if (value.trim()) {
+      setCompanyNameError(null);
+    }
+  }
+
+  function handleFounderVisionChange(value: string) {
+    setFounderVision(value);
+    if (value.trim()) {
+      setFounderVisionError(null);
+    }
+  }
+
+  function handleSelectAgent(agentId: string) {
+    setSelectedAgentId(agentId);
+    setAgentSelectionError(null);
+  }
+
+  function validateCompanyName() {
+    if (companyName.trim()) {
+      setCompanyNameError(null);
+      return true;
+    }
+
+    setCompanyNameError("Company name is required.");
+    return false;
+  }
+
+  function validateSelectedAgent() {
+    const selectedAgent = agents.find((agent) => agent.id === selectedAgentId && agent.detected);
+
+    if (selectedAgent) {
+      setAgentSelectionError(null);
+      return true;
+    }
+
+    setAgentSelectionError("Select one detected CEO Agent.");
+    return false;
+  }
+
+  function validateFounderVision() {
+    if (founderVision.trim()) {
+      setFounderVisionError(null);
+      return true;
+    }
+
+    setFounderVisionError("Founder vision is required.");
+    return false;
+  }
+
+  function goToNextStep() {
+    if (isCreating) {
+      return;
+    }
+
+    if (onboardingStep === "company") {
+      if (validateCompanyName()) {
+        setOnboardingStep("agents");
+      }
+      return;
+    }
+
+    if (onboardingStep === "agents") {
+      if (validateSelectedAgent()) {
+        setOnboardingStep("vision");
+      }
+      return;
+    }
+
+    void handleCreateCompany();
+  }
+
+  function goToPreviousStep() {
+    if (isCreating) {
+      return;
+    }
+
+    setCreateError(null);
+    if (onboardingStep === "vision") {
+      setOnboardingStep("agents");
+    } else if (onboardingStep === "agents") {
+      setOnboardingStep("company");
     }
   }
 
@@ -255,6 +353,7 @@ export default function App({ apiClient }: AppProps) {
       hasBlueprint={Boolean(blueprint)}
       hasProof={proof.length > 0}
       isCreating={isCreating}
+      canCreateCompany={view === "onboarding" && onboardingStep === "vision"}
       isFullscreen={isFullscreen}
       isPaused={isPaused}
       onActivateCompany={handleActivateCompany}
@@ -264,7 +363,7 @@ export default function App({ apiClient }: AppProps) {
       onLoadProof={handleMenuLoadProof}
       onLoadReviews={handleMenuLoadReviews}
       onOpenEvidence={handleOpenEvidence}
-      onSelectAgent={setSelectedAgentId}
+      onSelectAgent={handleSelectAgent}
       onToggleFullscreen={handleToggleFullscreen}
       onViewDepartments={() => focusDashboardSection("departments")}
       onViewTasks={() => focusDashboardSection("tasks")}
@@ -303,18 +402,27 @@ export default function App({ apiClient }: AppProps) {
         <Onboarding
           agents={agents}
           agentLoadState={agentLoadState}
+          agentSelectionError={agentSelectionError}
           blueprint={blueprint}
+          companyName={companyName}
+          companyNameError={companyNameError}
           createError={createError}
           founderVision={founderVision}
+          founderVisionError={founderVisionError}
           isCreating={isCreating}
           menuBar={menuBar}
           onActivateCompany={handleActivateCompany}
+          onBack={goToPreviousStep}
+          onCompanyNameChange={handleCompanyNameChange}
           onCreateCompany={handleCreateCompany}
+          onNext={goToNextStep}
           onPermissionModeChange={setPermissionMode}
-          onSelectAgent={setSelectedAgentId}
-          onVisionChange={setFounderVision}
+          onRetryAgents={detectAgents}
+          onSelectAgent={handleSelectAgent}
+          onVisionChange={handleFounderVisionChange}
           permissionMode={permissionMode}
           selectedAgentId={selectedAgentId}
+          step={onboardingStep}
         />
       </CRTViewport>
     </ThemeProvider>

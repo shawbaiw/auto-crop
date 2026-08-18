@@ -7,6 +7,71 @@ import App from "./App";
 import type { ApiClient, ServerEvent } from "./api/client";
 
 describe("Dashboard App", () => {
+  it("starts on the company-name step only", async () => {
+    const api = createMockApiClient();
+
+    render(<App apiClient={api} />);
+
+    expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Step 1 / Company Name" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Company name")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Step 2 / Choose CEO" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Founder vision")).not.toBeInTheDocument();
+    expect(api.listAgents).not.toHaveBeenCalled();
+  });
+
+  it("blocks Next on Step 1 until a company name is entered", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await user.click(await screen.findByRole("button", { name: /next/i }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Company name is required.");
+    expect(screen.getByRole("heading", { name: "Step 1 / Company Name" })).toBeInTheDocument();
+    expect(api.listAgents).not.toHaveBeenCalled();
+  });
+
+  it("detects agents automatically when entering Step 2", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await user.type(await screen.findByLabelText("Company name"), "Pricing Page Studio");
+    await user.click(screen.getByRole("button", { name: /next/i }));
+
+    expect(await screen.findByRole("heading", { name: "Step 2 / Choose CEO" })).toBeInTheDocument();
+    expect(api.listAgents).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("button", { name: /codex/i })).toBeInTheDocument();
+  });
+
+  it("requires a detected CEO before Step 3 appears", async () => {
+    const api = createMockApiClient();
+    api.listAgents = vi.fn(async () => ({
+      agents: [
+        {
+          id: "codex",
+          name: "Codex",
+          capabilities: ["code", "frontend", "test"],
+          detected: false,
+        },
+      ],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await user.type(await screen.findByLabelText("Company name"), "Pricing Page Studio");
+    await user.click(screen.getByRole("button", { name: /next/i }));
+    expect(await screen.findByRole("heading", { name: "Step 2 / Choose CEO" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /next/i }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Select one detected CEO Agent.");
+    expect(screen.queryByLabelText("Founder vision")).not.toBeInTheDocument();
+  });
+
   it("creates a company from onboarding, reviews the blueprint, activates it, and shows the operating dashboard", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -45,8 +110,12 @@ describe("Dashboard App", () => {
     api.listAgents = async () => {
       throw new Error("offline");
     };
+    const user = userEvent.setup();
 
     render(<App apiClient={api} />);
+
+    await user.type(await screen.findByLabelText("Company name"), "Pricing Page Studio");
+    await user.click(screen.getByRole("button", { name: /next/i }));
 
     expect(await screen.findByText(/local api is not connected/i)).toBeInTheDocument();
   });
@@ -61,7 +130,11 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
 
     expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Company name"), "Pricing Page Studio");
+    await user.click(screen.getByRole("button", { name: /next/i }));
+    expect(await screen.findByRole("heading", { name: "Step 2 / Choose CEO" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /codex/i }));
+    await user.click(screen.getByRole("button", { name: /next/i }));
     await user.type(screen.getByLabelText("Founder vision"), "Build an AI SaaS that creates pricing pages.");
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
@@ -89,7 +162,9 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
 
-    await screen.findByRole("heading", { name: "CEO Office" });
+    await user.type(await screen.findByLabelText("Company name"), "Pricing Page Studio");
+    await user.click(screen.getByRole("button", { name: /next/i }));
+    await screen.findByRole("heading", { name: "Step 2 / Choose CEO" });
     await user.click(screen.getByRole("menuitem", { name: "Agents" }));
     await user.click(screen.getByRole("menuitem", { name: "Claude Code" }));
     await user.click(screen.getByRole("menuitem", { name: "Agents" }));
@@ -173,7 +248,11 @@ describe("Dashboard App", () => {
 
 async function createAndActivateCompany(user: ReturnType<typeof userEvent.setup>) {
   expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
+  await user.type(screen.getByLabelText("Company name"), "Pricing Page Studio");
+  await user.click(screen.getByRole("button", { name: /next/i }));
+  expect(await screen.findByRole("heading", { name: "Step 2 / Choose CEO" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /codex/i }));
+  await user.click(screen.getByRole("button", { name: /next/i }));
   await user.type(screen.getByLabelText("Founder vision"), "Build an AI SaaS that creates pricing pages.");
   await user.click(screen.getByRole("button", { name: /permission mode/i }));
   await user.click(screen.getByRole("option", { name: "Balanced" }));
@@ -190,7 +269,7 @@ async function createAndActivateCompany(user: ReturnType<typeof userEvent.setup>
 function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerEvent) => void } {
   return {
     lastEventHandler: undefined,
-    async listAgents() {
+    listAgents: vi.fn(async () => {
       return {
         agents: [
           {
@@ -207,7 +286,7 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
           },
         ],
       };
-    },
+    }),
     async createCompany() {
       return {
         company: {

@@ -8,6 +8,7 @@ export type DashboardMenuView = "onboarding" | "dashboard";
 
 export type DashboardMenuBarProps = {
   agents: AgentSummary[];
+  canCreateCompany: boolean;
   hasBlueprint: boolean;
   isCreating: boolean;
   isPaused: boolean;
@@ -31,6 +32,7 @@ export type DashboardMenuBarProps = {
 
 export function DashboardMenuBar({
   agents,
+  canCreateCompany,
   hasBlueprint,
   isCreating,
   isPaused,
@@ -70,7 +72,7 @@ export function DashboardMenuBar({
         label: "Company",
         items: [
           {
-            disabled: view !== "onboarding" || isCreating,
+            disabled: !canCreateCompany || isCreating,
             id: "create-company",
             label: isCreating ? "Creating Company..." : "Create Company",
             onSelect: onCreateCompany,
@@ -203,6 +205,7 @@ export function DashboardMenuBar({
     ],
     [
       detectedAgents,
+      canCreateCompany,
       hasBlueprint,
       isCreating,
       isPaused,

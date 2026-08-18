@@ -72,11 +72,19 @@ async function routeRequest(
 
   if (method === "POST" && url.pathname === "/api/companies") {
     const body = await readJson<{
+      companyName?: string;
       founderVision: string;
       selectedCeoAgentId: string;
       permissionMode: PolicyMode;
       assets?: string[];
     }>(request);
+    const companyName = body.companyName?.trim() ?? "";
+
+    if (!companyName) {
+      sendJson(response, 400, { error: "Company name is required." });
+      return;
+    }
+
     const selectedCeoAgent = options.agents.find((agent) => agent.id === body.selectedCeoAgentId);
 
     if (!selectedCeoAgent) {
@@ -87,6 +95,7 @@ async function routeRequest(
     options.log?.(`Creating company with CEO agent ${selectedCeoAgent.name}`);
     const result = await createCompany({
       projectRoot: options.projectRoot,
+      companyName,
       founderVision: body.founderVision,
       selectedCeoAgent,
       availableAgents: options.agents,

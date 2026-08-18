@@ -30,6 +30,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string; status: string }; editable: { companyName: string } }>(
       `${fixture.baseUrl}/api/companies`,
       {
+        companyName: "Pricing Page Studio",
         founderVision: "Build an AI SaaS that creates pricing pages.",
         selectedCeoAgentId: "codex",
         permissionMode: "balanced",
@@ -93,6 +94,26 @@ describe("API routes", () => {
     );
     expect(killed.paused).toBe(true);
     expect(killed.company.status).toBe("review");
+
+    await fixture.close();
+  });
+
+  it("requires companyName when creating a company", async () => {
+    const fixture = await startFixtureServer();
+    const response = await fetch(`${fixture.baseUrl}/api/companies`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        founderVision: "Build an AI SaaS that creates pricing pages.",
+        selectedCeoAgentId: "codex",
+        permissionMode: "balanced",
+        assets: [],
+      }),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/company name is required/i);
 
     await fixture.close();
   });

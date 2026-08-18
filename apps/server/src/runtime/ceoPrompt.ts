@@ -8,6 +8,7 @@ export type CeoPromptAgent = {
 };
 
 export type BuildCeoPromptInput = {
+  companyName: string;
   founderVision: string;
   playbook: Playbook;
   availableAgents: CeoPromptAgent[];
@@ -21,6 +22,10 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
     "",
     "You are the CEO Office for a local agent company runtime.",
     "Turn the founder vision into an executable company blueprint.",
+    "",
+    "## Company Name",
+    input.companyName,
+    "Use the provided company name exactly. Do not rename, rebrand, abbreviate, or translate it.",
     "",
     "## Founder Vision",
     input.founderVision,
@@ -61,6 +66,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
     "## Strict JSON",
     "A fenced JSON block. The runtime will parse only this block.",
     "Do not include departments or proof schemas outside the selected playbook.",
+    `Set blueprint.company.name to the provided company name exactly: ${input.companyName}`,
     "",
     "```json",
     JSON.stringify(
@@ -68,7 +74,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
         brief: "Founder-facing summary.",
         blueprint: {
           company: {
-            name: "Company name",
+            name: input.companyName,
             founderVision: input.founderVision,
             playbookId: input.playbook.id,
           },
