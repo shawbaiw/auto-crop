@@ -74,7 +74,11 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
         input.repositories.updateTaskStatus(task.id, "running");
         result.started.push(task.id);
-        input.emit({ type: "task_started", taskId: task.id, message: "Task started." });
+        input.emit({
+          type: "task_started",
+          taskId: task.id,
+          message: `Task started: ${task.title} (${task.assigneeAgentId}).`,
+        });
 
         const workspace = task.workspacePath
           ? { root: task.workspacePath }

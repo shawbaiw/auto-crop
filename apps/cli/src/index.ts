@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
 import { startAutoCrop } from "./commands/start";
+import { resolveProjectRoot } from "./projectRoot";
 
 const [, , command] = process.argv;
 
 if (command === "start") {
   await startAutoCrop({
-    projectRoot: process.cwd(),
+    projectRoot: resolveProjectRoot(),
     port: Number(process.env.AUTO_CROP_PORT ?? 0),
   });
 } else {

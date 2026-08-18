@@ -40,7 +40,7 @@ describe("runSchedulerOnce", () => {
       createTaskRecord("task_1", "queued", "low"),
       createTaskRecord("task_2", "queued", "low"),
     ]);
-    const events: string[] = [];
+    const events: SchedulerEventRecord[] = [];
 
     const result = await runSchedulerOnce({
       projectRoot,
@@ -68,7 +68,7 @@ describe("runSchedulerOnce", () => {
           verifiedAt: null,
         },
       ],
-      emit: (event) => events.push(`${event.type}:${event.taskId}`),
+      emit: (event) => events.push(event),
     });
 
     expect(result.started).toEqual(["task_1", "task_2"]);
@@ -82,9 +82,13 @@ describe("runSchedulerOnce", () => {
     expect(readFileSync(join(projectRoot, ".auto-crop", "companies", "company_1", "logs", "task_1.log"), "utf8")).toContain(
       "proof: created artifact",
     );
-    expect(events).toContain("task_started:task_1");
-    expect(events).toContain("task_log:task_1");
-    expect(events).toContain("task_review:task_1");
+    expect(events).toContainEqual({
+      type: "task_started",
+      taskId: "task_1",
+      message: "Task started: Task task_1 (mock-worker).",
+    });
+    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_log:task_1");
+    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_review:task_1");
 
     client.close();
   });
@@ -245,3 +249,9 @@ function createSequentialIdFactory(): (prefix: string) => string {
     return `${prefix}_${next}`;
   };
 }
+
+type SchedulerEventRecord = {
+  type: "task_started" | "task_log" | "task_review" | "task_failed" | "task_blocked";
+  taskId: string;
+  message: string;
+};

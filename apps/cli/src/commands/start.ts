@@ -2,12 +2,16 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import {
+  aiSaasPlaybook,
   createApiServer,
   createClaudeCodeAdapter,
   createCodexAdapter,
   createDatabaseClient,
+  createProofCollector,
   createRepositories,
+  getDefaultPolicy,
   migrate,
+  runSchedulerOnce,
   type AgentAdapter,
 } from "@auto-crop/server";
 
@@ -16,6 +20,7 @@ export type StartAutoCropOptions = {
   host?: string;
   port?: number;
   agents?: AgentAdapter[];
+  schedulerIntervalMs?: number;
   log?: (line: string) => void;
 };
 
@@ -28,6 +33,7 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 0;
   const log = options.log ?? console.log;
+  const schedulerIntervalMs = options.schedulerIntervalMs ?? Number(process.env.AUTO_CROP_SCHEDULER_INTERVAL_MS ?? 5_000);
   const stateDir = join(options.projectRoot, ".auto-crop");
   mkdirSync(stateDir, { recursive: true });
 
@@ -46,6 +52,14 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
     repositories,
     agents,
     log,
+  });
+  const scheduler = startSchedulerLoop({
+    agents,
+    intervalMs: schedulerIntervalMs,
+    log,
+    projectRoot: options.projectRoot,
+    repositories,
+    publish: (event) => apiServer.events.publish(event),
   });
 
   await new Promise<void>((resolve) => {
@@ -67,7 +81,64 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
       await new Promise<void>((resolve, reject) => {
         apiServer.httpServer.close((error) => (error ? reject(error) : resolve()));
       });
+      scheduler.stop();
       database.close();
+    },
+  };
+}
+
+function startSchedulerLoop(input: {
+  agents: AgentAdapter[];
+  intervalMs: number;
+  log: (line: string) => void;
+  projectRoot: string;
+  publish: Parameters<typeof runSchedulerOnce>[0]["emit"];
+  repositories: ReturnType<typeof createRepositories>;
+}) {
+  const workerId = `cli-worker-${process.pid}`;
+  const proofCollector = createProofCollector({ proofSchemas: aiSaasPlaybook.proofSchemas });
+  let running = false;
+
+  async function tick() {
+    if (running) {
+      return;
+    }
+
+    running = true;
+    try {
+      const result = await runSchedulerOnce({
+        projectRoot: input.projectRoot,
+        repositories: input.repositories,
+        adapters: input.agents,
+        workerId,
+        maxTasks: 1,
+        approvalRequired: () => getDefaultPolicy().decisions.run_safe_command === "ask",
+        proofCollector,
+        emit: (event) => {
+          input.log(`Scheduler ${event.type}: ${event.taskId} ${event.message}`);
+          input.publish(event);
+        },
+      });
+
+      if (result.started.length > 0 || result.completed.length > 0 || result.failed.length > 0 || result.blocked.length > 0) {
+        input.log(
+          `Scheduler tick: started=${result.started.length} completed=${result.completed.length} failed=${result.failed.length} blocked=${result.blocked.length}`,
+        );
+      }
+    } catch (error) {
+      input.log(`Scheduler failed: ${(error as Error).message}`);
+    } finally {
+      running = false;
+    }
+  }
+
+  const interval = setInterval(() => void tick(), input.intervalMs);
+  void tick();
+  input.log(`Scheduler: running every ${input.intervalMs}ms`);
+
+  return {
+    stop() {
+      clearInterval(interval);
     },
   };
 }
