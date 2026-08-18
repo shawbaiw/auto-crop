@@ -16,6 +16,8 @@ export type DepartmentSummary = {
   id: string;
   name: string;
   responsibility: string;
+  leadAgentId?: string;
+  memoryPath?: string;
 };
 
 export type ObjectiveSummary = {
@@ -29,6 +31,9 @@ export type TaskSummary = {
   title: string;
   status: string;
   departmentId: string;
+  assigneeAgentId?: string;
+  description?: string;
+  riskLevel?: string;
 };
 
 export type ProofSummary = {

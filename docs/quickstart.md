@@ -51,19 +51,25 @@ The dashboard also accepts an API URL query parameter:
 http://127.0.0.1:5173/?apiUrl=http%3A%2F%2F127.0.0.1%3A8787
 ```
 
-## Basic Flow
+## Expected UI Flow
 
 1. Start the local runtime.
 2. Open the dashboard.
-3. Choose a CEO agent.
-4. Enter a founder vision.
-5. Choose Safe, Balanced, or Autonomous mode.
-6. Create a company blueprint.
-7. Review the CEO Office output.
-8. Activate the company.
-9. Watch task logs through Server-Sent Events.
-10. Load proof and review outputs from the dashboard.
+3. Enter a company name.
+4. Continue to agent detection and choose one detected CEO agent. Claude Code is the recommended first CEO Agent on this machine; Codex may require local permissions.
+5. Enter a founder vision.
+6. Choose Safe, Balanced, or Autonomous mode. Balanced is the default.
+7. Click Create Company and wait on the CRT-styled creation loading page.
+8. Land in the Department Workspace with CEO selected by default.
+9. Use the left rail to inspect generated departments and their queued tasks.
+10. Use the Work menu to open the operating dashboard for task, proof, review, and event views.
 11. Use the kill switch if work must stop immediately.
+
+## Troubleshooting
+
+If the CEO selection step shows `Local API is not connected`, make sure the local runtime is still running and that `VITE_AUTO_CROP_API_URL` points at the API server URL printed by the CLI.
+
+If company creation returns a CEO Agent timeout or blueprint error, retry with a smaller founder vision, confirm the selected local agent can run from the terminal, and consider increasing `AUTO_CROP_AGENT_TIMEOUT_MS` when starting the runtime.
 
 ## Supported Agents
 

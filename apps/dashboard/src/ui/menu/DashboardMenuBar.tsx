@@ -4,7 +4,7 @@ import { isPaletteId, paletteOrder, palettes, useTheme } from "../theme";
 import { RetroMenuBar } from "./RetroMenuBar";
 import type { RetroMenuGroup } from "./RetroMenu";
 
-export type DashboardMenuView = "onboarding" | "dashboard";
+export type DashboardMenuView = "onboarding" | "creating" | "department-workspace" | "dashboard";
 
 export type DashboardMenuBarProps = {
   agents: AgentSummary[];
@@ -86,7 +86,7 @@ export function DashboardMenuBar({
             shortcut: "Shift+Cmd+Enter",
           },
           {
-            disabled: view === "onboarding",
+            disabled: view === "onboarding" || view === "creating",
             id: "back-to-setup",
             label: "Back to Setup",
             onSelect: onBackToSetup,
@@ -120,14 +120,14 @@ export function DashboardMenuBar({
         label: "Work",
         items: [
           {
-            disabled: view !== "dashboard" || !hasBlueprint,
+            disabled: (view !== "dashboard" && view !== "department-workspace") || !hasBlueprint,
             id: "view-tasks",
             label: "View Tasks",
             onSelect: onViewTasks,
             shortcut: "Cmd+1",
           },
           {
-            disabled: view !== "dashboard" || !hasBlueprint,
+            disabled: (view !== "dashboard" && view !== "department-workspace") || !hasBlueprint,
             id: "view-departments",
             label: "View Departments",
             onSelect: onViewDepartments,

@@ -2,7 +2,7 @@
 
 An open-source local "agent company" runtime.
 
-The project goal is to let a founder run a zero-person company from their own computer. A user chooses a local agent, such as Claude Code or Codex, as CEO, writes a founder vision, and the system turns that vision into OKRs, departments, agent work, proof, and review loops.
+The project goal is to let a founder run a zero-person company from their own computer. A user names a company, chooses a local agent, such as Claude Code or Codex, as CEO, writes a founder vision, and the system turns that vision into OKRs, departments, agent work, proof, and review loops.
 
 The MVP is currently under active implementation. See [docs/quickstart.md](docs/quickstart.md) to run it locally, [docs/architecture.md](docs/architecture.md) for the system model, and [docs/implementation-plan.md](docs/implementation-plan.md) for the task plan.
 
@@ -90,7 +90,7 @@ npx auto-crop start
 - `@auto-crop/server` includes a kill switch that sets global pause, stops scheduler task claiming, cancels running agent runs, releases task locks, and moves the company into review.
 - `@auto-crop/server` exposes REST endpoints for agent detection, company creation/activation, blueprint edits, approvals, task cancellation, proof/review reads, kill switch, and Server-Sent Events for task logs/status.
 - `@auto-crop/cli` implements `auto-crop start`, creates local SQLite state under `.auto-crop/`, starts the local API server, prints the dashboard URL, and detects Claude Code / Codex adapters.
-- `@auto-crop/dashboard` provides the React onboarding and company operating dashboard foundation with CEO selection, founder vision, permission mode, blueprint review, activation, department/task panels, proof, approvals, review, and SSE-driven event updates.
+- `@auto-crop/dashboard` provides the React onboarding and operating views with company naming, CEO selection, founder vision, permission mode, a CRT-styled creation loading page, the default department workspace, department/task panels, proof, approvals, review, and SSE-driven event updates.
 - `@auto-crop/dashboard` includes a Playwright key-flow E2E spec that starts a mock API server, creates and activates a company, observes mock agent SSE output, loads proof/review data, and triggers the kill switch.
 - The current SQLite implementation uses Node's built-in `node:sqlite` module, which emits an experimental warning on Node 24.
 
@@ -168,7 +168,7 @@ On this development machine, Playwright browser launch is currently blocked by m
 
 - `node:sqlite` emits an experimental warning on Node 24.
 - `auto-crop start` currently starts the local API server and prints its URL. The packaged dashboard serving/opening flow is still future work.
-- The dashboard foundation can create and activate companies and load proof/review data, but advanced blueprint editing and live approval decisions are still planned.
+- The dashboard can create companies, land in the department workspace, open the operating dashboard from the menu, and load proof/review data, but advanced blueprint editing and live approval decisions are still planned.
 - E2E requires a working Playwright Chromium browser installation.
 - On this machine, Claude Code real-agent smoke passes. Codex CLI is installed, but `codex exec` currently fails during local app-server initialization with `Operation not permitted`.
 

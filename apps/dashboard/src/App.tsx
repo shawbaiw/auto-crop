@@ -9,6 +9,8 @@ import {
   type ServerEvent,
 } from "./api/client";
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
+import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
+import { DepartmentWorkspace } from "./pages/DepartmentWorkspace";
 import { Onboarding, type OnboardingStep } from "./pages/Onboarding";
 import { CRTViewport } from "./ui/crt";
 import { DashboardMenuBar } from "./ui/menu/DashboardMenuBar";
@@ -20,6 +22,7 @@ export type AppProps = {
 };
 
 type AgentLoadState = "idle" | "loading" | "ready" | "failed";
+type AppView = "onboarding" | "creating" | "department-workspace" | "dashboard";
 
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
@@ -41,7 +44,7 @@ export default function App({ apiClient }: AppProps) {
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [isPaused, setIsPaused] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [view, setView] = useState<"onboarding" | "dashboard">("onboarding");
+  const [view, setView] = useState<AppView>("onboarding");
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("company");
   const [dashboardFocusTarget, setDashboardFocusTarget] = useState<DashboardFocusTarget | null>(null);
 
@@ -107,7 +110,7 @@ export default function App({ apiClient }: AppProps) {
       }
 
       const key = event.key.toLowerCase();
-      if (key === "b" && view === "dashboard") {
+      if (key === "b" && (view === "dashboard" || view === "department-workspace")) {
         event.preventDefault();
         handleBackToSetup();
         return;
@@ -157,6 +160,7 @@ export default function App({ apiClient }: AppProps) {
     }
 
     setIsCreating(true);
+    setView("creating");
     setCreateError(null);
     try {
       const response = await client.createCompany({
@@ -167,7 +171,10 @@ export default function App({ apiClient }: AppProps) {
         assets: [],
       });
       setBlueprint(response);
+      setView("department-workspace");
     } catch (error) {
+      setView("onboarding");
+      setOnboardingStep("vision");
       setCreateError((error as Error).message);
     } finally {
       setIsCreating(false);
@@ -226,7 +233,7 @@ export default function App({ apiClient }: AppProps) {
   }
 
   function goToNextStep() {
-    if (isCreating) {
+    if (isCreating || view === "creating") {
       return;
     }
 
@@ -248,7 +255,7 @@ export default function App({ apiClient }: AppProps) {
   }
 
   function goToPreviousStep() {
-    if (isCreating) {
+    if (isCreating || view === "creating") {
       return;
     }
 
@@ -311,6 +318,9 @@ export default function App({ apiClient }: AppProps) {
   }
 
   function focusDashboardSection(section: DashboardFocusSection) {
+    if (blueprint && view === "department-workspace") {
+      setView("dashboard");
+    }
     setDashboardFocusTarget((current) => ({
       section,
       version: (current?.version ?? 0) + 1,
@@ -371,6 +381,41 @@ export default function App({ apiClient }: AppProps) {
       view={view}
     />
   );
+
+  if (view === "creating") {
+    const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
+
+    return (
+      <ThemeProvider defaultSkin={defaultSkin}>
+        <CRTViewport>
+          <CompanyCreationLoading
+            companyName={companyName.trim()}
+            menuBar={menuBar}
+            permissionMode={permissionMode}
+            selectedAgent={selectedAgent}
+          />
+        </CRTViewport>
+      </ThemeProvider>
+    );
+  }
+
+  if (view === "department-workspace" && blueprint) {
+    return (
+      <ThemeProvider defaultSkin={defaultSkin}>
+        <CRTViewport>
+          <DepartmentWorkspace
+            agents={agents}
+            company={blueprint.company}
+            departments={blueprint.departments}
+            menuBar={menuBar}
+            objectives={blueprint.objectives}
+            selectedCeoAgentId={selectedAgentId}
+            tasks={blueprint.tasks}
+          />
+        </CRTViewport>
+      </ThemeProvider>
+    );
+  }
 
   if (view === "dashboard" && blueprint) {
     return (

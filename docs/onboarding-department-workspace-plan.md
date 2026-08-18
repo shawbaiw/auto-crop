@@ -6,8 +6,9 @@ Change the user flow so startup opens a sequential onboarding wizard, creates th
 
 ## Execution Status
 
-- 2026-08-18: Completed the first vertical slice covering backend `companyName` persistence, CEO prompt name-locking, and the frontend three-step onboarding wizard. The dedicated `creating` view is still pending in Task 5. Verified with `pnpm --filter @auto-crop/server test`, `pnpm --filter @auto-crop/dashboard test`, and `pnpm --filter @auto-crop/dashboard typecheck`.
-- Next handoff point: implement Task 5 `CompanyCreationLoading`, then Task 6 `DepartmentWorkspace`, and update menu behavior/docs around those new post-creation views.
+- 2026-08-18: Completed the first vertical slice covering backend `companyName` persistence, CEO prompt name-locking, and the frontend three-step onboarding wizard. Verified with `pnpm --filter @auto-crop/server test`, `pnpm --filter @auto-crop/dashboard test`, and `pnpm --filter @auto-crop/dashboard typecheck`.
+- 2026-08-18: Completed the creation loading page and default department workspace. The post-create flow now switches to `creating`, then to `department-workspace`; the Work menu can still open the operating dashboard. Verified with `pnpm test` and `pnpm typecheck`.
+- Next handoff point: tighten remaining menu tests for Back to Setup/blueprint preservation, run final full verification, and continue any visual polish on mobile if screenshots reveal layout issues.
 
 ## Hard Constraints
 
@@ -152,7 +153,7 @@ permissionMode: string;
   - Step 3 requires non-empty Founder Vision before create.
 - [x] Add Back behavior for Step 2 and Step 3.
 - [x] Lock wizard navigation while `isCreating`.
-- [ ] Extend the lock to `view === "creating"` when Task 5 adds the dedicated creating page.
+- [x] Extend the lock to `view === "creating"` when Task 5 adds the dedicated creating page.
 
 ### Tests
 
@@ -208,7 +209,7 @@ type OnboardingProps = {
 ### Tests
 
 - [x] Assert Step 1 renders company name input and Next.
-- [ ] Assert Step 2 renders loading, failed, empty, and detected-agent states.
+- [x] Assert Step 2 renders loading, failed, empty, and detected-agent states.
 - [x] Assert Step 3 renders Founder Vision, Permission Mode, Back, and Create Company.
 - [x] Assert only one step body is present at a time.
 
@@ -247,10 +248,10 @@ Show:
 
 ### Tests
 
-- [ ] Assert clicking Create Company shows loading page immediately.
-- [ ] Assert loading page includes company name, CEO Agent, and stages.
-- [ ] Assert success lands in Department Workspace.
-- [ ] Assert failure returns to Step 3 and shows backend error.
+- [x] Assert clicking Create Company shows loading page immediately.
+- [x] Assert loading page includes company name, CEO Agent, and stages.
+- [x] Assert success lands in Department Workspace.
+- [x] Assert failure returns to Step 3 and shows backend error.
 
 ## Task 6: Department Workspace View
 
@@ -298,10 +299,10 @@ For selected department, show:
 
 ### Tests
 
-- [ ] Assert successful creation defaults to CEO selected.
-- [ ] Assert left rail contains CEO and generated departments.
-- [ ] Assert clicking Engineering shows Engineering responsibility and tasks.
-- [ ] Assert no chat input is rendered.
+- [x] Assert successful creation defaults to CEO selected.
+- [x] Assert left rail contains CEO and generated departments.
+- [x] Assert clicking Engineering shows Engineering responsibility and tasks.
+- [x] Assert no chat input is rendered.
 
 ## Task 7: Menu And View Integration
 
@@ -311,18 +312,18 @@ Keep the existing menu bar and make menu actions compatible with the new app vie
 
 ### Steps
 
-- [ ] Extend `DashboardMenuView` to include `"creating"` and `"department-workspace"` or map department workspace as a dashboard-capable view.
-- [ ] `Company > Create Company` should only be enabled on onboarding Step 3 when not creating.
-- [ ] `Company > Back to Setup` should work from department workspace and dashboard.
-- [ ] `Work > View Tasks` and `Work > View Departments` should switch to the existing operating dashboard view or focus matching content depending on final design.
-- [ ] Keep `Agents` menu synchronized with selected CEO during onboarding.
-- [ ] Keep `View > Skin` and fullscreen unchanged.
+- [x] Extend `DashboardMenuView` to include `"creating"` and `"department-workspace"` or map department workspace as a dashboard-capable view.
+- [x] `Company > Create Company` should only be enabled on onboarding Step 3 when not creating.
+- [x] `Company > Back to Setup` should work from department workspace and dashboard.
+- [x] `Work > View Tasks` and `Work > View Departments` should switch to the existing operating dashboard view or focus matching content depending on final design.
+- [x] Keep `Agents` menu synchronized with selected CEO during onboarding.
+- [x] Keep `View > Skin` and fullscreen unchanged.
 
 ### Tests
 
-- [ ] Update menu tests to account for the new views.
-- [ ] Assert disabled commands remain visible.
-- [ ] Assert skin switching still works from the View menu.
+- [x] Update menu tests to account for the new views.
+- [x] Assert disabled commands remain visible.
+- [x] Assert skin switching still works from the View menu.
 - [ ] Assert Back to Setup returns to the wizard without losing the generated blueprint.
 
 ## Task 8: CSS Layout Additions
@@ -351,8 +352,8 @@ Add only the layout CSS required for the new wizard, loading page, and departmen
 
 ### Tests
 
-- [ ] Run `pnpm --filter @auto-crop/dashboard test`.
-- [ ] Run `pnpm --filter @auto-crop/dashboard typecheck`.
+- [x] Run `pnpm --filter @auto-crop/dashboard test`.
+- [x] Run `pnpm --filter @auto-crop/dashboard typecheck`.
 - [ ] Manually inspect desktop and mobile widths.
 
 ## Task 9: Documentation Updates
@@ -380,7 +381,7 @@ Update open-source user documentation to match the new flow.
 
 ### Tests
 
-- [ ] Run `rg -n "Choose CEO|Founder Setup|Company Operating Dashboard|dashboard foundation" README.md docs/quickstart.md docs/architecture.md` and update stale wording.
+- [x] Run `rg -n "Choose CEO|Founder Setup|Company Operating Dashboard|dashboard foundation" README.md docs/quickstart.md docs/architecture.md` and update stale wording.
 
 ## Task 10: Final Verification
 

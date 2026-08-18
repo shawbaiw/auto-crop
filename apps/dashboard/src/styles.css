@@ -266,6 +266,39 @@ h3 {
   gap: 12px;
 }
 
+.creation-loading {
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+}
+
+.creation-loading__stage {
+  display: grid;
+  gap: 8px;
+}
+
+.department-workspace {
+  align-items: start;
+  grid-template-columns: minmax(220px, 0.32fr) minmax(0, 1fr);
+}
+
+.department-workspace__rail .retro-panel__body {
+  gap: 10px;
+}
+
+.department-workspace__main {
+  min-width: 0;
+}
+
+.role-summary {
+  display: grid;
+  gap: 14px;
+}
+
+.role-summary > div:last-of-type {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .operations-grid {
   grid-template-columns: 1.2fr 1fr 1fr;
 }
@@ -681,6 +714,10 @@ h3 {
   color: color-mix(in srgb, var(--ink) 72%, var(--field));
 }
 
+.retro-panel--inverted .muted {
+  color: var(--titlebar-ink);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .retro-button:active,
   .retro-list-row:active {
@@ -727,6 +764,8 @@ h3 {
   .page-header,
   .setup-grid,
   .onboarding-wizard,
+  .creation-loading,
+  .department-workspace,
   .operations-grid,
   .review-columns,
   .control-grid,

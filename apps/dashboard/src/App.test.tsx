@@ -47,6 +47,22 @@ describe("Dashboard App", () => {
     expect(await screen.findByRole("button", { name: /codex/i })).toBeInTheDocument();
   });
 
+  it("shows Step 2 loading and empty states", async () => {
+    const api = createMockApiClient();
+    const agents = createDeferred<{ agents: [] }>();
+    api.listAgents = vi.fn(() => agents.promise);
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await user.type(await screen.findByLabelText("Company name"), "Pricing Page Studio");
+    await user.click(screen.getByRole("button", { name: /next/i }));
+
+    expect(await screen.findByText("Scanning local agent registry...")).toBeInTheDocument();
+    agents.resolve({ agents: [] });
+    expect(await screen.findByText("No local agents reported by the API.")).toBeInTheDocument();
+  });
+
   it("requires a detected CEO before Step 3 appears", async () => {
     const api = createMockApiClient();
     api.listAgents = vi.fn(async () => ({
@@ -72,13 +88,13 @@ describe("Dashboard App", () => {
     expect(screen.queryByLabelText("Founder vision")).not.toBeInTheDocument();
   });
 
-  it("creates a company from onboarding, reviews the blueprint, activates it, and shows the operating dashboard", async () => {
+  it("creates a company from onboarding and can open the operating dashboard from the menu", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
 
-    await createAndActivateCompany(user);
+    await createCompanyAndOpenDashboard(user);
 
     expect(screen.getByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
     expect(screen.getByText("CEO Office")).toBeInTheDocument();
@@ -90,12 +106,66 @@ describe("Dashboard App", () => {
     expect(screen.getByText("Review")).toBeInTheDocument();
   });
 
+  it("shows the creation loading page immediately after Create Company", async () => {
+    const api = createMockApiClient();
+    const created = createDeferred<Awaited<ReturnType<ApiClient["createCompany"]>>>();
+    api.createCompany = vi.fn(() => created.promise);
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await fillReadyToCreate(user);
+    await user.click(screen.getByRole("button", { name: /create company/i }));
+
+    expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
+    expect(screen.getByText("Creating Company")).toBeInTheDocument();
+    expect(screen.getAllByText("Pricing Page Studio").length).toBeGreaterThan(0);
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(screen.getByText("Sending founder vision")).toBeInTheDocument();
+    expect(screen.getByText("CEO agent generating blueprint")).toBeInTheDocument();
+    expect(screen.getByText("Validating strict JSON")).toBeInTheDocument();
+    expect(screen.getByText("Creating departments and tasks")).toBeInTheDocument();
+
+    created.resolve(createCompanyResponse());
+    expect(await screen.findByRole("heading", { name: "Pricing Page Studio" })).toBeInTheDocument();
+  });
+
+  it("lands in the Department Workspace with CEO selected after creation", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    expect(screen.getByText("Department Workspace")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /CEO Codex/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /Engineering 01/i })).toBeInTheDocument();
+    expect(screen.getByText("Validate first wedge")).toBeInTheDocument();
+    expect(screen.getByText("Create landing page / queued")).toBeInTheDocument();
+  });
+
+  it("shows department responsibility and tasks without a chat input", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: /Engineering 01/i }));
+
+    expect(screen.getByRole("heading", { name: "Engineering Workspace" })).toBeInTheDocument();
+    expect(screen.getByText("Build prototype.")).toBeInTheDocument();
+    expect(screen.getByText("Create landing page / queued")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /chat/i })).not.toBeInTheDocument();
+  });
+
   it("updates task event stream messages from SSE", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
-    await createAndActivateCompany(user);
+    await createCompanyAndOpenDashboard(user);
 
     await waitFor(() => expect(api.lastEventHandler).toBeDefined());
     act(() => {
@@ -130,12 +200,7 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
 
     expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Company name"), "Pricing Page Studio");
-    await user.click(screen.getByRole("button", { name: /next/i }));
-    expect(await screen.findByRole("heading", { name: "Step 2 / Choose CEO" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /codex/i }));
-    await user.click(screen.getByRole("button", { name: /next/i }));
-    await user.type(screen.getByLabelText("Founder vision"), "Build an AI SaaS that creates pricing pages.");
+    await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("CEO agent failed to create company blueprint");
@@ -190,7 +255,7 @@ describe("Dashboard App", () => {
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
-    await createAndActivateCompany(user);
+    await createCompanyAndOpenDashboard(user);
 
     await user.click(screen.getByRole("menuitem", { name: "Work" }));
     await user.click(screen.getByRole("menuitem", { name: "View Tasks" }));
@@ -207,7 +272,7 @@ describe("Dashboard App", () => {
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
-    await createAndActivateCompany(user);
+    await createCompanyAndOpenDashboard(user);
 
     await user.click(screen.getByRole("menuitem", { name: "Proof" }));
     await expect(screen.getByRole("menuitem", { name: /Open Evidence/ })).toBeDisabled();
@@ -246,7 +311,7 @@ describe("Dashboard App", () => {
   });
 });
 
-async function createAndActivateCompany(user: ReturnType<typeof userEvent.setup>) {
+async function fillReadyToCreate(user: ReturnType<typeof userEvent.setup>) {
   expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
   await user.type(screen.getByLabelText("Company name"), "Pricing Page Studio");
   await user.click(screen.getByRole("button", { name: /next/i }));
@@ -256,14 +321,68 @@ async function createAndActivateCompany(user: ReturnType<typeof userEvent.setup>
   await user.type(screen.getByLabelText("Founder vision"), "Build an AI SaaS that creates pricing pages.");
   await user.click(screen.getByRole("button", { name: /permission mode/i }));
   await user.click(screen.getByRole("option", { name: "Balanced" }));
+}
+
+async function createCompany(user: ReturnType<typeof userEvent.setup>) {
+  await fillReadyToCreate(user);
   await user.click(screen.getByRole("button", { name: /create company/i }));
 
-  expect(await screen.findByText("Pricing Page Studio")).toBeInTheDocument();
-  expect(screen.getByText("Validate first wedge")).toBeInTheDocument();
-  expect(screen.getByText("Create landing page")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Pricing Page Studio" })).toBeInTheDocument();
+}
 
-  await user.click(screen.getByRole("button", { name: /activate company/i }));
+async function createCompanyAndOpenDashboard(user: ReturnType<typeof userEvent.setup>) {
+  await createCompany(user);
+  await user.click(screen.getByRole("menuitem", { name: "Work" }));
+  await user.click(screen.getByRole("menuitem", { name: "View Tasks" }));
   expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, reject, resolve };
+}
+
+function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
+  return {
+    company: {
+      id: "company_1",
+      name: "Pricing Page Studio",
+      status: "draft",
+      playbookId: "ai-saas",
+    },
+    departments: [
+      {
+        id: "department_1",
+        name: "Engineering",
+        responsibility: "Build prototype.",
+        leadAgentId: "codex",
+        memoryPath: ".auto-crop/companies/company_1/departments/engineering/memory.md",
+      },
+    ],
+    objectives: [{ id: "objective_1", title: "Validate first wedge", priority: 1 }],
+    tasks: [
+      {
+        id: "task_1",
+        title: "Create landing page",
+        status: "queued",
+        departmentId: "department_1",
+        assigneeAgentId: "codex",
+        description: "Build a landing page.",
+        riskLevel: "medium",
+      },
+    ],
+    editable: {
+      companyName: "Pricing Page Studio",
+      objectives: ["Validate first wedge"],
+      firstTasks: ["Create landing page"],
+    },
+  };
 }
 
 function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerEvent) => void } {
@@ -288,31 +407,7 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
       };
     }),
     async createCompany() {
-      return {
-        company: {
-          id: "company_1",
-          name: "Pricing Page Studio",
-          status: "draft",
-          playbookId: "ai-saas",
-        },
-        departments: [
-          { id: "department_1", name: "Engineering", responsibility: "Build prototype." },
-        ],
-        objectives: [{ id: "objective_1", title: "Validate first wedge", priority: 1 }],
-        tasks: [
-          {
-            id: "task_1",
-            title: "Create landing page",
-            status: "queued",
-            departmentId: "department_1",
-          },
-        ],
-        editable: {
-          companyName: "Pricing Page Studio",
-          objectives: ["Validate first wedge"],
-          firstTasks: ["Create landing page"],
-        },
-      };
+      return createCompanyResponse();
     },
     async activateCompany(companyId) {
       return {
