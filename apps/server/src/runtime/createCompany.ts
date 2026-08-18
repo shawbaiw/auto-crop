@@ -167,25 +167,6 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     input.repositories.createTask(task);
     return task;
   });
-  const taskIdsByTitle = new Map(tasks.map((task) => [task.title, task.id]));
-
-  for (const taskBlueprint of ceoResponse.blueprint.tasks) {
-    const taskId = taskIdsByTitle.get(taskBlueprint.title);
-
-    if (!taskId) {
-      continue;
-    }
-
-    for (const dependencyTitle of taskBlueprint.dependencies ?? []) {
-      const dependsOnTaskId = taskIdsByTitle.get(dependencyTitle);
-
-      if (!dependsOnTaskId) {
-        throw new Error(`Task references unknown dependency after parse: ${dependencyTitle}`);
-      }
-
-      input.repositories.createTaskDependency({ taskId, dependsOnTaskId });
-    }
-  }
 
   return {
     company,

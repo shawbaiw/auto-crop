@@ -2,9 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
-import type { Proof, ProofSchema, Task } from "@auto-crop/core";
+import type { Proof, Task } from "@auto-crop/core";
 import { createTaskWorkspace } from "./workspace";
-import { buildTaskPacket } from "./taskPacket";
 
 export type SchedulerEvent = {
   type: "task_started" | "task_log" | "task_review" | "task_failed" | "task_blocked";
@@ -20,7 +19,6 @@ export type RunSchedulerOnceInput = {
   maxTasks: number;
   now?: () => Date;
   createId?: (prefix: string) => string;
-  proofSchemas?: ProofSchema[];
   approvalRequired: (task: Task) => boolean;
   proofCollector: (input: { task: Task; stdout: string; stderr: string; logPath: string }) => Proof[];
   emit: (event: SchedulerEvent) => void;
@@ -47,8 +45,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
     return result;
   }
 
-  const queuedTasks = input.repositories.fetchRunnableQueuedTasks(input.maxTasks);
-  const proofSchemasById = new Map((input.proofSchemas ?? []).map((proofSchema) => [proofSchema.id, proofSchema]));
+  const queuedTasks = input.repositories.fetchQueuedTasks(input.maxTasks);
 
   await Promise.all(
     queuedTasks.map(async (task) => {
@@ -89,41 +86,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         if (!task.workspacePath) {
           input.repositories.updateTaskWorkspacePath(task.id, workspace.root);
         }
-        mkdirSync(join(workspace.root, "artifacts"), { recursive: true });
 
         const adapter = selectAdapter(input.adapters, task);
         const logPath = createLogPath(input.projectRoot, task);
-        const company = input.repositories.getCompany(task.companyId);
-        const department =
-          input.repositories.listDepartments(task.companyId).find((candidate) => candidate.id === task.departmentId) ??
-          null;
-        const keyResult = task.keyResultId
-          ? input.repositories.listKeyResults(task.companyId).find((candidate) => candidate.id === task.keyResultId) ??
-            null
-          : null;
-        const dependencies = input.repositories.listTaskDependencies(task.id).map((dependency) => ({
-          task: dependency,
-          proof: input.repositories.listProofsForTask(dependency.id),
-        }));
-        const taskPrompt = buildTaskPacket({
-          company: company ?? {
-            id: task.companyId,
-            name: task.companyId,
-            founderVision: "",
-            selectedCeoAgentId: task.assigneeAgentId,
-            playbookId: "",
-            status: "active",
-            createdAt: "",
-            updatedAt: "",
-          },
-          task,
-          department,
-          keyResult,
-          proofSchema: proofSchemasById.get(task.proofSchemaId) ?? null,
-          dependencies,
-        });
-        const promptPath = join(workspace.root, "task-prompt.md");
-        writeFileSync(promptPath, taskPrompt, "utf8");
         const agentRunId = createId("agent_run");
         input.repositories.createAgentRun({
           id: agentRunId,
@@ -137,8 +102,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
         const agentResult = await adapter.run({
           taskId: task.id,
-          prompt: taskPrompt,
-          promptPath,
+          prompt: task.description,
+          promptPath: "",
           workspacePath: workspace.root,
           metadata: {
             departmentId: task.departmentId,

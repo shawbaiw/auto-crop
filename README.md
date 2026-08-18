@@ -84,8 +84,8 @@ npx auto-crop start
 - `@auto-crop/server` includes the first complete execution playbook for AI tools / SaaS, with Product, Research, Growth, and Engineering departments.
 - `@auto-crop/server` can build CEO Office prompts and parse strict fenced JSON output against the selected playbook.
 - `@auto-crop/server` can create draft companies by selecting a playbook, running a CEO agent, storing the blueprint in SQLite, and creating local department/task workspaces.
-- `@auto-crop/server` has a SQLite-backed scheduler that claims dependency-ready queued tasks with locks, writes `task-prompt.md` task packets, dispatches worker agents, writes run logs, emits task events, and moves tasks to review, failed, or blocked.
-- `@auto-crop/server` can capture proof from `proof.json`, task `artifacts/`, files, diffs, command output, URLs, deployment URLs, and screenshots while enforcing task proof schemas.
+- `@auto-crop/server` has a SQLite-backed scheduler that claims queued tasks with locks, dispatches worker agents, writes run logs, emits task events, and moves tasks to review, failed, or blocked.
+- `@auto-crop/server` can capture proof from files, diffs, command output, URLs, deployment URLs, and screenshots while enforcing task proof schemas.
 - `@auto-crop/server` can route worker failures to department leads, create fix tasks, block tasks for founder input, escalate to CEO review, and write review markdown against key results.
 - `@auto-crop/server` includes a kill switch that sets global pause, stops scheduler task claiming, cancels running agent runs, releases task locks, and moves the company into review.
 - `@auto-crop/server` exposes REST endpoints for agent detection, company creation/activation, blueprint edits, approvals, task cancellation, proof/review reads, kill switch, and Server-Sent Events for task logs/status.
@@ -121,9 +121,6 @@ auto-crop stores runtime state inside the project it is operating:
     reviews/
     logs/
   workspaces/<taskId>/
-    task-prompt.md
-    proof.json
-    artifacts/
 ```
 
 Do not run the tool against a repository unless you are comfortable with it creating and modifying files under that workspace.

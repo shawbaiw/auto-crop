@@ -1,15 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Company, Department, KeyResult, Objective, Proof, Task } from "@auto-crop/core";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
-import type { AgentAdapter } from "../adapters/types";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { acquireTaskLock, releaseTaskLock } from "./locks";
-import { createProofCollector } from "./proof";
 import { runSchedulerOnce } from "./scheduler";
 
 const createdDirs: string[] = [];
@@ -152,142 +150,6 @@ describe("runSchedulerOnce", () => {
 
     expect(result.failed).toEqual(["task_1"]);
     expect(repositories.getTask("task_1")?.status).toBe("failed");
-
-    client.close();
-  });
-
-  it("waits for dependency proof before dispatching downstream tasks", async () => {
-    const { projectRoot, repositories, client } = createSchedulerFixture([
-      createTaskRecord("task_1", "queued", "low"),
-      createTaskRecord("task_2", "queued", "low"),
-    ]);
-    repositories.createTaskDependency({ taskId: "task_2", dependsOnTaskId: "task_1" });
-    const createId = createSequentialIdFactory();
-
-    const first = await runSchedulerOnce({
-      projectRoot,
-      repositories,
-      adapters: [
-        createMockAgentAdapter({
-          id: "mock-worker",
-          name: "Mock Worker",
-          capabilities: ["code"],
-          output: "proof: created artifact",
-        }),
-      ],
-      workerId: "worker_a",
-      maxTasks: 2,
-      now: () => new Date("2026-08-17T00:00:00.000Z"),
-      createId,
-      approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "command_output",
-          uri: "agent.log",
-          summary: "mock proof",
-          verifiedAt: null,
-        },
-      ],
-      emit: () => undefined,
-    });
-
-    expect(first.started).toEqual(["task_1"]);
-    expect(repositories.getTask("task_2")?.status).toBe("queued");
-
-    const second = await runSchedulerOnce({
-      projectRoot,
-      repositories,
-      adapters: [
-        createMockAgentAdapter({
-          id: "mock-worker",
-          name: "Mock Worker",
-          capabilities: ["code"],
-          output: "proof: created artifact",
-        }),
-      ],
-      workerId: "worker_a",
-      maxTasks: 2,
-      now: () => new Date("2026-08-17T00:00:01.000Z"),
-      createId,
-      approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "command_output",
-          uri: "agent.log",
-          summary: "mock proof",
-          verifiedAt: null,
-        },
-      ],
-      emit: () => undefined,
-    });
-
-    expect(second.started).toEqual(["task_2"]);
-
-    client.close();
-  });
-
-  it("writes a task packet and captures proof from artifacts", async () => {
-    const { projectRoot, repositories, client } = createSchedulerFixture([
-      createTaskRecord("task_1", "queued", "low"),
-    ]);
-    let capturedPromptPath = "";
-    const artifactAgent: AgentAdapter = {
-      id: "mock-worker",
-      name: "Artifact Worker",
-      capabilities: ["code"],
-      async detect() {
-        return true;
-      },
-      async run(request) {
-        capturedPromptPath = request.promptPath;
-        mkdirSync(join(request.workspacePath, "artifacts"), { recursive: true });
-        writeFileSync(join(request.workspacePath, "artifacts", "brief.md"), "# Brief\n", "utf8");
-        writeFileSync(
-          join(request.workspacePath, "proof.json"),
-          JSON.stringify({ files: ["artifacts/brief.md"] }),
-          "utf8",
-        );
-
-        return {
-          status: "complete",
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-        };
-      },
-    };
-
-    const result = await runSchedulerOnce({
-      projectRoot,
-      repositories,
-      adapters: [artifactAgent],
-      workerId: "worker_a",
-      maxTasks: 1,
-      proofSchemas: [{ id: "test-output", description: "task proof", acceptedTypes: ["file"] }],
-      now: () => new Date("2026-08-17T00:00:00.000Z"),
-      createId: createSequentialIdFactory(),
-      approvalRequired: () => false,
-      proofCollector: createProofCollector({
-        proofSchemas: [{ id: "test-output", description: "task proof", acceptedTypes: ["file"] }],
-        createId: createSequentialIdFactory(),
-      }),
-      emit: () => undefined,
-    });
-
-    const workspacePath = repositories.getTask("task_1")?.workspacePath;
-
-    expect(result.completed).toEqual(["task_1"]);
-    expect(workspacePath).toBeTruthy();
-    expect(capturedPromptPath).toBe(join(workspacePath ?? "", "task-prompt.md"));
-    expect(readFileSync(join(workspacePath ?? "", "task-prompt.md"), "utf8")).toContain("## Proof Contract");
-    expect(repositories.listProofsForTask("task_1")[0]).toMatchObject({
-      type: "file",
-      summary: "File proof: artifacts/brief.md",
-    });
 
     client.close();
   });

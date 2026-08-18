@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { Proof, ProofSchema, ProofType, Task } from "@auto-crop/core";
 
@@ -20,16 +20,6 @@ export type CaptureProofsInput = {
 export type CreateProofCollectorInput = {
   proofSchemas: ProofSchema[];
   createId?: (prefix: string) => string;
-};
-
-export type ProofManifest = {
-  status?: string;
-  summary?: string;
-  files?: string[];
-  artifactPaths?: string[];
-  screenshots?: string[];
-  urls?: string[];
-  deploymentUrls?: string[];
 };
 
 export function captureProofs(input: CaptureProofsInput): Proof[] {
@@ -153,14 +143,6 @@ export function createProofCollector(input: CreateProofCollectorInput) {
       throw new Error(`Task ${run.task.id} has no workspace path for proof capture.`);
     }
 
-    const manifest = readProofManifest(run.task.workspacePath);
-    const artifactFiles = listArtifactFiles(run.task.workspacePath);
-    const declaredFiles = unique([
-      ...artifactFiles,
-      ...(manifest.files ?? []),
-      ...(manifest.artifactPaths ?? []),
-    ]);
-
     return captureProofs({
       task: run.task,
       proofSchema,
@@ -168,10 +150,6 @@ export function createProofCollector(input: CreateProofCollectorInput) {
       logPath: run.logPath,
       stdout: run.stdout,
       stderr: run.stderr,
-      declaredFiles,
-      screenshots: manifest.screenshots,
-      urls: manifest.urls,
-      deploymentUrls: manifest.deploymentUrls,
       createId: input.createId,
     });
   };
@@ -191,70 +169,6 @@ function resolvePathInsideWorkspace(workspacePath: string, pathWithinWorkspace: 
   }
 
   throw new Error(`Proof path resolves outside workspace: ${pathWithinWorkspace}`);
-}
-
-function readProofManifest(workspacePath: string): ProofManifest {
-  const manifestPath = join(workspacePath, "proof.json");
-
-  if (!existsSync(manifestPath)) {
-    return {};
-  }
-
-  const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as ProofManifest;
-
-  return {
-    status: parsed.status,
-    summary: parsed.summary,
-    files: filterStringArray(parsed.files),
-    artifactPaths: filterStringArray(parsed.artifactPaths),
-    screenshots: filterStringArray(parsed.screenshots),
-    urls: filterStringArray(parsed.urls),
-    deploymentUrls: filterStringArray(parsed.deploymentUrls),
-  };
-}
-
-function listArtifactFiles(workspacePath: string): string[] {
-  const artifactsDir = join(workspacePath, "artifacts");
-
-  if (!existsSync(artifactsDir)) {
-    return [];
-  }
-
-  const files: string[] = [];
-  const pending = ["artifacts"];
-
-  while (pending.length > 0) {
-    const relativeDir = pending.pop();
-
-    if (!relativeDir) {
-      continue;
-    }
-
-    for (const entry of readdirSync(join(workspacePath, relativeDir))) {
-      const relativeEntry = join(relativeDir, entry);
-      const absoluteEntry = resolvePathInsideWorkspace(workspacePath, relativeEntry);
-      const stats = statSync(absoluteEntry);
-
-      if (stats.isDirectory()) {
-        pending.push(relativeEntry);
-        continue;
-      }
-
-      if (stats.isFile()) {
-        files.push(relativeEntry);
-      }
-    }
-  }
-
-  return files.sort();
-}
-
-function filterStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values)];
 }
 
 function defaultCreateId(prefix: string): string {

@@ -84,8 +84,6 @@ Custom agents are represented by command templates with capability tags. Command
 - `{workspace}`: the task workspace path.
 - `{promptPath}`: the prompt file path.
 
-Worker agents receive a generated `task-prompt.md` in the task workspace. Durable task outputs should go under `artifacts/`, and completed work should write `proof.json` that references the files, screenshots, URLs, or deployment URLs used as proof.
-
 The adapter interface exposes `id`, `name`, `capabilities`, `detect()`, and `run()`.
 
 ## Testing

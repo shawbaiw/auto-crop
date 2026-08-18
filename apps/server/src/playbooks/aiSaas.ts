@@ -25,7 +25,6 @@ const taskTemplates: TaskTemplate[] = [
     title: "Draft early acquisition assets",
     description:
       "Create landing page copy, launch positioning, and the first distribution channel list for early users.",
-    dependencies: ["Write the first product brief", "Create competitor and customer pain research"],
     requiredCapabilities: ["writing", "growth"],
     proofSchemaId: "product-brief",
     riskLevel: "low",
@@ -35,7 +34,6 @@ const taskTemplates: TaskTemplate[] = [
     title: "Create the first landing page prototype",
     description:
       "Build a runnable landing page or prototype that communicates the SaaS wedge and collects first traction proof.",
-    dependencies: ["Write the first product brief", "Create competitor and customer pain research"],
     requiredCapabilities: ["code", "frontend"],
     proofSchemaId: "landing-page-file",
     riskLevel: "medium",
@@ -45,7 +43,6 @@ const taskTemplates: TaskTemplate[] = [
     title: "Run local validation for the prototype",
     description:
       "Run local checks and capture command output, local URL, screenshot, and optional deployment URL when configured.",
-    dependencies: ["Create the first landing page prototype"],
     requiredCapabilities: ["code", "test"],
     proofSchemaId: "test-output",
     riskLevel: "medium",
@@ -172,7 +169,6 @@ export const aiSaasPlaybook = {
         departmentName: template.departmentName,
         title: template.title,
         description: template.description,
-        dependencies: template.dependencies,
         assigneeAgentId: template.departmentName === "Engineering" ? input.preferredEngineeringAgentId : input.preferredStrategyAgentId,
         requiredCapabilities: template.requiredCapabilities,
         proofSchemaId: template.proofSchemaId,

@@ -67,9 +67,6 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
     "A fenced JSON block. The runtime will parse only this block.",
     "Do not include departments or proof schemas outside the selected playbook.",
     `Set blueprint.company.name to the provided company name exactly: ${input.companyName}`,
-    "Each task may include dependencies as an array of earlier task titles from the same blueprint.",
-    "Only create a dependency when the downstream task needs the upstream task's accepted proof before it can produce useful work.",
-    "Worker tasks will receive a generated task-prompt.md and must write proof.json plus referenced files under artifacts/ when they finish.",
     "",
     "```json",
     JSON.stringify(
@@ -108,7 +105,6 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
               departmentName: "Product",
               title: "Task title",
               description: "Task description",
-              dependencies: [],
               assigneeAgentId: "agent-id",
               requiredCapabilities: ["writing"],
               proofSchemaId: input.playbook.proofSchemas[0]?.id ?? "proof-schema-id",

@@ -75,7 +75,6 @@ const validBlueprint = {
       departmentName: "Research",
       title: "Write competitor research brief",
       description: "Summarize competitor positioning and customer pain.",
-      dependencies: ["Create the first landing page prototype"],
       assigneeAgentId: "claude-code",
       requiredCapabilities: ["research", "writing"],
       proofSchemaId: "research-report-proof",
@@ -107,38 +106,6 @@ describe("companyBlueprintSchema", () => {
         {
           ...validBlueprint.tasks[0],
           proofSchemaId: "missing-proof-schema",
-        },
-      ],
-    });
-
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects tasks that reference missing dependencies", () => {
-    const result = companyBlueprintSchema.safeParse({
-      ...validBlueprint,
-      tasks: [
-        {
-          ...validBlueprint.tasks[0],
-          dependencies: ["Unknown upstream task"],
-        },
-      ],
-    });
-
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects task dependency cycles", () => {
-    const result = companyBlueprintSchema.safeParse({
-      ...validBlueprint,
-      tasks: [
-        {
-          ...validBlueprint.tasks[0],
-          dependencies: ["Write competitor research brief"],
-        },
-        {
-          ...validBlueprint.tasks[1],
-          dependencies: ["Create the first landing page prototype"],
         },
       ],
     });
