@@ -153,6 +153,53 @@ describe("runSchedulerOnce", () => {
 
     client.close();
   });
+
+  it("does not collect proof from failed agent output", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+    let proofCollectorCalls = 0;
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "# Partial output",
+          status: "failed",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => {
+        proofCollectorCalls += 1;
+        return [
+          {
+            id: "proof_1",
+            taskId: "task_1",
+            type: "command_output",
+            uri: "agent.log",
+            summary: "partial output",
+            verifiedAt: null,
+          },
+        ];
+      },
+      emit: () => undefined,
+    });
+
+    expect(result.failed).toEqual(["task_1"]);
+    expect(proofCollectorCalls).toBe(0);
+    expect(repositories.listProofsForTask("task_1")).toEqual([]);
+    expect(repositories.getTask("task_1")?.status).toBe("failed");
+
+    client.close();
+  });
 });
 
 function createSchedulerFixture(tasks: Task[]) {

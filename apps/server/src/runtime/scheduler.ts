@@ -126,12 +126,15 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         writeFileSync(logPath, logContent, "utf8");
         input.emit({ type: "task_log", taskId: task.id, message: agentResult.stdout });
 
-        const proof = input.proofCollector({
-          task: { ...task, workspacePath: workspace.root },
-          stdout: agentResult.stdout,
-          stderr: agentResult.stderr,
-          logPath,
-        });
+        const proof =
+          agentResult.status === "complete"
+            ? input.proofCollector({
+                task: { ...task, workspacePath: workspace.root },
+                stdout: agentResult.stdout,
+                stderr: agentResult.stderr,
+                logPath,
+              })
+            : [];
 
         for (const item of proof) {
           input.repositories.appendProof(item);

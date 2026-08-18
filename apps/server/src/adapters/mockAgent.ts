@@ -6,6 +6,7 @@ export type MockAgentOptions = {
   capabilities: string[];
   detected?: boolean;
   output?: string;
+  status?: AgentRunResult["status"];
 };
 
 export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter {
@@ -18,8 +19,8 @@ export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter 
     },
     async run(request: AgentRunRequest): Promise<AgentRunResult> {
       return {
-        status: "complete",
-        exitCode: 0,
+        status: options.status ?? "complete",
+        exitCode: options.status === "failed" ? 1 : 0,
         stdout:
           options.output ??
           `Mock agent ${options.id} completed task ${request.taskId} in ${request.workspacePath}`,

@@ -143,6 +143,14 @@ export function createProofCollector(input: CreateProofCollectorInput) {
       throw new Error(`Task ${run.task.id} has no workspace path for proof capture.`);
     }
 
+    const declaredFiles = collectDeclaredFilesForSchema(proofSchema, run.task.workspacePath);
+    maybeWriteStdoutFileProof({
+      proofSchema,
+      stdout: run.stdout,
+      workspacePath: run.task.workspacePath,
+      declaredFiles,
+    });
+
     return captureProofs({
       task: run.task,
       proofSchema,
@@ -150,9 +158,55 @@ export function createProofCollector(input: CreateProofCollectorInput) {
       logPath: run.logPath,
       stdout: run.stdout,
       stderr: run.stderr,
+      declaredFiles,
       createId: input.createId,
     });
   };
+}
+
+function collectDeclaredFilesForSchema(proofSchema: ProofSchema, workspacePath: string): string[] {
+  if (!accepts(proofSchema, "file")) {
+    return [];
+  }
+
+  if (proofSchema.id === "landing-page-file") {
+    return ["index.html", "src/main.tsx", "src/App.tsx", "app/page.tsx"].filter((path) =>
+      existsSync(resolvePathInsideWorkspace(workspacePath, path)),
+    );
+  }
+
+  return [stdoutProofFileName(proofSchema.id)];
+}
+
+function maybeWriteStdoutFileProof(input: {
+  proofSchema: ProofSchema;
+  stdout: string;
+  workspacePath: string;
+  declaredFiles: string[];
+}): void {
+  const stdout = input.stdout.trim();
+
+  if (!stdout || !accepts(input.proofSchema, "file") || input.proofSchema.id === "landing-page-file") {
+    return;
+  }
+
+  const proofFile = input.declaredFiles[0] ?? stdoutProofFileName(input.proofSchema.id);
+  const proofPath = resolvePathInsideWorkspace(input.workspacePath, proofFile);
+
+  if (!existsSync(proofPath)) {
+    writeFileSync(proofPath, `${stdout}\n`, "utf8");
+  }
+}
+
+function stdoutProofFileName(proofSchemaId: string): string {
+  switch (proofSchemaId) {
+    case "product-brief":
+      return "product-brief.md";
+    case "research-report":
+      return "research-report.md";
+    default:
+      return "task-output.md";
+  }
 }
 
 function accepts(proofSchema: ProofSchema, proofType: ProofType): boolean {

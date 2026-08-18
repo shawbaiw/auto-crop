@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -201,6 +201,77 @@ describe("createProofCollector", () => {
     expect(proof).toHaveLength(1);
     expect(proof[0]?.type).toBe("command_output");
   });
+
+  it("writes successful stdout to stable markdown file proof for text schemas", () => {
+    const { task, workspacePath } = createFixture("product-brief", ["file"]);
+    const logPath = join(workspacePath, "agent.log");
+    const collect = createProofCollector({
+      proofSchemas: [
+        {
+          id: "product-brief",
+          description: "product brief proof",
+          acceptedTypes: ["file"],
+        },
+      ],
+      createId: createSequentialIdFactory(),
+    });
+
+    const proof = collect({
+      task: { ...task, workspacePath },
+      stdout: "# Product Brief\n\nShip the narrow wedge.",
+      stderr: "",
+      logPath,
+    });
+    const proofPath = join(workspacePath, "product-brief.md");
+
+    expect(readProofFile(proofPath)).toContain("Ship the narrow wedge.");
+    expect(proof).toEqual([
+      {
+        id: "proof_1",
+        taskId: "task_1",
+        type: "file",
+        uri: proofPath,
+        summary: "File proof: product-brief.md",
+        verifiedAt: null,
+      },
+    ]);
+  });
+
+  it("captures a playable prototype entry file without turning stdout into file proof", () => {
+    const { task, workspacePath } = createFixture("landing-page-file", ["file"]);
+    const entryPath = join(workspacePath, "app", "page.tsx");
+    const collect = createProofCollector({
+      proofSchemas: [
+        {
+          id: "landing-page-file",
+          description: "prototype file proof",
+          acceptedTypes: ["file"],
+        },
+      ],
+      createId: createSequentialIdFactory(),
+    });
+    mkdirSync(join(workspacePath, "app"), { recursive: true });
+    writeFileSync(entryPath, "export default function Page() { return null; }\n", "utf8");
+
+    const proof = collect({
+      task: { ...task, workspacePath },
+      stdout: "Implemented a prototype.",
+      stderr: "",
+      logPath: join(workspacePath, "agent.log"),
+    });
+
+    expect(existsSync(join(workspacePath, "task-output.md"))).toBe(false);
+    expect(proof).toEqual([
+      {
+        id: "proof_1",
+        taskId: "task_1",
+        type: "file",
+        uri: entryPath,
+        summary: "File proof: app/page.tsx",
+        verifiedAt: null,
+      },
+    ]);
+  });
 });
 
 function createFixture(proofSchemaId: string, acceptedTypes: ProofSchema["acceptedTypes"]) {
@@ -239,4 +310,8 @@ function createSequentialIdFactory(): (prefix: string) => string {
     counts.set(prefix, next);
     return `${prefix}_${next}`;
   };
+}
+
+function readProofFile(path: string): string {
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
