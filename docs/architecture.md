@@ -121,6 +121,8 @@ The OKR system stores objectives, key results, task priorities, and review outpu
 
 The scheduler claims queued tasks from SQLite with locks, creates isolated task workspaces, dispatches work to a matching agent, writes logs, emits SSE events, captures proof, and moves tasks to review, failed, or blocked states.
 
+Queued tasks can declare task dependencies. The scheduler only treats a queued task as runnable after every dependency has reached review or complete with captured proof. Before dispatch, it writes a `task-prompt.md` task packet into the task workspace with the company context, task brief, key result, dependency proof summaries, artifact guidance, and proof contract.
+
 ## Proof And Review
 
 Proof can include:
@@ -132,7 +134,7 @@ Proof can include:
 - screenshots
 - optional deployment URLs
 
-Proof is validated against the task proof schema before a task can be treated as review-ready. Reviews compare proof against key results and write review markdown into the company workspace.
+Worker agents should write durable outputs under the task workspace's `artifacts/` directory and summarize them in `proof.json`. The proof collector reads `proof.json`, scans `artifacts/`, and validates proof against the task proof schema before a task can be treated as review-ready. Reviews compare proof against key results and write review markdown into the company workspace.
 
 ## Permission Modes
 

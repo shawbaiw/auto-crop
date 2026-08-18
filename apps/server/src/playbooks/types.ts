@@ -21,6 +21,7 @@ export type TaskTemplate = {
   departmentName: string;
   title: string;
   description: string;
+  dependencies?: string[];
   requiredCapabilities: string[];
   proofSchemaId: string;
   riskLevel: "low" | "medium" | "high";

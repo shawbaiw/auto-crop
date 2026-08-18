@@ -74,6 +74,11 @@ export type Task = {
   riskLevel: RiskLevel;
 };
 
+export type TaskDependency = {
+  taskId: string;
+  dependsOnTaskId: string;
+};
+
 export type Proof = {
   id: string;
   taskId: string;
@@ -113,6 +118,7 @@ export type BlueprintTask = {
   departmentName: string;
   title: string;
   description: string;
+  dependencies?: string[];
   assigneeAgentId: string;
   requiredCapabilities: string[];
   proofSchemaId: string;

@@ -7,6 +7,7 @@ import type {
   Objective,
   Proof,
   Task,
+  TaskDependency,
   TaskStatus,
 } from "@auto-crop/core";
 import type { DatabaseClient } from "./client";
@@ -157,6 +158,16 @@ export function createRepositories(database: DatabaseClient) {
         );
     },
 
+    createTaskDependency(dependency: TaskDependency): void {
+      database
+        .prepare(
+          `INSERT INTO task_dependencies (
+            task_id, depends_on_task_id
+          ) VALUES (?, ?)`,
+        )
+        .run(dependency.taskId, dependency.dependsOnTaskId);
+    },
+
     getTask(id: string): Task | null {
       const row = database.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
       return row ? mapTask(row as TaskRow) : null;
@@ -177,10 +188,51 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapTask(row as TaskRow));
     },
 
+    fetchRunnableQueuedTasks(limit: number): Task[] {
+      const rows = database
+        .prepare(
+          `SELECT queued.*
+           FROM tasks queued
+           WHERE queued.status = 'queued'
+             AND NOT EXISTS (
+               SELECT 1
+               FROM task_dependencies dependency
+               LEFT JOIN tasks upstream ON upstream.id = dependency.depends_on_task_id
+               WHERE dependency.task_id = queued.id
+                 AND (
+                   upstream.id IS NULL
+                   OR upstream.status NOT IN ('review', 'complete')
+                   OR NOT EXISTS (
+                     SELECT 1
+                     FROM proofs
+                     WHERE proofs.task_id = upstream.id
+                   )
+                 )
+             )
+           ORDER BY queued.id ASC
+           LIMIT ?`,
+        )
+        .all(limit);
+      return rows.map((row) => mapTask(row as TaskRow));
+    },
+
     listTasksForCompany(companyId: string): Task[] {
       const rows = database
         .prepare("SELECT * FROM tasks WHERE company_id = ? ORDER BY id ASC")
         .all(companyId);
+      return rows.map((row) => mapTask(row as TaskRow));
+    },
+
+    listTaskDependencies(taskId: string): Task[] {
+      const rows = database
+        .prepare(
+          `SELECT upstream.*
+           FROM task_dependencies dependency
+           INNER JOIN tasks upstream ON upstream.id = dependency.depends_on_task_id
+           WHERE dependency.task_id = ?
+           ORDER BY upstream.id ASC`,
+        )
+        .all(taskId);
       return rows.map((row) => mapTask(row as TaskRow));
     },
 

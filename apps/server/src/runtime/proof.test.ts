@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -200,6 +200,42 @@ describe("createProofCollector", () => {
 
     expect(proof).toHaveLength(1);
     expect(proof[0]?.type).toBe("command_output");
+  });
+
+  it("captures proof from proof.json and task artifacts", () => {
+    const { task, workspacePath } = createFixture("file-proof", ["file"]);
+    const artifactsDir = join(workspacePath, "artifacts");
+    writeFileSync(join(workspacePath, "proof.json"), JSON.stringify({ files: ["artifacts/brief.md"] }), "utf8");
+    mkdirSync(artifactsDir, { recursive: true });
+    writeFileSync(join(artifactsDir, "brief.md"), "# Brief\n", "utf8");
+    const collect = createProofCollector({
+      proofSchemas: [
+        {
+          id: "file-proof",
+          description: "file proof",
+          acceptedTypes: ["file"],
+        },
+      ],
+      createId: createSequentialIdFactory(),
+    });
+
+    const proof = collect({
+      task,
+      stdout: "",
+      stderr: "",
+      logPath: join(workspacePath, "agent.log"),
+    });
+
+    expect(proof).toEqual([
+      {
+        id: "proof_1",
+        taskId: task.id,
+        type: "file",
+        uri: join(artifactsDir, "brief.md"),
+        summary: "File proof: artifacts/brief.md",
+        verifiedAt: null,
+      },
+    ]);
   });
 });
 

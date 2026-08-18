@@ -48,6 +48,7 @@ describe("workspace layout", () => {
 
     expect(workspace.root).toBe(join(projectRoot, ".auto-crop", "workspaces", "task_1"));
     expect(existsSync(workspace.root)).toBe(true);
+    expect(existsSync(workspace.artifactsDir)).toBe(true);
   });
 
   it("rejects ids that would escape the project root", () => {

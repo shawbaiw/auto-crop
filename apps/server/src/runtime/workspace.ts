@@ -17,6 +17,7 @@ export type DepartmentWorkspace = {
 
 export type TaskWorkspace = {
   root: string;
+  artifactsDir: string;
 };
 
 export function createCompanyWorkspace(projectRoot: string, companyId: string): CompanyWorkspace {
@@ -67,9 +68,11 @@ export function createTaskWorkspace(projectRoot: string, taskId: string): TaskWo
   assertWorkspaceId(taskId);
 
   const root = resolveWorkspacePath(projectRoot, `.auto-crop/workspaces/${taskId}`);
+  const artifactsDir = resolveWorkspacePath(projectRoot, `${root}/artifacts`);
   mkdirSync(root, { recursive: true });
+  mkdirSync(artifactsDir, { recursive: true });
 
-  return { root };
+  return { root, artifactsDir };
 }
 
 export function resolveWorkspacePath(projectRoot: string, pathWithinProject: string): string {

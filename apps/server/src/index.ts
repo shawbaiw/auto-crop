@@ -16,6 +16,7 @@ export * from "./runtime/ceoParser";
 export * from "./runtime/createCompany";
 export * from "./runtime/locks";
 export * from "./runtime/scheduler";
+export * from "./runtime/taskPacket";
 export * from "./runtime/proof";
 export * from "./runtime/failure";
 export * from "./runtime/review";

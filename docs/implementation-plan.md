@@ -325,7 +325,9 @@ type Approval = {
 - Test: `apps/server/src/runtime/scheduler.test.ts`
 
 - [x] Claim queued tasks from SQLite with a lock.
+- [x] Only claim queued tasks whose dependencies have captured proof.
 - [x] Create a task-level workspace or git worktree for writable tasks.
+- [x] Write a scheduler-generated `task-prompt.md` task packet before dispatch.
 - [x] Dispatch to the selected Worker Agent.
 - [x] Stream output to file logs and SSE.
 - [x] Move tasks to review when proof is present, failed when no proof is present, and blocked when approval is required.
@@ -339,6 +341,7 @@ type Approval = {
 - Test: `apps/server/src/runtime/proof.test.ts`
 
 - [x] Capture file proof from declared paths.
+- [x] Capture file proof from `proof.json` and task `artifacts/`.
 - [x] Capture diff proof from git worktree changes.
 - [x] Capture command output proof from log excerpts.
 - [x] Capture URL proof for local dev server and optional deployment.

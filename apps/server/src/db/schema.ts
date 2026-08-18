@@ -58,6 +58,14 @@ export function migrate(database: DatabaseClient): void {
     CREATE INDEX IF NOT EXISTS tasks_status_idx ON tasks(status);
     CREATE INDEX IF NOT EXISTS tasks_company_status_idx ON tasks(company_id, status);
 
+    CREATE TABLE IF NOT EXISTS task_dependencies (
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      PRIMARY KEY (task_id, depends_on_task_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id);
+
     CREATE TABLE IF NOT EXISTS task_locks (
       task_id TEXT PRIMARY KEY,
       owner_id TEXT NOT NULL,

@@ -68,6 +68,37 @@ describe("repositories", () => {
 
     reopenedClient.close();
   });
+
+  it("only returns dependency-ready queued tasks as runnable", () => {
+    const { repos, close } = openTestRepositories();
+    const records = createRecords();
+    const downstreamTask: Task = {
+      ...records.task,
+      id: "task_2",
+      title: "Run local validation for the prototype",
+      proofSchemaId: "test-output",
+    };
+
+    repos.createCompany(records.company);
+    repos.createDepartment(records.department);
+    repos.createObjective(records.objective);
+    repos.createKeyResult(records.keyResult);
+    repos.createTask(records.task);
+    repos.createTask(downstreamTask);
+    repos.createTaskDependency({ taskId: downstreamTask.id, dependsOnTaskId: records.task.id });
+
+    expect(repos.fetchQueuedTasks(10).map((task) => task.id)).toEqual(["task_1", "task_2"]);
+    expect(repos.fetchRunnableQueuedTasks(10).map((task) => task.id)).toEqual(["task_1"]);
+
+    repos.updateTaskStatus(records.task.id, "review");
+    expect(repos.fetchRunnableQueuedTasks(10).map((task) => task.id)).toEqual([]);
+
+    repos.appendProof(records.proof);
+    expect(repos.fetchRunnableQueuedTasks(10).map((task) => task.id)).toEqual(["task_2"]);
+    expect(repos.listTaskDependencies(downstreamTask.id).map((task) => task.id)).toEqual(["task_1"]);
+
+    close();
+  });
 });
 
 function openTestRepositories() {

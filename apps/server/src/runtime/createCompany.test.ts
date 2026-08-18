@@ -77,6 +77,11 @@ describe("createCompany", () => {
     expect(repositories.listObjectives(result.company.id)).toHaveLength(1);
     expect(repositories.listKeyResults(result.company.id)).toHaveLength(2);
     expect(repositories.fetchQueuedTasks(10).length).toBeGreaterThan(0);
+    const validationTask = result.tasks.find((task) => task.title === "Run local validation for the prototype");
+    expect(validationTask).toBeDefined();
+    expect(repositories.listTaskDependencies(validationTask?.id ?? "").map((task) => task.title)).toEqual([
+      "Create the first landing page prototype",
+    ]);
 
     const engineering = repositories
       .listDepartments(result.company.id)

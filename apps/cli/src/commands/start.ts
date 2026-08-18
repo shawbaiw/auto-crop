@@ -112,6 +112,7 @@ function startSchedulerLoop(input: {
         adapters: input.agents,
         workerId,
         maxTasks: 1,
+        proofSchemas: aiSaasPlaybook.proofSchemas,
         approvalRequired: () => getDefaultPolicy().decisions.run_safe_command === "ask",
         proofCollector,
         emit: (event) => {
