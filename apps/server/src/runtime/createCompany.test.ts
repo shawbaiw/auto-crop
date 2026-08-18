@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
+import type { AgentAdapter } from "../adapters/types";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
@@ -82,6 +83,44 @@ describe("createCompany", () => {
       .find((department) => department.name === "Engineering");
     expect(engineering).toBeDefined();
     expect(existsSync(engineering?.memoryPath ?? "")).toBe(true);
+
+    client.close();
+  });
+
+  it("surfaces stdout when a failing CEO agent has no stderr", async () => {
+    const projectRoot = createTempProjectRoot();
+    const client = createDatabaseClient(":memory:");
+    migrate(client);
+    const repositories = createRepositories(client);
+    const failingAgent: AgentAdapter = {
+      id: "claude-code",
+      name: "Claude Code",
+      capabilities: ["writing"],
+      async detect() {
+        return true;
+      },
+      async run() {
+        return {
+          status: "failed",
+          exitCode: 1,
+          stdout: "Not logged in · Please run /login",
+          stderr: "",
+        };
+      },
+    };
+
+    await expect(
+      createCompany({
+        projectRoot,
+        companyName: "Pricing Page Studio",
+        founderVision: "Build an AI SaaS that creates pricing pages.",
+        selectedCeoAgent: failingAgent,
+        availableAgents: [failingAgent],
+        permissionMode: "balanced",
+        assets: [],
+        repositories,
+      }),
+    ).rejects.toThrow(/not logged in/i);
 
     client.close();
   });

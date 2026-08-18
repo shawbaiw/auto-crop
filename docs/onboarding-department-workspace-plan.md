@@ -8,7 +8,8 @@ Change the user flow so startup opens a sequential onboarding wizard, creates th
 
 - 2026-08-18: Completed the first vertical slice covering backend `companyName` persistence, CEO prompt name-locking, and the frontend three-step onboarding wizard. Verified with `pnpm --filter @auto-crop/server test`, `pnpm --filter @auto-crop/dashboard test`, and `pnpm --filter @auto-crop/dashboard typecheck`.
 - 2026-08-18: Completed the creation loading page and default department workspace. The post-create flow now switches to `creating`, then to `department-workspace`; the Work menu can still open the operating dashboard. Verified with `pnpm test` and `pnpm typecheck`.
-- Next handoff point: tighten remaining menu tests for Back to Setup/blueprint preservation, run final full verification, and continue any visual polish on mobile if screenshots reveal layout issues.
+- 2026-08-18: Completed remaining menu regression coverage and desktop/mobile visual checks. Final `pnpm test` and `pnpm typecheck` pass. Manual CLI smoke used port `8788` because `8787` was already in use; agent detection worked, Step 1/2/3 and loading UI worked, and real creation failure returned to Step 3 with a visible error. Full real-agent success is blocked by local agent state: Claude Code returns `Not logged in · Please run /login`, and Codex fails to initialize because `/Users/maka/.codex/state_5.sqlite` is read-only in this environment.
+- Next handoff point: run a full successful real-agent smoke after logging into Claude Code or fixing Codex local state permissions; otherwise continue broader browser E2E coverage and future polish against product feedback.
 
 ## Hard Constraints
 
@@ -324,7 +325,7 @@ Keep the existing menu bar and make menu actions compatible with the new app vie
 - [x] Update menu tests to account for the new views.
 - [x] Assert disabled commands remain visible.
 - [x] Assert skin switching still works from the View menu.
-- [ ] Assert Back to Setup returns to the wizard without losing the generated blueprint.
+- [x] Assert Back to Setup returns to the wizard without losing the generated blueprint.
 
 ## Task 8: CSS Layout Additions
 
@@ -354,7 +355,7 @@ Add only the layout CSS required for the new wizard, loading page, and departmen
 
 - [x] Run `pnpm --filter @auto-crop/dashboard test`.
 - [x] Run `pnpm --filter @auto-crop/dashboard typecheck`.
-- [ ] Manually inspect desktop and mobile widths.
+- [x] Manually inspect desktop and mobile widths.
 
 ## Task 9: Documentation Updates
 
@@ -384,6 +385,8 @@ Update open-source user documentation to match the new flow.
 - [x] Run `rg -n "Choose CEO|Founder Setup|Company Operating Dashboard|dashboard foundation" README.md docs/quickstart.md docs/architecture.md` and update stale wording.
 
 ## Task 10: Final Verification
+
+Status: automated verification is complete. The full real-agent success path is environment-blocked until a local CEO agent can run successfully.
 
 ### Required Commands
 

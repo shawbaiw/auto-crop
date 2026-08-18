@@ -73,7 +73,8 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   });
 
   if (agentResult.status !== "complete") {
-    throw new Error(`CEO agent failed to create company blueprint: ${agentResult.stderr}`);
+    const failureDetail = agentResult.stderr.trim() || agentResult.stdout.trim() || "No agent output.";
+    throw new Error(`CEO agent failed to create company blueprint: ${failureDetail}`);
   }
 
   const ceoResponse = parseCeoOutput(agentResult.stdout, playbook);

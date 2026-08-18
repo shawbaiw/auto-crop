@@ -170,7 +170,7 @@ On this development machine, Playwright browser launch is currently blocked by m
 - `auto-crop start` currently starts the local API server and prints its URL. The packaged dashboard serving/opening flow is still future work.
 - The dashboard can create companies, land in the department workspace, open the operating dashboard from the menu, and load proof/review data, but advanced blueprint editing and live approval decisions are still planned.
 - E2E requires a working Playwright Chromium browser installation.
-- On this machine, Claude Code real-agent smoke passes. Codex CLI is installed, but `codex exec` currently fails during local app-server initialization with `Operation not permitted`.
+- On this machine, Claude Code is detected but currently returns `Not logged in · Please run /login` during real-agent creation. Codex CLI is installed, but `codex exec` currently fails during local app-server initialization with `Operation not permitted` and a read-only local state DB warning.
 
 ## Documentation Rule
 

@@ -160,6 +160,29 @@ describe("Dashboard App", () => {
     expect(screen.queryByRole("textbox", { name: /chat/i })).not.toBeInTheDocument();
   });
 
+  it("returns to setup from workspace views without losing the generated blueprint", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+    await user.click(screen.getByRole("menuitem", { name: "Company" }));
+    await user.click(screen.getByRole("menuitem", { name: "Back to Setup" }));
+
+    expect(await screen.findByRole("heading", { name: "Step 3 / Founder Vision" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Blueprint Review" })).toBeInTheDocument();
+    expect(screen.getByText("Create landing page")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /activate company/i }));
+    expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Company" }));
+    await user.click(screen.getByRole("menuitem", { name: "Back to Setup" }));
+
+    expect(await screen.findByRole("heading", { name: "Step 3 / Founder Vision" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Blueprint Review" })).toBeInTheDocument();
+  });
+
   it("updates task event stream messages from SSE", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
