@@ -12,26 +12,6 @@ Change the user flow so startup opens a sequential onboarding wizard, creates th
 - 2026-08-18: Used the public `grill-with-docs` workflow without installing it. The execution protocol is now documented and implemented as a dependency DAG, scheduler-generated `task-prompt.md`, task `artifacts/`, and `proof.json` proof capture. Verified with `pnpm test` and `pnpm typecheck`.
 - Next handoff point: run a full successful real-agent smoke after logging into Claude Code or fixing Codex local state permissions, and specifically verify that downstream tasks wait for dependency proof, agents receive `task-prompt.md`, and `proof.json` plus `artifacts/` move tasks to review.
 
-## Grilling Decisions
-
-These decisions were confirmed on 2026-08-18 after reviewing the remote test screenshots and using the public `grill-with-docs` workflow without installing the skill.
-
-- Previously pushed code stays in place as a candidate implementation to audit and adjust, not revert immediately.
-- Task execution order uses a dependency DAG: tasks run only when their dependencies are satisfied; independent ready tasks may run in parallel in later scheduler versions.
-- Context handoff uses scheduler-generated `task-prompt.md` plus file references back to the company workspace. Dependency artifacts are not copied into each new task workspace by default.
-- Agent proof handoff uses `proof.json` plus an `artifacts/` directory. `proof.json` references durable files, screenshots, URLs, or deployments.
-- Frontend task status refresh is out of scope for this protocol pass. This pass closes the backend execution contract first.
-
-## Recommended Next Tasks
-
-- [ ] Run a real-agent protocol smoke on a machine where Claude Code or Codex is authenticated and writable.
-- [ ] Verify that a downstream task remains queued until every dependency has captured proof.
-- [ ] Verify that the worker agent receives and follows `task-prompt.md`.
-- [ ] Verify that `proof.json` plus files under `artifacts/` moves a task to review without relying on stdout prose.
-- [ ] Add a dashboard diagnostic view that distinguishes queued, dependency-waiting, running, review, failed, and blocked states.
-- [ ] Add SSE coverage for dependency-waiting and proof-captured events if the manual smoke shows unclear UI feedback.
-- [ ] Consider a reviewer action for explicitly skipping or accepting missing dependency proof after a human decision.
-
 ## Hard Constraints
 
 - Reuse existing UI primitives as much as possible: `AppShell`, `PageHeader`, `Workspace`, `RetroPanel`, `RetroButton`, `RetroField`, `RetroTextarea`, `RetroSelect`, `RetroListRow`, `RetroBadge`, `RetroStatus`, `VideotexLog`, and `VideotexKeyValue`.
