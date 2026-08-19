@@ -391,6 +391,8 @@ function createTaskRecord(
   riskLevel: Task["riskLevel"],
   proofSchemaId = "test-output",
 ): Task {
+  const numericSuffix = Number(id.split("_").at(-1));
+
   return {
     id,
     companyId: "company_1",
@@ -404,6 +406,7 @@ function createTaskRecord(
     workspacePath: null,
     status,
     riskLevel,
+    position: Number.isFinite(numericSuffix) ? numericSuffix - 1 : 0,
   };
 }
 

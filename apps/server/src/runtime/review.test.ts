@@ -172,6 +172,7 @@ function createReviewFixture() {
     workspacePath: join(projectRoot, ".auto-crop", "workspaces", "task_1"),
     status: "failed",
     riskLevel: "low",
+    position: 0,
   };
 
   repositories.createCompany(company);

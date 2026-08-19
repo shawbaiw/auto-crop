@@ -138,8 +138,9 @@ export function createRepositories(database: DatabaseClient) {
         .prepare(
           `INSERT INTO tasks (
             id, company_id, department_id, key_result_id, title, description,
-            assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, status, risk_level
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, status, risk_level,
+            position
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           task.id,
@@ -154,6 +155,7 @@ export function createRepositories(database: DatabaseClient) {
           task.workspacePath,
           task.status,
           task.riskLevel,
+          task.position,
         );
     },
 
@@ -172,16 +174,30 @@ export function createRepositories(database: DatabaseClient) {
 
     fetchQueuedTasks(limit: number): Task[] {
       const rows = database
-        .prepare("SELECT * FROM tasks WHERE status = 'queued' ORDER BY id ASC LIMIT ?")
+        .prepare(
+          `SELECT tasks.*
+           FROM tasks
+           INNER JOIN companies ON companies.id = tasks.company_id
+           WHERE tasks.status = 'queued'
+           ORDER BY companies.created_at ASC, tasks.position ASC, tasks.id ASC
+           LIMIT ?`,
+        )
         .all(limit);
       return rows.map((row) => mapTask(row as TaskRow));
     },
 
     listTasksForCompany(companyId: string): Task[] {
       const rows = database
-        .prepare("SELECT * FROM tasks WHERE company_id = ? ORDER BY id ASC")
+        .prepare("SELECT * FROM tasks WHERE company_id = ? ORDER BY position ASC, id ASC")
         .all(companyId);
       return rows.map((row) => mapTask(row as TaskRow));
+    },
+
+    getNextTaskPosition(companyId: string): number {
+      const row = database
+        .prepare("SELECT COALESCE(MAX(position), -1) + 1 AS next_position FROM tasks WHERE company_id = ?")
+        .get(companyId) as { next_position: number };
+      return row.next_position;
     },
 
     acquireTaskLock(taskId: string, ownerId: string, acquiredAt: string): boolean {
@@ -382,6 +398,7 @@ type TaskRow = {
   workspace_path: string | null;
   status: Task["status"];
   risk_level: Task["riskLevel"];
+  position: number;
 };
 
 type ProofRow = {
@@ -477,6 +494,7 @@ function mapTask(row: TaskRow): Task {
     workspacePath: row.workspace_path,
     status: row.status,
     riskLevel: row.risk_level,
+    position: row.position,
   };
 }
 

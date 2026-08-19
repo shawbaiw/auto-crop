@@ -52,7 +52,8 @@ export function migrate(database: DatabaseClient): void {
       proof_schema_id TEXT NOT NULL,
       workspace_path TEXT,
       status TEXT NOT NULL,
-      risk_level TEXT NOT NULL
+      risk_level TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS tasks_status_idx ON tasks(status);
@@ -106,4 +107,34 @@ export function migrate(database: DatabaseClient): void {
       created_at TEXT NOT NULL
     );
   `);
+  migrateTaskPosition(database);
+  database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
+}
+
+function migrateTaskPosition(database: DatabaseClient): void {
+  const columns = database.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  const hasPosition = columns.some((column) => column.name === "position");
+
+  if (hasPosition) {
+    return;
+  }
+
+  database.exec("ALTER TABLE tasks ADD COLUMN position INTEGER NOT NULL DEFAULT 0");
+  backfillTaskPositions(database);
+}
+
+function backfillTaskPositions(database: DatabaseClient): void {
+  const companies = database
+    .prepare("SELECT DISTINCT company_id FROM tasks ORDER BY company_id ASC")
+    .all() as Array<{ company_id: string }>;
+  const selectTasks = database.prepare("SELECT id FROM tasks WHERE company_id = ? ORDER BY rowid ASC");
+  const updatePosition = database.prepare("UPDATE tasks SET position = ? WHERE id = ?");
+
+  for (const company of companies) {
+    const tasks = selectTasks.all(company.company_id) as Array<{ id: string }>;
+
+    tasks.forEach((task, index) => {
+      updatePosition.run(index, task.id);
+    });
+  }
 }

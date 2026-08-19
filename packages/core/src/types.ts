@@ -64,6 +64,7 @@ export type Task = {
   companyId: string;
   departmentId: string;
   keyResultId: string | null;
+  position: number;
   title: string;
   description: string;
   assigneeAgentId: string;

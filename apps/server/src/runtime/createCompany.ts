@@ -141,7 +141,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   }
 
   const firstKeyResultId = keyResults[0]?.id ?? null;
-  const tasks = ceoResponse.blueprint.tasks.map((taskBlueprint) => {
+  const tasks = ceoResponse.blueprint.tasks.map((taskBlueprint, position) => {
     const departmentId = departmentIdsByName.get(taskBlueprint.departmentName);
 
     if (!departmentId) {
@@ -163,6 +163,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       workspacePath: taskWorkspace.root,
       status: "queued",
       riskLevel: taskBlueprint.riskLevel,
+      position,
     };
     input.repositories.createTask(task);
     return task;

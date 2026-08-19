@@ -45,6 +45,7 @@ export function routeWorkerFailure(input: RouteWorkerFailureInput): RouteWorkerF
       logExcerpt,
     ].join("\n"),
     status: "queued",
+    position: input.repositories.getNextTaskPosition(input.failedTask.companyId),
   };
 
   input.repositories.createTask(fixTask);

@@ -77,6 +77,10 @@ describe("createCompany", () => {
     expect(repositories.listObjectives(result.company.id)).toHaveLength(1);
     expect(repositories.listKeyResults(result.company.id)).toHaveLength(2);
     expect(repositories.fetchQueuedTasks(10).length).toBeGreaterThan(0);
+    expect(result.tasks.map((task) => task.position)).toEqual(result.tasks.map((_, index) => index));
+    expect(repositories.listTasksForCompany(result.company.id).map((task) => task.title)).toEqual(
+      result.tasks.map((task) => task.title),
+    );
 
     const engineering = repositories
       .listDepartments(result.company.id)

@@ -120,6 +120,7 @@ function createKillSwitchFixture() {
     workspacePath: ".auto-crop/workspaces/task_1",
     status: "queued",
     riskLevel: "low",
+    position: 0,
   };
 
   repositories.createCompany(company);

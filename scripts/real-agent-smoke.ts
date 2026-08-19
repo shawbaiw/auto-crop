@@ -54,6 +54,7 @@ try {
     workspacePath,
     status: "review",
     riskLevel: "low",
+    position: 0,
   };
   const proofSchema: ProofSchema = {
     id: "real-agent-smoke-proof",

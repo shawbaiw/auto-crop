@@ -293,6 +293,7 @@ function createFixture(proofSchemaId: string, acceptedTypes: ProofSchema["accept
       workspacePath,
       status: "running",
       riskLevel: "low",
+      position: 0,
     } satisfies Task,
     proofSchema: {
       id: proofSchemaId,

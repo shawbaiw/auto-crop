@@ -68,6 +68,114 @@ describe("repositories", () => {
 
     reopenedClient.close();
   });
+
+  it("orders queued and company tasks by explicit position", () => {
+    const { repos, close } = openTestRepositories();
+    const records = createRecords();
+    const firstTask = { ...records.task, id: "task_z", title: "First queued task", position: 0 };
+    const secondTask = { ...records.task, id: "task_a", title: "Second queued task", position: 1 };
+
+    repos.createCompany(records.company);
+    repos.createDepartment(records.department);
+    repos.createObjective(records.objective);
+    repos.createKeyResult(records.keyResult);
+    repos.createTask(secondTask);
+    repos.createTask(firstTask);
+
+    expect(repos.fetchQueuedTasks(10).map((task) => task.id)).toEqual(["task_z", "task_a"]);
+    expect(repos.listTasksForCompany("company_1").map((task) => task.id)).toEqual(["task_z", "task_a"]);
+    expect(repos.getNextTaskPosition("company_1")).toBe(2);
+
+    close();
+  });
+
+  it("backfills explicit task positions when migrating an existing database", () => {
+    const dir = mkdtempSync(join(tmpdir(), "auto-crop-db-"));
+    createdDirs.push(dir);
+    const databasePath = join(dir, "state.sqlite");
+    const legacyClient = createDatabaseClient(databasePath);
+
+    legacyClient.exec(`
+      CREATE TABLE companies (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        founder_vision TEXT NOT NULL,
+        selected_ceo_agent_id TEXT NOT NULL,
+        playbook_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE departments (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        responsibility TEXT NOT NULL,
+        lead_agent_id TEXT NOT NULL,
+        memory_path TEXT NOT NULL
+      );
+
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+        key_result_id TEXT,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        assignee_agent_id TEXT NOT NULL,
+        required_capabilities TEXT NOT NULL,
+        proof_schema_id TEXT NOT NULL,
+        workspace_path TEXT,
+        status TEXT NOT NULL,
+        risk_level TEXT NOT NULL
+      );
+    `);
+    legacyClient
+      .prepare(
+        `INSERT INTO companies (
+          id, name, founder_vision, selected_ceo_agent_id, playbook_id, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "company_1",
+        "Pricing Page Studio",
+        "Build an AI SaaS for pricing pages.",
+        "codex",
+        "ai-saas",
+        "active",
+        "2026-08-17T00:00:00.000Z",
+        "2026-08-17T00:00:00.000Z",
+      );
+    legacyClient
+      .prepare(
+        `INSERT INTO departments (
+          id, company_id, name, responsibility, lead_agent_id, memory_path
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "department_engineering",
+        "company_1",
+        "Engineering",
+        "Build prototypes.",
+        "codex",
+        ".auto-crop/companies/company_1/departments/engineering/Memory.md",
+      );
+    insertLegacyTask(legacyClient, "task_z", "First legacy task");
+    insertLegacyTask(legacyClient, "task_a", "Second legacy task");
+    legacyClient.close();
+
+    const migratedClient = createDatabaseClient(databasePath);
+    migrate(migratedClient);
+    const repos = createRepositories(migratedClient);
+
+    expect(repos.listTasksForCompany("company_1").map((task) => [task.id, task.position])).toEqual([
+      ["task_z", 0],
+      ["task_a", 1],
+    ]);
+
+    migratedClient.close();
+  });
 });
 
 function openTestRepositories() {
@@ -136,6 +244,7 @@ function createRecords(): {
       workspacePath: ".auto-crop/workspaces/task_1",
       status: "queued",
       riskLevel: "medium",
+      position: 0,
     },
     proof: {
       id: "proof_1",
@@ -146,4 +255,28 @@ function createRecords(): {
       verifiedAt: null,
     },
   };
+}
+
+function insertLegacyTask(client: ReturnType<typeof createDatabaseClient>, id: string, title: string): void {
+  client
+    .prepare(
+      `INSERT INTO tasks (
+        id, company_id, department_id, key_result_id, title, description,
+        assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, status, risk_level
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      "company_1",
+      "department_engineering",
+      null,
+      title,
+      "Run legacy work.",
+      "codex",
+      JSON.stringify(["code"]),
+      "test-output",
+      null,
+      "queued",
+      "low",
+    );
 }
