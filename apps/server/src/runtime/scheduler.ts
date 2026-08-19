@@ -3,12 +3,16 @@ import { join } from "node:path";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { Proof, Task } from "@auto-crop/core";
+import { formatExecutionBudget, resolveTaskExecutionProfile } from "./executionProfile";
 import { createTaskWorkspace } from "./workspace";
+
+export type SchedulerFailureReason = "timeout" | "agent_failed" | "no_proof" | "proof_capture_failed";
 
 export type SchedulerEvent = {
   type: "task_started" | "task_log" | "task_review" | "task_failed" | "task_blocked";
   taskId: string;
   message: string;
+  failureReason?: SchedulerFailureReason;
 };
 
 export type RunSchedulerOnceInput = {
@@ -74,10 +78,11 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
         input.repositories.updateTaskStatus(task.id, "running");
         result.started.push(task.id);
+        const executionProfile = resolveTaskExecutionProfile(task);
         input.emit({
           type: "task_started",
           taskId: task.id,
-          message: `Task started: ${task.title} (${task.assigneeAgentId}).`,
+          message: `Task started: ${task.title} (${task.assigneeAgentId}, ${executionProfile.name} budget ${formatExecutionBudget(executionProfile.timeoutMs)}).`,
         });
 
         const workspace = task.workspacePath
@@ -109,6 +114,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             departmentId: task.departmentId,
             proofSchemaId: task.proofSchemaId,
           },
+          timeoutMs: executionProfile.timeoutMs,
         });
         const logContent = [
           `# Agent Run ${agentRunId}`,
@@ -126,24 +132,43 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         writeFileSync(logPath, logContent, "utf8");
         input.emit({ type: "task_log", taskId: task.id, message: agentResult.stdout });
 
-        const proof =
-          agentResult.status === "complete"
-            ? input.proofCollector({
-                task: { ...task, workspacePath: workspace.root },
-                stdout: agentResult.stdout,
-                stderr: agentResult.stderr,
-                logPath,
-              })
-            : [];
+        let proof: Proof[] = [];
+        if (agentResult.status === "complete") {
+          try {
+            proof = input.proofCollector({
+              task: { ...task, workspacePath: workspace.root },
+              stdout: agentResult.stdout,
+              stderr: agentResult.stderr,
+              logPath,
+            });
+          } catch (error) {
+            input.repositories.updateTaskStatus(task.id, "failed");
+            input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString());
+            input.emit({
+              type: "task_failed",
+              taskId: task.id,
+              failureReason: "proof_capture_failed",
+              message: `Task failed: ${task.title} / proof_capture_failed / ${(error as Error).message}`,
+            });
+            result.failed.push(task.id);
+            return;
+          }
+        }
 
         for (const item of proof) {
           input.repositories.appendProof(item);
         }
 
         if (agentResult.status !== "complete" || proof.length === 0) {
+          const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
           input.repositories.updateTaskStatus(task.id, "failed");
           input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString());
-          input.emit({ type: "task_failed", taskId: task.id, message: "Task finished without proof." });
+          input.emit({
+            type: "task_failed",
+            taskId: task.id,
+            failureReason,
+            message: failureMessage(task, failureReason, executionProfile.timeoutMs),
+          });
           result.failed.push(task.id);
           return;
         }
@@ -184,6 +209,22 @@ function createLogPath(projectRoot: string, task: Task): string {
   const logsDir = join(projectRoot, ".auto-crop", "companies", task.companyId, "logs");
   mkdirSync(logsDir, { recursive: true });
   return join(logsDir, `${task.id}.log`);
+}
+
+function failureMessage(task: Task, failureReason: SchedulerFailureReason, timeoutMs: number): string {
+  if (failureReason === "timeout") {
+    return `Task failed: ${task.title} / timeout after ${formatExecutionBudget(timeoutMs)}.`;
+  }
+
+  if (failureReason === "no_proof") {
+    return `Task failed: ${task.title} / no_proof.`;
+  }
+
+  if (failureReason === "proof_capture_failed") {
+    return `Task failed: ${task.title} / proof_capture_failed.`;
+  }
+
+  return `Task failed: ${task.title} / agent_failed.`;
 }
 
 function defaultCreateId(prefix: string): string {

@@ -6,13 +6,17 @@ export type AgentRunRequest = {
   promptPath: string;
   workspacePath: string;
   metadata: Record<string, string>;
+  timeoutMs?: number;
 };
+
+export type AgentFailureReason = "timeout" | "agent_failed";
 
 export type AgentRunResult = {
   status: "complete" | "failed";
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  failureReason?: AgentFailureReason;
 };
 
 export type AgentAdapter = {

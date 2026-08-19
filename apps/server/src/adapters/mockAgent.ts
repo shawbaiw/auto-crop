@@ -7,6 +7,7 @@ export type MockAgentOptions = {
   detected?: boolean;
   output?: string;
   status?: AgentRunResult["status"];
+  failureReason?: AgentRunResult["failureReason"];
 };
 
 export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter {
@@ -25,6 +26,7 @@ export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter 
           options.output ??
           `Mock agent ${options.id} completed task ${request.taskId} in ${request.workspacePath}`,
         stderr: "",
+        failureReason: options.failureReason ?? (options.status === "failed" ? "agent_failed" : undefined),
       };
     },
   };

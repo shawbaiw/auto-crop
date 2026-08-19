@@ -44,7 +44,7 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
 
       options.log?.(`Agent ${options.name} starting task ${request.taskId}`);
       const result = await runCommand(command, args, request.workspacePath, {
-        timeoutMs: options.timeoutMs ?? Number(process.env.AUTO_CROP_AGENT_TIMEOUT_MS ?? 120_000),
+        timeoutMs: resolveTimeoutMs(request.timeoutMs, options.timeoutMs),
         log: options.log,
         agentName: options.name,
       });
@@ -116,6 +116,16 @@ function quoteShell(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+function resolveTimeoutMs(requestTimeoutMs: number | undefined, optionTimeoutMs: number | undefined): number {
+  const envTimeoutMs = Number(process.env.AUTO_CROP_AGENT_TIMEOUT_MS);
+
+  if (Number.isFinite(envTimeoutMs) && envTimeoutMs > 0) {
+    return envTimeoutMs;
+  }
+
+  return requestTimeoutMs ?? optionTimeoutMs ?? 120_000;
+}
+
 function runCommand(
   command: string,
   args: string[],
@@ -144,6 +154,7 @@ function runCommand(
         exitCode: null,
         stdout: Buffer.concat(stdoutChunks).toString("utf8"),
         stderr: [stderr, `Agent command timed out after ${options.timeoutMs}ms.`].filter(Boolean).join("\n"),
+        failureReason: "timeout",
       });
     }, options.timeoutMs);
 
@@ -166,6 +177,7 @@ function runCommand(
         exitCode: null,
         stdout: Buffer.concat(stdoutChunks).toString("utf8"),
         stderr: error.message,
+        failureReason: "agent_failed",
       });
     });
     child.on("close", (code) => {
@@ -179,6 +191,7 @@ function runCommand(
         exitCode: code,
         stdout: Buffer.concat(stdoutChunks).toString("utf8"),
         stderr: Buffer.concat(stderrChunks).toString("utf8"),
+        failureReason: code === 0 ? undefined : "agent_failed",
       });
     });
   });

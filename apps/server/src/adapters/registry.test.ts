@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { createClaudeCodeAdapter, createCliAgentAdapter, createCodexAdapter, interpolateCommandTemplate } from "./cliAgent";
 import { createMockAgentAdapter } from "./mockAgent";
 import { createAgentRegistry } from "./registry";
@@ -14,6 +17,15 @@ const request: AgentRunRequest = {
     proofSchemaId: "landing-page-proof",
   },
 };
+
+const createdDirs: string[] = [];
+
+afterEach(() => {
+  delete process.env.AUTO_CROP_AGENT_TIMEOUT_MS;
+  for (const dir of createdDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe("agent registry", () => {
   it("selects the first detected adapter that satisfies all required capabilities", async () => {
@@ -130,4 +142,50 @@ describe("CLI command template adapter", () => {
     await expect(adapter.detect()).resolves.toBe(true);
   });
 
+  it("uses request timeout for CLI agent runs", async () => {
+    const workspacePath = createWorkspaceWithScript("setTimeout(() => {}, 50);");
+    const adapter = createCliAgentAdapter({
+      id: "custom",
+      name: "Custom Agent",
+      capabilities: ["code"],
+      commandTemplate: "node {promptPath}",
+    });
+
+    const result = await adapter.run({
+      ...request,
+      promptPath: join(workspacePath, "agent-script.mjs"),
+      workspacePath,
+      timeoutMs: 1,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toBe("timeout");
+  });
+
+  it("lets AUTO_CROP_AGENT_TIMEOUT_MS override request timeout", async () => {
+    process.env.AUTO_CROP_AGENT_TIMEOUT_MS = "1000";
+    const workspacePath = createWorkspaceWithScript("setTimeout(() => process.exit(0), 20);");
+    const adapter = createCliAgentAdapter({
+      id: "custom",
+      name: "Custom Agent",
+      capabilities: ["code"],
+      commandTemplate: "node {promptPath}",
+    });
+
+    const result = await adapter.run({
+      ...request,
+      promptPath: join(workspacePath, "agent-script.mjs"),
+      workspacePath,
+      timeoutMs: 1,
+    });
+
+    expect(result.status).toBe("complete");
+  });
 });
+
+function createWorkspaceWithScript(script: string): string {
+  const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-cli-agent-"));
+  createdDirs.push(workspacePath);
+  writeFileSync(join(workspacePath, "agent-script.mjs"), script, "utf8");
+  return workspacePath;
+}

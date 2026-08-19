@@ -11,6 +11,7 @@
 - **Task Deliverable**: The artifact a task must produce to be eligible for review. A Task Deliverable must be represented by Proof that matches the task's proof schema.
 - **Proof**: A runtime-recorded artifact, command output, URL, screenshot, diff, deployment, or other accepted evidence that satisfies a task's proof schema. Tasks without Proof are not complete, even when the agent produced useful Agent Output.
 - **Partial Output**: Useful Agent Output left behind by a failed or timed-out task. Partial Output should remain visible for diagnosis and follow-up, but it does not make the task complete.
+- **Task Execution Profile**: A task execution contract that sets the expected time budget and failure explanation style for a task based on its deliverable shape. It is part of how Auto-Crop decides how long an agent should be allowed to work before the run is considered failed.
 - **Onboarding Wizard**: The sequential setup flow shown before a company is created. It collects company name, CEO Agent, Founder Vision, and Permission Mode one step at a time.
 - **Creation Loading Page**: The CRT-styled intermediate page shown after `Create Company` while the backend waits for the CEO Agent to produce a blueprint.
 - **Department Workspace**: The post-creation default view that shows a left rail of `CEO` plus generated departments, and a right-side role workspace for the selected role.

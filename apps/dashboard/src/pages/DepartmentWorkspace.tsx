@@ -89,7 +89,7 @@ export function DepartmentWorkspace({
                 <div>
                   {(tasksByDepartment.get(selectedDepartment.id) ?? []).map((task) => (
                     <RetroBadge key={task.id} tone="signal">
-                      {task.title} / {task.status}
+                      {task.title} / {formatTaskStatus(task)}
                     </RetroBadge>
                   ))}
                 </div>
@@ -112,7 +112,7 @@ export function DepartmentWorkspace({
                 </div>
                 <div>
                   <h3>First Tasks</h3>
-                  <VideotexLog emptyMessage="No tasks queued." rows={tasks.map((task) => `${task.title} / ${task.status}`)} />
+                  <VideotexLog emptyMessage="No tasks queued." rows={tasks.map((task) => `${task.title} / ${formatTaskStatus(task)}`)} />
                 </div>
                 <p className="muted">
                   Scheduler, proof, and review views are available from the menu.
@@ -127,4 +127,8 @@ export function DepartmentWorkspace({
       </Workspace>
     </AppShell>
   );
+}
+
+function formatTaskStatus(task: TaskSummary): string {
+  return task.failureReason ? `${task.status} · ${task.failureReason}` : task.status;
 }

@@ -218,6 +218,27 @@ describe("Dashboard App", () => {
     expect(screen.getByText("Task started: Create landing page (codex).")).toBeInTheDocument();
   });
 
+  it("shows failed task reasons in the Department Workspace from SSE", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    await waitFor(() => expect(api.lastEventHandler).toBeDefined());
+    act(() => {
+      api.lastEventHandler?.({
+        type: "task_failed",
+        taskId: "task_1",
+        failureReason: "timeout",
+        message: "Task failed: Create landing page / timeout after 10m.",
+      });
+    });
+
+    expect(await screen.findByText("Create landing page / failed · timeout")).toBeInTheDocument();
+    expect(screen.getByText("Task failed: Create landing page / timeout after 10m.")).toBeInTheDocument();
+  });
+
   it("updates task status in the operating dashboard from SSE", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -235,6 +256,32 @@ describe("Dashboard App", () => {
     });
 
     expect(await screen.findByText("Create landing page / REVIEW")).toBeInTheDocument();
+  });
+
+  it("shows task budgets and failed reasons in the operating dashboard from SSE", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompanyAndOpenDashboard(user);
+
+    await waitFor(() => expect(api.lastEventHandler).toBeDefined());
+    act(() => {
+      api.lastEventHandler?.({
+        type: "task_started",
+        taskId: "task_1",
+        message: "Task started: Create landing page (codex, long budget 10m).",
+      });
+      api.lastEventHandler?.({
+        type: "task_failed",
+        taskId: "task_1",
+        failureReason: "timeout",
+        message: "Task failed: Create landing page / timeout after 10m.",
+      });
+    });
+
+    expect(await screen.findByText("Create landing page / FAILED · TIMEOUT")).toBeInTheDocument();
+    expect(screen.getByText("Task started: Create landing page (codex, long budget 10m).")).toBeInTheDocument();
   });
 
   it("shows a styled empty state when the local API is not connected", async () => {

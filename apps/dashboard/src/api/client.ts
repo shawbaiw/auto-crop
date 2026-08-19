@@ -34,6 +34,7 @@ export type TaskSummary = {
   assigneeAgentId?: string;
   description?: string;
   riskLevel?: string;
+  failureReason?: string;
 };
 
 export type ProofSummary = {
@@ -70,6 +71,7 @@ export type ServerEvent = {
   type: string;
   taskId?: string;
   message: string;
+  failureReason?: string;
 };
 
 export type ApiClient = {

@@ -89,7 +89,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
         >
           <VideotexLog
             emptyMessage="No active tasks."
-            rows={props.tasks.map((task) => `${task.title} / ${task.status.toUpperCase()}`)}
+            rows={props.tasks.map((task) => `${task.title} / ${formatTaskStatus(task).toUpperCase()}`)}
           />
         </RetroPanel>
       </Workspace>
@@ -153,4 +153,8 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
       </RetroPanel>
     </AppShell>
   );
+}
+
+function formatTaskStatus(task: TaskSummary): string {
+  return task.failureReason ? `${task.status} · ${task.failureReason}` : task.status;
 }

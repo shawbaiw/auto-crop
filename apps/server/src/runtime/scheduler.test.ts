@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Company, Department, KeyResult, Objective, Proof, Task } from "@auto-crop/core";
+import type { AgentAdapter } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
@@ -85,7 +86,7 @@ describe("runSchedulerOnce", () => {
     expect(events).toContainEqual({
       type: "task_started",
       taskId: "task_1",
-      message: "Task started: Task task_1 (mock-worker).",
+      message: "Task started: Task task_1 (mock-worker, long budget 10m).",
     });
     expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_log:task_1");
     expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_review:task_1");
@@ -154,10 +155,11 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
-  it("does not collect proof from failed agent output", async () => {
+  it("does not collect proof from failed agent output and emits timeout reason", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low"),
     ]);
+    const events: SchedulerEventRecord[] = [];
     let proofCollectorCalls = 0;
 
     const result = await runSchedulerOnce({
@@ -170,6 +172,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           output: "# Partial output",
           status: "failed",
+          failureReason: "timeout",
         }),
       ],
       workerId: "worker_a",
@@ -190,13 +193,125 @@ describe("runSchedulerOnce", () => {
           },
         ];
       },
-      emit: () => undefined,
+      emit: (event) => events.push(event),
     });
 
     expect(result.failed).toEqual(["task_1"]);
     expect(proofCollectorCalls).toBe(0);
     expect(repositories.listProofsForTask("task_1")).toEqual([]);
     expect(repositories.getTask("task_1")?.status).toBe("failed");
+    expect(events).toContainEqual({
+      type: "task_failed",
+      taskId: "task_1",
+      failureReason: "timeout",
+      message: "Task failed: Task task_1 / timeout after 10m.",
+    });
+
+    client.close();
+  });
+
+  it("passes the resolved task execution timeout to the adapter", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "landing-page-file"),
+    ]);
+    let timeoutMs: number | undefined;
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        {
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          detect: async () => true,
+          run: async (request) => {
+            timeoutMs = request.timeoutMs;
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "done",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "file",
+          uri: "app/page.tsx",
+          summary: "file proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: () => undefined,
+    });
+
+    expect(timeoutMs).toBe(600_000);
+    expect(result.completed).toEqual(["task_1"]);
+
+    client.close();
+  });
+
+  it("fails only the current task when proof capture throws", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+      createTaskRecord("task_2", "queued", "low"),
+    ]);
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 2,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => {
+        if (task.id === "task_1") {
+          throw new Error("schema missing");
+        }
+
+        return [
+          {
+            id: `proof_${task.id}`,
+            taskId: task.id,
+            type: "command_output",
+            uri: "agent.log",
+            summary: "mock proof",
+            verifiedAt: null,
+          },
+        ];
+      },
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.failed).toEqual(["task_1"]);
+    expect(result.completed).toEqual(["task_2"]);
+    expect(repositories.getTask("task_1")?.status).toBe("failed");
+    expect(repositories.getTask("task_2")?.status).toBe("review");
+    expect(repositories.listTaskLocks()).toEqual([]);
+    expect(events).toContainEqual({
+      type: "task_failed",
+      taskId: "task_1",
+      failureReason: "proof_capture_failed",
+      message: "Task failed: Task task_1 / proof_capture_failed / schema missing",
+    });
 
     client.close();
   });
@@ -270,7 +385,12 @@ function createKeyResultRecord(): KeyResult {
   };
 }
 
-function createTaskRecord(id: string, status: Task["status"], riskLevel: Task["riskLevel"]): Task {
+function createTaskRecord(
+  id: string,
+  status: Task["status"],
+  riskLevel: Task["riskLevel"],
+  proofSchemaId = "test-output",
+): Task {
   return {
     id,
     companyId: "company_1",
@@ -280,7 +400,7 @@ function createTaskRecord(id: string, status: Task["status"], riskLevel: Task["r
     description: "Run mock work.",
     assigneeAgentId: "mock-worker",
     requiredCapabilities: ["code"],
-    proofSchemaId: "test-output",
+    proofSchemaId,
     workspacePath: null,
     status,
     riskLevel,
@@ -301,4 +421,5 @@ type SchedulerEventRecord = {
   type: "task_started" | "task_log" | "task_review" | "task_failed" | "task_blocked";
   taskId: string;
   message: string;
+  failureReason?: "timeout" | "agent_failed" | "no_proof" | "proof_capture_failed";
 };

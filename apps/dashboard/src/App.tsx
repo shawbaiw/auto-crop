@@ -516,11 +516,19 @@ function updateBlueprintTaskStatus(blueprint: CreateCompanyResponse | null, even
   let changed = false;
   const tasks = blueprint.tasks.map((task) => {
     if (task.id !== event.taskId || task.status === nextStatus) {
+      if (task.id === event.taskId && event.failureReason && task.failureReason !== event.failureReason) {
+        changed = true;
+        return { ...task, failureReason: event.failureReason };
+      }
       return task;
     }
 
     changed = true;
-    return { ...task, status: nextStatus };
+    return {
+      ...task,
+      status: nextStatus,
+      failureReason: event.type === "task_failed" ? event.failureReason : undefined,
+    };
   });
 
   return changed ? { ...blueprint, tasks } : blueprint;

@@ -1,0 +1,3 @@
+# Task Execution Profiles Before Persistent Sessions
+
+Auto-Crop will first add Task Execution Profiles to choose per-task time budgets and clearer failure explanations instead of immediately building a Cumora-style persistent agent session runtime. The current runtime already models work as queued tasks dispatched to one CLI agent process, so profiles are the smallest reversible step that fixes the 120-second timeout problem while preserving Proof-based completion. Persistent sessions, automatic retries, and follow-up task generation remain future options after the one-process task model is more observable.
