@@ -400,8 +400,10 @@ pnpm typecheck
 Manual smoke:
 
 ```bash
-AUTO_CROP_PORT=8787 AUTO_CROP_AGENT_TIMEOUT_MS=120000 pnpm --filter @auto-crop/cli start
+AUTO_CROP_PORT=8787 pnpm --filter @auto-crop/cli start
 ```
+
+Do not set `AUTO_CROP_AGENT_TIMEOUT_MS=120000` for normal manual smoke runs; it can hide long-task profile behavior by forcing prototype and validation tasks back to a 2-minute budget.
 
 In another terminal:
 

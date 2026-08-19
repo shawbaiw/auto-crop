@@ -162,7 +162,7 @@ describe("CLI command template adapter", () => {
     expect(result.failureReason).toBe("timeout");
   });
 
-  it("lets AUTO_CROP_AGENT_TIMEOUT_MS override request timeout", async () => {
+  it("ignores AUTO_CROP_AGENT_TIMEOUT_MS because runtime resolves effective timeout", async () => {
     process.env.AUTO_CROP_AGENT_TIMEOUT_MS = "1000";
     const workspacePath = createWorkspaceWithScript("setTimeout(() => process.exit(0), 20);");
     const adapter = createCliAgentAdapter({
@@ -179,7 +179,8 @@ describe("CLI command template adapter", () => {
       timeoutMs: 1,
     });
 
-    expect(result.status).toBe("complete");
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toBe("timeout");
   });
 });
 

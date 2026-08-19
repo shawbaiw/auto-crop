@@ -64,7 +64,7 @@ describe("repositories", () => {
     migrate(reopenedClient);
     const reopenedRepos = createRepositories(reopenedClient);
 
-    expect(reopenedRepos.fetchQueuedTasks(10)).toEqual([records.task]);
+    expect(reopenedRepos.fetchQueuedTasks(10)).toEqual([expect.objectContaining(records.task)]);
 
     reopenedClient.close();
   });

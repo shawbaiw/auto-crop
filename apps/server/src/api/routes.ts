@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { Company, Department, Objective, Proof, Task, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
-import type { createRepositories } from "../db/repositories";
+import type { createRepositories, ReviewRecord } from "../db/repositories";
 import { EventStream } from "../events/sse";
 import type { PolicyMode } from "../policies/policy";
 import { createCompany } from "../runtime/createCompany";
@@ -105,7 +106,13 @@ async function routeRequest(
       now: options.now,
       createId: options.createId,
     });
-    sendJson(response, 201, result);
+    sendJson(response, 201, {
+      ...result,
+      tasks: summarizeTasks(result.tasks, options.repositories.listTaskDependenciesForCompany(result.company.id)),
+      proof: [],
+      reviews: [],
+      activity: options.repositories.listTaskEventsForCompany(result.company.id).map(summarizeTaskEvent),
+    });
     return;
   }
 
@@ -118,6 +125,20 @@ async function routeRequest(
       (options.now ?? (() => new Date()))().toISOString(),
     );
     sendJson(response, 200, { company: options.repositories.getCompany(companyId) });
+    return;
+  }
+
+  const stateMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/state$/);
+  if (method === "GET" && stateMatch) {
+    const companyId = stateMatch[1];
+    const company = options.repositories.getCompany(companyId);
+
+    if (!company) {
+      sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      return;
+    }
+
+    sendJson(response, 200, buildCompanyState(company, options.repositories));
     return;
   }
 
@@ -185,6 +206,112 @@ async function routeRequest(
   }
 
   sendJson(response, 404, { error: "Not found" });
+}
+
+function buildCompanyState(company: Company, repositories: ReturnType<typeof createRepositories>) {
+  const tasks = repositories.listTasksForCompany(company.id);
+
+  return {
+    company: summarizeCompany(company),
+    departments: repositories.listDepartments(company.id).map(summarizeDepartment),
+    objectives: repositories.listObjectives(company.id).map(summarizeObjective),
+    keyResults: repositories.listKeyResults(company.id),
+    tasks: summarizeTasks(tasks, repositories.listTaskDependenciesForCompany(company.id)),
+    proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
+    reviews: repositories.listReviews(company.id).map(summarizeReview),
+    activity: repositories.listTaskEventsForCompany(company.id).map(summarizeTaskEvent),
+    editable: {
+      companyName: company.name,
+      objectives: repositories.listObjectives(company.id).map((objective) => objective.title),
+      firstTasks: tasks.map((task) => task.title),
+    },
+  };
+}
+
+function summarizeCompany(company: Company) {
+  return {
+    id: company.id,
+    name: company.name,
+    status: company.status,
+    playbookId: company.playbookId,
+    selectedCeoAgentId: company.selectedCeoAgentId,
+  };
+}
+
+function summarizeDepartment(department: Department) {
+  return {
+    id: department.id,
+    name: department.name,
+    responsibility: department.responsibility,
+    leadAgentId: department.leadAgentId,
+    memoryPath: department.memoryPath,
+  };
+}
+
+function summarizeObjective(objective: Objective) {
+  return {
+    id: objective.id,
+    title: objective.title,
+    priority: objective.priority,
+  };
+}
+
+function summarizeTasks(tasks: Task[], dependencies: Array<{ taskId: string; dependsOnTaskId: string }>) {
+  const dependenciesByTask = new Map<string, string[]>();
+  for (const dependency of dependencies) {
+    dependenciesByTask.set(dependency.taskId, [
+      ...(dependenciesByTask.get(dependency.taskId) ?? []),
+      dependency.dependsOnTaskId,
+    ]);
+  }
+
+  return tasks.map((task) => ({
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    departmentId: task.departmentId,
+    assigneeAgentId: task.assigneeAgentId,
+    description: task.description,
+    riskLevel: task.riskLevel,
+    failureReason: task.latestFailureReason ?? undefined,
+    failureMessage: task.latestFailureMessage ?? undefined,
+    executionProfileName: task.latestExecutionProfileName ?? undefined,
+    requestedTimeoutMs: task.latestRequestedTimeoutMs ?? undefined,
+    effectiveTimeoutMs: task.latestEffectiveTimeoutMs ?? undefined,
+    dependencyNote: task.dependencyNote ?? undefined,
+    artifactWorkspacePath: task.artifactWorkspacePath ?? undefined,
+    dependsOnTaskIds: dependenciesByTask.get(task.id) ?? [],
+  }));
+}
+
+function summarizeProof(proof: Proof) {
+  return {
+    id: proof.id,
+    taskId: proof.taskId,
+    type: proof.type,
+    uri: proof.uri,
+    summary: proof.summary,
+  };
+}
+
+function summarizeReview(review: ReviewRecord) {
+  return review;
+}
+
+function summarizeTaskEvent(event: TaskEvent) {
+  return {
+    type: event.type,
+    taskId: event.taskId,
+    message: event.message,
+    status: event.status ?? undefined,
+    failureReason: event.failureReason ?? undefined,
+    failureMessage: event.failureMessage ?? undefined,
+    executionProfileName: event.executionProfileName ?? undefined,
+    requestedTimeoutMs: event.requestedTimeoutMs ?? undefined,
+    effectiveTimeoutMs: event.effectiveTimeoutMs ?? undefined,
+    dependencyNote: event.dependencyNote ?? undefined,
+    artifactWorkspacePath: event.artifactWorkspacePath ?? undefined,
+  };
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {

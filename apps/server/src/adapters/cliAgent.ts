@@ -117,12 +117,6 @@ function quoteShell(value: string): string {
 }
 
 function resolveTimeoutMs(requestTimeoutMs: number | undefined, optionTimeoutMs: number | undefined): number {
-  const envTimeoutMs = Number(process.env.AUTO_CROP_AGENT_TIMEOUT_MS);
-
-  if (Number.isFinite(envTimeoutMs) && envTimeoutMs > 0) {
-    return envTimeoutMs;
-  }
-
   return requestTimeoutMs ?? optionTimeoutMs ?? 120_000;
 }
 

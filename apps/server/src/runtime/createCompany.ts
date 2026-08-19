@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import type { Company, Department, KeyResult, Objective, Task } from "@auto-crop/core";
+import type { Company, Department, KeyResult, Objective, Task, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { PolicyMode } from "../policies/policy";
@@ -141,6 +141,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   }
 
   const firstKeyResultId = keyResults[0]?.id ?? null;
+  const taskWarnings: TaskEvent[] = [];
   const tasks = ceoResponse.blueprint.tasks.map((taskBlueprint, position) => {
     const departmentId = departmentIdsByName.get(taskBlueprint.departmentName);
 
@@ -150,24 +151,53 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
 
     const taskId = createId("task");
     const taskWorkspace = createTaskWorkspace(input.projectRoot, taskId);
+    const schemaDecision = applyProofSchemaSanity(taskBlueprint);
     const task: Task = {
       id: taskId,
       companyId: company.id,
       departmentId,
       keyResultId: firstKeyResultId,
       title: taskBlueprint.title,
-      description: taskBlueprint.description,
+      description: withPrototypeGuidance(taskBlueprint.description, schemaDecision.proofSchemaId),
       assigneeAgentId: taskBlueprint.assigneeAgentId,
       requiredCapabilities: taskBlueprint.requiredCapabilities,
-      proofSchemaId: taskBlueprint.proofSchemaId,
+      proofSchemaId: schemaDecision.proofSchemaId,
       workspacePath: taskWorkspace.root,
+      artifactWorkspacePath: isArtifactProducer(schemaDecision.proofSchemaId) ? taskWorkspace.root : null,
       status: "queued",
       riskLevel: taskBlueprint.riskLevel,
       position,
+      latestFailureReason: null,
+      latestFailureMessage: null,
+      latestExecutionProfileName: null,
+      latestRequestedTimeoutMs: null,
+      latestEffectiveTimeoutMs: null,
+      dependencyNote: null,
     };
     input.repositories.createTask(task);
+    if (schemaDecision.warning) {
+      taskWarnings.push({
+        id: createId("task_event"),
+        companyId: company.id,
+        taskId: task.id,
+        type: "task_warning",
+        message: schemaDecision.warning,
+        createdAt: now,
+        status: task.status,
+        failureReason: null,
+        failureMessage: null,
+        executionProfileName: null,
+        requestedTimeoutMs: null,
+        effectiveTimeoutMs: null,
+        dependencyNote: null,
+        artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+      });
+    }
     return task;
   });
+
+  inferValidationDependencies(tasks).forEach((dependency) => input.repositories.createTaskDependency(dependency));
+  taskWarnings.forEach((warning) => input.repositories.appendTaskEvent(warning));
 
   return {
     company,
@@ -193,4 +223,93 @@ function slugify(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
+}
+
+type TaskBlueprintLike = {
+  title: string;
+  description: string;
+  proofSchemaId: string;
+};
+
+function applyProofSchemaSanity(task: TaskBlueprintLike): { proofSchemaId: string; warning: string | null } {
+  const expected = expectedProofSchema(task);
+
+  if (!expected || isProofSchemaCompatible(task.proofSchemaId, expected)) {
+    return { proofSchemaId: task.proofSchemaId, warning: null };
+  }
+
+  return {
+    proofSchemaId: expected,
+    warning: `Task warning: ${task.title} proof schema changed from ${task.proofSchemaId} to ${expected}.`,
+  };
+}
+
+function expectedProofSchema(task: TaskBlueprintLike): string | null {
+  const text = `${task.title} ${task.description}`.toLowerCase();
+
+  if (/\b(validate|test|check|screenshot|local url|local-url)\b/.test(text)) {
+    return "test-output";
+  }
+
+  if (/\b(research|competitor|customer pain)\b/.test(text)) {
+    return "research-report";
+  }
+
+  if (/\b(copy|plan|brief|assets|launch)\b/.test(text)) {
+    return "product-brief";
+  }
+
+  if (/\b(build|prototype|playable|landing-page)\b/.test(text) || /\blanding page\b/.test(text)) {
+    return "landing-page-file";
+  }
+
+  return null;
+}
+
+function isProofSchemaCompatible(actual: string, expected: string): boolean {
+  if (actual === expected) {
+    return true;
+  }
+
+  if (expected === "test-output") {
+    return actual === "local-url" || actual === "screenshot";
+  }
+
+  if (expected === "landing-page-file") {
+    return actual === "repo-diff";
+  }
+
+  return false;
+}
+
+function withPrototypeGuidance(description: string, proofSchemaId: string): string {
+  if (!isArtifactProducer(proofSchemaId)) {
+    return description;
+  }
+
+  return [
+    description,
+    "",
+    "Prototype guidance: prefer a fast, inspectable browser artifact such as static index.html, src/main.tsx, src/App.tsx, or app/page.tsx. Prefer built-in browser APIs and small local code over installing large scaffolds. Do not initialize Sites, Vinext, or Next unless deployment is explicitly required or an existing .openai/hosting.json requires it. Leave a clear entry file for proof collection.",
+  ].join("\n");
+}
+
+function isArtifactProducer(proofSchemaId: string): boolean {
+  return proofSchemaId === "landing-page-file" || proofSchemaId === "repo-diff";
+}
+
+function isValidationTask(task: Task): boolean {
+  return task.proofSchemaId === "test-output" || task.proofSchemaId === "local-url" || task.proofSchemaId === "screenshot";
+}
+
+function inferValidationDependencies(tasks: Task[]) {
+  return tasks.flatMap((task, index) => {
+    if (!isValidationTask(task)) {
+      return [];
+    }
+
+    const producer = [...tasks.slice(0, index)].reverse().find((candidate) => isArtifactProducer(candidate.proofSchemaId));
+
+    return producer ? [{ taskId: task.id, dependsOnTaskId: producer.id }] : [];
+  });
 }

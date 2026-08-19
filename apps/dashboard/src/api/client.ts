@@ -10,6 +10,7 @@ export type CompanySummary = {
   name: string;
   status: string;
   playbookId: string;
+  selectedCeoAgentId?: string;
 };
 
 export type DepartmentSummary = {
@@ -35,6 +36,13 @@ export type TaskSummary = {
   description?: string;
   riskLevel?: string;
   failureReason?: string;
+  failureMessage?: string;
+  executionProfileName?: string;
+  requestedTimeoutMs?: number;
+  effectiveTimeoutMs?: number;
+  dependencyNote?: string;
+  artifactWorkspacePath?: string;
+  dependsOnTaskIds?: string[];
 };
 
 export type ProofSummary = {
@@ -65,6 +73,9 @@ export type CreateCompanyResponse = {
   objectives: ObjectiveSummary[];
   tasks: TaskSummary[];
   editable: EditableBlueprint;
+  proof?: ProofSummary[];
+  reviews?: ReviewSummary[];
+  activity?: ServerEvent[];
 };
 
 export type ServerEvent = {
@@ -72,6 +83,19 @@ export type ServerEvent = {
   taskId?: string;
   message: string;
   failureReason?: string;
+  failureMessage?: string;
+  status?: string;
+  executionProfileName?: string;
+  requestedTimeoutMs?: number;
+  effectiveTimeoutMs?: number;
+  dependencyNote?: string;
+  artifactWorkspacePath?: string;
+};
+
+export type CompanyStateResponse = CreateCompanyResponse & {
+  proof: ProofSummary[];
+  reviews: ReviewSummary[];
+  activity: ServerEvent[];
 };
 
 export type ApiClient = {
@@ -83,6 +107,7 @@ export type ApiClient = {
     permissionMode: string;
     assets: string[];
   }): Promise<CreateCompanyResponse>;
+  getCompanyState(companyId: string): Promise<CompanyStateResponse>;
   activateCompany(companyId: string): Promise<{ company: CompanySummary }>;
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
@@ -97,6 +122,9 @@ export function createApiClient(baseUrl = ""): ApiClient {
     },
     async createCompany(input) {
       return postJson(`${baseUrl}/api/companies`, input);
+    },
+    async getCompanyState(companyId) {
+      return getJson(`${baseUrl}/api/companies/${companyId}/state`);
     },
     async activateCompany(companyId) {
       return postJson(`${baseUrl}/api/companies/${companyId}/activate`, {});
@@ -120,6 +148,8 @@ export function createApiClient(baseUrl = ""): ApiClient {
       events.addEventListener("task_review", listener);
       events.addEventListener("task_failed", listener);
       events.addEventListener("task_blocked", listener);
+      events.addEventListener("task_warning", listener);
+      events.addEventListener("partial_output", listener);
       return () => events.close();
     },
   };

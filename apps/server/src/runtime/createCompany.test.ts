@@ -81,6 +81,14 @@ describe("createCompany", () => {
     expect(repositories.listTasksForCompany(result.company.id).map((task) => task.title)).toEqual(
       result.tasks.map((task) => task.title),
     );
+    const buildTask = result.tasks.find((task) => task.proofSchemaId === "landing-page-file");
+    const validationTask = result.tasks.find((task) => task.proofSchemaId === "test-output");
+    expect(buildTask?.artifactWorkspacePath).toBe(buildTask?.workspacePath);
+    expect(buildTask?.description).toContain("Prototype guidance");
+    expect(validationTask && buildTask).toBeTruthy();
+    expect(repositories.listTaskDependencies(validationTask?.id ?? "")).toEqual([
+      { taskId: validationTask?.id, dependsOnTaskId: buildTask?.id },
+    ]);
 
     const engineering = repositories
       .listDepartments(result.company.id)

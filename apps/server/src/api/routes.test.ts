@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Proof } from "@auto-crop/core";
+import type { Proof, TaskEvent } from "@auto-crop/core";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories, type ReviewRecord } from "../db/repositories";
@@ -63,6 +63,22 @@ describe("API routes", () => {
       reviewPath: ".auto-crop/reviews/review_1.md",
       createdAt: "2026-08-17T00:00:00.000Z",
     } satisfies ReviewRecord);
+    fixture.repositories.appendTaskEvent({
+      id: "task_event_1",
+      companyId: created.company.id,
+      taskId: task.id,
+      type: "task_failed",
+      message: "Task failed: sample.",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      status: "failed",
+      failureReason: "agent_failed",
+      failureMessage: "Task failed: sample.",
+      executionProfileName: "short",
+      requestedTimeoutMs: 120_000,
+      effectiveTimeoutMs: 120_000,
+      dependencyNote: null,
+      artifactWorkspacePath: null,
+    } satisfies TaskEvent);
 
     const proofs = await getJson<{ proof: Proof[] }>(`${fixture.baseUrl}/api/tasks/${task.id}/proof`);
     expect(proofs.proof).toHaveLength(1);
@@ -71,6 +87,17 @@ describe("API routes", () => {
       `${fixture.baseUrl}/api/companies/${created.company.id}/reviews`,
     );
     expect(reviews.reviews).toHaveLength(1);
+
+    const state = await getJson<{
+      proof: Proof[];
+      reviews: ReviewRecord[];
+      activity: Array<{ type: string; failureReason?: string }>;
+      tasks: Array<{ dependsOnTaskIds: string[] }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    expect(state.proof).toHaveLength(1);
+    expect(state.reviews).toHaveLength(1);
+    expect(state.activity).toContainEqual(expect.objectContaining({ type: "task_failed", failureReason: "agent_failed" }));
+    expect(state.tasks.some((stateTask) => stateTask.dependsOnTaskIds.length > 0)).toBe(true);
 
     const cancelled = await postJson<{ task: { status: string } }>(
       `${fixture.baseUrl}/api/tasks/${task.id}/cancel`,

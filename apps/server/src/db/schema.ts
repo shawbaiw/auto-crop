@@ -51,9 +51,16 @@ export function migrate(database: DatabaseClient): void {
       required_capabilities TEXT NOT NULL,
       proof_schema_id TEXT NOT NULL,
       workspace_path TEXT,
+      artifact_workspace_path TEXT,
       status TEXT NOT NULL,
       risk_level TEXT NOT NULL,
-      position INTEGER NOT NULL DEFAULT 0
+      position INTEGER NOT NULL DEFAULT 0,
+      latest_failure_reason TEXT,
+      latest_failure_message TEXT,
+      latest_execution_profile_name TEXT,
+      latest_requested_timeout_ms INTEGER,
+      latest_effective_timeout_ms INTEGER,
+      dependency_note TEXT
     );
 
     CREATE INDEX IF NOT EXISTS tasks_status_idx ON tasks(status);
@@ -86,7 +93,35 @@ export function migrate(database: DatabaseClient): void {
       status TEXT NOT NULL,
       log_path TEXT NOT NULL,
       started_at TEXT,
-      finished_at TEXT
+      finished_at TEXT,
+      execution_profile_name TEXT,
+      requested_timeout_ms INTEGER,
+      effective_timeout_ms INTEGER,
+      failure_reason TEXT,
+      failure_message TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS task_dependencies (
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      PRIMARY KEY (task_id, depends_on_task_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS task_events (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT,
+      failure_reason TEXT,
+      failure_message TEXT,
+      execution_profile_name TEXT,
+      requested_timeout_ms INTEGER,
+      effective_timeout_ms INTEGER,
+      dependency_note TEXT,
+      artifact_workspace_path TEXT
     );
 
     CREATE TABLE IF NOT EXISTS approvals (
@@ -108,7 +143,11 @@ export function migrate(database: DatabaseClient): void {
     );
   `);
   migrateTaskPosition(database);
+  migrateTasksExecutionFields(database);
+  migrateAgentRunsExecutionFields(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
+  database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
+  database.exec("CREATE INDEX IF NOT EXISTS task_events_company_created_idx ON task_events(company_id, created_at, id)");
 }
 
 function migrateTaskPosition(database: DatabaseClient): void {
@@ -137,4 +176,44 @@ function backfillTaskPositions(database: DatabaseClient): void {
       updatePosition.run(index, task.id);
     });
   }
+}
+
+function migrateTasksExecutionFields(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "tasks");
+  addColumnIfMissing(database, columns, "tasks", "artifact_workspace_path TEXT");
+  addColumnIfMissing(database, columns, "tasks", "latest_failure_reason TEXT");
+  addColumnIfMissing(database, columns, "tasks", "latest_failure_message TEXT");
+  addColumnIfMissing(database, columns, "tasks", "latest_execution_profile_name TEXT");
+  addColumnIfMissing(database, columns, "tasks", "latest_requested_timeout_ms INTEGER");
+  addColumnIfMissing(database, columns, "tasks", "latest_effective_timeout_ms INTEGER");
+  addColumnIfMissing(database, columns, "tasks", "dependency_note TEXT");
+}
+
+function migrateAgentRunsExecutionFields(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "agent_runs");
+  addColumnIfMissing(database, columns, "agent_runs", "execution_profile_name TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "requested_timeout_ms INTEGER");
+  addColumnIfMissing(database, columns, "agent_runs", "effective_timeout_ms INTEGER");
+  addColumnIfMissing(database, columns, "agent_runs", "failure_reason TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "failure_message TEXT");
+}
+
+function addColumnIfMissing(
+  database: DatabaseClient,
+  columns: Set<string>,
+  table: string,
+  definition: string,
+): void {
+  const columnName = definition.split(" ")[0];
+  if (columns.has(columnName)) {
+    return;
+  }
+
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  columns.add(columnName);
+}
+
+function getColumnNames(database: DatabaseClient, table: string): Set<string> {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return new Set(columns.map((column) => column.name));
 }

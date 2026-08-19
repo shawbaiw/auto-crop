@@ -10,7 +10,7 @@ Fix the current one-size-fits-all agent timeout by introducing Task Execution Pr
 - Use `requiredCapabilities` only for fallback or unknown schemas.
 - Keep profiles as runtime-derived data in the first version; do not add database columns.
 - Let task-level profile timeout override adapter defaults.
-- Keep `AUTO_CROP_AGENT_TIMEOUT_MS` as the highest-priority global override for manual test runs.
+- Superseded by `docs/runtime-observability-and-artifact-workspace-plan.md`: `AUTO_CROP_AGENT_TIMEOUT_MS` should not silently lower a task profile budget. Use `AUTO_CROP_FORCE_AGENT_TIMEOUT_MS` for deliberate full override test runs.
 - Keep timed-out tasks in `failed`; Partial Output remains useful but does not make a task complete.
 - Keep UI changes inside existing dashboard components.
 
@@ -40,7 +40,7 @@ Proof collection errors should fail only the current task and release its lock. 
 
 1. Add a server-side execution profile resolver.
 2. Extend `AgentRunRequest` with an optional task timeout.
-3. Have CLI adapters prefer `AUTO_CROP_AGENT_TIMEOUT_MS`, then request timeout, then adapter/default timeout.
+3. Have CLI adapters resolve an effective timeout from request timeout and environment rules, without letting normal environment configuration silently reduce a task profile budget.
 4. Have the scheduler calculate a task profile, pass its timeout, and emit clearer start/failure messages.
 5. Update dashboard task displays using existing `RetroBadge`, `VideotexLog`, and related primitives.
 6. Add server and dashboard tests.

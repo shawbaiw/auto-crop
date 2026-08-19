@@ -192,10 +192,10 @@ describe("Dashboard App", () => {
 
     await waitFor(() => expect(api.lastEventHandler).toBeDefined());
     act(() => {
-      api.lastEventHandler?.({ type: "task_log", taskId: "task_1", message: "Generated landing page" });
+      api.lastEventHandler?.({ type: "task_warning", taskId: "task_1", message: "Task warning: ignored invalid timeout." });
     });
 
-    expect(await screen.findByText("Generated landing page")).toBeInTheDocument();
+    expect(await screen.findByText("Task warning: ignored invalid timeout.")).toBeInTheDocument();
   });
 
   it("updates task status in the Department Workspace from SSE", async () => {
@@ -418,6 +418,60 @@ describe("Dashboard App", () => {
 
     expect(requestFullscreen).toHaveBeenCalledTimes(1);
   });
+
+  it("hydrates persisted company state, proof, and activity after refresh", async () => {
+    const restoreStorage = installMockLocalStorage({ "auto-crop.currentCompanyId": "company_1" });
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.getCompanyState = vi.fn(async () => ({
+      ...created,
+      company: {
+        ...created.company,
+        status: "active",
+        selectedCeoAgentId: "codex",
+      },
+      tasks: [
+        {
+          ...created.tasks[0],
+          status: "failed",
+          failureReason: "timeout",
+          effectiveTimeoutMs: 600_000,
+          artifactWorkspacePath: ".auto-crop/workspaces/task_1",
+        },
+      ],
+      proof: [
+        {
+          id: "proof_1",
+          taskId: "task_1",
+          type: "file",
+          uri: ".auto-crop/workspaces/task_1/index.html",
+          summary: "Prototype file captured.",
+        },
+      ],
+      reviews: [],
+      activity: [
+        {
+          type: "task_failed",
+          taskId: "task_1",
+          failureReason: "timeout",
+          effectiveTimeoutMs: 600_000,
+          message: "Task failed: Create landing page / timeout after 10m.",
+        },
+      ],
+    }));
+
+    try {
+      render(<App apiClient={api} />);
+
+      expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
+      expect(api.getCompanyState).toHaveBeenCalledWith("company_1");
+      expect(screen.getByText("Create landing page / FAILED · TIMEOUT · 10M · PARTIAL OUTPUT: .AUTO-CROP/WORKSPACES/TASK_1")).toBeInTheDocument();
+      expect(screen.getByText(".auto-crop/workspaces/task_1/index.html")).toBeInTheDocument();
+      expect(screen.getByText("Task failed: Create landing page / timeout after 10m.")).toBeInTheDocument();
+    } finally {
+      restoreStorage();
+    }
+  });
 });
 
 async function fillReadyToCreate(user: ReturnType<typeof userEvent.setup>) {
@@ -518,6 +572,14 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
     async createCompany() {
       return createCompanyResponse();
     },
+    async getCompanyState() {
+      return {
+        ...createCompanyResponse(),
+        proof: [],
+        reviews: [],
+        activity: [],
+      };
+    },
     async activateCompany(companyId) {
       return {
         company: {
@@ -569,5 +631,26 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
       this.lastEventHandler = handler;
       return () => undefined;
     },
+  };
+}
+
+function installMockLocalStorage(initial: Record<string, string>) {
+  const descriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+  const values = new Map(Object.entries(initial));
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+      removeItem: vi.fn((key: string) => values.delete(key)),
+    },
+  });
+
+  return () => {
+    if (descriptor) {
+      Object.defineProperty(window, "localStorage", descriptor);
+    } else {
+      delete (window as { localStorage?: Storage }).localStorage;
+    }
   };
 }

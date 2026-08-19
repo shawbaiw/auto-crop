@@ -4,6 +4,14 @@ export type ServerEvent = {
   type: string;
   taskId?: string;
   message: string;
+  status?: string;
+  failureReason?: string;
+  failureMessage?: string;
+  executionProfileName?: string;
+  requestedTimeoutMs?: number;
+  effectiveTimeoutMs?: number;
+  dependencyNote?: string;
+  artifactWorkspacePath?: string;
 };
 
 export class EventStream {

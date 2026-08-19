@@ -1,3 +1,5 @@
+import type { AgentFailureReason } from "@auto-crop/core";
+
 export type AgentCapability = string;
 
 export type AgentRunRequest = {
@@ -8,8 +10,6 @@ export type AgentRunRequest = {
   metadata: Record<string, string>;
   timeoutMs?: number;
 };
-
-export type AgentFailureReason = "timeout" | "agent_failed";
 
 export type AgentRunResult = {
   status: "complete" | "failed";

@@ -83,12 +83,14 @@ describe("runSchedulerOnce", () => {
     expect(readFileSync(join(projectRoot, ".auto-crop", "companies", "company_1", "logs", "task_1.log"), "utf8")).toContain(
       "proof: created artifact",
     );
-    expect(events).toContainEqual({
+    expect(events).toContainEqual(expect.objectContaining({
       type: "task_started",
       taskId: "task_1",
       message: "Task started: Task task_1 (mock-worker, long budget 10m).",
-    });
-    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_log:task_1");
+      executionProfileName: "long",
+      requestedTimeoutMs: 600_000,
+      effectiveTimeoutMs: 600_000,
+    }));
     expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_review:task_1");
 
     client.close();
@@ -200,12 +202,12 @@ describe("runSchedulerOnce", () => {
     expect(proofCollectorCalls).toBe(0);
     expect(repositories.listProofsForTask("task_1")).toEqual([]);
     expect(repositories.getTask("task_1")?.status).toBe("failed");
-    expect(events).toContainEqual({
+    expect(events).toContainEqual(expect.objectContaining({
       type: "task_failed",
       taskId: "task_1",
       failureReason: "timeout",
       message: "Task failed: Task task_1 / timeout after 10m.",
-    });
+    }));
 
     client.close();
   });
@@ -260,6 +262,107 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("skips queued tasks waiting on dependencies and dispatches later eligible work", async () => {
+    const producer = createTaskRecord("task_1", "running", "low", "landing-page-file");
+    const waiting = createTaskRecord("task_2", "queued", "low", "test-output");
+    const independent = createTaskRecord("task_3", "queued", "low", "product-brief");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, waiting, independent]);
+    repositories.createTaskDependency({ taskId: waiting.id, dependsOnTaskId: producer.id });
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "brief proof",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "file",
+          uri: "product-brief.md",
+          summary: "mock proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.started).toEqual(["task_3"]);
+    expect(repositories.getTask("task_2")?.status).toBe("queued");
+    expect(repositories.getTask("task_2")?.dependencyNote).toBe("Waiting for dependency: Task task_1 (running).");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "task_warning",
+      taskId: "task_2",
+      dependencyNote: "Waiting for dependency: Task task_1 (running).",
+    }));
+
+    client.close();
+  });
+
+  it("immediately blocks direct dependency consumers when a producer fails", async () => {
+    const producer = {
+      ...createTaskRecord("task_1", "queued", "low", "landing-page-file"),
+      artifactWorkspacePath: ".auto-crop/workspaces/task_1",
+    };
+    const consumer = createTaskRecord("task_2", "queued", "low", "test-output");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
+    repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          status: "failed",
+          failureReason: "agent_failed",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.failed).toEqual(["task_1"]);
+    expect(result.blocked).toEqual(["task_2"]);
+    expect(repositories.getTask("task_2")).toMatchObject({
+      status: "blocked",
+      latestFailureReason: "dependency_failed",
+      dependencyNote: "Blocked by failed dependency: Task task_1.",
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "partial_output",
+      taskId: "task_1",
+      artifactWorkspacePath: ".auto-crop/workspaces/task_1",
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "task_blocked",
+      taskId: "task_2",
+      failureReason: "dependency_failed",
+    }));
+
+    client.close();
+  });
+
   it("fails only the current task when proof capture throws", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low"),
@@ -306,12 +409,12 @@ describe("runSchedulerOnce", () => {
     expect(repositories.getTask("task_1")?.status).toBe("failed");
     expect(repositories.getTask("task_2")?.status).toBe("review");
     expect(repositories.listTaskLocks()).toEqual([]);
-    expect(events).toContainEqual({
+    expect(events).toContainEqual(expect.objectContaining({
       type: "task_failed",
       taskId: "task_1",
       failureReason: "proof_capture_failed",
       message: "Task failed: Task task_1 / proof_capture_failed / schema missing",
-    });
+    }));
 
     client.close();
   });
@@ -421,8 +524,15 @@ function createSequentialIdFactory(): (prefix: string) => string {
 }
 
 type SchedulerEventRecord = {
-  type: "task_started" | "task_log" | "task_review" | "task_failed" | "task_blocked";
+  type: "task_started" | "task_review" | "task_failed" | "task_blocked" | "task_warning" | "partial_output";
   taskId: string;
   message: string;
-  failureReason?: "timeout" | "agent_failed" | "no_proof" | "proof_capture_failed";
+  failureReason?: "timeout" | "agent_failed" | "no_proof" | "proof_capture_failed" | "dependency_failed";
+  failureMessage?: string;
+  status?: Task["status"];
+  executionProfileName?: string;
+  requestedTimeoutMs?: number;
+  effectiveTimeoutMs?: number;
+  dependencyNote?: string;
+  artifactWorkspacePath?: string;
 };

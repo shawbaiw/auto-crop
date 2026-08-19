@@ -1,5 +1,6 @@
 import type {
   AgentRun,
+  AgentFailureReason,
   Approval,
   Company,
   Department,
@@ -7,6 +8,9 @@ import type {
   Objective,
   Proof,
   Task,
+  TaskDependency,
+  TaskEvent,
+  TaskEventType,
   TaskStatus,
 } from "@auto-crop/core";
 import type { DatabaseClient } from "./client";
@@ -138,9 +142,11 @@ export function createRepositories(database: DatabaseClient) {
         .prepare(
           `INSERT INTO tasks (
             id, company_id, department_id, key_result_id, title, description,
-            assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, status, risk_level,
-            position
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, artifact_workspace_path,
+            status, risk_level, position, latest_failure_reason, latest_failure_message,
+            latest_execution_profile_name, latest_requested_timeout_ms, latest_effective_timeout_ms,
+            dependency_note
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           task.id,
@@ -153,9 +159,16 @@ export function createRepositories(database: DatabaseClient) {
           JSON.stringify(task.requiredCapabilities),
           task.proofSchemaId,
           task.workspacePath,
+          task.artifactWorkspacePath ?? null,
           task.status,
           task.riskLevel,
           task.position,
+          task.latestFailureReason ?? null,
+          task.latestFailureMessage ?? null,
+          task.latestExecutionProfileName ?? null,
+          task.latestRequestedTimeoutMs ?? null,
+          task.latestEffectiveTimeoutMs ?? null,
+          task.dependencyNote ?? null,
         );
     },
 
@@ -168,8 +181,57 @@ export function createRepositories(database: DatabaseClient) {
       database.prepare("UPDATE tasks SET status = ? WHERE id = ?").run(status, id);
     },
 
+    updateTaskExecutionSummary(
+      id: string,
+      summary: {
+        latestFailureReason?: AgentFailureReason | null;
+        latestFailureMessage?: string | null;
+        latestExecutionProfileName?: string | null;
+        latestRequestedTimeoutMs?: number | null;
+        latestEffectiveTimeoutMs?: number | null;
+        dependencyNote?: string | null;
+        artifactWorkspacePath?: string | null;
+      },
+    ): void {
+      const assignments: string[] = [];
+      const values: Array<string | number | null> = [];
+      const add = (column: string, value: string | number | null | undefined) => {
+        if (value === undefined) {
+          return;
+        }
+        assignments.push(`${column} = ?`);
+        values.push(value);
+      };
+
+      add("latest_failure_reason", summary.latestFailureReason);
+      add("latest_failure_message", summary.latestFailureMessage);
+      add("latest_execution_profile_name", summary.latestExecutionProfileName);
+      add("latest_requested_timeout_ms", summary.latestRequestedTimeoutMs);
+      add("latest_effective_timeout_ms", summary.latestEffectiveTimeoutMs);
+      add("dependency_note", summary.dependencyNote);
+      add("artifact_workspace_path", summary.artifactWorkspacePath);
+
+      if (assignments.length === 0) {
+        return;
+      }
+
+      database
+        .prepare(`UPDATE tasks SET ${assignments.join(", ")} WHERE id = ?`)
+        .run(...values, id);
+    },
+
+    clearTaskDependencyNote(id: string): void {
+      database.prepare("UPDATE tasks SET dependency_note = NULL WHERE id = ?").run(id);
+    },
+
     updateTaskWorkspacePath(id: string, workspacePath: string): void {
       database.prepare("UPDATE tasks SET workspace_path = ? WHERE id = ?").run(workspacePath, id);
+    },
+
+    updateTaskArtifactWorkspacePath(id: string, artifactWorkspacePath: string): void {
+      database
+        .prepare("UPDATE tasks SET artifact_workspace_path = ? WHERE id = ?")
+        .run(artifactWorkspacePath, id);
     },
 
     fetchQueuedTasks(limit: number): Task[] {
@@ -190,6 +252,53 @@ export function createRepositories(database: DatabaseClient) {
       const rows = database
         .prepare("SELECT * FROM tasks WHERE company_id = ? ORDER BY position ASC, id ASC")
         .all(companyId);
+      return rows.map((row) => mapTask(row as TaskRow));
+    },
+
+    createTaskDependency(dependency: TaskDependency): void {
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_task_id)
+           VALUES (?, ?)`,
+        )
+        .run(dependency.taskId, dependency.dependsOnTaskId);
+    },
+
+    listTaskDependencies(taskId: string): TaskDependency[] {
+      const rows = database
+        .prepare(
+          `SELECT task_id, depends_on_task_id
+           FROM task_dependencies
+           WHERE task_id = ?
+           ORDER BY depends_on_task_id ASC`,
+        )
+        .all(taskId);
+      return rows.map((row) => mapTaskDependency(row as TaskDependencyRow));
+    },
+
+    listTaskDependenciesForCompany(companyId: string): TaskDependency[] {
+      const rows = database
+        .prepare(
+          `SELECT task_dependencies.task_id, task_dependencies.depends_on_task_id
+           FROM task_dependencies
+           INNER JOIN tasks ON tasks.id = task_dependencies.task_id
+           WHERE tasks.company_id = ?
+           ORDER BY tasks.position ASC, task_dependencies.depends_on_task_id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapTaskDependency(row as TaskDependencyRow));
+    },
+
+    listDependencyConsumers(dependsOnTaskId: string): Task[] {
+      const rows = database
+        .prepare(
+          `SELECT tasks.*
+           FROM tasks
+           INNER JOIN task_dependencies ON task_dependencies.task_id = tasks.id
+           WHERE task_dependencies.depends_on_task_id = ?
+           ORDER BY tasks.position ASC, tasks.id ASC`,
+        )
+        .all(dependsOnTaskId);
       return rows.map((row) => mapTask(row as TaskRow));
     },
 
@@ -269,6 +378,19 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapProof(row as ProofRow));
     },
 
+    listProofsForCompany(companyId: string): Proof[] {
+      const rows = database
+        .prepare(
+          `SELECT proofs.*
+           FROM proofs
+           INNER JOIN tasks ON tasks.id = proofs.task_id
+           WHERE tasks.company_id = ?
+           ORDER BY tasks.position ASC, proofs.id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapProof(row as ProofRow));
+    },
+
     createApproval(approval: Approval): void {
       database
         .prepare(
@@ -291,8 +413,9 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO agent_runs (
-            id, task_id, agent_id, status, log_path, started_at, finished_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            id, task_id, agent_id, status, log_path, started_at, finished_at,
+            execution_profile_name, requested_timeout_ms, effective_timeout_ms, failure_reason, failure_message
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           agentRun.id,
@@ -302,6 +425,11 @@ export function createRepositories(database: DatabaseClient) {
           agentRun.logPath,
           agentRun.startedAt,
           agentRun.finishedAt,
+          agentRun.executionProfileName ?? null,
+          agentRun.requestedTimeoutMs ?? null,
+          agentRun.effectiveTimeoutMs ?? null,
+          agentRun.failureReason ?? null,
+          agentRun.failureMessage ?? null,
         );
     },
 
@@ -309,10 +437,21 @@ export function createRepositories(database: DatabaseClient) {
       id: string,
       status: AgentRun["status"],
       finishedAt: string | null,
+      outcome: {
+        failureReason?: AgentFailureReason | null;
+        failureMessage?: string | null;
+      } = {},
     ): void {
       database
-        .prepare("UPDATE agent_runs SET status = ?, finished_at = ? WHERE id = ?")
-        .run(status, finishedAt, id);
+        .prepare(
+          `UPDATE agent_runs
+           SET status = ?,
+               finished_at = ?,
+               failure_reason = COALESCE(?, failure_reason),
+               failure_message = COALESCE(?, failure_message)
+           WHERE id = ?`,
+        )
+        .run(status, finishedAt, outcome.failureReason ?? null, outcome.failureMessage ?? null, id);
     },
 
     listRunningAgentRuns(companyId: string): AgentRun[] {
@@ -343,6 +482,45 @@ export function createRepositories(database: DatabaseClient) {
         .prepare("SELECT * FROM reviews WHERE company_id = ? ORDER BY created_at ASC, id ASC")
         .all(companyId);
       return rows.map((row) => mapReview(row as ReviewRow));
+    },
+
+    appendTaskEvent(event: TaskEvent): void {
+      database
+        .prepare(
+          `INSERT INTO task_events (
+            id, company_id, task_id, type, message, created_at, status, failure_reason,
+            failure_message, execution_profile_name, requested_timeout_ms, effective_timeout_ms,
+            dependency_note, artifact_workspace_path
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          event.id,
+          event.companyId,
+          event.taskId,
+          event.type,
+          event.message,
+          event.createdAt,
+          event.status,
+          event.failureReason,
+          event.failureMessage,
+          event.executionProfileName,
+          event.requestedTimeoutMs,
+          event.effectiveTimeoutMs,
+          event.dependencyNote,
+          event.artifactWorkspacePath,
+        );
+    },
+
+    listTaskEventsForCompany(companyId: string): TaskEvent[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM task_events
+           WHERE company_id = ?
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapTaskEvent(row as TaskEventRow));
     },
   };
 }
@@ -396,9 +574,16 @@ type TaskRow = {
   required_capabilities: string;
   proof_schema_id: string;
   workspace_path: string | null;
+  artifact_workspace_path: string | null;
   status: Task["status"];
   risk_level: Task["riskLevel"];
   position: number;
+  latest_failure_reason: AgentFailureReason | null;
+  latest_failure_message: string | null;
+  latest_execution_profile_name: string | null;
+  latest_requested_timeout_ms: number | null;
+  latest_effective_timeout_ms: number | null;
+  dependency_note: string | null;
 };
 
 type ProofRow = {
@@ -424,6 +609,11 @@ type AgentRunRow = {
   log_path: string;
   started_at: string | null;
   finished_at: string | null;
+  execution_profile_name: string | null;
+  requested_timeout_ms: number | null;
+  effective_timeout_ms: number | null;
+  failure_reason: AgentFailureReason | null;
+  failure_message: string | null;
 };
 
 type ReviewRow = {
@@ -432,6 +622,28 @@ type ReviewRow = {
   summary: string;
   review_path: string;
   created_at: string;
+};
+
+type TaskDependencyRow = {
+  task_id: string;
+  depends_on_task_id: string;
+};
+
+type TaskEventRow = {
+  id: string;
+  company_id: string;
+  task_id: string;
+  type: TaskEventType;
+  message: string;
+  created_at: string;
+  status: TaskStatus | null;
+  failure_reason: AgentFailureReason | null;
+  failure_message: string | null;
+  execution_profile_name: string | null;
+  requested_timeout_ms: number | null;
+  effective_timeout_ms: number | null;
+  dependency_note: string | null;
+  artifact_workspace_path: string | null;
 };
 
 function mapCompany(row: CompanyRow): Company {
@@ -492,9 +704,16 @@ function mapTask(row: TaskRow): Task {
     requiredCapabilities: JSON.parse(row.required_capabilities) as string[],
     proofSchemaId: row.proof_schema_id,
     workspacePath: row.workspace_path,
+    artifactWorkspacePath: row.artifact_workspace_path,
     status: row.status,
     riskLevel: row.risk_level,
     position: row.position,
+    latestFailureReason: row.latest_failure_reason,
+    latestFailureMessage: row.latest_failure_message,
+    latestExecutionProfileName: row.latest_execution_profile_name,
+    latestRequestedTimeoutMs: row.latest_requested_timeout_ms,
+    latestEffectiveTimeoutMs: row.latest_effective_timeout_ms,
+    dependencyNote: row.dependency_note,
   };
 }
 
@@ -518,6 +737,11 @@ function mapAgentRun(row: AgentRunRow): AgentRun {
     logPath: row.log_path,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    executionProfileName: row.execution_profile_name,
+    requestedTimeoutMs: row.requested_timeout_ms,
+    effectiveTimeoutMs: row.effective_timeout_ms,
+    failureReason: row.failure_reason,
+    failureMessage: row.failure_message,
   };
 }
 
@@ -528,5 +752,31 @@ function mapReview(row: ReviewRow): ReviewRecord {
     summary: row.summary,
     reviewPath: row.review_path,
     createdAt: row.created_at,
+  };
+}
+
+function mapTaskDependency(row: TaskDependencyRow): TaskDependency {
+  return {
+    taskId: row.task_id,
+    dependsOnTaskId: row.depends_on_task_id,
+  };
+}
+
+function mapTaskEvent(row: TaskEventRow): TaskEvent {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    taskId: row.task_id,
+    type: row.type,
+    message: row.message,
+    createdAt: row.created_at,
+    status: row.status,
+    failureReason: row.failure_reason,
+    failureMessage: row.failure_message,
+    executionProfileName: row.execution_profile_name,
+    requestedTimeoutMs: row.requested_timeout_ms,
+    effectiveTimeoutMs: row.effective_timeout_ms,
+    dependencyNote: row.dependency_note,
+    artifactWorkspacePath: row.artifact_workspace_path,
   };
 }

@@ -20,6 +20,19 @@ export type ProofType =
   | "deployment";
 export type AgentRunStatus = "queued" | "running" | "complete" | "failed" | "cancelled";
 export type ApprovalStatus = "pending" | "approved" | "denied";
+export type AgentFailureReason =
+  | "timeout"
+  | "agent_failed"
+  | "no_proof"
+  | "proof_capture_failed"
+  | "dependency_failed";
+export type TaskEventType =
+  | "task_started"
+  | "task_review"
+  | "task_failed"
+  | "task_blocked"
+  | "task_warning"
+  | "partial_output";
 
 export type Company = {
   id: string;
@@ -71,8 +84,15 @@ export type Task = {
   requiredCapabilities: string[];
   proofSchemaId: string;
   workspacePath: string | null;
+  artifactWorkspacePath?: string | null;
   status: TaskStatus;
   riskLevel: RiskLevel;
+  latestFailureReason?: AgentFailureReason | null;
+  latestFailureMessage?: string | null;
+  latestExecutionProfileName?: string | null;
+  latestRequestedTimeoutMs?: number | null;
+  latestEffectiveTimeoutMs?: number | null;
+  dependencyNote?: string | null;
 };
 
 export type Proof = {
@@ -92,6 +112,33 @@ export type AgentRun = {
   logPath: string;
   startedAt: string | null;
   finishedAt: string | null;
+  executionProfileName?: string | null;
+  requestedTimeoutMs?: number | null;
+  effectiveTimeoutMs?: number | null;
+  failureReason?: AgentFailureReason | null;
+  failureMessage?: string | null;
+};
+
+export type TaskDependency = {
+  taskId: string;
+  dependsOnTaskId: string;
+};
+
+export type TaskEvent = {
+  id: string;
+  companyId: string;
+  taskId: string;
+  type: TaskEventType;
+  message: string;
+  createdAt: string;
+  status: TaskStatus | null;
+  failureReason: AgentFailureReason | null;
+  failureMessage: string | null;
+  executionProfileName: string | null;
+  requestedTimeoutMs: number | null;
+  effectiveTimeoutMs: number | null;
+  dependencyNote: string | null;
+  artifactWorkspacePath: string | null;
 };
 
 export type Approval = {

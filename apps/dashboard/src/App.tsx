@@ -23,6 +23,7 @@ export type AppProps = {
 
 type AgentLoadState = "idle" | "loading" | "ready" | "failed";
 type AppView = "onboarding" | "creating" | "department-workspace" | "dashboard";
+const currentCompanyStorageKey = "auto-crop.currentCompanyId";
 
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
@@ -47,6 +48,35 @@ export default function App({ apiClient }: AppProps) {
   const [view, setView] = useState<AppView>("onboarding");
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("company");
   const [dashboardFocusTarget, setDashboardFocusTarget] = useState<DashboardFocusTarget | null>(null);
+
+  useEffect(() => {
+    const companyId = readCurrentCompanyId();
+    if (!companyId) {
+      return;
+    }
+
+    let cancelled = false;
+    void client
+      .getCompanyState(companyId)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setBlueprint(response);
+        setProof(response.proof);
+        setReviews(response.reviews);
+        setEvents(response.activity);
+        setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
+        setView(response.company.status === "draft" ? "department-workspace" : "dashboard");
+      })
+      .catch(() => {
+        clearCurrentCompanyId();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
 
   useEffect(() => {
     if (view === "onboarding" && onboardingStep === "agents" && agentLoadState === "idle") {
@@ -172,6 +202,10 @@ export default function App({ apiClient }: AppProps) {
         assets: [],
       });
       setBlueprint(response);
+      setProof(response.proof ?? []);
+      setReviews(response.reviews ?? []);
+      setEvents(response.activity ?? []);
+      writeCurrentCompanyId(response.company.id);
       setView("department-workspace");
     } catch (error) {
       setView("onboarding");
@@ -274,6 +308,7 @@ export default function App({ apiClient }: AppProps) {
     }
 
     const response = await client.activateCompany(blueprint.company.id);
+    writeCurrentCompanyId(blueprint.company.id);
     setBlueprint({
       ...blueprint,
       company: response.company,
@@ -507,31 +542,45 @@ function updateBlueprintTaskStatus(blueprint: CreateCompanyResponse | null, even
     return blueprint;
   }
 
-  const nextStatus = taskStatusFromEvent(event.type);
+  const nextStatus = event.status ?? taskStatusFromEvent(event.type);
 
-  if (!nextStatus) {
+  if (!nextStatus && !hasTaskSummaryUpdate(event)) {
     return blueprint;
   }
 
   let changed = false;
   const tasks = blueprint.tasks.map((task) => {
-    if (task.id !== event.taskId || task.status === nextStatus) {
-      if (task.id === event.taskId && event.failureReason && task.failureReason !== event.failureReason) {
-        changed = true;
-        return { ...task, failureReason: event.failureReason };
-      }
+    if (task.id !== event.taskId) {
       return task;
     }
 
     changed = true;
     return {
       ...task,
-      status: nextStatus,
-      failureReason: event.type === "task_failed" ? event.failureReason : undefined,
+      status: nextStatus ?? task.status,
+      failureReason: event.failureReason ?? (event.type === "task_started" ? undefined : task.failureReason),
+      failureMessage: event.failureMessage ?? (event.type === "task_started" ? undefined : task.failureMessage),
+      executionProfileName: event.executionProfileName ?? task.executionProfileName,
+      requestedTimeoutMs: event.requestedTimeoutMs ?? task.requestedTimeoutMs,
+      effectiveTimeoutMs: event.effectiveTimeoutMs ?? task.effectiveTimeoutMs,
+      dependencyNote: event.dependencyNote ?? (event.type === "task_started" ? undefined : task.dependencyNote),
+      artifactWorkspacePath: event.artifactWorkspacePath ?? task.artifactWorkspacePath,
     };
   });
 
   return changed ? { ...blueprint, tasks } : blueprint;
+}
+
+function hasTaskSummaryUpdate(event: ServerEvent) {
+  return Boolean(
+    event.failureReason ||
+      event.failureMessage ||
+      event.executionProfileName ||
+      event.requestedTimeoutMs ||
+      event.effectiveTimeoutMs ||
+      event.dependencyNote ||
+      event.artifactWorkspacePath,
+  );
 }
 
 function taskStatusFromEvent(eventType: string) {
@@ -547,4 +596,28 @@ function taskStatusFromEvent(eventType: string) {
     default:
       return null;
   }
+}
+
+function readCurrentCompanyId(): string | null {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return null;
+  }
+
+  return window.localStorage.getItem(currentCompanyStorageKey);
+}
+
+function writeCurrentCompanyId(companyId: string): void {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+
+  window.localStorage.setItem(currentCompanyStorageKey, companyId);
+}
+
+function clearCurrentCompanyId(): void {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+
+  window.localStorage.removeItem(currentCompanyStorageKey);
 }
