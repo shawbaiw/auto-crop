@@ -2,6 +2,7 @@ import { Activity, Building2, LoaderCircle } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { AgentSummary } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
+import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroPanel, RetroStatus } from "../ui/retro";
 
@@ -12,20 +13,20 @@ export type CompanyCreationLoadingProps = {
   selectedAgent: AgentSummary | null;
 };
 
-const creationStages = [
-  "Sending founder vision",
-  "CEO agent generating blueprint",
-  "Validating strict JSON",
-  "Creating departments and tasks",
-];
-
 export function CompanyCreationLoading({
   companyName,
   menuBar,
   permissionMode,
   selectedAgent,
 }: CompanyCreationLoadingProps) {
+  const { t } = useLanguage();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const creationStages = [
+    t("creating.stageVision"),
+    t("creating.stageBlueprint"),
+    t("creating.stageJson"),
+    t("creating.stageTasks"),
+  ];
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -39,30 +40,30 @@ export function CompanyCreationLoading({
     <AppShell menuBar={menuBar}>
       <PageHeader
         eyebrow={companyName}
-        status="Creating Company"
+        status={t("creating.status")}
         statusIcon={<Building2 size={16} aria-hidden="true" />}
-        title="CEO Office"
+        title={t("app.title")}
       />
 
       <Workspace className="creation-loading">
-        <RetroPanel icon={<LoaderCircle size={18} aria-hidden="true" />} title="Company Creation">
+        <RetroPanel icon={<LoaderCircle size={18} aria-hidden="true" />} title={t("creating.panel")}>
           <VideotexKeyValue
             items={[
-              { label: "Company", value: companyName },
-              { label: "CEO", value: selectedAgent?.name ?? "Selected agent" },
-              { label: "Policy", value: permissionMode },
-              { label: "Elapsed", value: `${elapsedSeconds}s` },
+              { label: t("creating.company"), value: companyName },
+              { label: t("creating.ceo"), value: selectedAgent?.name ?? t("creating.selectedAgent") },
+              { label: t("creating.policy"), value: permissionMode },
+              { label: t("creating.elapsed"), value: `${elapsedSeconds}s` },
             ]}
           />
         </RetroPanel>
 
-        <RetroPanel icon={<Activity size={18} aria-hidden="true" />} title="Creation Stages">
-          <VideotexLog emptyMessage="Waiting for CEO agent." rows={creationStages} />
+        <RetroPanel icon={<Activity size={18} aria-hidden="true" />} title={t("creating.stages")}>
+          <VideotexLog emptyMessage={t("creating.waiting")} rows={creationStages} />
         </RetroPanel>
       </Workspace>
 
       <RetroStatus icon={<LoaderCircle size={16} aria-hidden="true" />}>
-        CEO agent blueprint generation in progress
+        {t("creating.statusText")}
       </RetroStatus>
     </AppShell>
   );

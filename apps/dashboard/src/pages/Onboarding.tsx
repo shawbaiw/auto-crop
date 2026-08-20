@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { AgentSummary, CreateCompanyResponse } from "../api/client";
 import { RetroButton, RetroField, RetroListRow, RetroPanel, RetroSelect, RetroStatus, RetroTextarea } from "../ui/retro";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
+import { useLanguage } from "../ui/language";
 
 export type OnboardingStep = "company" | "agents" | "vision";
 
@@ -32,34 +33,34 @@ export type OnboardingProps = {
   onActivateCompany(): void;
 };
 
-const permissionOptions = [
-  { value: "safe", label: "Safe" },
-  { value: "balanced", label: "Balanced" },
-  { value: "autonomous", label: "Autonomous" },
-];
-
 export function Onboarding(props: OnboardingProps) {
+  const { t } = useLanguage();
   const selectedAgent = props.agents.find((agent) => agent.id === props.selectedAgentId);
+  const permissionOptions = [
+    { value: "safe", label: t("onboarding.safe") },
+    { value: "balanced", label: t("onboarding.balanced") },
+    { value: "autonomous", label: t("onboarding.autonomous") },
+  ];
 
   return (
     <AppShell menuBar={props.menuBar}>
       <PageHeader
-        eyebrow="Founder Setup"
-        status="Local Agent Company"
+        eyebrow={t("onboarding.eyebrow")}
+        status={t("app.localAgentCompany")}
         statusIcon={<Building2 size={16} aria-hidden="true" />}
-        title="CEO Office"
+        title={t("app.title")}
       />
 
       <Workspace className="onboarding-wizard">
         {props.step === "company" ? (
-          <RetroPanel title="Step 1 / Company Name">
-            <RetroField htmlFor="company-name" label="Company name">
+          <RetroPanel title={t("onboarding.stepCompany")}>
+            <RetroField htmlFor="company-name" label={t("onboarding.companyName")}>
               <input
-                aria-label="Company name"
+                aria-label={t("onboarding.companyName")}
                 className="retro-input"
                 id="company-name"
                 onChange={(event) => props.onCompanyNameChange(event.target.value)}
-                placeholder="Pricing Page Studio"
+                placeholder={t("onboarding.companyPlaceholder")}
                 value={props.companyName}
               />
             </RetroField>
@@ -74,35 +75,35 @@ export function Onboarding(props: OnboardingProps) {
                 onClick={props.onNext}
                 variant="primary"
               >
-                Next
+                {t("onboarding.next")}
               </RetroButton>
             </div>
           </RetroPanel>
         ) : null}
 
         {props.step === "agents" ? (
-          <RetroPanel title="Step 2 / Choose CEO">
+          <RetroPanel title={t("onboarding.stepAgents")}>
           <div className="agent-grid">
             {props.agentLoadState === "loading" ? (
               <div className="system-message" role="status">
-                Scanning local agent registry...
+                {t("onboarding.scanningAgents")}
               </div>
             ) : null}
             {props.agentLoadState === "failed" ? (
               <div className="system-message system-message--danger" role="status">
-                Local API is not connected. Start auto-crop or open the dashboard URL printed by the CLI.
+                {t("onboarding.apiDisconnected")}
               </div>
             ) : null}
             {props.agentLoadState === "ready" && props.agents.length === 0 ? (
               <div className="system-message" role="status">
-                No local agents reported by the API.
+                {t("onboarding.noAgents")}
               </div>
             ) : null}
             {props.agents.map((agent) => (
               <RetroListRow
                 disabled={!agent.detected}
                 key={agent.id}
-                meta={agent.detected ? "available" : "unavailable"}
+                meta={agent.detected ? t("onboarding.available") : t("onboarding.unavailable")}
                 onClick={() => props.onSelectAgent(agent.id)}
                 selected={agent.id === props.selectedAgentId}
                 title={agent.name}
@@ -116,11 +117,11 @@ export function Onboarding(props: OnboardingProps) {
           ) : null}
           <div className="onboarding-wizard__actions">
             <RetroButton icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
-              Back
+              {t("onboarding.back")}
             </RetroButton>
             {props.agentLoadState === "failed" ? (
               <RetroButton icon={<RefreshCw size={16} aria-hidden="true" />} onClick={props.onRetryAgents}>
-                Retry
+                {t("onboarding.retry")}
               </RetroButton>
             ) : null}
             <RetroButton
@@ -128,33 +129,33 @@ export function Onboarding(props: OnboardingProps) {
               onClick={props.onNext}
               variant="primary"
             >
-              Next
+              {t("onboarding.next")}
             </RetroButton>
           </div>
         </RetroPanel>
         ) : null}
 
         {props.step === "vision" ? (
-          <RetroPanel title="Step 3 / Founder Vision">
-          {selectedAgent ? <p className="muted">CEO Agent: {selectedAgent.name}</p> : null}
-          <RetroField htmlFor="founder-vision" label="Founder vision">
+          <RetroPanel title={t("onboarding.stepVision")}>
+          {selectedAgent ? <p className="muted">{t("onboarding.ceoAgent")}: {selectedAgent.name}</p> : null}
+          <RetroField htmlFor="founder-vision" label={t("onboarding.founderVision")}>
             <RetroTextarea
-              aria-label="Founder vision"
+              aria-label={t("onboarding.founderVision")}
               id="founder-vision"
               onChange={(event) => props.onVisionChange(event.target.value)}
-              placeholder="Build an AI SaaS that creates pricing pages."
+              placeholder={t("onboarding.visionPlaceholder")}
               value={props.founderVision}
             />
           </RetroField>
           {props.founderVisionError ? (
             <div className="system-message system-message--danger" role="alert">
               {props.founderVisionError}
-            </div>
+              </div>
           ) : null}
-          <RetroField htmlFor="permission-mode" label="Permission mode">
+          <RetroField htmlFor="permission-mode" label={t("onboarding.permissionMode")}>
             <RetroSelect
               id="permission-mode"
-              label="Permission mode"
+              label={t("onboarding.permissionMode")}
               onValueChange={props.onPermissionModeChange}
               options={permissionOptions}
               value={props.permissionMode}
@@ -167,7 +168,7 @@ export function Onboarding(props: OnboardingProps) {
           ) : null}
           <div className="onboarding-wizard__actions">
             <RetroButton disabled={props.isCreating} icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
-              Back
+              {t("onboarding.back")}
             </RetroButton>
             <RetroButton
               disabled={props.isCreating}
@@ -175,7 +176,7 @@ export function Onboarding(props: OnboardingProps) {
               onClick={props.onCreateCompany}
               variant="primary"
             >
-              {props.isCreating ? "Creating..." : "Create Company"}
+              {props.isCreating ? t("onboarding.creating") : t("menu.createCompany")}
             </RetroButton>
           </div>
         </RetroPanel>
@@ -183,20 +184,20 @@ export function Onboarding(props: OnboardingProps) {
       </Workspace>
 
       {props.step === "vision" && props.blueprint ? (
-        <RetroPanel className="blueprint-band" title="Blueprint Review">
+        <RetroPanel className="blueprint-band" title={t("onboarding.blueprintReview")}>
           <div>
-            <span className="eyebrow">Blueprint Review</span>
+            <span className="eyebrow">{t("onboarding.blueprintReview")}</span>
             <h2>{props.blueprint.editable.companyName}</h2>
           </div>
           <div className="review-columns">
             <div>
-              <h3>Objectives</h3>
+              <h3>{t("onboarding.objectives")}</h3>
               {props.blueprint.editable.objectives.map((objective) => (
                 <p key={objective}>{objective}</p>
               ))}
             </div>
             <div>
-              <h3>First Tasks</h3>
+              <h3>{t("onboarding.firstTasks")}</h3>
               {props.blueprint.editable.firstTasks.map((task) => (
                 <p key={task}>{task}</p>
               ))}
@@ -207,13 +208,13 @@ export function Onboarding(props: OnboardingProps) {
             onClick={props.onActivateCompany}
             variant="primary"
           >
-            Activate Company
+            {t("menu.activateCompany")}
           </RetroButton>
         </RetroPanel>
       ) : null}
 
       <RetroStatus icon={<ShieldCheck size={16} aria-hidden="true" />}>
-        {props.permissionMode} execution policy
+        {props.permissionMode} {t("onboarding.executionPolicy")}
       </RetroStatus>
     </AppShell>
   );

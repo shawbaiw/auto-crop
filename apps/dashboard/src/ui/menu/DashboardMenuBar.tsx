@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { AgentSummary } from "../../api/client";
+import { languageOrder, useLanguage } from "../language";
 import { isPaletteId, paletteOrder, palettes, useTheme } from "../theme";
 import { RetroMenuBar } from "./RetroMenuBar";
 import type { RetroMenuGroup } from "./RetroMenu";
@@ -56,6 +57,7 @@ export function DashboardMenuBar({
   view,
 }: DashboardMenuBarProps) {
   const { setSkin, skin } = useTheme();
+  const { language, setLanguage, t } = useLanguage();
   const detectedAgents = agents.filter((agent) => agent.detected);
   const canViewCompanyWork = (view === "dashboard" || view === "department-workspace" || view === "operations") && hasBlueprint;
 
@@ -63,35 +65,35 @@ export function DashboardMenuBar({
     () => [
       {
         id: "auto-crop",
-        label: "Auto-Crop",
+        label: t("menu.app"),
         items: [
-          { disabled: true, id: "about", label: "About Auto-Crop" },
+          { disabled: true, id: "about", label: t("menu.about") },
           { id: "auto-crop-separator", type: "separator" },
-          { disabled: true, id: "preferences", label: "Preferences..." },
+          { disabled: true, id: "preferences", label: t("menu.preferences") },
         ],
       },
       {
         id: "company",
-        label: "Company",
+        label: t("menu.company"),
         items: [
           {
             disabled: !canCreateCompany || isCreating,
             id: "create-company",
-            label: isCreating ? "Creating Company..." : "Create Company",
+            label: isCreating ? t("menu.creatingCompany") : t("menu.createCompany"),
             onSelect: onCreateCompany,
             shortcut: "Cmd+Enter",
           },
           {
             disabled: !hasBlueprint,
             id: "activate-company",
-            label: "Activate Company",
+            label: t("menu.activateCompany"),
             onSelect: onActivateCompany,
             shortcut: "Shift+Cmd+Enter",
           },
           {
             disabled: view === "onboarding" || view === "creating",
             id: "back-to-setup",
-            label: "Back to Setup",
+            label: t("menu.backToSetup"),
             onSelect: onBackToSetup,
             shortcut: "Cmd+B",
           },
@@ -99,7 +101,7 @@ export function DashboardMenuBar({
           {
             disabled: view !== "dashboard" || !hasBlueprint,
             id: "kill-switch",
-            label: "Kill Switch",
+            label: t("menu.killSwitch"),
             onSelect: onKillSwitch,
             shortcut: "Shift+Cmd+K",
           },
@@ -107,7 +109,7 @@ export function DashboardMenuBar({
       },
       {
         id: "agents",
-        label: "Agents",
+        label: t("menu.agents"),
         items:
           detectedAgents.length > 0
             ? detectedAgents.map((agent) => ({
@@ -116,57 +118,57 @@ export function DashboardMenuBar({
                 label: agent.name,
                 onSelect: () => onSelectAgent(agent.id),
               }))
-            : [{ disabled: true, id: "no-agents-detected", label: "No Agents Detected" }],
+            : [{ disabled: true, id: "no-agents-detected", label: t("menu.noAgentsDetected") }],
       },
       {
         id: "work",
-        label: "Work",
+        label: t("menu.work"),
         items: [
           {
             disabled: !canViewCompanyWork,
             id: "view-tasks",
-            label: "View Tasks",
+            label: t("menu.viewTasks"),
             onSelect: onViewTasks,
             shortcut: "Cmd+1",
           },
           {
             disabled: !canViewCompanyWork,
             id: "view-departments",
-            label: "View Departments",
+            label: t("menu.viewDepartments"),
             onSelect: onViewDepartments,
             shortcut: "Cmd+2",
           },
           {
             disabled: !canViewCompanyWork,
             id: "view-operations",
-            label: "View Operations",
+            label: t("menu.viewOperations"),
             onSelect: onViewOperations,
           },
-          { checked: isPaused, disabled: true, id: "pause-status", label: "Pause Status" },
+          { checked: isPaused, disabled: true, id: "pause-status", label: t("menu.pauseStatus") },
         ],
       },
       {
         id: "proof",
-        label: "Proof",
+        label: t("menu.proof"),
         items: [
           {
             disabled: view !== "dashboard" || !hasBlueprint,
             id: "load-proof",
-            label: "Load Proof",
+            label: t("menu.loadProof"),
             onSelect: onLoadProof,
             shortcut: "Cmd+3",
           },
           {
             disabled: view !== "dashboard" || !hasBlueprint,
             id: "load-review",
-            label: "Load Review",
+            label: t("menu.loadReview"),
             onSelect: onLoadReviews,
             shortcut: "Cmd+4",
           },
           {
             disabled: view !== "dashboard" || !hasBlueprint || !hasProof,
             id: "open-evidence",
-            label: "Open Evidence",
+            label: t("menu.openEvidence"),
             onSelect: onOpenEvidence,
             shortcut: "Cmd+5",
           },
@@ -174,11 +176,11 @@ export function DashboardMenuBar({
       },
       {
         id: "view",
-        label: "View",
+        label: t("menu.view"),
         items: [
           {
             id: "skin",
-            label: "Skin",
+            label: t("menu.skin"),
             children: paletteOrder.map((paletteId) => ({
               checked: paletteId === skin,
               id: `skin-${paletteId}`,
@@ -190,13 +192,23 @@ export function DashboardMenuBar({
               },
             })),
           },
+          {
+            id: "language",
+            label: t("menu.language"),
+            children: languageOrder.map((languageId) => ({
+              checked: languageId === language,
+              id: `language-${languageId}`,
+              label: languageId === "zh" ? t("menu.languageChinese") : t("menu.languageEnglish"),
+              onSelect: () => setLanguage(languageId),
+            })),
+          },
           { id: "view-separator", type: "separator" as const },
-          { checked: true, disabled: true, id: "crt-effect", label: "CRT Effect: Horizontal + Vignette" },
+          { checked: true, disabled: true, id: "crt-effect", label: t("menu.crtEffect") },
           {
             checked: isFullscreen,
             disabled: !fullscreenAvailable,
             id: "fullscreen",
-            label: isFullscreen ? "Exit Fullscreen" : "Fullscreen",
+            label: isFullscreen ? t("menu.exitFullscreen") : t("menu.fullscreen"),
             onSelect: onToggleFullscreen,
             shortcut: "Ctrl+Cmd+F",
           },
@@ -204,16 +216,17 @@ export function DashboardMenuBar({
       },
       {
         id: "help",
-        label: "Help",
+        label: t("menu.help"),
         items: [
-          { disabled: true, id: "documentation", label: "Documentation" },
-          { disabled: true, id: "github-repository", label: "GitHub Repository" },
-          { disabled: true, id: "keyboard-shortcuts", label: "Keyboard Shortcuts" },
+          { disabled: true, id: "documentation", label: t("menu.documentation") },
+          { disabled: true, id: "github-repository", label: t("menu.githubRepository") },
+          { disabled: true, id: "keyboard-shortcuts", label: t("menu.keyboardShortcuts") },
         ],
       },
     ],
     [
       detectedAgents,
+      language,
       canCreateCompany,
       hasBlueprint,
       isCreating,
@@ -234,8 +247,10 @@ export function DashboardMenuBar({
       hasProof,
       isFullscreen,
       selectedAgentId,
+      setLanguage,
       setSkin,
       skin,
+      t,
       view,
     ],
   );

@@ -10,6 +10,7 @@ import type {
   TaskSummary,
 } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
+import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroPanel } from "../ui/retro";
 
@@ -37,6 +38,7 @@ export type CompanyDashboardProps = {
 };
 
 export function CompanyDashboard(props: CompanyDashboardProps) {
+  const { t } = useLanguage();
   const sectionRefs = {
     departments: useRef<HTMLElement>(null),
     evidence: useRef<HTMLParagraphElement>(null),
@@ -68,27 +70,27 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
         eyebrow={props.company.name}
         status={props.company.status}
         statusIcon={<Activity size={16} aria-hidden="true" />}
-        title="Company Operating Dashboard"
+        title={t("dashboard.title")}
       />
-      {props.isPaused ? <section className="system-message system-message--danger">Global pause active</section> : null}
+      {props.isPaused ? <section className="system-message system-message--danger">{t("app.globalPause")}</section> : null}
 
       <Workspace className="operations-grid">
-        <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title="CEO Office" variant="inverted">
-          <p>Sets objectives, routes work, and reviews proof.</p>
-          <VideotexKeyValue items={[{ label: "STATE", value: props.company.status }, { label: "PLAYBOOK", value: props.company.playbookId }]} />
+        <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title={t("dashboard.ceoOffice")} variant="inverted">
+          <p>{t("dashboard.ceoOfficeDescription")}</p>
+          <VideotexKeyValue items={[{ label: t("dashboard.state"), value: props.company.status }, { label: t("dashboard.playbook"), value: props.company.playbookId }]} />
         </RetroPanel>
-        <RetroPanel icon={<Flag size={18} aria-hidden="true" />} title="OKR System">
-          <VideotexLog emptyMessage="No objectives queued." rows={props.objectives.map((objective) => objective.title)} />
+        <RetroPanel icon={<Flag size={18} aria-hidden="true" />} title={t("dashboard.okrSystem")}>
+          <VideotexLog emptyMessage={t("dashboard.noObjectives")} rows={props.objectives.map((objective) => objective.title)} />
         </RetroPanel>
         <RetroPanel
           icon={<ListChecks size={18} aria-hidden="true" />}
           id="active-tasks"
           ref={sectionRefs.tasks}
           tabIndex={-1}
-          title="Active Tasks"
+          title={t("dashboard.activeTasks")}
         >
           <VideotexLog
-            emptyMessage="No active tasks."
+            emptyMessage={t("dashboard.noActiveTasks")}
             rows={props.tasks.map((task) => `${task.title} / ${formatTaskStatus(task).toUpperCase()}`)}
           />
         </RetroPanel>
@@ -114,11 +116,11 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
       </Workspace>
 
       <Workspace className="control-grid">
-        <RetroPanel icon={<FileCheck2 size={18} aria-hidden="true" />} id="proof" ref={sectionRefs.proof} tabIndex={-1} title="Proof">
+        <RetroPanel icon={<FileCheck2 size={18} aria-hidden="true" />} id="proof" ref={sectionRefs.proof} tabIndex={-1} title={t("dashboard.proof")}>
           <RetroButton onClick={props.onLoadProof}>
-            Load Proof
+            {t("menu.loadProof")}
           </RetroButton>
-          {props.proof.length === 0 ? <p className="muted">Work evidence will appear here after task review.</p> : null}
+          {props.proof.length === 0 ? <p className="muted">{t("dashboard.workEvidence")}</p> : null}
           {props.proof.map((proof, index) => (
             <p
               className="proof-evidence-row"
@@ -131,25 +133,25 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
             </p>
           ))}
         </RetroPanel>
-        <RetroPanel icon={<ShieldAlert size={18} aria-hidden="true" />} title="Approvals">
-          <p className="muted">Permission requests will pause here before risky actions.</p>
+        <RetroPanel icon={<ShieldAlert size={18} aria-hidden="true" />} title={t("dashboard.approvals")}>
+          <p className="muted">{t("dashboard.permissionRequests")}</p>
           <RetroButton onClick={props.onKillSwitch} variant="danger">
-            Kill Switch
+            {t("menu.killSwitch")}
           </RetroButton>
         </RetroPanel>
-        <RetroPanel icon={<TimerReset size={18} aria-hidden="true" />} id="review" ref={sectionRefs.review} tabIndex={-1} title="Review">
+        <RetroPanel icon={<TimerReset size={18} aria-hidden="true" />} id="review" ref={sectionRefs.review} tabIndex={-1} title={t("dashboard.review")}>
           <RetroButton onClick={props.onLoadReviews}>
-            Load Review
+            {t("menu.loadReview")}
           </RetroButton>
-          {props.reviews.length === 0 ? <p className="muted">CEO Office review notes and OKR updates will appear here.</p> : null}
+          {props.reviews.length === 0 ? <p className="muted">{t("dashboard.reviewNotes")}</p> : null}
           {props.reviews.map((review) => (
             <p key={review.id}>{review.summary}</p>
           ))}
         </RetroPanel>
       </Workspace>
 
-      <RetroPanel title="Live Events">
-        <VideotexLog emptyMessage="Waiting for agent activity." rows={props.events.map((event) => event.message)} />
+      <RetroPanel title={t("dashboard.liveEvents")}>
+        <VideotexLog emptyMessage={t("dashboard.waitingActivity")} rows={props.events.map((event) => event.message)} />
       </RetroPanel>
     </AppShell>
   );

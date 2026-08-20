@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   createApiClient,
   type AgentSummary,
@@ -14,6 +14,7 @@ import { CompanyOperations } from "./pages/CompanyOperations";
 import { DepartmentWorkspace } from "./pages/DepartmentWorkspace";
 import { Onboarding, type OnboardingStep } from "./pages/Onboarding";
 import { CRTViewport } from "./ui/crt";
+import { isLanguageId, LanguageProvider, readCurrentLanguage, type LanguageId } from "./ui/language";
 import { DashboardMenuBar } from "./ui/menu/DashboardMenuBar";
 import { isPaletteId, readCurrentSkin, ThemeProvider, type PaletteId } from "./ui/theme";
 import "./styles.css";
@@ -30,6 +31,7 @@ const currentViewStorageKey = "auto-crop.currentView";
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
   const defaultSkin = useMemo(() => getInitialSkin(), []);
+  const defaultLanguage = useMemo(() => getInitialLanguage(), []);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentLoadState, setAgentLoadState] = useState<AgentLoadState>("idle");
   const [selectedAgentId, setSelectedAgentId] = useState("");
@@ -451,112 +453,102 @@ export default function App({ apiClient }: AppProps) {
     />
   );
 
+  function renderAppFrame(children: ReactNode) {
+    return (
+      <ThemeProvider defaultSkin={defaultSkin}>
+        <LanguageProvider defaultLanguage={defaultLanguage}>
+          <CRTViewport>{children}</CRTViewport>
+        </LanguageProvider>
+      </ThemeProvider>
+    );
+  }
+
   if (view === "creating") {
     const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
 
-    return (
-      <ThemeProvider defaultSkin={defaultSkin}>
-        <CRTViewport>
-          <CompanyCreationLoading
-            companyName={companyName.trim()}
-            menuBar={menuBar}
-            permissionMode={permissionMode}
-            selectedAgent={selectedAgent}
-          />
-        </CRTViewport>
-      </ThemeProvider>
+    return renderAppFrame(
+      <CompanyCreationLoading
+        companyName={companyName.trim()}
+        menuBar={menuBar}
+        permissionMode={permissionMode}
+        selectedAgent={selectedAgent}
+      />,
     );
   }
 
   if (view === "department-workspace" && blueprint) {
-    return (
-      <ThemeProvider defaultSkin={defaultSkin}>
-        <CRTViewport>
-          <DepartmentWorkspace
-            agents={agents}
-            company={blueprint.company}
-            departments={blueprint.departments}
-            menuBar={menuBar}
-            objectives={blueprint.objectives}
-            selectedCeoAgentId={selectedAgentId}
-            tasks={blueprint.tasks}
-          />
-        </CRTViewport>
-      </ThemeProvider>
+    return renderAppFrame(
+      <DepartmentWorkspace
+        agents={agents}
+        company={blueprint.company}
+        departments={blueprint.departments}
+        menuBar={menuBar}
+        objectives={blueprint.objectives}
+        selectedCeoAgentId={selectedAgentId}
+        tasks={blueprint.tasks}
+      />,
     );
   }
 
   if (view === "operations" && blueprint) {
-    return (
-      <ThemeProvider defaultSkin={defaultSkin}>
-        <CRTViewport>
-          <CompanyOperations
-            company={blueprint.company}
-            departments={blueprint.departments}
-            events={events}
-            isPaused={isPaused}
-            menuBar={menuBar}
-            tasks={blueprint.tasks}
-          />
-        </CRTViewport>
-      </ThemeProvider>
+    return renderAppFrame(
+      <CompanyOperations
+        company={blueprint.company}
+        departments={blueprint.departments}
+        events={events}
+        isPaused={isPaused}
+        menuBar={menuBar}
+        tasks={blueprint.tasks}
+      />,
     );
   }
 
   if (view === "dashboard" && blueprint) {
-    return (
-      <ThemeProvider defaultSkin={defaultSkin}>
-        <CRTViewport>
-          <CompanyDashboard
-            company={blueprint.company}
-            departments={blueprint.departments}
-            events={events}
-            focusTarget={dashboardFocusTarget}
-            isPaused={isPaused}
-            menuBar={menuBar}
-            onKillSwitch={handleKillSwitch}
-            onLoadProof={handleLoadProof}
-            onLoadReviews={handleLoadReviews}
-            objectives={blueprint.objectives}
-            proof={proof}
-            reviews={reviews}
-            tasks={blueprint.tasks}
-          />
-        </CRTViewport>
-      </ThemeProvider>
+    return renderAppFrame(
+      <CompanyDashboard
+        company={blueprint.company}
+        departments={blueprint.departments}
+        events={events}
+        focusTarget={dashboardFocusTarget}
+        isPaused={isPaused}
+        menuBar={menuBar}
+        onKillSwitch={handleKillSwitch}
+        onLoadProof={handleLoadProof}
+        onLoadReviews={handleLoadReviews}
+        objectives={blueprint.objectives}
+        proof={proof}
+        reviews={reviews}
+        tasks={blueprint.tasks}
+      />,
     );
   }
 
-  return (
-    <ThemeProvider defaultSkin={defaultSkin}>
-      <CRTViewport>
-        <Onboarding
-          agents={agents}
-          agentLoadState={agentLoadState}
-          agentSelectionError={agentSelectionError}
-          blueprint={blueprint}
-          companyName={companyName}
-          companyNameError={companyNameError}
-          createError={createError}
-          founderVision={founderVision}
-          founderVisionError={founderVisionError}
-          isCreating={isCreating}
-          menuBar={menuBar}
-          onActivateCompany={handleActivateCompany}
-          onBack={goToPreviousStep}
-          onCompanyNameChange={handleCompanyNameChange}
-          onCreateCompany={handleCreateCompany}
-          onNext={goToNextStep}
-          onPermissionModeChange={setPermissionMode}
-          onRetryAgents={detectAgents}
-          onSelectAgent={handleSelectAgent}
-          onVisionChange={handleFounderVisionChange}
-          permissionMode={permissionMode}
-          selectedAgentId={selectedAgentId}
-          step={onboardingStep}
-        />
-      </CRTViewport>
-    </ThemeProvider>
+  return renderAppFrame(
+    <Onboarding
+      agents={agents}
+      agentLoadState={agentLoadState}
+      agentSelectionError={agentSelectionError}
+      blueprint={blueprint}
+      companyName={companyName}
+      companyNameError={companyNameError}
+      createError={createError}
+      founderVision={founderVision}
+      founderVisionError={founderVisionError}
+      isCreating={isCreating}
+      menuBar={menuBar}
+      onActivateCompany={handleActivateCompany}
+      onBack={goToPreviousStep}
+      onCompanyNameChange={handleCompanyNameChange}
+      onCreateCompany={handleCreateCompany}
+      onNext={goToNextStep}
+      onPermissionModeChange={setPermissionMode}
+      onRetryAgents={detectAgents}
+      onSelectAgent={handleSelectAgent}
+      onVisionChange={handleFounderVisionChange}
+      permissionMode={permissionMode}
+      selectedAgentId={selectedAgentId}
+      step={onboardingStep}
+    />,
   );
 }
 
@@ -571,6 +563,19 @@ function getInitialSkin(): PaletteId {
   }
 
   return readCurrentSkin() ?? "mono";
+}
+
+function getInitialLanguage(): LanguageId {
+  if (typeof window === "undefined") {
+    return "en";
+  }
+
+  const requestedLanguage = new URLSearchParams(window.location.search).get("lang");
+  if (requestedLanguage && isLanguageId(requestedLanguage)) {
+    return requestedLanguage;
+  }
+
+  return readCurrentLanguage() ?? "en";
 }
 
 function isCommandShortcut(event: KeyboardEvent) {

@@ -376,6 +376,37 @@ describe("Dashboard App", () => {
     }
   });
 
+  it("switches language from the reusable View menu", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "View" }));
+    await user.click(screen.getByRole("menuitem", { name: "Language" }));
+    await user.click(screen.getByRole("menuitem", { name: "中文" }));
+
+    expect(screen.getByRole("heading", { name: "CEO 办公室" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("auto-crop.currentLanguage")).toBe("zh");
+  });
+
+  it("restores the selected language after refresh", async () => {
+    const restoreStorage = installMockLocalStorage({
+      "auto-crop.currentLanguage": "zh",
+    });
+    const api = createMockApiClient();
+
+    try {
+      render(<App apiClient={api} />);
+
+      expect(await screen.findByRole("heading", { name: "CEO 办公室" })).toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: "视图" })).toBeInTheDocument();
+    } finally {
+      restoreStorage();
+    }
+  });
+
   it("selects detected agents from the reusable Agents menu", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();

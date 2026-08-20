@@ -2,6 +2,7 @@ import { Activity, Building2, FileCheck2, ListChecks, ShieldAlert } from "lucide
 import { useMemo, type ReactNode } from "react";
 import type { CompanySummary, DepartmentSummary, ServerEvent, TaskSummary } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
+import { useLanguage, type TranslationKey } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroPanel } from "../ui/retro";
 
@@ -15,10 +16,11 @@ export type CompanyOperationsProps = {
 };
 
 export function CompanyOperations({ company, departments, events, isPaused, menuBar, tasks }: CompanyOperationsProps) {
+  const { t } = useLanguage();
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const activityRows = useMemo(
-    () => events.map((event) => formatAgentActivityEvent(event, event.taskId ? tasksById.get(event.taskId) : undefined)),
-    [events, tasksById],
+    () => events.map((event) => formatAgentActivityEvent(event, event.taskId ? tasksById.get(event.taskId) : undefined, t)),
+    [events, tasksById, t],
   );
   const taskCounts = countTaskStates(tasks);
 
@@ -28,33 +30,33 @@ export function CompanyOperations({ company, departments, events, isPaused, menu
         eyebrow={company.name}
         status={company.status}
         statusIcon={<Activity size={16} aria-hidden="true" />}
-        title="Company Operations"
+        title={t("operations.title")}
       />
-      {isPaused ? <section className="system-message system-message--danger">Global pause active</section> : null}
+      {isPaused ? <section className="system-message system-message--danger">{t("app.globalPause")}</section> : null}
 
       <Workspace className="operations-grid">
-        <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title="Company State" variant="inverted">
+        <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title={t("operations.companyState")} variant="inverted">
           <VideotexKeyValue
             items={[
-              { label: "State", value: company.status },
-              { label: "Playbook", value: company.playbookId },
-              { label: "Departments", value: String(departments.length).padStart(2, "0") },
+              { label: t("operations.state"), value: company.status },
+              { label: t("operations.playbook"), value: company.playbookId },
+              { label: t("operations.departments"), value: String(departments.length).padStart(2, "0") },
             ]}
           />
         </RetroPanel>
-        <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title="Task Flow">
+        <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title={t("operations.taskFlow")}>
           <VideotexKeyValue
             items={[
-              { label: "Running", value: String(taskCounts.running).padStart(2, "0") },
-              { label: "Review", value: String(taskCounts.review).padStart(2, "0") },
-              { label: "Blocked", value: String(taskCounts.blocked).padStart(2, "0") },
-              { label: "Failed", value: String(taskCounts.failed).padStart(2, "0") },
+              { label: t("operations.running"), value: String(taskCounts.running).padStart(2, "0") },
+              { label: t("operations.review"), value: String(taskCounts.review).padStart(2, "0") },
+              { label: t("operations.blocked"), value: String(taskCounts.blocked).padStart(2, "0") },
+              { label: t("operations.failed"), value: String(taskCounts.failed).padStart(2, "0") },
             ]}
           />
         </RetroPanel>
-        <RetroPanel icon={<ShieldAlert size={18} aria-hidden="true" />} title="Attention">
+        <RetroPanel icon={<ShieldAlert size={18} aria-hidden="true" />} title={t("operations.attention")}>
           <VideotexLog
-            emptyMessage="No tasks need attention."
+            emptyMessage={t("operations.noAttention")}
             rows={tasks
               .filter((task) => task.status === "blocked" || task.status === "failed")
               .map((task) => `${task.title} / ${formatTaskStatus(task)}`)}
@@ -63,17 +65,17 @@ export function CompanyOperations({ company, departments, events, isPaused, menu
       </Workspace>
 
       <Workspace className="control-grid">
-        <RetroPanel icon={<Activity size={18} aria-hidden="true" />} title="Agent Activity">
-          <VideotexLog emptyMessage="Waiting for agent activity." rows={activityRows} />
+        <RetroPanel icon={<Activity size={18} aria-hidden="true" />} title={t("operations.agentActivity")}>
+          <VideotexLog emptyMessage={t("operations.waitingActivity")} rows={activityRows} />
         </RetroPanel>
-        <RetroPanel icon={<FileCheck2 size={18} aria-hidden="true" />} title="Review Queue">
+        <RetroPanel icon={<FileCheck2 size={18} aria-hidden="true" />} title={t("operations.reviewQueue")}>
           <VideotexLog
-            emptyMessage="No tasks are ready for review."
+            emptyMessage={t("operations.noReviewTasks")}
             rows={tasks.filter((task) => task.status === "review").map((task) => task.title)}
           />
         </RetroPanel>
-        <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title="Departments">
-          <VideotexLog emptyMessage="No departments created." rows={departments.map((department) => department.name)} />
+        <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title={t("operations.departments")}>
+          <VideotexLog emptyMessage={t("operations.noDepartments")} rows={departments.map((department) => department.name)} />
         </RetroPanel>
       </Workspace>
     </AppShell>
@@ -104,76 +106,76 @@ function formatTaskStatus(task: TaskSummary): string {
   return details.join(" · ");
 }
 
-function formatAgentActivityEvent(event: ServerEvent, task?: TaskSummary): string {
-  const title = task?.title ?? "Unknown task";
-  return `${formatAgentActivityState(event)} · ${title} — ${formatAgentActivityDetail(event)}`;
+function formatAgentActivityEvent(event: ServerEvent, task: TaskSummary | undefined, t: (key: TranslationKey) => string): string {
+  const title = task?.title ?? t("operations.unknownTask");
+  return `${formatAgentActivityState(event, t)} · ${title} — ${formatAgentActivityDetail(event, t)}`;
 }
 
-function formatAgentActivityState(event: ServerEvent): string {
+function formatAgentActivityState(event: ServerEvent, t: (key: TranslationKey) => string): string {
   switch (event.type) {
     case "task_started":
-      return "Running";
+      return t("operations.running");
     case "task_review":
-      return "Ready for review";
+      return t("operations.readyForReview");
     case "task_failed":
-      return "Failed";
+      return t("operations.failed");
     case "task_blocked":
-      return "Blocked";
+      return t("operations.blocked");
     case "task_warning":
-      return "Warning";
+      return t("operations.warning");
     case "partial_output":
-      return "Partial output";
+      return t("operations.partialOutput");
     default:
-      return event.status ? titleCase(event.status) : "Activity";
+      return event.status ? titleCase(event.status) : t("operations.activity");
   }
 }
 
-function formatAgentActivityDetail(event: ServerEvent): string {
+function formatAgentActivityDetail(event: ServerEvent, t: (key: TranslationKey) => string): string {
   if (event.type === "task_started") {
     return event.effectiveTimeoutMs
-      ? `Agent is working on this task. Budget: ${formatBudget(event.effectiveTimeoutMs)}.`
-      : "Agent is working on this task.";
+      ? `${t("operations.agentWorking")} ${t("operations.budget")}: ${formatBudget(event.effectiveTimeoutMs)}.`
+      : t("operations.agentWorking");
   }
 
   if (event.type === "task_review") {
-    return "Proof is ready to inspect from the Proof menu.";
+    return t("operations.proofReady");
   }
 
   if (event.type === "task_failed") {
-    return formatFailureDetail(event.failureReason);
+    return formatFailureDetail(event.failureReason, t);
   }
 
   if (event.type === "task_blocked") {
-    return event.dependencyNote ?? cleanActivityMessage(event.message) ?? "Waiting for an approval or dependency.";
+    return event.dependencyNote ?? cleanActivityMessage(event.message) ?? t("operations.waitingDependency");
   }
 
   if (event.type === "task_warning") {
-    return cleanActivityMessage(event.message) ?? "Needs attention before this task can continue.";
+    return cleanActivityMessage(event.message) ?? t("operations.needsAttention");
   }
 
   if (event.type === "partial_output") {
     return event.artifactWorkspacePath
-      ? `${event.artifactWorkspacePath} is available for diagnosis, but it is not proof.`
-      : "The agent left diagnostic output, but the task is not review-ready.";
+      ? `${event.artifactWorkspacePath} ${t("operations.diagnosticPath")}`
+      : t("operations.diagnosticOnly");
   }
 
-  return cleanActivityMessage(event.message) ?? "New task activity received.";
+  return cleanActivityMessage(event.message) ?? t("operations.newActivity");
 }
 
-function formatFailureDetail(reason?: string): string {
+function formatFailureDetail(reason: string | undefined, t: (key: TranslationKey) => string): string {
   switch (reason) {
     case "timeout":
-      return "Timed out before producing review-ready proof.";
+      return t("operations.failureTimeout");
     case "no_proof":
-      return "Finished, but no required proof was captured.";
+      return t("operations.failureNoProof");
     case "proof_capture_failed":
-      return "Finished, but proof capture failed.";
+      return t("operations.failureProofCapture");
     case "dependency_failed":
-      return "A required upstream task failed.";
+      return t("operations.failureDependency");
     case "agent_failed":
-      return "Agent run failed before review.";
+      return t("operations.failureAgent");
     default:
-      return "Task did not reach review.";
+      return t("operations.failureDefault");
   }
 }
 
