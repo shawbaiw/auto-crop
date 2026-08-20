@@ -15,6 +15,8 @@
   --rgb-misregistration: 1px;
   --sync-fault-strength: 0.32;
   --stable-content-max: 1280px;
+  --screen-gutter: clamp(10px, 1.45vw, 22px);
+  --screen-gap: clamp(10px, 1vw, 14px);
   color: var(--ink);
   background: var(--field);
   font-family: var(--font-ui);
@@ -82,11 +84,20 @@ p {
 .app-shell {
   align-content: start;
   display: grid;
-  gap: 14px;
+  gap: var(--screen-gap);
   margin: 0 auto;
-  max-width: var(--stable-content-max);
-  min-height: 100vh;
-  padding: 28px;
+  max-width: min(var(--stable-content-max), 100%);
+  min-height: inherit;
+  padding: var(--screen-gutter);
+  width: 100%;
+}
+
+.app-shell--workbench {
+  max-width: none;
+}
+
+.app-shell--department-workspace {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .retro-menu-bar {
@@ -98,7 +109,7 @@ p {
   min-height: 34px;
   overflow: visible;
   position: sticky;
-  top: 0;
+  top: var(--screen-gutter);
   z-index: 30;
 }
 
@@ -214,7 +225,7 @@ p {
 }
 
 .page-header > div:first-child {
-  padding: 14px 16px;
+  padding: 10px 14px;
 }
 
 .eyebrow {
@@ -249,7 +260,7 @@ h3 {
 
 .workspace {
   display: grid;
-  gap: 14px;
+  gap: var(--screen-gap);
 }
 
 .setup-grid {
@@ -277,7 +288,8 @@ h3 {
 
 .department-workspace {
   align-items: start;
-  grid-template-columns: minmax(220px, 0.32fr) minmax(0, 1fr);
+  grid-template-columns: minmax(190px, 0.2fr) minmax(0, 1fr);
+  min-height: 0;
 }
 
 .department-workspace__rail .retro-panel__body {
@@ -285,7 +297,29 @@ h3 {
 }
 
 .department-workspace__main {
+  display: grid;
+  gap: var(--screen-gap);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.34fr);
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+}
+
+.app-shell--department-workspace .department-workspace,
+.app-shell--department-workspace .department-workspace > .retro-panel,
+.app-shell--department-workspace .department-workspace__main > .retro-panel {
+  min-height: 0;
+}
+
+.app-shell--department-workspace .department-workspace > .retro-panel,
+.app-shell--department-workspace .department-workspace__main > .retro-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.app-shell--department-workspace .retro-panel__body {
+  align-content: start;
+  min-height: 0;
 }
 
 .role-summary {
@@ -300,11 +334,11 @@ h3 {
 }
 
 .operations-grid {
-  grid-template-columns: 1.2fr 1fr 1fr;
+  grid-template-columns: 1.25fr 1fr 1fr;
 }
 
 .department-band {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .control-grid,
@@ -372,7 +406,7 @@ h3 {
 
 .retro-panel__body {
   display: grid;
-  gap: 14px;
+  gap: var(--screen-gap);
   padding: 16px;
 }
 
@@ -770,6 +804,10 @@ h3 {
   .review-columns,
   .control-grid,
   .department-band {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell--department-workspace .department-workspace__main {
     grid-template-columns: 1fr;
   }
 

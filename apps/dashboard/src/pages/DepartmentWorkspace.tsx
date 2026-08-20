@@ -47,7 +47,7 @@ export function DepartmentWorkspace({
   }, [departments, tasks]);
 
   return (
-    <AppShell menuBar={menuBar}>
+    <AppShell className="app-shell--workbench app-shell--department-workspace" menuBar={menuBar}>
       <PageHeader
         eyebrow="Department Workspace"
         status={company.status}

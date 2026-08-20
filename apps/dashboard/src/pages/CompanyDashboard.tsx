@@ -63,7 +63,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
   }, [props.focusTarget?.version]);
 
   return (
-    <AppShell menuBar={props.menuBar}>
+    <AppShell className="app-shell--workbench" menuBar={props.menuBar}>
       <PageHeader
         eyebrow={props.company.name}
         status={props.company.status}
