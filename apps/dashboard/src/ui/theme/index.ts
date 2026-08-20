@@ -1,3 +1,3 @@
 export { paletteOrder, palettes, type PaletteId } from "./palettes";
 export { SkinSwitcher } from "./SkinSwitcher";
-export { isPaletteId, ThemeProvider, useTheme } from "./ThemeProvider";
+export { isPaletteId, readCurrentSkin, ThemeProvider, useTheme } from "./ThemeProvider";

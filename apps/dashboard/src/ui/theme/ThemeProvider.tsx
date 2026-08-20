@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { paletteOrder, palettes, type PaletteId } from "./palettes";
 
 type ThemeContextValue = {
@@ -7,6 +7,7 @@ type ThemeContextValue = {
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
+const currentSkinStorageKey = "auto-crop.currentSkin";
 
 export type ThemeProviderProps = {
   children: ReactNode;
@@ -16,6 +17,11 @@ export type ThemeProviderProps = {
 export function ThemeProvider({ children, defaultSkin = "mono" }: ThemeProviderProps) {
   const [skin, setSkin] = useState<PaletteId>(defaultSkin);
   const palette = palettes[skin];
+
+  useEffect(() => {
+    writeCurrentSkin(skin);
+  }, [skin]);
+
   const style = useMemo(
     () =>
       ({
@@ -62,4 +68,21 @@ export function useTheme() {
 
 export function isPaletteId(value: string): value is PaletteId {
   return paletteOrder.includes(value as PaletteId);
+}
+
+function writeCurrentSkin(skin: PaletteId): void {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+
+  window.localStorage.setItem(currentSkinStorageKey, skin);
+}
+
+export function readCurrentSkin(): PaletteId | null {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return null;
+  }
+
+  const storedSkin = window.localStorage.getItem(currentSkinStorageKey);
+  return storedSkin && isPaletteId(storedSkin) ? storedSkin : null;
 }

@@ -15,7 +15,7 @@ import { DepartmentWorkspace } from "./pages/DepartmentWorkspace";
 import { Onboarding, type OnboardingStep } from "./pages/Onboarding";
 import { CRTViewport } from "./ui/crt";
 import { DashboardMenuBar } from "./ui/menu/DashboardMenuBar";
-import { isPaletteId, ThemeProvider, type PaletteId } from "./ui/theme";
+import { isPaletteId, readCurrentSkin, ThemeProvider, type PaletteId } from "./ui/theme";
 import "./styles.css";
 
 export type AppProps = {
@@ -566,7 +566,11 @@ function getInitialSkin(): PaletteId {
   }
 
   const requestedSkin = new URLSearchParams(window.location.search).get("skin");
-  return requestedSkin && isPaletteId(requestedSkin) ? requestedSkin : "mono";
+  if (requestedSkin && isPaletteId(requestedSkin)) {
+    return requestedSkin;
+  }
+
+  return readCurrentSkin() ?? "mono";
 }
 
 function isCommandShortcut(event: KeyboardEvent) {

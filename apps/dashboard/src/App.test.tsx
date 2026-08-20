@@ -360,6 +360,22 @@ describe("Dashboard App", () => {
     expect(document.querySelector(".theme-root")).toHaveAttribute("data-skin", "geek02");
   });
 
+  it("restores the selected skin after refresh", async () => {
+    const restoreStorage = installMockLocalStorage({
+      "auto-crop.currentSkin": "geek02",
+    });
+    const api = createMockApiClient();
+
+    try {
+      render(<App apiClient={api} />);
+
+      await screen.findByRole("heading", { name: "CEO Office" });
+      expect(document.querySelector(".theme-root")).toHaveAttribute("data-skin", "geek02");
+    } finally {
+      restoreStorage();
+    }
+  });
+
   it("selects detected agents from the reusable Agents menu", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
