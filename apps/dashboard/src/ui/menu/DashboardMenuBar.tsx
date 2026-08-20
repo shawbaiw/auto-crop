@@ -4,7 +4,7 @@ import { isPaletteId, paletteOrder, palettes, useTheme } from "../theme";
 import { RetroMenuBar } from "./RetroMenuBar";
 import type { RetroMenuGroup } from "./RetroMenu";
 
-export type DashboardMenuView = "onboarding" | "creating" | "department-workspace" | "dashboard";
+export type DashboardMenuView = "onboarding" | "creating" | "department-workspace" | "dashboard" | "operations";
 
 export type DashboardMenuBarProps = {
   agents: AgentSummary[];
@@ -22,6 +22,7 @@ export type DashboardMenuBarProps = {
   onSelectAgent(agentId: string): void;
   onToggleFullscreen(): void;
   onViewDepartments(): void;
+  onViewOperations(): void;
   onViewTasks(): void;
   hasProof: boolean;
   isFullscreen: boolean;
@@ -46,6 +47,7 @@ export function DashboardMenuBar({
   onSelectAgent,
   onToggleFullscreen,
   onViewDepartments,
+  onViewOperations,
   onViewTasks,
   hasProof,
   isFullscreen,
@@ -55,6 +57,7 @@ export function DashboardMenuBar({
 }: DashboardMenuBarProps) {
   const { setSkin, skin } = useTheme();
   const detectedAgents = agents.filter((agent) => agent.detected);
+  const canViewCompanyWork = (view === "dashboard" || view === "department-workspace" || view === "operations") && hasBlueprint;
 
   const groups = useMemo<RetroMenuGroup[]>(
     () => [
@@ -120,18 +123,24 @@ export function DashboardMenuBar({
         label: "Work",
         items: [
           {
-            disabled: (view !== "dashboard" && view !== "department-workspace") || !hasBlueprint,
+            disabled: !canViewCompanyWork,
             id: "view-tasks",
             label: "View Tasks",
             onSelect: onViewTasks,
             shortcut: "Cmd+1",
           },
           {
-            disabled: (view !== "dashboard" && view !== "department-workspace") || !hasBlueprint,
+            disabled: !canViewCompanyWork,
             id: "view-departments",
             label: "View Departments",
             onSelect: onViewDepartments,
             shortcut: "Cmd+2",
+          },
+          {
+            disabled: !canViewCompanyWork,
+            id: "view-operations",
+            label: "View Operations",
+            onSelect: onViewOperations,
           },
           { checked: isPaused, disabled: true, id: "pause-status", label: "Pause Status" },
         ],
@@ -219,6 +228,7 @@ export function DashboardMenuBar({
       onSelectAgent,
       onToggleFullscreen,
       onViewDepartments,
+      onViewOperations,
       onViewTasks,
       fullscreenAvailable,
       hasProof,

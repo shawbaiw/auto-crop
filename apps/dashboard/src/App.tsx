@@ -10,6 +10,7 @@ import {
 } from "./api/client";
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
 import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
+import { CompanyOperations } from "./pages/CompanyOperations";
 import { DepartmentWorkspace } from "./pages/DepartmentWorkspace";
 import { Onboarding, type OnboardingStep } from "./pages/Onboarding";
 import { CRTViewport } from "./ui/crt";
@@ -22,7 +23,7 @@ export type AppProps = {
 };
 
 type AgentLoadState = "idle" | "loading" | "ready" | "failed";
-type AppView = "onboarding" | "creating" | "department-workspace" | "dashboard";
+type AppView = "onboarding" | "creating" | "department-workspace" | "dashboard" | "operations";
 const currentCompanyStorageKey = "auto-crop.currentCompanyId";
 
 export default function App({ apiClient }: AppProps) {
@@ -372,6 +373,15 @@ export default function App({ apiClient }: AppProps) {
     setView("department-workspace");
   }
 
+  function viewCompanyOperations() {
+    if (!blueprint) {
+      return;
+    }
+
+    setDashboardFocusTarget(null);
+    setView("operations");
+  }
+
   async function handleMenuLoadProof() {
     focusDashboardSection("proof");
     await handleLoadProof();
@@ -421,6 +431,7 @@ export default function App({ apiClient }: AppProps) {
       onSelectAgent={handleSelectAgent}
       onToggleFullscreen={handleToggleFullscreen}
       onViewDepartments={viewDepartmentWorkspace}
+      onViewOperations={viewCompanyOperations}
       onViewTasks={() => focusDashboardSection("tasks")}
       selectedAgentId={selectedAgentId}
       view={view}
@@ -454,8 +465,24 @@ export default function App({ apiClient }: AppProps) {
             departments={blueprint.departments}
             menuBar={menuBar}
             objectives={blueprint.objectives}
-            events={events}
             selectedCeoAgentId={selectedAgentId}
+            tasks={blueprint.tasks}
+          />
+        </CRTViewport>
+      </ThemeProvider>
+    );
+  }
+
+  if (view === "operations" && blueprint) {
+    return (
+      <ThemeProvider defaultSkin={defaultSkin}>
+        <CRTViewport>
+          <CompanyOperations
+            company={blueprint.company}
+            departments={blueprint.departments}
+            events={events}
+            isPaused={isPaused}
+            menuBar={menuBar}
             tasks={blueprint.tasks}
           />
         </CRTViewport>

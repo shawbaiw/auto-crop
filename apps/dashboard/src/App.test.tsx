@@ -215,7 +215,7 @@ describe("Dashboard App", () => {
     });
 
     expect(await screen.findByText("Create landing page / running")).toBeInTheDocument();
-    expect(screen.getByText("Running · Create landing page — Agent is working on this task.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Agent Activity" })).not.toBeInTheDocument();
     expect(screen.queryByText("Task started: Create landing page (codex).")).not.toBeInTheDocument();
   });
 
@@ -237,6 +237,34 @@ describe("Dashboard App", () => {
     });
 
     expect(await screen.findByText("Create landing page / failed · timeout")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Agent Activity" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Task failed: Create landing page / timeout after 10m.")).not.toBeInTheDocument();
+  });
+
+  it("shows agent activity on a dedicated Company Operations page", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    await waitFor(() => expect(api.lastEventHandler).toBeDefined());
+    act(() => {
+      api.lastEventHandler?.({
+        type: "task_failed",
+        taskId: "task_1",
+        failureReason: "timeout",
+        message: "Task failed: Create landing page / timeout after 10m.",
+      });
+    });
+
+    expect(screen.queryByRole("heading", { name: "Agent Activity" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+
+    expect(await screen.findByRole("heading", { name: "Company Operations" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agent Activity" })).toBeInTheDocument();
     expect(screen.getByText("Failed · Create landing page — Timed out before producing review-ready proof.")).toBeInTheDocument();
     expect(screen.queryByText("Task failed: Create landing page / timeout after 10m.")).not.toBeInTheDocument();
   });
