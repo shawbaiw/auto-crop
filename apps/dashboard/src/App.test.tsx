@@ -376,6 +376,22 @@ describe("Dashboard App", () => {
     expect(await screen.findByText("Ready for next cycle")).toBeInTheDocument();
   });
 
+  it("returns from the task dashboard to the Department Workspace from the Work menu", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompanyAndOpenDashboard(user);
+
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Departments" }));
+
+    expect(await screen.findByRole("heading", { name: "Pricing Page Studio" })).toBeInTheDocument();
+    expect(screen.getByText("Department Workspace")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "CEO Workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Company Operating Dashboard" })).not.toBeInTheDocument();
+  });
+
   it("opens evidence and supports visible command shortcuts", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();

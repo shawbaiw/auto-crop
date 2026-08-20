@@ -168,7 +168,7 @@ export default function App({ apiClient }: AppProps) {
         focusDashboardSection("tasks");
       } else if (event.key === "2") {
         event.preventDefault();
-        focusDashboardSection("departments");
+        viewDepartmentWorkspace();
       } else if (event.key === "3") {
         event.preventDefault();
         void handleMenuLoadProof();
@@ -363,6 +363,15 @@ export default function App({ apiClient }: AppProps) {
     }));
   }
 
+  function viewDepartmentWorkspace() {
+    if (!blueprint) {
+      return;
+    }
+
+    setDashboardFocusTarget(null);
+    setView("department-workspace");
+  }
+
   async function handleMenuLoadProof() {
     focusDashboardSection("proof");
     await handleLoadProof();
@@ -411,7 +420,7 @@ export default function App({ apiClient }: AppProps) {
       onOpenEvidence={handleOpenEvidence}
       onSelectAgent={handleSelectAgent}
       onToggleFullscreen={handleToggleFullscreen}
-      onViewDepartments={() => focusDashboardSection("departments")}
+      onViewDepartments={viewDepartmentWorkspace}
       onViewTasks={() => focusDashboardSection("tasks")}
       selectedAgentId={selectedAgentId}
       view={view}
