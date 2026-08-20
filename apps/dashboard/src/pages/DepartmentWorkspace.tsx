@@ -45,6 +45,11 @@ export function DepartmentWorkspace({
     }
     return grouped;
   }, [departments, tasks]);
+  const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const activityRows = useMemo(
+    () => events.map((event) => formatAgentActivityEvent(event, event.taskId ? tasksById.get(event.taskId) : undefined)),
+    [events, tasksById],
+  );
 
   return (
     <AppShell className="app-shell--workbench app-shell--department-workspace" menuBar={menuBar}>
@@ -121,7 +126,7 @@ export function DepartmentWorkspace({
             </RetroPanel>
           )}
           <RetroPanel title="Agent Activity">
-            <VideotexLog emptyMessage="Waiting for agent activity." rows={events.map((event) => event.message)} />
+            <VideotexLog emptyMessage="Waiting for agent activity." rows={activityRows} />
           </RetroPanel>
         </section>
       </Workspace>
@@ -154,4 +159,92 @@ function formatTaskStatus(task: TaskSummary): string {
 function formatBudget(timeoutMs: number): string {
   const seconds = timeoutMs / 1000;
   return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60}m` : `${seconds}s`;
+}
+
+function formatAgentActivityEvent(event: ServerEvent, task?: TaskSummary): string {
+  const title = task?.title ?? "Unknown task";
+  return `${formatAgentActivityState(event)} · ${title} — ${formatAgentActivityDetail(event)}`;
+}
+
+function formatAgentActivityState(event: ServerEvent): string {
+  switch (event.type) {
+    case "task_started":
+      return "Running";
+    case "task_review":
+      return "Ready for review";
+    case "task_failed":
+      return "Failed";
+    case "task_blocked":
+      return "Blocked";
+    case "task_warning":
+      return "Warning";
+    case "partial_output":
+      return "Partial output";
+    default:
+      return event.status ? titleCase(event.status) : "Activity";
+  }
+}
+
+function formatAgentActivityDetail(event: ServerEvent): string {
+  if (event.type === "task_started") {
+    return event.effectiveTimeoutMs
+      ? `Agent is working on this task. Budget: ${formatBudget(event.effectiveTimeoutMs)}.`
+      : "Agent is working on this task.";
+  }
+
+  if (event.type === "task_review") {
+    return "Proof is ready to inspect from the Proof menu.";
+  }
+
+  if (event.type === "task_failed") {
+    return formatFailureDetail(event.failureReason);
+  }
+
+  if (event.type === "task_blocked") {
+    return event.dependencyNote ?? cleanActivityMessage(event.message) ?? "Waiting for an approval or dependency.";
+  }
+
+  if (event.type === "task_warning") {
+    return cleanActivityMessage(event.message) ?? "Needs attention before this task can continue.";
+  }
+
+  if (event.type === "partial_output") {
+    return event.artifactWorkspacePath
+      ? `${event.artifactWorkspacePath} is available for diagnosis, but it is not proof.`
+      : "The agent left diagnostic output, but the task is not review-ready.";
+  }
+
+  return cleanActivityMessage(event.message) ?? "New task activity received.";
+}
+
+function formatFailureDetail(reason?: string): string {
+  switch (reason) {
+    case "timeout":
+      return "Timed out before producing review-ready proof.";
+    case "no_proof":
+      return "Finished, but no required proof was captured.";
+    case "proof_capture_failed":
+      return "Finished, but proof capture failed.";
+    case "dependency_failed":
+      return "A required upstream task failed.";
+    case "agent_failed":
+      return "Agent run failed before review.";
+    default:
+      return "Task did not reach review.";
+  }
+}
+
+function cleanActivityMessage(message: string): string | null {
+  const cleaned = message
+    .replace(/^Task warning:\s*/i, "")
+    .replace(/^Task blocked:\s*/i, "")
+    .replace(/^Task failed:\s*/i, "")
+    .replace(/^Partial Output:\s*/i, "")
+    .trim();
+
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function titleCase(value: string): string {
+  return value.slice(0, 1).toUpperCase() + value.slice(1).replaceAll("_", " ");
 }

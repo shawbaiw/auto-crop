@@ -215,7 +215,8 @@ describe("Dashboard App", () => {
     });
 
     expect(await screen.findByText("Create landing page / running")).toBeInTheDocument();
-    expect(screen.getByText("Task started: Create landing page (codex).")).toBeInTheDocument();
+    expect(screen.getByText("Running · Create landing page — Agent is working on this task.")).toBeInTheDocument();
+    expect(screen.queryByText("Task started: Create landing page (codex).")).not.toBeInTheDocument();
   });
 
   it("shows failed task reasons in the Department Workspace from SSE", async () => {
@@ -236,7 +237,8 @@ describe("Dashboard App", () => {
     });
 
     expect(await screen.findByText("Create landing page / failed · timeout")).toBeInTheDocument();
-    expect(screen.getByText("Task failed: Create landing page / timeout after 10m.")).toBeInTheDocument();
+    expect(screen.getByText("Failed · Create landing page — Timed out before producing review-ready proof.")).toBeInTheDocument();
+    expect(screen.queryByText("Task failed: Create landing page / timeout after 10m.")).not.toBeInTheDocument();
   });
 
   it("updates task status in the operating dashboard from SSE", async () => {
