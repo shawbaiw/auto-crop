@@ -518,6 +518,42 @@ describe("Dashboard App", () => {
       restoreStorage();
     }
   });
+
+  it("restores the last company page after refresh", async () => {
+    const restoreStorage = installMockLocalStorage({
+      "auto-crop.currentCompanyId": "company_1",
+      "auto-crop.currentView": "operations",
+    });
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.getCompanyState = vi.fn(async () => ({
+      ...created,
+      company: {
+        ...created.company,
+        status: "active",
+        selectedCeoAgentId: "codex",
+      },
+      proof: [],
+      reviews: [],
+      activity: [
+        {
+          type: "task_started",
+          taskId: "task_1",
+          message: "Task started: Create landing page (codex).",
+        },
+      ],
+    }));
+
+    try {
+      render(<App apiClient={api} />);
+
+      expect(await screen.findByRole("heading", { name: "Company Operations" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Agent Activity" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Company Operating Dashboard" })).not.toBeInTheDocument();
+    } finally {
+      restoreStorage();
+    }
+  });
 });
 
 async function fillReadyToCreate(user: ReturnType<typeof userEvent.setup>) {

@@ -25,6 +25,7 @@ export type AppProps = {
 type AgentLoadState = "idle" | "loading" | "ready" | "failed";
 type AppView = "onboarding" | "creating" | "department-workspace" | "dashboard" | "operations";
 const currentCompanyStorageKey = "auto-crop.currentCompanyId";
+const currentViewStorageKey = "auto-crop.currentView";
 
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
@@ -68,7 +69,11 @@ export default function App({ apiClient }: AppProps) {
         setReviews(response.reviews);
         setEvents(response.activity);
         setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
-        setView(response.company.status === "draft" ? "department-workspace" : "dashboard");
+        const restoredView = readCurrentView() ?? defaultCompanyView(response.company.status);
+        setView(restoredView);
+        if (restoredView === "onboarding") {
+          setOnboardingStep("vision");
+        }
       })
       .catch(() => {
         clearCurrentCompanyId();
@@ -78,6 +83,14 @@ export default function App({ apiClient }: AppProps) {
       cancelled = true;
     };
   }, [client]);
+
+  useEffect(() => {
+    if (!blueprint || view === "creating") {
+      return;
+    }
+
+    writeCurrentView(view);
+  }, [blueprint, view]);
 
   useEffect(() => {
     if (view === "onboarding" && onboardingStep === "agents" && agentLoadState === "idle") {
@@ -634,6 +647,10 @@ function taskStatusFromEvent(eventType: string) {
   }
 }
 
+function defaultCompanyView(companyStatus: string): AppView {
+  return companyStatus === "draft" ? "department-workspace" : "dashboard";
+}
+
 function readCurrentCompanyId(): string | null {
   if (typeof window === "undefined" || !window.localStorage) {
     return null;
@@ -656,4 +673,26 @@ function clearCurrentCompanyId(): void {
   }
 
   window.localStorage.removeItem(currentCompanyStorageKey);
+  window.localStorage.removeItem(currentViewStorageKey);
+}
+
+function readCurrentView(): AppView | null {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return null;
+  }
+
+  const storedView = window.localStorage.getItem(currentViewStorageKey);
+  return isRestorableView(storedView) ? storedView : null;
+}
+
+function writeCurrentView(view: AppView): void {
+  if (typeof window === "undefined" || !window.localStorage || !isRestorableView(view)) {
+    return;
+  }
+
+  window.localStorage.setItem(currentViewStorageKey, view);
+}
+
+function isRestorableView(view: string | null): view is AppView {
+  return view === "onboarding" || view === "department-workspace" || view === "dashboard" || view === "operations";
 }
