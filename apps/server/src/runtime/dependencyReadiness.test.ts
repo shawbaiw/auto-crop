@@ -41,7 +41,11 @@ describe("resolveDependencyReadiness", () => {
       createTaskRecord("task_1", "failed"),
       createTaskRecord("task_2", "queued"),
     ]);
-    repositories.createTaskDependency({ taskId: "task_2", dependsOnTaskId: "task_1" });
+    repositories.createTaskDependency({
+      taskId: "task_2",
+      dependsOnTaskId: "task_1",
+      handoffContract: "Consume the product brief before drafting launch copy.",
+    });
 
     const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
 
@@ -58,7 +62,11 @@ describe("resolveDependencyReadiness", () => {
       createTaskRecord("task_1", "needs_replan"),
       createTaskRecord("task_2", "queued"),
     ]);
-    repositories.createTaskDependency({ taskId: "task_2", dependsOnTaskId: "task_1" });
+    repositories.createTaskDependency({
+      taskId: "task_2",
+      dependsOnTaskId: "task_1",
+      handoffContract: "Consume the product brief before drafting launch copy.",
+    });
 
     const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
 
@@ -75,7 +83,11 @@ describe("resolveDependencyReadiness", () => {
       createTaskRecord("task_1", "review"),
       createTaskRecord("task_2", "queued"),
     ]);
-    repositories.createTaskDependency({ taskId: "task_2", dependsOnTaskId: "task_1" });
+    repositories.createTaskDependency({
+      taskId: "task_2",
+      dependsOnTaskId: "task_1",
+      handoffContract: "Consume the product brief before drafting launch copy.",
+    });
 
     const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
 
@@ -91,7 +103,11 @@ describe("resolveDependencyReadiness", () => {
       { ...createTaskRecord("task_1", "review"), artifactWorkspacePath: "/tmp/artifact-workspace" },
       createTaskRecord("task_2", "queued"),
     ]);
-    repositories.createTaskDependency({ taskId: "task_2", dependsOnTaskId: "task_1" });
+    repositories.createTaskDependency({
+      taskId: "task_2",
+      dependsOnTaskId: "task_1",
+      handoffContract: "Consume the product brief before drafting launch copy.",
+    });
     repositories.appendProof({
       id: "proof_1",
       taskId: "task_1",
@@ -114,6 +130,7 @@ describe("resolveDependencyReadiness", () => {
           uri: "/tmp/artifact-workspace/product-brief.md",
           summary: "File proof: product-brief.md",
           artifactWorkspacePath: "/tmp/artifact-workspace",
+          handoffContract: "Consume the product brief before drafting launch copy.",
         },
       ],
     });

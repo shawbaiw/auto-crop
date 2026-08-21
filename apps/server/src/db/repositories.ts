@@ -260,16 +260,18 @@ export function createRepositories(database: DatabaseClient) {
     createTaskDependency(dependency: TaskDependency): void {
       database
         .prepare(
-          `INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_task_id)
-           VALUES (?, ?)`,
+          `INSERT INTO task_dependencies (task_id, depends_on_task_id, handoff_contract)
+           VALUES (?, ?, ?)
+           ON CONFLICT(task_id, depends_on_task_id) DO UPDATE SET
+             handoff_contract = COALESCE(excluded.handoff_contract, task_dependencies.handoff_contract)`,
         )
-        .run(dependency.taskId, dependency.dependsOnTaskId);
+        .run(dependency.taskId, dependency.dependsOnTaskId, dependency.handoffContract ?? null);
     },
 
     listTaskDependencies(taskId: string): TaskDependency[] {
       const rows = database
         .prepare(
-          `SELECT task_id, depends_on_task_id
+          `SELECT task_id, depends_on_task_id, handoff_contract
            FROM task_dependencies
            WHERE task_id = ?
            ORDER BY depends_on_task_id ASC`,
@@ -297,7 +299,7 @@ export function createRepositories(database: DatabaseClient) {
     listTaskDependenciesForCompany(companyId: string): TaskDependency[] {
       const rows = database
         .prepare(
-          `SELECT task_dependencies.task_id, task_dependencies.depends_on_task_id
+          `SELECT task_dependencies.task_id, task_dependencies.depends_on_task_id, task_dependencies.handoff_contract
            FROM task_dependencies
            INNER JOIN tasks ON tasks.id = task_dependencies.task_id
            WHERE tasks.company_id = ?
@@ -711,6 +713,7 @@ type ReplanProposalRow = {
 type TaskDependencyRow = {
   task_id: string;
   depends_on_task_id: string;
+  handoff_contract: string | null;
 };
 
 type TaskEventRow = {
@@ -861,6 +864,7 @@ function mapTaskDependency(row: TaskDependencyRow): TaskDependency {
   return {
     taskId: row.task_id,
     dependsOnTaskId: row.depends_on_task_id,
+    ...(row.handoff_contract ? { handoffContract: row.handoff_contract } : {}),
   };
 }
 

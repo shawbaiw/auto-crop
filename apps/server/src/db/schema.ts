@@ -104,6 +104,7 @@ export function migrate(database: DatabaseClient): void {
     CREATE TABLE IF NOT EXISTS task_dependencies (
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      handoff_contract TEXT,
       PRIMARY KEY (task_id, depends_on_task_id)
     );
 
@@ -161,6 +162,7 @@ export function migrate(database: DatabaseClient): void {
   migrateTaskPosition(database);
   migrateTasksExecutionFields(database);
   migrateAgentRunsExecutionFields(database);
+  migrateTaskDependencyContracts(database);
   migrateReplanProposalDiagnostics(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
@@ -223,6 +225,11 @@ function migrateAgentRunsExecutionFields(database: DatabaseClient): void {
   addColumnIfMissing(database, columns, "agent_runs", "effective_timeout_ms INTEGER");
   addColumnIfMissing(database, columns, "agent_runs", "failure_reason TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "failure_message TEXT");
+}
+
+function migrateTaskDependencyContracts(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "task_dependencies");
+  addColumnIfMissing(database, columns, "task_dependencies", "handoff_contract TEXT");
 }
 
 function addColumnIfMissing(

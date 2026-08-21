@@ -67,6 +67,10 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
     "A fenced JSON block. The runtime will parse only this block.",
     "Do not include departments or proof schemas outside the selected playbook.",
     `Set blueprint.company.name to the provided company name exactly: ${input.companyName}`,
+    "Each task must include a stable lowercase key, a dependsOnTaskKeys array, and a handoffContract.",
+    "Use dependsOnTaskKeys only when the downstream task consumes the upstream task's proof or artifact handoff.",
+    "Dependencies must reference earlier task keys so the runtime can build an acyclic task graph.",
+    "Write handoffContract as the specific consumable deliverable downstream agents can rely on after Proof exists.",
     "",
     "```json",
     JSON.stringify(
@@ -102,6 +106,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
           proofSchemas: input.playbook.proofSchemas,
           tasks: [
             {
+              key: "task_key",
               departmentName: "Product",
               title: "Task title",
               description: "Task description",
@@ -109,6 +114,8 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
               requiredCapabilities: ["writing"],
               proofSchemaId: input.playbook.proofSchemas[0]?.id ?? "proof-schema-id",
               riskLevel: "low",
+              dependsOnTaskKeys: [],
+              handoffContract: "Specific consumable deliverable this task must produce for downstream work.",
             },
           ],
         },

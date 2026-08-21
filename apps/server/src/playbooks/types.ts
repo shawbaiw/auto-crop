@@ -18,12 +18,15 @@ export type OkrTemplate = {
 };
 
 export type TaskTemplate = {
+  key: string;
   departmentName: string;
   title: string;
   description: string;
   requiredCapabilities: string[];
   proofSchemaId: string;
   riskLevel: "low" | "medium" | "high";
+  dependsOnTaskKeys: string[];
+  handoffContract: string;
 };
 
 export type CreateBlueprintInput = {

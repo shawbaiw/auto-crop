@@ -66,15 +66,7 @@ const validBlueprint = {
   ],
   tasks: [
     {
-      departmentName: "Engineering",
-      title: "Create the first landing page prototype",
-      description: "Build a pricing-page-focused landing page prototype.",
-      assigneeAgentId: "codex",
-      requiredCapabilities: ["code", "frontend"],
-      proofSchemaId: "landing-page-proof",
-      riskLevel: "medium",
-    },
-    {
+      key: "competitor_research",
       departmentName: "Research",
       title: "Write competitor research brief",
       description: "Summarize competitor positioning and customer pain.",
@@ -82,6 +74,20 @@ const validBlueprint = {
       requiredCapabilities: ["research", "writing"],
       proofSchemaId: "research-report-proof",
       riskLevel: "low",
+      dependsOnTaskKeys: [],
+      handoffContract: "Produce a competitor research brief for prototype positioning.",
+    },
+    {
+      key: "landing_page_prototype",
+      departmentName: "Engineering",
+      title: "Create the first landing page prototype",
+      description: "Build a pricing-page-focused landing page prototype.",
+      assigneeAgentId: "codex",
+      requiredCapabilities: ["code", "frontend"],
+      proofSchemaId: "landing-page-proof",
+      riskLevel: "medium",
+      dependsOnTaskKeys: ["competitor_research"],
+      handoffContract: "Produce runnable landing page files for downstream validation.",
     },
   ],
 };
@@ -114,6 +120,51 @@ describe("companyBlueprintSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("rejects duplicate task keys", () => {
+    const result = companyBlueprintSchema.safeParse({
+      ...validBlueprint,
+      tasks: [
+        validBlueprint.tasks[0],
+        {
+          ...validBlueprint.tasks[1],
+          key: validBlueprint.tasks[0].key,
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects dependency keys that do not reference earlier tasks", () => {
+    const result = companyBlueprintSchema.safeParse({
+      ...validBlueprint,
+      tasks: [
+        {
+          ...validBlueprint.tasks[0],
+          dependsOnTaskKeys: ["landing_page_prototype"],
+        },
+        validBlueprint.tasks[1],
+      ],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts explicit dependencies on earlier task keys", () => {
+    const result = companyBlueprintSchema.safeParse({
+      ...validBlueprint,
+      tasks: [
+        validBlueprint.tasks[0],
+        {
+          ...validBlueprint.tasks[1],
+          dependsOnTaskKeys: ["competitor_research"],
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 

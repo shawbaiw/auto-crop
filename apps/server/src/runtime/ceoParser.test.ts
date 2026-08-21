@@ -35,6 +35,9 @@ describe("buildCeoPrompt", () => {
     expect(prompt).toContain("README.md");
     expect(prompt).toContain("Human CEO Brief");
     expect(prompt).toContain("Strict JSON");
+    expect(prompt).toContain("dependsOnTaskKeys");
+    expect(prompt).toContain("handoffContract");
+    expect(prompt).toContain("Dependencies must reference earlier task keys");
     expect(prompt).toContain("```json");
   });
 });

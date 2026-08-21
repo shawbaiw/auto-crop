@@ -3,6 +3,7 @@ import type { Playbook, TaskTemplate } from "./types";
 
 const taskTemplates: TaskTemplate[] = [
   {
+    key: "product_brief",
     departmentName: "Product",
     title: "Write the first product brief",
     description:
@@ -10,8 +11,11 @@ const taskTemplates: TaskTemplate[] = [
     requiredCapabilities: ["writing", "research"],
     proofSchemaId: "product-brief",
     riskLevel: "low",
+    dependsOnTaskKeys: [],
+    handoffContract: "Produce a concise product brief with target customer, wedge, MVP scope, and first revenue path.",
   },
   {
+    key: "market_research",
     departmentName: "Research",
     title: "Create competitor and customer pain research",
     description:
@@ -19,8 +23,11 @@ const taskTemplates: TaskTemplate[] = [
     requiredCapabilities: ["research", "writing"],
     proofSchemaId: "research-report",
     riskLevel: "low",
+    dependsOnTaskKeys: [],
+    handoffContract: "Produce a research report covering comparable products, positioning, pricing, and customer pain.",
   },
   {
+    key: "growth_assets",
     departmentName: "Growth",
     title: "Draft early acquisition assets",
     description:
@@ -28,8 +35,11 @@ const taskTemplates: TaskTemplate[] = [
     requiredCapabilities: ["writing", "growth"],
     proofSchemaId: "product-brief",
     riskLevel: "low",
+    dependsOnTaskKeys: ["product_brief", "market_research"],
+    handoffContract: "Produce launch copy, positioning notes, and an initial channel list for the prototype and launch plan.",
   },
   {
+    key: "landing_page_prototype",
     departmentName: "Engineering",
     title: "Create the first landing page prototype",
     description:
@@ -37,8 +47,11 @@ const taskTemplates: TaskTemplate[] = [
     requiredCapabilities: ["code", "frontend"],
     proofSchemaId: "landing-page-file",
     riskLevel: "medium",
+    dependsOnTaskKeys: ["product_brief", "market_research", "growth_assets"],
+    handoffContract: "Produce runnable prototype files that implement the approved wedge, research-informed positioning, and launch copy.",
   },
   {
+    key: "prototype_validation",
     departmentName: "Engineering",
     title: "Run local validation for the prototype",
     description:
@@ -46,6 +59,8 @@ const taskTemplates: TaskTemplate[] = [
     requiredCapabilities: ["code", "test"],
     proofSchemaId: "test-output",
     riskLevel: "medium",
+    dependsOnTaskKeys: ["landing_page_prototype"],
+    handoffContract: "Produce validation output that proves the prototype can run and be inspected locally.",
   },
 ];
 
@@ -166,6 +181,7 @@ export const aiSaasPlaybook = {
       })),
       proofSchemas: this.proofSchemas,
       tasks: this.taskTemplates.map((template) => ({
+        key: template.key,
         departmentName: template.departmentName,
         title: template.title,
         description: template.description,
@@ -173,6 +189,8 @@ export const aiSaasPlaybook = {
         requiredCapabilities: template.requiredCapabilities,
         proofSchemaId: template.proofSchemaId,
         riskLevel: template.riskLevel,
+        dependsOnTaskKeys: template.dependsOnTaskKeys,
+        handoffContract: template.handoffContract,
       })),
     };
   },

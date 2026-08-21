@@ -540,6 +540,7 @@ function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string 
       `   Proof: ${handoff.proofType} / ${handoff.proofId}`,
       `   URI: ${handoff.uri}`,
       `   Summary: ${handoff.summary}`,
+      ...(handoff.handoffContract ? [`   Handoff Contract: ${handoff.handoffContract}`] : []),
       ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
     ]),
   ].join("\n");

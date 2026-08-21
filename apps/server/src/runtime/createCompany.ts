@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import type { Company, Department, KeyResult, Objective, Task, TaskEvent } from "@auto-crop/core";
+import type { BlueprintTask, Company, Department, KeyResult, Objective, Task, TaskDependency, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { PolicyMode } from "../policies/policy";
@@ -142,6 +142,8 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
 
   const firstKeyResultId = keyResults[0]?.id ?? null;
   const taskWarnings: TaskEvent[] = [];
+  const taskIdsByBlueprintKey = new Map<string, string>();
+  const handoffContractsByBlueprintKey = new Map<string, string>();
   const tasks = ceoResponse.blueprint.tasks.map((taskBlueprint, position) => {
     const departmentId = departmentIdsByName.get(taskBlueprint.departmentName);
 
@@ -175,6 +177,8 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       dependencyNote: null,
     };
     input.repositories.createTask(task);
+    taskIdsByBlueprintKey.set(taskBlueprint.key, task.id);
+    handoffContractsByBlueprintKey.set(taskBlueprint.key, taskBlueprint.handoffContract);
     if (schemaDecision.warning) {
       taskWarnings.push({
         id: createId("task_event"),
@@ -196,6 +200,9 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     return task;
   });
 
+  createBlueprintDependencies(ceoResponse.blueprint.tasks, taskIdsByBlueprintKey, handoffContractsByBlueprintKey).forEach(
+    (dependency) => input.repositories.createTaskDependency(dependency),
+  );
   inferValidationDependencies(tasks).forEach((dependency) => input.repositories.createTaskDependency(dependency));
   taskWarnings.forEach((warning) => input.repositories.appendTaskEvent(warning));
 
@@ -302,7 +309,35 @@ function isValidationTask(task: Task): boolean {
   return task.proofSchemaId === "test-output" || task.proofSchemaId === "local-url" || task.proofSchemaId === "screenshot";
 }
 
-function inferValidationDependencies(tasks: Task[]) {
+function createBlueprintDependencies(
+  taskBlueprints: BlueprintTask[],
+  taskIdsByBlueprintKey: Map<string, string>,
+  handoffContractsByBlueprintKey: Map<string, string>,
+): TaskDependency[] {
+  return taskBlueprints.flatMap((taskBlueprint) => {
+    const taskId = taskIdsByBlueprintKey.get(taskBlueprint.key);
+
+    if (!taskId) {
+      throw new Error(`Task references unknown key after parse: ${taskBlueprint.key}`);
+    }
+
+    return taskBlueprint.dependsOnTaskKeys.map((dependencyKey) => {
+      const dependsOnTaskId = taskIdsByBlueprintKey.get(dependencyKey);
+
+      if (!dependsOnTaskId) {
+        throw new Error(`Task references unknown dependency key after parse: ${dependencyKey}`);
+      }
+
+      return {
+        taskId,
+        dependsOnTaskId,
+        handoffContract: handoffContractsByBlueprintKey.get(dependencyKey) ?? null,
+      };
+    });
+  });
+}
+
+function inferValidationDependencies(tasks: Task[]): TaskDependency[] {
   return tasks.flatMap((task, index) => {
     if (!isValidationTask(task)) {
       return [];

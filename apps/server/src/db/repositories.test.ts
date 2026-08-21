@@ -224,7 +224,11 @@ describe("repositories", () => {
     repos.createTask({ ...records.task, status: "needs_replan" });
     repos.createTask(blockedConsumer);
     repos.createTask(replacement);
-    repos.createTaskDependency({ taskId: blockedConsumer.id, dependsOnTaskId: records.task.id });
+    repos.createTaskDependency({
+      taskId: blockedConsumer.id,
+      dependsOnTaskId: records.task.id,
+      handoffContract: "Consume the replacement-ready artifact.",
+    });
     repos.createReplanProposal(proposal);
 
     expect(repos.listReplanProposalsForCompany(records.company.id)).toEqual([proposal]);
@@ -232,7 +236,11 @@ describe("repositories", () => {
     repos.replaceDependencyConsumers(records.task.id, replacement.id);
 
     expect(repos.listTaskDependencies(blockedConsumer.id)).toEqual([
-      { taskId: blockedConsumer.id, dependsOnTaskId: replacement.id },
+      {
+        taskId: blockedConsumer.id,
+        dependsOnTaskId: replacement.id,
+        handoffContract: "Consume the replacement-ready artifact.",
+      },
     ]);
 
     repos.updateReplanProposalStatus(proposal.id, "confirmed", "2026-08-17T00:01:00.000Z");

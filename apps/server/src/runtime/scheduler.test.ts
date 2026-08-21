@@ -445,7 +445,11 @@ describe("runSchedulerOnce", () => {
     const producer = createTaskRecord("task_1", "review", "low", "product-brief");
     const consumer = createTaskRecord("task_2", "queued", "low", "test-output");
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
-    repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
+    repositories.createTaskDependency({
+      taskId: consumer.id,
+      dependsOnTaskId: producer.id,
+      handoffContract: "Consume the product brief before validating the prototype.",
+    });
     const events: SchedulerEventRecord[] = [];
 
     const result = await runSchedulerOnce({
@@ -489,7 +493,11 @@ describe("runSchedulerOnce", () => {
     };
     const consumer = createTaskRecord("task_2", "queued", "low", "test-output");
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
-    repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
+    repositories.createTaskDependency({
+      taskId: consumer.id,
+      dependsOnTaskId: producer.id,
+      handoffContract: "Consume the product brief before validating the prototype.",
+    });
     repositories.appendProof({
       id: "proof_1",
       taskId: producer.id,
@@ -543,6 +551,7 @@ describe("runSchedulerOnce", () => {
     expect(prompt).toContain("Task: Task task_1");
     expect(prompt).toContain("Proof: file / proof_1");
     expect(prompt).toContain("URI: /tmp/artifact-workspace/product-brief.md");
+    expect(prompt).toContain("Handoff Contract: Consume the product brief before validating the prototype.");
 
     client.close();
   });

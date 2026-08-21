@@ -83,11 +83,31 @@ describe("createCompany", () => {
     );
     const buildTask = result.tasks.find((task) => task.proofSchemaId === "landing-page-file");
     const validationTask = result.tasks.find((task) => task.proofSchemaId === "test-output");
+    const productTask = result.tasks.find((task) => task.title === "Write the first product brief");
+    const researchTask = result.tasks.find((task) => task.title === "Create competitor and customer pain research");
+    const growthTask = result.tasks.find((task) => task.title === "Draft early acquisition assets");
     expect(buildTask?.artifactWorkspacePath).toBe(buildTask?.workspacePath);
     expect(buildTask?.description).toContain("Prototype guidance");
-    expect(validationTask && buildTask).toBeTruthy();
+    expect(validationTask && buildTask && productTask && researchTask && growthTask).toBeTruthy();
+    expect(repositories.listTaskDependencies(growthTask?.id ?? "")).toEqual([
+      {
+        taskId: growthTask?.id,
+        dependsOnTaskId: productTask?.id,
+        handoffContract: "Produce a concise product brief with target customer, wedge, MVP scope, and first revenue path.",
+      },
+      {
+        taskId: growthTask?.id,
+        dependsOnTaskId: researchTask?.id,
+        handoffContract: "Produce a research report covering comparable products, positioning, pricing, and customer pain.",
+      },
+    ]);
     expect(repositories.listTaskDependencies(validationTask?.id ?? "")).toEqual([
-      { taskId: validationTask?.id, dependsOnTaskId: buildTask?.id },
+      {
+        taskId: validationTask?.id,
+        dependsOnTaskId: buildTask?.id,
+        handoffContract:
+          "Produce runnable prototype files that implement the approved wedge, research-informed positioning, and launch copy.",
+      },
     ]);
 
     const engineering = repositories

@@ -59,6 +59,10 @@ export const proofSchemaSchema = z.object({
   acceptedTypes: z.array(proofTypeSchema).min(1),
 });
 
+export const taskKeySchema = nonEmptyString.regex(/^[a-z0-9][a-z0-9_-]*$/, {
+  message: "Task keys must use lowercase letters, numbers, underscores, or hyphens.",
+});
+
 export const departmentBlueprintSchema = z.object({
   name: nonEmptyString,
   responsibility: nonEmptyString,
@@ -79,6 +83,7 @@ export const objectiveBlueprintSchema = z.object({
 });
 
 export const taskSchema = z.object({
+  key: taskKeySchema,
   departmentName: nonEmptyString,
   title: nonEmptyString,
   description: nonEmptyString,
@@ -86,6 +91,8 @@ export const taskSchema = z.object({
   requiredCapabilities: z.array(nonEmptyString).min(1),
   proofSchemaId: nonEmptyString,
   riskLevel: riskLevelSchema,
+  dependsOnTaskKeys: z.array(taskKeySchema).default([]),
+  handoffContract: nonEmptyString,
 });
 
 export const companyBlueprintSchema = z
@@ -103,6 +110,20 @@ export const companyBlueprintSchema = z
   .superRefine((blueprint, context) => {
     const departmentNames = new Set(blueprint.departments.map((department) => department.name));
     const proofSchemaIds = new Set(blueprint.proofSchemas.map((proofSchema) => proofSchema.id));
+    const taskIndexesByKey = new Map<string, number>();
+
+    blueprint.tasks.forEach((task, index) => {
+      if (taskIndexesByKey.has(task.key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["tasks", index, "key"],
+          message: `Duplicate task key: ${task.key}`,
+        });
+        return;
+      }
+
+      taskIndexesByKey.set(task.key, index);
+    });
 
     blueprint.tasks.forEach((task, index) => {
       if (!departmentNames.has(task.departmentName)) {
@@ -120,6 +141,27 @@ export const companyBlueprintSchema = z
           message: `Task references missing proof schema: ${task.proofSchemaId}`,
         });
       }
+
+      task.dependsOnTaskKeys.forEach((dependencyKey, dependencyIndex) => {
+        const upstreamIndex = taskIndexesByKey.get(dependencyKey);
+
+        if (upstreamIndex === undefined) {
+          context.addIssue({
+            code: "custom",
+            path: ["tasks", index, "dependsOnTaskKeys", dependencyIndex],
+            message: `Task references missing dependency key: ${dependencyKey}`,
+          });
+          return;
+        }
+
+        if (upstreamIndex >= index) {
+          context.addIssue({
+            code: "custom",
+            path: ["tasks", index, "dependsOnTaskKeys", dependencyIndex],
+            message: `Task dependencies must reference earlier task keys: ${dependencyKey}`,
+          });
+        }
+      });
     });
   });
 
@@ -130,6 +172,7 @@ export const ceoResponseSchema = z.object({
 
 export type RiskLevelInput = z.infer<typeof riskLevelSchema>;
 export type ProofTypeInput = z.infer<typeof proofTypeSchema>;
+export type TaskKeyInput = z.infer<typeof taskKeySchema>;
 export type CompanyBlueprintInput = z.infer<typeof companyBlueprintSchema>;
 export type CeoResponseInput = z.infer<typeof ceoResponseSchema>;
 

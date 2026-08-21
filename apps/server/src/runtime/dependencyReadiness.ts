@@ -9,6 +9,7 @@ export type TaskHandoff = {
   uri: string;
   summary: string;
   artifactWorkspacePath: string | null;
+  handoffContract: string | null;
 };
 
 export type DependencyReadiness =
@@ -66,7 +67,7 @@ export function resolveDependencyReadiness(
       };
     }
 
-    handoffs.push(...proofs.map((proof) => createTaskHandoff(upstream, proof)));
+    handoffs.push(...proofs.map((proof) => createTaskHandoff(upstream, proof, dependency.handoffContract ?? null)));
   }
 
   return { kind: "ready", handoffs };
@@ -80,7 +81,7 @@ function isFailedDependencyStatus(status: Task["status"]): boolean {
   return status === "failed" || status === "blocked" || status === "cancelled";
 }
 
-function createTaskHandoff(task: Task, proof: Proof): TaskHandoff {
+function createTaskHandoff(task: Task, proof: Proof, handoffContract: string | null): TaskHandoff {
   return {
     upstreamTaskId: task.id,
     upstreamTaskTitle: task.title,
@@ -89,5 +90,6 @@ function createTaskHandoff(task: Task, proof: Proof): TaskHandoff {
     uri: proof.uri,
     summary: proof.summary,
     artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+    handoffContract,
   };
 }

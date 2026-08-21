@@ -136,6 +136,7 @@ export type AgentRun = {
 export type TaskDependency = {
   taskId: string;
   dependsOnTaskId: string;
+  handoffContract?: string | null;
 };
 
 export type ReplanReplacementTask = {
@@ -196,6 +197,7 @@ export type ProofSchema = {
 };
 
 export type BlueprintTask = {
+  key: string;
   departmentName: string;
   title: string;
   description: string;
@@ -203,6 +205,8 @@ export type BlueprintTask = {
   requiredCapabilities: string[];
   proofSchemaId: string;
   riskLevel: RiskLevel;
+  dependsOnTaskKeys: string[];
+  handoffContract: string;
 };
 
 export type CompanyBlueprint = {
