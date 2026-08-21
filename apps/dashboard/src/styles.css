@@ -297,7 +297,30 @@ h3 {
   max-width: min(860px, 100%);
   overflow: auto;
   padding: var(--screen-gap);
+  scrollbar-color: var(--titlebar) var(--surface-alt);
+  scrollbar-width: thin;
   width: min(860px, 100%);
+}
+
+.app-modal-card::-webkit-scrollbar {
+  height: 14px;
+  width: 14px;
+}
+
+.app-modal-card::-webkit-scrollbar-track {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--ink) 16%, transparent) 0 1px, transparent 1px 4px),
+    var(--surface-alt);
+  border-left: var(--border-px) solid var(--border);
+}
+
+.app-modal-card::-webkit-scrollbar-thumb {
+  background: var(--titlebar);
+  border: var(--border-px) solid var(--surface-alt);
+}
+
+.app-modal-card::-webkit-scrollbar-corner {
+  background: var(--surface-alt);
 }
 
 .app-modal-card--creation {

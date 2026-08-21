@@ -1,6 +1,6 @@
-import { ArrowLeft, ArrowRight, Building2, CheckCircle2, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
-import type { AgentSummary, CreateCompanyResponse } from "../api/client";
+import type { AgentSummary } from "../api/client";
 import { RetroButton, RetroField, RetroListRow, RetroPanel, RetroSelect, RetroStatus, RetroTextarea } from "../ui/retro";
 import { ModalFrame, PageHeader, Workspace } from "../ui/layout";
 import { useLanguage } from "../ui/language";
@@ -18,7 +18,6 @@ export type OnboardingProps = {
   founderVision: string;
   founderVisionError: string | null;
   permissionMode: string;
-  blueprint: CreateCompanyResponse | null;
   isCreating: boolean;
   menuBar?: ReactNode;
   createError: string | null;
@@ -30,13 +29,13 @@ export type OnboardingProps = {
   onBack(): void;
   onNext(): void;
   onCreateCompany(): void;
-  onActivateCompany(): void;
 };
 
 export function Onboarding(props: OnboardingProps) {
   const { t } = useLanguage();
   const selectedAgent = props.agents.find((agent) => agent.id === props.selectedAgentId);
   const titleId = "onboarding-dialog-title";
+  const displayCompanyName = props.companyName.trim();
   const permissionOptions = [
     { value: "safe", label: t("onboarding.safe") },
     { value: "balanced", label: t("onboarding.balanced") },
@@ -46,10 +45,10 @@ export function Onboarding(props: OnboardingProps) {
   return (
     <ModalFrame labelledBy={titleId} menuBar={props.menuBar}>
           <PageHeader
-            eyebrow={t("onboarding.eyebrow")}
+            eyebrow={displayCompanyName ? t("app.localAgentCompany") : t("onboarding.eyebrow")}
             status={t("app.localAgentCompany")}
             statusIcon={<Building2 size={16} aria-hidden="true" />}
-            title={t("app.title")}
+            title={displayCompanyName || t("app.title")}
             titleId={titleId}
           />
 
@@ -184,36 +183,6 @@ export function Onboarding(props: OnboardingProps) {
               </RetroPanel>
             ) : null}
           </Workspace>
-
-          {props.step === "vision" && props.blueprint ? (
-            <RetroPanel className="blueprint-band" title={t("onboarding.blueprintReview")}>
-              <div>
-                <span className="eyebrow">{t("onboarding.blueprintReview")}</span>
-                <h2>{props.blueprint.editable.companyName}</h2>
-              </div>
-              <div className="review-columns">
-                <div>
-                  <h3>{t("onboarding.objectives")}</h3>
-                  {props.blueprint.editable.objectives.map((objective) => (
-                    <p key={objective}>{objective}</p>
-                  ))}
-                </div>
-                <div>
-                  <h3>{t("onboarding.firstTasks")}</h3>
-                  {props.blueprint.editable.firstTasks.map((task) => (
-                    <p key={task}>{task}</p>
-                  ))}
-                </div>
-              </div>
-              <RetroButton
-                icon={<CheckCircle2 size={16} aria-hidden="true" />}
-                onClick={props.onActivateCompany}
-                variant="primary"
-              >
-                {t("menu.activateCompany")}
-              </RetroButton>
-            </RetroPanel>
-          ) : null}
 
           <RetroStatus icon={<ShieldCheck size={16} aria-hidden="true" />}>
             {props.permissionMode} {t("onboarding.executionPolicy")}

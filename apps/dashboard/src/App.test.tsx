@@ -35,6 +35,18 @@ describe("Dashboard App", () => {
     expect(api.listAgents).not.toHaveBeenCalled();
   });
 
+  it("uses the entered company name as the onboarding modal title", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await user.type(await screen.findByLabelText("Company name"), "MATT");
+
+    expect(screen.getByRole("dialog", { name: "MATT" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "MATT" })).toBeInTheDocument();
+  });
+
   it("detects agents automatically when entering Step 2", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -165,7 +177,7 @@ describe("Dashboard App", () => {
     expect(screen.queryByRole("textbox", { name: /chat/i })).not.toBeInTheDocument();
   });
 
-  it("returns to setup from workspace views without losing the generated blueprint", async () => {
+  it("returns to setup from workspace views without showing the generated blueprint", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
@@ -176,16 +188,17 @@ describe("Dashboard App", () => {
     await user.click(screen.getByRole("menuitem", { name: "Back to Setup" }));
 
     expect(await screen.findByRole("heading", { name: "Step 3 / Founder Vision" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Blueprint Review" })).toBeInTheDocument();
-    expect(screen.getByText("Create landing page")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Blueprint Review" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Create landing page")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /activate company/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Company" }));
+    await user.click(screen.getByRole("menuitem", { name: "Activate Company" }));
     expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: "Company" }));
     await user.click(screen.getByRole("menuitem", { name: "Back to Setup" }));
 
     expect(await screen.findByRole("heading", { name: "Step 3 / Founder Vision" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Blueprint Review" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Blueprint Review" })).not.toBeInTheDocument();
   });
 
   it("updates task event stream messages from SSE", async () => {

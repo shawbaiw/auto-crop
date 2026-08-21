@@ -209,6 +209,11 @@ export default function App({ apiClient }: AppProps) {
     setIsCreating(true);
     setView("creating");
     setCreateError(null);
+    setBlueprint(null);
+    setProof([]);
+    setReviews([]);
+    setEvents([]);
+    setDashboardFocusTarget(null);
     try {
       const response = await client.createCompany({
         companyName: companyName.trim(),
@@ -528,7 +533,6 @@ export default function App({ apiClient }: AppProps) {
       agents={agents}
       agentLoadState={agentLoadState}
       agentSelectionError={agentSelectionError}
-      blueprint={blueprint}
       companyName={companyName}
       companyNameError={companyNameError}
       createError={createError}
@@ -536,7 +540,6 @@ export default function App({ apiClient }: AppProps) {
       founderVisionError={founderVisionError}
       isCreating={isCreating}
       menuBar={menuBar}
-      onActivateCompany={handleActivateCompany}
       onBack={goToPreviousStep}
       onCompanyNameChange={handleCompanyNameChange}
       onCreateCompany={handleCreateCompany}
