@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -96,6 +96,61 @@ describe("runSchedulerOnce", () => {
       effectiveTimeoutMs: 600_000,
     }));
     expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_review:task_1");
+
+    client.close();
+  });
+
+  it("cleans generated dependency directories after task execution while preserving artifacts", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "landing-page-file"),
+    ]);
+    let workspacePath = "";
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        {
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          detect: async () => true,
+          run: async (request) => {
+            workspacePath = request.workspacePath;
+            mkdirSync(join(workspacePath, "node_modules", "vite"), { recursive: true });
+            writeFileSync(join(workspacePath, "node_modules", "vite", "index.js"), "module.exports = {}\n", "utf8");
+            writeFileSync(join(workspacePath, "index.html"), "<main>Prototype</main>\n", "utf8");
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "prototype complete",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "file",
+          uri: join(workspacePath, "index.html"),
+          summary: "file proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: () => undefined,
+    });
+
+    expect(result.completed).toEqual(["task_1"]);
+    expect(existsSync(join(workspacePath, "index.html"))).toBe(true);
+    expect(existsSync(join(workspacePath, "node_modules"))).toBe(false);
+    expect(existsSync(join(workspacePath, ".auto-crop-handoff", "package.json"))).toBe(true);
 
     client.close();
   });

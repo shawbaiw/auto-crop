@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import {
   createCompanyWorkspace,
   createDepartmentWorkspace,
   createTaskWorkspace,
+  cleanupGeneratedWorkspaceArtifacts,
   resolveWorkspacePath,
 } from "./workspace";
 
@@ -64,6 +65,51 @@ describe("workspace layout", () => {
     const projectRoot = createTempProjectRoot();
 
     expect(() => resolveWorkspacePath(projectRoot, "../outside")).toThrow(/outside project root/i);
+  });
+
+  it("removes generated dependency directories from task workspaces only", () => {
+    const projectRoot = createTempProjectRoot();
+    const workspace = createTaskWorkspace(projectRoot, "task_1");
+    const sourcePath = join(workspace.root, "src", "App.tsx");
+    const handoffPath = join(workspace.root, ".auto-crop-handoff", "package.json");
+    const rootDependencyPath = join(workspace.root, "node_modules", "vite", "index.js");
+    const nestedDependencyPath = join(workspace.root, "app", "node_modules", "react", "index.js");
+    mkdirSync(join(workspace.root, "src"), { recursive: true });
+    mkdirSync(join(workspace.root, ".auto-crop-handoff"), { recursive: true });
+    mkdirSync(join(workspace.root, "node_modules", "vite"), { recursive: true });
+    mkdirSync(join(workspace.root, "app", "node_modules", "react"), { recursive: true });
+    writeFileSync(sourcePath, "export default function App() { return null; }\n", "utf8");
+    writeFileSync(handoffPath, "{}\n", "utf8");
+    writeFileSync(rootDependencyPath, "module.exports = {}\n", "utf8");
+    writeFileSync(nestedDependencyPath, "module.exports = {}\n", "utf8");
+
+    const result = cleanupGeneratedWorkspaceArtifacts({ projectRoot, workspacePath: workspace.root });
+
+    expect(result.removedPaths).toEqual([
+      join(workspace.root, "app", "node_modules"),
+      join(workspace.root, "node_modules"),
+    ]);
+    expect(existsSync(join(workspace.root, "node_modules"))).toBe(false);
+    expect(existsSync(join(workspace.root, "app", "node_modules"))).toBe(false);
+    expect(readFileSync(sourcePath, "utf8")).toContain("App");
+    expect(readFileSync(handoffPath, "utf8")).toBe("{}\n");
+  });
+
+  it("rejects cleanup outside managed task workspaces", () => {
+    const projectRoot = createTempProjectRoot();
+
+    expect(() =>
+      cleanupGeneratedWorkspaceArtifacts({
+        projectRoot,
+        workspacePath: join(projectRoot, ".auto-crop", "companies", "company_1"),
+      }),
+    ).toThrow(/not a task workspace/i);
+    expect(() =>
+      cleanupGeneratedWorkspaceArtifacts({
+        projectRoot,
+        workspacePath: join(tmpdir(), "outside-task"),
+      }),
+    ).toThrow(/outside project root/i);
   });
 });
 

@@ -6,7 +6,7 @@ import type { AgentFailureReason, Proof, Task, TaskEvent, TaskStatus } from "@au
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { createHandoffPackage } from "./proof";
-import { createTaskWorkspace } from "./workspace";
+import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
 
 export type SchedulerFailureReason = AgentFailureReason;
 
@@ -104,6 +104,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           return;
         }
 
+        let taskWorkspaceRoot: string | null = null;
         try {
           if (input.approvalRequired(task)) {
             input.repositories.updateTaskStatus(task.id, "blocked");
@@ -161,6 +162,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           const taskWorkspace = task.workspacePath
             ? { root: task.workspacePath }
             : createTaskWorkspace(input.projectRoot, task.id);
+          taskWorkspaceRoot = taskWorkspace.root;
           if (!task.workspacePath) {
             input.repositories.updateTaskWorkspacePath(task.id, taskWorkspace.root);
           }
@@ -378,7 +380,24 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           });
           result.completed.push(task.id);
         } finally {
-          input.repositories.releaseTaskLock(task.id, input.workerId);
+          try {
+            if (taskWorkspaceRoot) {
+              try {
+                cleanupGeneratedWorkspaceArtifacts({
+                  projectRoot: input.projectRoot,
+                  workspacePath: taskWorkspaceRoot,
+                });
+              } catch (error) {
+                appendAndEmitTaskEvent(input, {
+                  task,
+                  type: "task_warning",
+                  message: `Task warning: ${task.title} / workspace cleanup skipped / ${(error as Error).message}`,
+                });
+              }
+            }
+          } finally {
+            input.repositories.releaseTaskLock(task.id, input.workerId);
+          }
         }
       })(dependencyDecision.handoffs),
     );

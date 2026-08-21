@@ -46,10 +46,11 @@ Make task failures explainable after refresh and make validation tasks operate o
 - Keep Proof as the completion gate. Partial Output can be visible and useful without making a task complete.
 - Do not infer or backfill dependencies for historical tasks during migration. Dependency inference applies only when new tasks are created.
 - Do not automatically unlock or retry a dependency-blocked task in this version. Future task refresh or manual retry work should recompute dependency state.
-- If there is no stored current company id in the browser, return to onboarding instead of guessing the latest company.
+- If there is no stored current company id in the browser, show a recent company picker when companies exist; otherwise return to onboarding instead of guessing the latest company.
 - Agent Activity is a concise lifecycle timeline, not a raw stdout viewer. Full stdout/stderr stay in log files.
 - Persist only user-visible task lifecycle activity, not every raw log line.
 - Invalid timeout environment variables are ignored and recorded as visible warning activity.
+- After a task run reaches a terminal scheduler outcome, clean generated dependency directories such as `node_modules` from the managed task workspace while preserving source artifacts, Proof, handoff manifests, and logs.
 
 ## Data Model
 
@@ -264,14 +265,11 @@ On refresh:
 
 - No persistent agent sessions.
 - No new dashboard component system.
-- No automatic cleanup of large generated `node_modules` workspaces.
 - No human action to accept Partial Output as the Artifact Workspace.
-- No automatic latest-company selection when browser storage has no current company id.
 - No compressed archive or retention policy for generated handoff packages.
 
 ## Suggested Next Steps After This
 
-- Add workspace cleanup/retention policy for large prototype scaffolds.
 - Revisit persistent agent sessions only after effective timeouts, durable failures, and artifact workspaces are stable.
 
 ## Verification

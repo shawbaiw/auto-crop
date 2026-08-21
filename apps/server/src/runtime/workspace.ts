@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 export type CompanyWorkspace = {
   companyRoot: string;
@@ -17,6 +17,16 @@ export type DepartmentWorkspace = {
 
 export type TaskWorkspace = {
   root: string;
+};
+
+export type WorkspaceCleanupResult = {
+  removedPaths: string[];
+};
+
+export type CleanupGeneratedWorkspaceInput = {
+  projectRoot: string;
+  workspacePath: string;
+  generatedDirNames?: string[];
 };
 
 export function createCompanyWorkspace(projectRoot: string, companyId: string): CompanyWorkspace {
@@ -84,9 +94,56 @@ export function resolveWorkspacePath(projectRoot: string, pathWithinProject: str
   throw new Error(`Path resolves outside project root: ${pathWithinProject}`);
 }
 
+export function cleanupGeneratedWorkspaceArtifacts(
+  input: CleanupGeneratedWorkspaceInput,
+): WorkspaceCleanupResult {
+  const workspacePath = resolveWorkspacePath(input.projectRoot, input.workspacePath);
+  assertTaskWorkspacePath(input.projectRoot, workspacePath);
+
+  if (!existsSync(workspacePath)) {
+    return { removedPaths: [] };
+  }
+
+  const generatedDirNames = new Set(input.generatedDirNames ?? ["node_modules"]);
+  const removedPaths: string[] = [];
+
+  removeGeneratedDirs(workspacePath, generatedDirNames, removedPaths);
+
+  return { removedPaths };
+}
+
 function assertWorkspaceId(id: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
     throw new Error(`Invalid workspace id: ${id}`);
+  }
+}
+
+function assertTaskWorkspacePath(projectRoot: string, workspacePath: string): void {
+  const workspacesRoot = resolveWorkspacePath(projectRoot, ".auto-crop/workspaces");
+  const relativePath = relative(workspacesRoot, workspacePath);
+
+  if (relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath)) {
+    return;
+  }
+
+  throw new Error(`Cleanup path is not a task workspace: ${workspacePath}`);
+}
+
+function removeGeneratedDirs(root: string, generatedDirNames: Set<string>, removedPaths: string[]): void {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entryPath = join(root, entry.name);
+
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    if (generatedDirNames.has(entry.name)) {
+      rmSync(entryPath, { force: true, recursive: true });
+      removedPaths.push(entryPath);
+      continue;
+    }
+
+    removeGeneratedDirs(entryPath, generatedDirNames, removedPaths);
   }
 }
 
