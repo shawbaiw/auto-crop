@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { Proof, ProofSchema, ProofType, Task } from "@auto-crop/core";
 
 export type CaptureProofsInput = {
@@ -20,6 +20,18 @@ export type CaptureProofsInput = {
 export type CreateProofCollectorInput = {
   proofSchemas: ProofSchema[];
   createId?: (prefix: string) => string;
+};
+
+export type HandoffPackage = {
+  manifestPath: string;
+  packageDir: string;
+};
+
+export type CreateHandoffPackageInput = {
+  task: Task;
+  proofs: Proof[];
+  workspacePath: string;
+  logPath: string;
 };
 
 export function captureProofs(input: CaptureProofsInput): Proof[] {
@@ -167,6 +179,78 @@ export function createProofCollector(input: CreateProofCollectorInput) {
   };
 }
 
+export function createHandoffPackage(input: CreateHandoffPackageInput): HandoffPackage | null {
+  if (input.proofs.length === 0) {
+    return null;
+  }
+
+  const packageDir = join(input.workspacePath, ".auto-crop-handoff");
+  const artifactsDir = join(packageDir, "artifacts");
+  rmSync(packageDir, { force: true, recursive: true });
+  mkdirSync(artifactsDir, { recursive: true });
+
+  const artifacts = input.proofs.flatMap((proof, index) => {
+    if (!isCopyableLocalArtifact(proof.uri)) {
+      return [];
+    }
+
+    const sourcePath = resolveCopyableArtifactPath(input.workspacePath, proof.uri);
+
+    if (!sourcePath || !existsSync(sourcePath)) {
+      return [];
+    }
+
+    const artifactName = `${String(index + 1).padStart(2, "0")}-${sanitizeArtifactName(basename(sourcePath))}`;
+    const packagePath = join(artifactsDir, artifactName);
+    copyFileSync(sourcePath, packagePath);
+
+    return [
+      {
+        proofId: proof.id,
+        proofType: proof.type,
+        sourceUri: proof.uri,
+        packagePath,
+      },
+    ];
+  });
+
+  const manifestPath = join(packageDir, "package.json");
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify(
+      {
+        task: {
+          id: input.task.id,
+          title: input.task.title,
+          proofSchemaId: input.task.proofSchemaId,
+        },
+        proofs: input.proofs.map((proof) => ({
+          id: proof.id,
+          type: proof.type,
+          uri: proof.uri,
+          summary: proof.summary,
+        })),
+        artifacts,
+        logPath: input.logPath,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  return { manifestPath, packageDir };
+}
+
+export function getHandoffPackageManifestPath(task: Pick<Task, "workspacePath">): string | null {
+  if (!task.workspacePath) {
+    return null;
+  }
+
+  const manifestPath = join(task.workspacePath, ".auto-crop-handoff", "package.json");
+  return existsSync(manifestPath) ? manifestPath : null;
+}
+
 function extractUrlProof(stdout: string): { urls: string[]; deploymentUrls: string[] } {
   const candidates = stdout.match(/https?:\/\/[^\s<>)\]]+/g) ?? [];
   const urls: string[] = [];
@@ -258,6 +342,26 @@ function stdoutProofFileName(proofSchemaId: string): string {
     default:
       return "task-output.md";
   }
+}
+
+function isCopyableLocalArtifact(uri: string): boolean {
+  if (/^https?:\/\//i.test(uri)) {
+    return false;
+  }
+
+  return true;
+}
+
+function resolveCopyableArtifactPath(workspacePath: string, uri: string): string | null {
+  try {
+    return resolvePathInsideWorkspace(workspacePath, uri);
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeArtifactName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
 
 function accepts(proofSchema: ProofSchema, proofType: ProofType): boolean {

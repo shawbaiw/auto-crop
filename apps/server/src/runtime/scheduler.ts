@@ -5,6 +5,7 @@ import type { createRepositories } from "../db/repositories";
 import type { AgentFailureReason, Proof, Task, TaskEvent, TaskStatus } from "@auto-crop/core";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
+import { createHandoffPackage } from "./proof";
 import { createTaskWorkspace } from "./workspace";
 
 export type SchedulerFailureReason = AgentFailureReason;
@@ -292,6 +293,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           for (const item of proof) {
             input.repositories.appendProof(item);
           }
+          createHandoffPackage({
+            task: { ...task, workspacePath: taskWorkspace.root },
+            proofs: proof,
+            workspacePath: taskWorkspace.root,
+            logPath,
+          });
 
           if (agentResult.status !== "complete" || proof.length === 0) {
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
@@ -631,6 +638,7 @@ function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string 
       `   URI: ${handoff.uri}`,
       `   Summary: ${handoff.summary}`,
       ...(handoff.handoffContract ? [`   Handoff Contract: ${handoff.handoffContract}`] : []),
+      ...(handoff.handoffPackagePath ? [`   Handoff Package: ${handoff.handoffPackagePath}`] : []),
       ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
     ]),
   ].join("\n");

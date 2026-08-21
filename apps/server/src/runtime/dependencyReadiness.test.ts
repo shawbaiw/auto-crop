@@ -131,6 +131,7 @@ describe("resolveDependencyReadiness", () => {
           summary: "File proof: product-brief.md",
           artifactWorkspacePath: "/tmp/artifact-workspace",
           handoffContract: "Consume the product brief before drafting launch copy.",
+          handoffPackagePath: null,
         },
       ],
     });

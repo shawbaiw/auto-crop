@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { acquireTaskLock, releaseTaskLock } from "./locks";
+import { createHandoffPackage } from "./proof";
 import { runSchedulerOnce, type SchedulerEvent } from "./scheduler";
 
 const createdDirs: string[] = [];
@@ -82,6 +83,9 @@ describe("runSchedulerOnce", () => {
     );
     expect(readFileSync(join(projectRoot, ".auto-crop", "companies", "company_1", "logs", "task_1.log"), "utf8")).toContain(
       "proof: created artifact",
+    );
+    expect(existsSync(join(projectRoot, ".auto-crop", "workspaces", "task_1", ".auto-crop-handoff", "package.json"))).toBe(
+      true,
     );
     expect(events).toContainEqual(expect.objectContaining({
       type: "task_started",
@@ -487,9 +491,14 @@ describe("runSchedulerOnce", () => {
   });
 
   it("injects upstream proof handoffs into dependent agent prompts", async () => {
+    const producerWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-upstream-"));
+    createdDirs.push(producerWorkspace);
+    const proofPath = join(producerWorkspace, "product-brief.md");
+    writeFileSync(proofPath, "# Product Brief\n", "utf8");
     const producer = {
       ...createTaskRecord("task_1", "review", "low", "product-brief"),
-      artifactWorkspacePath: "/tmp/artifact-workspace",
+      workspacePath: producerWorkspace,
+      artifactWorkspacePath: producerWorkspace,
     };
     const consumer = createTaskRecord("task_2", "queued", "low", "test-output");
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
@@ -498,13 +507,20 @@ describe("runSchedulerOnce", () => {
       dependsOnTaskId: producer.id,
       handoffContract: "Consume the product brief before validating the prototype.",
     });
-    repositories.appendProof({
+    const proof: Proof = {
       id: "proof_1",
       taskId: producer.id,
       type: "file",
-      uri: "/tmp/artifact-workspace/product-brief.md",
+      uri: proofPath,
       summary: "File proof: product-brief.md",
       verifiedAt: null,
+    };
+    repositories.appendProof(proof);
+    createHandoffPackage({
+      task: producer,
+      proofs: [proof],
+      workspacePath: producerWorkspace,
+      logPath: join(producerWorkspace, "agent.log"),
     });
     let prompt = "";
 
@@ -550,8 +566,10 @@ describe("runSchedulerOnce", () => {
     expect(prompt).toContain("## Upstream Handoffs");
     expect(prompt).toContain("Task: Task task_1");
     expect(prompt).toContain("Proof: file / proof_1");
-    expect(prompt).toContain("URI: /tmp/artifact-workspace/product-brief.md");
+    expect(prompt).toContain(`URI: ${proofPath}`);
     expect(prompt).toContain("Handoff Contract: Consume the product brief before validating the prototype.");
+    expect(prompt).toContain(`Handoff Package: ${join(producerWorkspace, ".auto-crop-handoff", "package.json")}`);
+    expect(prompt).toContain(`Artifact Workspace: ${producerWorkspace}`);
 
     client.close();
   });

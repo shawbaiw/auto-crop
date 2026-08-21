@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProofSchema, Task } from "@auto-crop/core";
-import { captureProofs, createProofCollector } from "./proof";
+import { captureProofs, createHandoffPackage, createProofCollector, getHandoffPackageManifestPath } from "./proof";
 
 const createdDirs: string[] = [];
 
@@ -303,6 +303,128 @@ describe("createProofCollector", () => {
         verifiedAt: null,
       },
     ]);
+  });
+});
+
+describe("createHandoffPackage", () => {
+  it("packages file proof into a manifest and artifacts directory for downstream handoff", () => {
+    const { task, workspacePath } = createFixture("product-brief", ["file"]);
+    const proofPath = join(workspacePath, "product-brief.md");
+    const logPath = join(workspacePath, "agent.log");
+    writeFileSync(proofPath, "# Product Brief\n\nShip the wedge.\n", "utf8");
+    writeFileSync(logPath, "agent log\n", "utf8");
+
+    const handoffPackage = createHandoffPackage({
+      task: { ...task, workspacePath },
+      proofs: [
+        {
+          id: "proof_1",
+          taskId: task.id,
+          type: "file",
+          uri: proofPath,
+          summary: "File proof: product-brief.md",
+          verifiedAt: null,
+        },
+      ],
+      workspacePath,
+      logPath,
+    });
+
+    expect(handoffPackage?.manifestPath).toBe(join(workspacePath, ".auto-crop-handoff", "package.json"));
+    expect(getHandoffPackageManifestPath({ ...task, workspacePath })).toBe(handoffPackage?.manifestPath);
+    const manifest = JSON.parse(readFileSync(handoffPackage?.manifestPath ?? "", "utf8")) as {
+      artifacts: Array<{ packagePath: string; proofId: string }>;
+      proofs: Array<{ id: string; uri: string }>;
+      task: { id: string; title: string; proofSchemaId: string };
+    };
+    expect(manifest.task).toEqual({
+      id: "task_1",
+      title: "Capture proof",
+      proofSchemaId: "product-brief",
+    });
+    expect(manifest.proofs).toEqual([
+      {
+        id: "proof_1",
+        type: "file",
+        uri: proofPath,
+        summary: "File proof: product-brief.md",
+      },
+    ]);
+    expect(manifest.artifacts).toHaveLength(1);
+    expect(manifest.artifacts[0]?.proofId).toBe("proof_1");
+    expect(readProofFile(manifest.artifacts[0]?.packagePath ?? "")).toContain("Ship the wedge.");
+  });
+
+  it("records URL proof in the manifest without copying remote artifacts", () => {
+    const { task, workspacePath } = createFixture("deployment-url", ["deployment"]);
+
+    const handoffPackage = createHandoffPackage({
+      task: { ...task, workspacePath },
+      proofs: [
+        {
+          id: "proof_1",
+          taskId: task.id,
+          type: "deployment",
+          uri: "https://example.com",
+          summary: "Deployment proof: https://example.com",
+          verifiedAt: null,
+        },
+      ],
+      workspacePath,
+      logPath: join(workspacePath, "agent.log"),
+    });
+
+    const manifest = JSON.parse(readFileSync(handoffPackage?.manifestPath ?? "", "utf8")) as {
+      artifacts: unknown[];
+      proofs: Array<{ uri: string }>;
+    };
+    expect(manifest.proofs).toEqual([
+      {
+        id: "proof_1",
+        type: "deployment",
+        uri: "https://example.com",
+        summary: "Deployment proof: https://example.com",
+      },
+    ]);
+    expect(manifest.artifacts).toEqual([]);
+  });
+
+  it("records local proof outside the workspace without copying it into the package", () => {
+    const { task, workspacePath } = createFixture("test-output", ["command_output"]);
+    const outsideDir = mkdtempSync(join(tmpdir(), "auto-crop-log-"));
+    createdDirs.push(outsideDir);
+    const logPath = join(outsideDir, "agent.log");
+    writeFileSync(logPath, "42 passed\n", "utf8");
+
+    const handoffPackage = createHandoffPackage({
+      task: { ...task, workspacePath },
+      proofs: [
+        {
+          id: "proof_1",
+          taskId: task.id,
+          type: "command_output",
+          uri: logPath,
+          summary: "Command output proof captured.",
+          verifiedAt: null,
+        },
+      ],
+      workspacePath,
+      logPath,
+    });
+
+    const manifest = JSON.parse(readFileSync(handoffPackage?.manifestPath ?? "", "utf8")) as {
+      artifacts: unknown[];
+      proofs: Array<{ uri: string }>;
+    };
+    expect(manifest.proofs).toEqual([
+      {
+        id: "proof_1",
+        type: "command_output",
+        uri: logPath,
+        summary: "Command output proof captured.",
+      },
+    ]);
+    expect(manifest.artifacts).toEqual([]);
   });
 });
 

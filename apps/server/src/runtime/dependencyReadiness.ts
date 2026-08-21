@@ -1,5 +1,6 @@
 import type { Proof, Task } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { getHandoffPackageManifestPath } from "./proof";
 
 export type TaskHandoff = {
   upstreamTaskId: string;
@@ -10,6 +11,7 @@ export type TaskHandoff = {
   summary: string;
   artifactWorkspacePath: string | null;
   handoffContract: string | null;
+  handoffPackagePath: string | null;
 };
 
 export type DependencyReadiness =
@@ -91,5 +93,6 @@ function createTaskHandoff(task: Task, proof: Proof, handoffContract: string | n
     summary: proof.summary,
     artifactWorkspacePath: task.artifactWorkspacePath ?? null,
     handoffContract,
+    handoffPackagePath: getHandoffPackageManifestPath(task),
   };
 }

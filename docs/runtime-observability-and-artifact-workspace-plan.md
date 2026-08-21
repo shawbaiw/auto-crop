@@ -263,22 +263,15 @@ On refresh:
 ## This Version Does Not Do
 
 - No persistent agent sessions.
-- No automatic retry or continuation from Partial Output.
-- No automatic unlock/retry for dependency-blocked tasks after an upstream task is later fixed.
-- No full artifact packaging/copying layer.
-- No CEO-authored explicit dependency schema.
 - No new dashboard component system.
 - No automatic cleanup of large generated `node_modules` workspaces.
 - No human action to accept Partial Output as the Artifact Workspace.
 - No automatic latest-company selection when browser storage has no current company id.
+- No compressed archive or retention policy for generated handoff packages.
 
 ## Suggested Next Steps After This
 
-- Add explicit dependency fields to CEO blueprint output.
-- Add a follow-up task policy that can continue from Partial Output.
-- Add task refresh/manual retry to recompute dependency state and unblock tasks after upstream recovery.
 - Add a company picker or recent companies view for returning to earlier companies without browser storage.
-- Add artifact packaging for handoff between non-validation tasks.
 - Add workspace cleanup/retention policy for large prototype scaffolds.
 - Revisit persistent agent sessions only after effective timeouts, durable failures, and artifact workspaces are stable.
 
