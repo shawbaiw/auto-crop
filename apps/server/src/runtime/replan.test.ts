@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Company, Department, KeyResult, Objective, Task } from "@auto-crop/core";
-import type { AgentAdapter, AgentRunRequest } from "../adapters/types";
+import type { AgentAdapter, AgentRunRequest, AgentSession } from "../adapters/types";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
@@ -110,6 +110,165 @@ describe("replan proposals", () => {
     expect(proposal.replacementTasks.map((task) => task.title)).toEqual([
       "Write implementation handoff",
       "Build reduced prototype",
+    ]);
+
+    client.close();
+  });
+
+  it("uses an opt-in persistent session for planner agent replans and records activity", async () => {
+    const { repositories, client } = createFixture([
+      createTaskRecord("source_task", "needs_replan", 0),
+    ]);
+    const output = [
+      "```json",
+      JSON.stringify({
+        rationale: "Planner kept context in a persistent session.",
+        replacementTasks: [
+          {
+            title: "Write scoped handoff",
+            description: "Define the reduced scope.",
+            requiredCapabilities: ["writing"],
+            proofSchemaId: "product-brief",
+            riskLevel: "low",
+          },
+        ],
+      }),
+      "```",
+    ].join("\n");
+    const sessionRuns: string[] = [];
+    const session: AgentSession = {
+      id: "session_1",
+      key: {
+        companyId: "company_1",
+        agentId: "codex",
+        permissionMode: "balanced",
+      },
+      alive: true,
+      async run(request) {
+        sessionRuns.push(request.taskId);
+        return {
+          status: "complete",
+          exitCode: 0,
+          stdout: output,
+          stderr: "",
+        };
+      },
+      stop() {
+        this.alive = false;
+      },
+    };
+    const plannerAgent: AgentAdapter = {
+      id: "codex",
+      name: "Codex",
+      capabilities: ["code", "frontend", "test", "writing", "research"],
+      async detect() {
+        return true;
+      },
+      async run() {
+        throw new Error("one-shot fallback should not run");
+      },
+      session: {
+        async getOrStart(key) {
+          session.key = key;
+          return session;
+        },
+      },
+    };
+
+    const proposal = await createReplanProposalForTask({
+      repositories,
+      taskId: "source_task",
+      projectRoot: mkdtempTracked(),
+      plannerAgent,
+      playbook: aiSaasPlaybook,
+      agentSessionEnv: { AUTO_CROP_EXPERIMENTAL_AGENT_SESSIONS: "1" },
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(session.key).toEqual({
+      companyId: "company_1",
+      agentId: "codex",
+      permissionMode: "balanced",
+    });
+    expect(sessionRuns).toEqual(["source_task_replan_planner"]);
+    expect(proposal.proposalSource).toBe("planner_agent");
+    expect(repositories.listTaskEventsForCompany("company_1")).toEqual([
+      expect.objectContaining({
+        type: "task_warning",
+        message: "Planner agent used a persistent session for this replan proposal.",
+      }),
+    ]);
+
+    client.close();
+  });
+
+  it("falls back to one-shot planner execution when an opt-in session is unavailable", async () => {
+    const { repositories, client } = createFixture([
+      createTaskRecord("source_task", "needs_replan", 0),
+    ]);
+    const output = [
+      "```json",
+      JSON.stringify({
+        rationale: "Planner used one-shot fallback.",
+        replacementTasks: [
+          {
+            title: "Write fallback handoff",
+            description: "Define the reduced scope.",
+            requiredCapabilities: ["writing"],
+            proofSchemaId: "product-brief",
+            riskLevel: "low",
+          },
+        ],
+      }),
+      "```",
+    ].join("\n");
+    const oneShotRuns: string[] = [];
+    const plannerAgent: AgentAdapter = {
+      id: "codex",
+      name: "Codex",
+      capabilities: ["code", "frontend", "test", "writing", "research"],
+      async detect() {
+        return true;
+      },
+      async run(request) {
+        oneShotRuns.push(request.taskId);
+        return {
+          status: "complete",
+          exitCode: 0,
+          stdout: output,
+          stderr: "",
+        };
+      },
+      session: {
+        async probe() {
+          return { status: "unavailable", reason: "cli has no session support" };
+        },
+        async getOrStart() {
+          throw new Error("getOrStart should not run after an unavailable probe");
+        },
+      },
+    };
+
+    const proposal = await createReplanProposalForTask({
+      repositories,
+      taskId: "source_task",
+      projectRoot: mkdtempTracked(),
+      plannerAgent,
+      playbook: aiSaasPlaybook,
+      agentSessionEnv: { AUTO_CROP_EXPERIMENTAL_AGENT_SESSIONS: "1" },
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(oneShotRuns).toEqual(["source_task_replan_planner"]);
+    expect(proposal.proposalSource).toBe("planner_agent");
+    expect(repositories.listTaskEventsForCompany("company_1")).toEqual([
+      expect.objectContaining({
+        type: "task_warning",
+        message:
+          "Planner agent persistent session was unavailable (cli has no session support); used a one-shot run.",
+      }),
     ]);
 
     client.close();
@@ -236,6 +395,7 @@ function createCompanyRecord(): Company {
     founderVision: "Build an AI SaaS that creates pricing pages.",
     selectedCeoAgentId: "codex",
     playbookId: "ai-saas",
+    permissionMode: "balanced",
     status: "active",
     createdAt: "2026-08-17T00:00:00.000Z",
     updatedAt: "2026-08-17T00:00:00.000Z",

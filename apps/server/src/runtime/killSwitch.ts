@@ -5,11 +5,13 @@ export type TriggerKillSwitchInput = {
   repositories: ReturnType<typeof createRepositories>;
   now?: () => Date;
   cancelActiveRun: (taskId: string) => void;
+  stopCompanySessions?: (companyId: string, reason: string) => string[];
 };
 
 export type TriggerKillSwitchResult = {
   cancelledTasks: string[];
   releasedLocks: string[];
+  stoppedSessions: string[];
 };
 
 export function triggerKillSwitch(input: TriggerKillSwitchInput): TriggerKillSwitchResult {
@@ -30,10 +32,12 @@ export function triggerKillSwitch(input: TriggerKillSwitchInput): TriggerKillSwi
   }
 
   const releasedLocks = input.repositories.releaseAllTaskLocks();
+  const stoppedSessions = input.stopCompanySessions?.(input.companyId, "emergency_stop") ?? [];
   input.repositories.updateCompanyStatus(input.companyId, "review", finishedAt);
 
   return {
     cancelledTasks,
     releasedLocks,
+    stoppedSessions,
   };
 }

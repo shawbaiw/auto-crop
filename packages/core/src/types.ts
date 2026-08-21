@@ -1,4 +1,5 @@
 export type CompanyStatus = "draft" | "active" | "paused" | "review";
+export type PermissionMode = "safe" | "balanced" | "autonomous";
 export type ObjectiveStatus = "active" | "complete" | "paused";
 export type KeyResultStatus = "active" | "met" | "missed";
 export type TaskStatus =
@@ -54,6 +55,7 @@ export type Company = {
   founderVision: string;
   selectedCeoAgentId: string;
   playbookId: string;
+  permissionMode?: PermissionMode | null;
   status: CompanyStatus;
   createdAt: string;
   updatedAt: string;

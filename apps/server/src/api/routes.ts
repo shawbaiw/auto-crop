@@ -5,6 +5,7 @@ import type { createRepositories, ReviewRecord } from "../db/repositories";
 import { EventStream } from "../events/sse";
 import type { PolicyMode } from "../policies/policy";
 import { createCompany } from "../runtime/createCompany";
+import { defaultAgentSessionManager } from "../runtime/agentSessions";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
@@ -264,6 +265,7 @@ async function routeRequest(
       repositories: options.repositories,
       now: options.now,
       cancelActiveRun: () => undefined,
+      stopCompanySessions: (companyId, reason) => defaultAgentSessionManager.stopCompanySessions(companyId, reason),
     });
     sendJson(response, 200, {
       ...result,
@@ -304,6 +306,7 @@ function summarizeCompany(company: Company) {
     status: company.status,
     playbookId: company.playbookId,
     selectedCeoAgentId: company.selectedCeoAgentId,
+    permissionMode: company.permissionMode ?? null,
   };
 }
 

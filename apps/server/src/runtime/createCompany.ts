@@ -3,8 +3,10 @@ import type { BlueprintTask, Company, Department, KeyResult, Objective, Task, Ta
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { PolicyMode } from "../policies/policy";
+import { defaultAgentSessionManager, type AgentSessionManager } from "./agentSessions";
 import { buildCeoPrompt } from "./ceoPrompt";
 import { parseCeoOutput } from "./ceoParser";
+import { resolveAgentSessionPolicy } from "./sessionPolicy";
 import { createCompanyWorkspace, createDepartmentWorkspace, createTaskWorkspace } from "./workspace";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
 
@@ -17,6 +19,8 @@ export type CreateCompanyInput = {
   permissionMode: PolicyMode;
   assets: string[];
   repositories: ReturnType<typeof createRepositories>;
+  agentSessionManager?: AgentSessionManager;
+  agentSessionEnv?: Record<string, string | undefined>;
   now?: () => Date;
   createId?: (prefix: string) => string;
 };
@@ -61,7 +65,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   const promptPath = `${companyWorkspace.companyRoot}/ceo-prompt.md`;
   writeFileSync(promptPath, prompt, "utf8");
 
-  const agentResult = await input.selectedCeoAgent.run({
+  const agentRequest = {
     taskId: `${companyId}_ceo_blueprint`,
     prompt,
     promptPath,
@@ -70,7 +74,20 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       playbookId: playbook.id,
       permissionMode: input.permissionMode,
     },
+  };
+  const sessionPolicy = resolveAgentSessionPolicy({
+    companyId,
+    agentId: input.selectedCeoAgent.id,
+    permissionMode: input.permissionMode,
+    purpose: "ceo_blueprint",
+    env: input.agentSessionEnv,
   });
+  const agentRun = await (input.agentSessionManager ?? defaultAgentSessionManager).run({
+    adapter: input.selectedCeoAgent,
+    request: agentRequest,
+    sessionKey: sessionPolicy.status === "enabled" ? sessionPolicy.key : null,
+  });
+  const agentResult = agentRun.result;
 
   if (agentResult.status !== "complete") {
     const failureDetail = agentResult.stderr.trim() || agentResult.stdout.trim() || "No agent output.";
@@ -84,6 +101,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     founderVision: ceoResponse.blueprint.company.founderVision,
     selectedCeoAgentId: input.selectedCeoAgent.id,
     playbookId: ceoResponse.blueprint.company.playbookId,
+    permissionMode: input.permissionMode,
     status: "draft",
     createdAt: now,
     updatedAt: now,

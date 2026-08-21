@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
-import type { AgentAdapter } from "../adapters/types";
+import type { AgentAdapter, AgentSession } from "../adapters/types";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
@@ -65,9 +65,11 @@ describe("createCompany", () => {
     expect(result.editable.objectives).toEqual(["Validate the first AI SaaS wedge"]);
     expect(result.editable.firstTasks.length).toBeGreaterThan(0);
     expect(result.company.playbookId).toBe("ai-saas");
+    expect(result.company.permissionMode).toBe("balanced");
     expect(result.company.status).toBe("draft");
 
     expect(repositories.getCompany(result.company.id)?.name).toBe("Pricing Page Studio");
+    expect(repositories.getCompany(result.company.id)?.permissionMode).toBe("balanced");
     expect(repositories.listDepartments(result.company.id).map((department) => department.name)).toEqual([
       "Product",
       "Research",
@@ -153,6 +155,82 @@ describe("createCompany", () => {
         repositories,
       }),
     ).rejects.toThrow(/not logged in/i);
+
+    client.close();
+  });
+
+  it("uses an opt-in persistent session for the CEO blueprint request", async () => {
+    const projectRoot = createTempProjectRoot();
+    const client = createDatabaseClient(":memory:");
+    migrate(client);
+    const repositories = createRepositories(client);
+    const blueprint = aiSaasPlaybook.createBlueprint({
+      companyName: "Session Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      preferredEngineeringAgentId: "codex",
+      preferredStrategyAgentId: "codex",
+    });
+    const sessionRuns: string[] = [];
+    const session: AgentSession = {
+      id: "session_1",
+      key: {
+        companyId: "company_1",
+        agentId: "codex",
+        permissionMode: "balanced",
+      },
+      alive: true,
+      async run(request) {
+        sessionRuns.push(request.taskId);
+        return {
+          status: "complete",
+          exitCode: 0,
+          stdout: ["```json", JSON.stringify({ brief: "Session brief.", blueprint }), "```"].join("\n"),
+          stderr: "",
+        };
+      },
+      stop() {
+        this.alive = false;
+      },
+    };
+    const ceoAgent: AgentAdapter = {
+      id: "codex",
+      name: "Codex",
+      capabilities: ["code", "frontend", "test"],
+      async detect() {
+        return true;
+      },
+      async run() {
+        throw new Error("one-shot fallback should not run");
+      },
+      session: {
+        async getOrStart(key) {
+          session.key = key;
+          return session;
+        },
+      },
+    };
+
+    const result = await createCompany({
+      projectRoot,
+      companyName: "Session Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgent: ceoAgent,
+      availableAgents: [ceoAgent],
+      permissionMode: "balanced",
+      assets: [],
+      repositories,
+      agentSessionEnv: { AUTO_CROP_EXPERIMENTAL_AGENT_SESSIONS: "1" },
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(session.key).toEqual({
+      companyId: "company_1",
+      agentId: "codex",
+      permissionMode: "balanced",
+    });
+    expect(sessionRuns).toEqual(["company_1_ceo_blueprint"]);
+    expect(result.company.permissionMode).toBe("balanced");
 
     client.close();
   });

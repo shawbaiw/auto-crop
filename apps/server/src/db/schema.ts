@@ -8,6 +8,7 @@ export function migrate(database: DatabaseClient): void {
       founder_vision TEXT NOT NULL,
       selected_ceo_agent_id TEXT NOT NULL,
       playbook_id TEXT NOT NULL,
+      permission_mode TEXT,
       status TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -160,6 +161,7 @@ export function migrate(database: DatabaseClient): void {
     );
   `);
   migrateTaskPosition(database);
+  migrateCompanyPermissionMode(database);
   migrateTasksExecutionFields(database);
   migrateAgentRunsExecutionFields(database);
   migrateTaskDependencyContracts(database);
@@ -168,6 +170,11 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_events_company_created_idx ON task_events(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS replan_proposals_company_status_idx ON replan_proposals(company_id, status)");
+}
+
+function migrateCompanyPermissionMode(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "companies");
+  addColumnIfMissing(database, columns, "companies", "permission_mode TEXT");
 }
 
 function migrateReplanProposalDiagnostics(database: DatabaseClient): void {

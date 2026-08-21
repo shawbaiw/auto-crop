@@ -8,6 +8,10 @@
 - **Permission Mode**: Runtime policy level for local execution. Current values are `safe`, `balanced`, and `autonomous`.
 - **Company Blueprint**: The structured result returned by the CEO Agent, including company metadata, departments, objectives, key results, proof schemas, and first tasks.
 - **Agent Output**: The raw stdout/stderr content and workspace side effects produced by an agent run. Agent Output can be useful evidence for humans, but it is not itself a completed task deliverable unless the runtime captures it as Proof.
+- **One-shot Agent Run**: An Agent Run executed by starting a fresh agent process for one task attempt, then ending that process when the attempt finishes. _Avoid_: stateless task, cold run.
+- **Agent Session**: A reusable agent context container that may serve multiple Agent Runs for the same company, agent, and Permission Mode. An Agent Session can improve continuity, but it does not decide whether a task is complete.
+- **Session Memory**: Context remembered inside an Agent Session. Session Memory is not Proof, Consumable Proof, a Task Deliverable, or a Handoff Package. _Avoid_: hidden proof, implicit handoff.
+- **Session Policy**: Runtime rules that decide whether an Agent Run is eligible to attempt an Agent Session. Session Policy is separate from Proof Schema, which defines the required deliverable.
 - **Task Deliverable**: The artifact a task must produce to be eligible for review. A Task Deliverable must be represented by Proof that matches the task's proof schema.
 - **Proof**: A runtime-recorded artifact, command output, URL, screenshot, diff, deployment, or other accepted evidence that satisfies a task's proof schema. Tasks without Proof are not complete, even when the agent produced useful Agent Output.
 - **Partial Output**: Useful Agent Output left behind by a failed or timed-out task. Partial Output should remain visible for diagnosis and follow-up, but it does not make the task complete.
@@ -20,6 +24,7 @@
 - **Bounded Recovery**: Automatic task recovery that changes execution conditions and has a hard stop, such as escalating an Effective Timeout before requiring replanning. _Avoid_: infinite retry.
 - **Replan Required**: A task outcome where the current task is too broad or expensive for the available execution profile and should be split or rewritten before downstream work continues. _Avoid_: timeout failure.
 - **Agent Activity**: Durable, user-facing timeline entries that explain task execution progress and outcomes. _Avoid_: debug log, raw stdout.
+- **Emergency Stop**: The user-facing command that stops active Agent Runs and active Agent Sessions for a company without deleting queued tasks. _Avoid_: normal pause, task cancellation.
 - **Artifact Workspace**: The workspace whose files are treated as the task's runnable or inspectable product. A dependent validation task may use another task's Artifact Workspace when validating that task's output. _Avoid_: task folder, temp folder.
 - **Dependency Block**: A task state caused by an unmet or failed Task Dependency, distinct from an agent execution failure. _Avoid_: failed validation, skipped task.
 - **Company State Snapshot**: The persisted company, department, objective, task, proof, and review state needed to rebuild the dashboard after a refresh. _Avoid_: blueprint cache, frontend state.

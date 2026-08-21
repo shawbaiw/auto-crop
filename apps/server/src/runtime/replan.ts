@@ -3,7 +3,9 @@ import type { ReplanProposal, Task, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { Playbook } from "../playbooks/types";
+import { defaultAgentSessionManager, type AgentSessionManager, type AgentSessionRunEvent } from "./agentSessions";
 import { buildReplanPlannerPrompt, parseReplanPlannerOutput } from "./replanPlanner";
+import { resolveAgentSessionPolicy } from "./sessionPolicy";
 import { createCompanyWorkspace, createTaskWorkspace } from "./workspace";
 
 type PlannerAttempt =
@@ -31,6 +33,8 @@ export type CreateReplanProposalInput = {
   projectRoot?: string;
   plannerAgent?: AgentAdapter;
   playbook?: Playbook;
+  agentSessionManager?: AgentSessionManager;
+  agentSessionEnv?: Record<string, string | undefined>;
   now?: () => Date;
   createId?: (prefix: string) => string;
 };
@@ -120,7 +124,7 @@ async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: 
   const companyWorkspace = createCompanyWorkspace(input.projectRoot, task.companyId);
   const promptPath = `${companyWorkspace.companyRoot}/replan-${task.id}-prompt.md`;
   writeFileSync(promptPath, prompt, "utf8");
-  const result = await input.plannerAgent.run({
+  const agentRequest = {
     taskId: `${task.id}_replan_planner`,
     prompt,
     promptPath,
@@ -131,7 +135,21 @@ async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: 
       playbookId: input.playbook.id,
       purpose: "replan_proposal",
     },
+  };
+  const sessionPolicy = resolveAgentSessionPolicy({
+    companyId: task.companyId,
+    agentId: input.plannerAgent.id,
+    permissionMode: company.permissionMode,
+    purpose: "replan_planner",
+    env: input.agentSessionEnv,
   });
+  const run = await (input.agentSessionManager ?? defaultAgentSessionManager).run({
+    adapter: input.plannerAgent,
+    request: agentRequest,
+    sessionKey: sessionPolicy.status === "enabled" ? sessionPolicy.key : null,
+    onSessionEvent: (event) => appendPlannerSessionEvent(input, task, event),
+  });
+  const result = run.result;
 
   if (result.status !== "complete") {
     return {
@@ -278,6 +296,40 @@ function buildReplacementTasks(task: Task): ReplanProposal["replacementTasks"] {
       riskLevel: task.riskLevel,
     },
   ];
+}
+
+function appendPlannerSessionEvent(
+  input: CreateReplanProposalInput,
+  task: Task,
+  event: AgentSessionRunEvent,
+): void {
+  if (event.mode === "one_shot") {
+    return;
+  }
+
+  const createId = input.createId ?? defaultCreateId;
+  const createdAt = (input.now ?? (() => new Date()))().toISOString();
+  const message =
+    event.mode === "persistent_used"
+      ? "Planner agent used a persistent session for this replan proposal."
+      : `Planner agent persistent session was unavailable (${event.reason ?? "unknown"}); used a one-shot run.`;
+
+  input.repositories.appendTaskEvent({
+    id: createId("task_event"),
+    companyId: task.companyId,
+    taskId: task.id,
+    type: "task_warning",
+    message,
+    createdAt,
+    status: task.status,
+    failureReason: null,
+    failureMessage: null,
+    executionProfileName: null,
+    requestedTimeoutMs: null,
+    effectiveTimeoutMs: null,
+    dependencyNote: task.dependencyNote ?? null,
+    artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+  } satisfies TaskEvent);
 }
 
 function isArtifactProducer(proofSchemaId: string): boolean {

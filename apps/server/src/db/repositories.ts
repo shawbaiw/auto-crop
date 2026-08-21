@@ -31,8 +31,8 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO companies (
-            id, name, founder_vision, selected_ceo_agent_id, playbook_id, status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            id, name, founder_vision, selected_ceo_agent_id, playbook_id, permission_mode, status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           company.id,
@@ -40,6 +40,7 @@ export function createRepositories(database: DatabaseClient) {
           company.founderVision,
           company.selectedCeoAgentId,
           company.playbookId,
+          company.permissionMode ?? null,
           company.status,
           company.createdAt,
           company.updatedAt,
@@ -606,6 +607,7 @@ type CompanyRow = {
   founder_vision: string;
   selected_ceo_agent_id: string;
   playbook_id: string;
+  permission_mode: Company["permissionMode"];
   status: Company["status"];
   created_at: string;
   updated_at: string;
@@ -745,6 +747,7 @@ function mapCompany(row: CompanyRow): Company {
     founderVision: row.founder_vision,
     selectedCeoAgentId: row.selected_ceo_agent_id,
     playbookId: row.playbook_id,
+    permissionMode: row.permission_mode ?? null,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

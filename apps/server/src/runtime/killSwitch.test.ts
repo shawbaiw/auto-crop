@@ -28,10 +28,12 @@ describe("triggerKillSwitch", () => {
       repositories,
       now: () => new Date("2026-08-17T00:00:10.000Z"),
       cancelActiveRun: (taskId) => cancelled.push(taskId),
+      stopCompanySessions: () => ["session_1"],
     });
 
     expect(result.cancelledTasks).toEqual(["task_1"]);
     expect(result.releasedLocks).toEqual(["task_1"]);
+    expect(result.stoppedSessions).toEqual(["session_1"]);
     expect(cancelled).toEqual(["task_1"]);
     expect(repositories.isGlobalPaused()).toBe(true);
     expect(repositories.getCompany("company_1")?.status).toBe("review");
