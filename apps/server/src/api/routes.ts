@@ -74,6 +74,15 @@ async function routeRequest(
     return;
   }
 
+  if (method === "GET" && url.pathname === "/api/companies") {
+    sendJson(response, 200, {
+      companies: options.repositories
+        .listCompanies()
+        .map((company) => summarizeCompanyListItem(company, options.repositories)),
+    });
+    return;
+  }
+
   if (method === "POST" && url.pathname === "/api/companies") {
     const body = await readJson<{
       companyName?: string;
@@ -295,6 +304,15 @@ function summarizeCompany(company: Company) {
     status: company.status,
     playbookId: company.playbookId,
     selectedCeoAgentId: company.selectedCeoAgentId,
+  };
+}
+
+function summarizeCompanyListItem(company: Company, repositories: ReturnType<typeof createRepositories>) {
+  return {
+    ...summarizeCompany(company),
+    createdAt: company.createdAt,
+    updatedAt: company.updatedAt,
+    taskCount: repositories.listTasksForCompany(company.id).length,
   };
 }
 

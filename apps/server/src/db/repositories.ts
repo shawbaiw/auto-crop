@@ -51,6 +51,11 @@ export function createRepositories(database: DatabaseClient) {
       return row ? mapCompany(row as CompanyRow) : null;
     },
 
+    listCompanies(): Company[] {
+      const rows = database.prepare("SELECT * FROM companies ORDER BY updated_at DESC, created_at DESC").all();
+      return rows.map((row) => mapCompany(row as CompanyRow));
+    },
+
     updateCompanyStatus(id: string, status: Company["status"], updatedAt: string): void {
       database
         .prepare("UPDATE companies SET status = ?, updated_at = ? WHERE id = ?")

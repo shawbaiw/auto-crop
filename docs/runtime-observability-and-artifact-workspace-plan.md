@@ -271,7 +271,6 @@ On refresh:
 
 ## Suggested Next Steps After This
 
-- Add a company picker or recent companies view for returning to earlier companies without browser storage.
 - Add workspace cleanup/retention policy for large prototype scaffolds.
 - Revisit persistent agent sessions only after effective timeouts, durable failures, and artifact workspaces are stable.
 

@@ -13,6 +13,12 @@ export type CompanySummary = {
   selectedCeoAgentId?: string;
 };
 
+export type CompanyListItem = CompanySummary & {
+  createdAt: string;
+  updatedAt: string;
+  taskCount: number;
+};
+
 export type DepartmentSummary = {
   id: string;
   name: string;
@@ -126,6 +132,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
 
 export type ApiClient = {
   listAgents(): Promise<{ agents: AgentSummary[] }>;
+  listCompanies(): Promise<{ companies: CompanyListItem[] }>;
   createCompany(input: {
     companyName: string;
     founderVision: string;
@@ -152,6 +159,9 @@ export function createApiClient(baseUrl = ""): ApiClient {
   return {
     async listAgents() {
       return getJson(`${baseUrl}/api/agents`);
+    },
+    async listCompanies() {
+      return getJson(`${baseUrl}/api/companies`);
     },
     async createCompany(input) {
       return postJson(`${baseUrl}/api/companies`, input);

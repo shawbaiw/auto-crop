@@ -272,6 +272,19 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.company-picker__list {
+  display: grid;
+  gap: 8px;
+}
+
+.company-picker__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .app-modal-backdrop {
   align-items: center;
   background:

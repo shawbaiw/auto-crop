@@ -63,6 +63,16 @@ export const englishTranslations = {
   "onboarding.firstTasks": "First Tasks",
   "onboarding.executionPolicy": "execution policy",
 
+  "companyPicker.eyebrow": "Company Select",
+  "companyPicker.title": "Recent Companies",
+  "companyPicker.recentCompanies": "Companies",
+  "companyPicker.loading": "Loading companies...",
+  "companyPicker.failed": "Could not load companies from the local API.",
+  "companyPicker.empty": "No companies created yet.",
+  "companyPicker.tasks": "tasks",
+  "companyPicker.createNew": "Create New Company",
+  "companyPicker.status": "Choose a company or start a new one",
+
   "creating.status": "Creating Company",
   "creating.panel": "Company Creation",
   "creating.company": "Company",
@@ -259,6 +269,16 @@ export const chineseTranslations: Record<TranslationKey, string> = {
   "onboarding.objectives": "目标",
   "onboarding.firstTasks": "首批任务",
   "onboarding.executionPolicy": "执行策略",
+
+  "companyPicker.eyebrow": "公司选择",
+  "companyPicker.title": "最近公司",
+  "companyPicker.recentCompanies": "公司",
+  "companyPicker.loading": "正在加载公司...",
+  "companyPicker.failed": "无法从本地 API 加载公司。",
+  "companyPicker.empty": "还没有创建公司。",
+  "companyPicker.tasks": "个任务",
+  "companyPicker.createNew": "创建新公司",
+  "companyPicker.status": "选择公司或创建新公司",
 
   "creating.status": "正在创建公司",
   "creating.panel": "公司创建",

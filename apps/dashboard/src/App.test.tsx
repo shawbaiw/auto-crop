@@ -19,7 +19,53 @@ describe("Dashboard App", () => {
     expect(screen.getByLabelText("Company name")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Step 2 / Choose CEO" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Founder vision")).not.toBeInTheDocument();
+    expect(api.listCompanies).toHaveBeenCalledTimes(1);
     expect(api.listAgents).not.toHaveBeenCalled();
+  });
+
+  it("opens a recent company when browser storage has no current company", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    api.listCompanies = vi.fn(async () => ({
+      companies: [
+        {
+          id: "company_2",
+          name: "Ops Lab",
+          status: "active",
+          playbookId: "ai-saas",
+          selectedCeoAgentId: "codex",
+          createdAt: "2026-08-17T00:00:00.000Z",
+          updatedAt: "2026-08-18T00:00:00.000Z",
+          taskCount: 2,
+        },
+      ],
+    }));
+    api.getCompanyState = vi.fn(async () => {
+      const created = createCompanyResponse();
+      return {
+        ...created,
+        company: {
+          ...created.company,
+          id: "company_2",
+          name: "Ops Lab",
+          status: "active",
+          selectedCeoAgentId: "codex",
+        },
+        proof: [],
+        reviews: [],
+        activity: [],
+        replanProposals: created.replanProposals ?? [],
+      };
+    });
+
+    render(<App apiClient={api} />);
+
+    expect(await screen.findByRole("heading", { name: "Recent Companies" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /ops lab/i }));
+
+    expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
+    expect(api.getCompanyState).toHaveBeenCalledWith("company_2");
+    expect(window.localStorage.getItem("auto-crop.currentCompanyId")).toBe("company_2");
   });
 
   it("blocks Next on Step 1 until a company name is entered", async () => {
@@ -936,6 +982,7 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         ],
       };
     }),
+    listCompanies: vi.fn(async () => ({ companies: [] })),
     async createCompany() {
       return createCompanyResponse();
     },

@@ -41,6 +41,18 @@ describe("API routes", () => {
     expect(created.company.status).toBe("draft");
     expect(created.editable.companyName).toBe("Pricing Page Studio");
 
+    const companies = await getJson<{
+      companies: Array<{ id: string; name: string; taskCount: number; updatedAt: string }>;
+    }>(`${fixture.baseUrl}/api/companies`);
+    expect(companies.companies).toEqual([
+      expect.objectContaining({
+        id: created.company.id,
+        name: "Pricing Page Studio",
+        taskCount: expect.any(Number),
+        updatedAt: expect.any(String),
+      }),
+    ]);
+
     const activated = await postJson<{ company: { status: string } }>(
       `${fixture.baseUrl}/api/companies/${created.company.id}/activate`,
       {},

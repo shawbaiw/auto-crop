@@ -3,6 +3,7 @@ import {
   createApiClient,
   type AgentSummary,
   type ApiClient,
+  type CompanyListItem,
   type CreateCompanyResponse,
   type ProofSummary,
   type ReplanProposalSummary,
@@ -13,6 +14,7 @@ import {
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
 import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
 import { CompanyOperations } from "./pages/CompanyOperations";
+import { CompanyPicker } from "./pages/CompanyPicker";
 import { DepartmentWorkspace } from "./pages/DepartmentWorkspace";
 import { Onboarding, type OnboardingStep } from "./pages/Onboarding";
 import { CRTViewport } from "./ui/crt";
@@ -26,7 +28,8 @@ export type AppProps = {
 };
 
 type AgentLoadState = "idle" | "loading" | "ready" | "failed";
-type AppView = "onboarding" | "creating" | "department-workspace" | "dashboard" | "operations";
+type CompanyListLoadState = "loading" | "ready" | "failed";
+type AppView = "company-picker" | "onboarding" | "creating" | "department-workspace" | "dashboard" | "operations";
 const currentCompanyStorageKey = "auto-crop.currentCompanyId";
 const currentViewStorageKey = "auto-crop.currentView";
 
@@ -50,45 +53,87 @@ export default function App({ apiClient }: AppProps) {
   const [proof, setProof] = useState<ProofSummary[]>([]);
   const [replanProposals, setReplanProposals] = useState<ReplanProposalSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
+  const [companies, setCompanies] = useState<CompanyListItem[]>([]);
+  const [companyListLoadState, setCompanyListLoadState] = useState<CompanyListLoadState>("loading");
   const [isPaused, setIsPaused] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [view, setView] = useState<AppView>("onboarding");
+  const [view, setView] = useState<AppView>("company-picker");
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("company");
   const [dashboardFocusTarget, setDashboardFocusTarget] = useState<DashboardFocusTarget | null>(null);
 
   useEffect(() => {
     const companyId = readCurrentCompanyId();
-    if (!companyId) {
-      return;
-    }
-
     let cancelled = false;
-    void client
-      .getCompanyState(companyId)
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-        setBlueprint(response);
-        setProof(response.proof);
-        setReviews(response.reviews);
-        setEvents(response.activity);
-        setReplanProposals(response.replanProposals);
-        setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
-        const restoredView = readCurrentView() ?? defaultCompanyView(response.company.status);
-        setView(restoredView);
-        if (restoredView === "onboarding") {
-          setOnboardingStep("vision");
-        }
-      })
-      .catch(() => {
-        clearCurrentCompanyId();
-      });
+
+    if (companyId) {
+      void client
+        .getCompanyState(companyId)
+        .then((response) => {
+          if (cancelled) {
+            return;
+          }
+          applyCompanyState(response, readCurrentView() ?? defaultCompanyView(response.company.status));
+        })
+        .catch(() => {
+          if (cancelled) {
+            return;
+          }
+          clearCurrentCompanyId();
+          void loadCompanies({ isCancelled: () => cancelled });
+        });
+    } else {
+      void loadCompanies({ isCancelled: () => cancelled });
+    }
 
     return () => {
       cancelled = true;
     };
   }, [client]);
+
+  async function loadCompanies(options?: { isCancelled(): boolean }) {
+    setCompanyListLoadState("loading");
+    try {
+      const response = await client.listCompanies();
+      if (options?.isCancelled()) {
+        return;
+      }
+      setCompanies(response.companies);
+      setCompanyListLoadState("ready");
+      setView(response.companies.length > 0 ? "company-picker" : "onboarding");
+    } catch {
+      if (options?.isCancelled()) {
+        return;
+      }
+      setCompanies([]);
+      setCompanyListLoadState("failed");
+      setView("company-picker");
+    }
+  }
+
+  async function openCompany(companyId: string) {
+    setCompanyListLoadState("loading");
+    try {
+      const response = await client.getCompanyState(companyId);
+      writeCurrentCompanyId(companyId);
+      applyCompanyState(response, defaultCompanyView(response.company.status));
+    } catch {
+      setCompanyListLoadState("failed");
+      setView("company-picker");
+    }
+  }
+
+  function applyCompanyState(response: CreateCompanyResponse, nextView: AppView) {
+    setBlueprint(response);
+    setProof(response.proof ?? []);
+    setReviews(response.reviews ?? []);
+    setEvents(response.activity ?? []);
+    setReplanProposals(response.replanProposals ?? []);
+    setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
+    setView(nextView);
+    if (nextView === "onboarding") {
+      setOnboardingStep("vision");
+    }
+  }
 
   useEffect(() => {
     if (!blueprint || view === "creating") {
@@ -392,6 +437,23 @@ export default function App({ apiClient }: AppProps) {
     setBlueprint((current) => updateBlueprintTask(current, response.task));
   }
 
+  function handleCreateNewCompany() {
+    clearCurrentCompanyId();
+    setBlueprint(null);
+    setProof([]);
+    setReviews([]);
+    setEvents([]);
+    setReplanProposals([]);
+    setDashboardFocusTarget(null);
+    setCompanyName("");
+    setCompanyNameError(null);
+    setFounderVision("");
+    setFounderVisionError(null);
+    setAgentSelectionError(null);
+    setOnboardingStep("company");
+    setView("onboarding");
+  }
+
   function handleBackToSetup() {
     setView("onboarding");
   }
@@ -476,7 +538,7 @@ export default function App({ apiClient }: AppProps) {
       onViewOperations={viewCompanyOperations}
       onViewTasks={() => focusDashboardSection("tasks")}
       selectedAgentId={selectedAgentId}
-      view={view}
+      view={view === "company-picker" ? "onboarding" : view}
     />
   );
 
@@ -487,6 +549,19 @@ export default function App({ apiClient }: AppProps) {
           <CRTViewport>{children}</CRTViewport>
         </LanguageProvider>
       </ThemeProvider>
+    );
+  }
+
+  if (view === "company-picker") {
+    return renderAppFrame(
+      <CompanyPicker
+        companies={companies}
+        loadState={companyListLoadState}
+        menuBar={menuBar}
+        onCreateNew={handleCreateNewCompany}
+        onOpenCompany={openCompany}
+        onRetry={loadCompanies}
+      />,
     );
   }
 
