@@ -1,15 +1,16 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentAdapter } from "../adapters/types";
+import type { AgentAdapter, AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { AgentFailureReason, Proof, Task, TaskEvent, TaskStatus } from "@auto-crop/core";
-import { formatExecutionBudget, resolveEffectiveTimeout } from "./executionProfile";
+import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
+import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { createTaskWorkspace } from "./workspace";
 
 export type SchedulerFailureReason = AgentFailureReason;
 
 export type SchedulerEvent = {
-  type: "task_started" | "task_review" | "task_failed" | "task_blocked" | "task_warning" | "partial_output";
+  type: TaskEvent["type"];
   taskId: string;
   message: string;
   failureReason?: SchedulerFailureReason;
@@ -64,29 +65,38 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
       break;
     }
 
-    const dependencyDecision = resolveDependencyDecision(input.repositories, task);
+    const dependencyDecision = resolveDependencyReadiness(input.repositories, task);
     if (dependencyDecision.kind === "waiting") {
-      if (task.dependencyNote !== dependencyDecision.note) {
+      if (task.status !== "waiting_dependency") {
+        input.repositories.updateTaskStatus(task.id, "waiting_dependency");
+      }
+      if (task.dependencyNote !== dependencyDecision.note || task.status !== "waiting_dependency") {
         input.repositories.updateTaskExecutionSummary(task.id, { dependencyNote: dependencyDecision.note });
         appendAndEmitTaskEvent(input, {
           task,
-          type: "task_warning",
+          type: "dependency_waiting",
           message: dependencyDecision.note,
-          status: "queued",
+          status: "waiting_dependency",
           dependencyNote: dependencyDecision.note,
         });
       }
       continue;
     }
 
-    if (dependencyDecision.kind === "failed") {
-      blockTaskForDependency(input, task, dependencyDecision.dependency);
+    if (dependencyDecision.kind === "missing_deliverable") {
+      blockTaskForMissingDeliverable(input, task, dependencyDecision.dependency, dependencyDecision.note);
+      result.blocked.push(task.id);
+      continue;
+    }
+
+    if (dependencyDecision.kind === "blocked") {
+      blockTaskForDependency(input, task, dependencyDecision.dependency, dependencyDecision.reason, dependencyDecision.note);
       result.blocked.push(task.id);
       continue;
     }
 
     dispatches.push(
-      (async () => {
+      (async (handoffs: TaskHandoff[]) => {
         const acquiredAt = now().toISOString();
 
         if (!input.repositories.acquireTaskLock(task.id, input.workerId, acquiredAt)) {
@@ -115,36 +125,36 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             return;
           }
 
-          const timeoutResolution = resolveEffectiveTimeout(task);
+          const initialTimeoutResolution = resolveEffectiveTimeout(task);
           input.repositories.updateTaskStatus(task.id, "running");
           input.repositories.updateTaskExecutionSummary(task.id, {
             latestFailureReason: null,
             latestFailureMessage: null,
-            latestExecutionProfileName: timeoutResolution.executionProfile.name,
-            latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-            latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+            latestExecutionProfileName: initialTimeoutResolution.executionProfile.name,
+            latestRequestedTimeoutMs: initialTimeoutResolution.requestedTimeoutMs,
+            latestEffectiveTimeoutMs: initialTimeoutResolution.effectiveTimeoutMs,
             dependencyNote: null,
           });
           result.started.push(task.id);
-          for (const warning of timeoutResolution.warnings) {
+          for (const warning of initialTimeoutResolution.warnings) {
             appendAndEmitTaskEvent(input, {
               task,
               type: "task_warning",
               message: `Task warning: ${task.title} / ${warning}`,
               status: "queued",
-              executionProfileName: timeoutResolution.executionProfile.name,
-              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+              executionProfileName: initialTimeoutResolution.executionProfile.name,
+              requestedTimeoutMs: initialTimeoutResolution.requestedTimeoutMs,
+              effectiveTimeoutMs: initialTimeoutResolution.effectiveTimeoutMs,
             });
           }
           appendAndEmitTaskEvent(input, {
             task,
             type: "task_started",
-            message: `Task started: ${task.title} (${task.assigneeAgentId}, ${timeoutResolution.executionProfile.name} budget ${formatExecutionBudget(timeoutResolution.effectiveTimeoutMs)}).`,
+            message: `Task started: ${task.title} (${task.assigneeAgentId}, ${initialTimeoutResolution.executionProfile.name} budget ${formatExecutionBudget(initialTimeoutResolution.effectiveTimeoutMs)}).`,
             status: "running",
-            executionProfileName: timeoutResolution.executionProfile.name,
-            requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-            effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+            executionProfileName: initialTimeoutResolution.executionProfile.name,
+            requestedTimeoutMs: initialTimeoutResolution.requestedTimeoutMs,
+            effectiveTimeoutMs: initialTimeoutResolution.effectiveTimeoutMs,
           });
 
           const taskWorkspace = task.workspacePath
@@ -157,47 +167,92 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           const adapter = selectAdapter(input.adapters, task);
           const logPath = createLogPath(input.projectRoot, task);
-          const agentRunId = createId("agent_run");
-          input.repositories.createAgentRun({
-            id: agentRunId,
-            taskId: task.id,
-            agentId: adapter.id,
-            status: "running",
-            logPath,
-            startedAt: acquiredAt,
-            finishedAt: null,
-            executionProfileName: timeoutResolution.executionProfile.name,
-            requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-            effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-            failureReason: null,
-            failureMessage: null,
-          });
+          let timeoutResolution = initialTimeoutResolution;
+          let agentRunId = "";
+          let agentResult: AgentRunResult | null = null;
 
-          const agentResult = await adapter.run({
-            taskId: task.id,
-            prompt: task.description,
-            promptPath: "",
-            workspacePath: runWorkspacePath,
-            metadata: {
-              departmentId: task.departmentId,
-              proofSchemaId: task.proofSchemaId,
-            },
-            timeoutMs: timeoutResolution.effectiveTimeoutMs,
-          });
-          const logContent = [
-            `# Agent Run ${agentRunId}`,
-            "",
-            `status: ${agentResult.status}`,
-            `exitCode: ${agentResult.exitCode ?? ""}`,
-            "",
-            "## stdout",
-            agentResult.stdout,
-            "",
-            "## stderr",
-            agentResult.stderr,
-            "",
-          ].join("\n");
-          writeFileSync(logPath, logContent, "utf8");
+          while (true) {
+            agentRunId = createId("agent_run");
+            input.repositories.createAgentRun({
+              id: agentRunId,
+              taskId: task.id,
+              agentId: adapter.id,
+              status: "running",
+              logPath,
+              startedAt: now().toISOString(),
+              finishedAt: null,
+              executionProfileName: timeoutResolution.executionProfile.name,
+              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+              failureReason: null,
+              failureMessage: null,
+            });
+
+            agentResult = await adapter.run({
+              taskId: task.id,
+              prompt: buildAgentPrompt(task.description, handoffs),
+              promptPath: "",
+              workspacePath: runWorkspacePath,
+              metadata: {
+                departmentId: task.departmentId,
+                proofSchemaId: task.proofSchemaId,
+              },
+              timeoutMs: timeoutResolution.effectiveTimeoutMs,
+            });
+            const logContent = [
+              `# Agent Run ${agentRunId}`,
+              "",
+              `status: ${agentResult.status}`,
+              `exitCode: ${agentResult.exitCode ?? ""}`,
+              "",
+              "## stdout",
+              agentResult.stdout,
+              "",
+              "## stderr",
+              agentResult.stderr,
+              "",
+            ].join("\n");
+            writeFileSync(logPath, logContent, "utf8");
+
+            const failureReason =
+              agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : null;
+            const retryTimeoutResolution = failureReason === "timeout" ? resolveRetryTimeout(timeoutResolution) : null;
+
+            if (!retryTimeoutResolution) {
+              break;
+            }
+
+            const failure = failureMessage(task, "timeout", timeoutResolution.effectiveTimeoutMs);
+            const timedOutAfterMs = timeoutResolution.effectiveTimeoutMs;
+            input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
+              failureReason: "timeout",
+              failureMessage: failure,
+            });
+            timeoutResolution = retryTimeoutResolution;
+            input.repositories.updateTaskStatus(task.id, "retrying");
+            input.repositories.updateTaskExecutionSummary(task.id, {
+              latestExecutionProfileName: timeoutResolution.executionProfile.name,
+              latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+              latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+            });
+            appendAndEmitTaskEvent(input, {
+              task,
+              type: "task_retrying",
+              message: `Task warning: ${task.title} / timed out after ${formatExecutionBudget(
+                timedOutAfterMs,
+              )}; retrying with ${timeoutResolution.executionProfile.name} budget ${formatExecutionBudget(
+                timeoutResolution.effectiveTimeoutMs,
+              )}.`,
+              status: "running",
+              executionProfileName: timeoutResolution.executionProfile.name,
+              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+            });
+          }
+
+          if (!agentResult) {
+            throw new Error(`No agent result produced for task ${task.id}`);
+          }
 
           let proof: Proof[] = [];
           if (agentResult.status === "complete") {
@@ -240,6 +295,34 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           if (agentResult.status !== "complete" || proof.length === 0) {
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
+            if (failureReason === "timeout" && timeoutResolution.executionProfile.name === "long") {
+              const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
+              input.repositories.updateTaskStatus(task.id, "needs_replan");
+              input.repositories.updateTaskExecutionSummary(task.id, {
+                latestFailureReason: "needs_replan",
+                latestFailureMessage: failure,
+                latestExecutionProfileName: timeoutResolution.executionProfile.name,
+                latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+              });
+              input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
+                failureReason: "timeout",
+                failureMessage: failure,
+              });
+              appendAndEmitTaskEvent(input, {
+                task,
+                type: "task_needs_replan",
+                failureReason: "needs_replan",
+                failureMessage: failure,
+                message: failure,
+                status: "needs_replan",
+                executionProfileName: timeoutResolution.executionProfile.name,
+                requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+              });
+              result.blocked.push(task.id);
+              return;
+            }
             const failure = failureMessage(task, failureReason, timeoutResolution.effectiveTimeoutMs);
             input.repositories.updateTaskStatus(task.id, "failed");
             input.repositories.updateTaskExecutionSummary(task.id, {
@@ -287,42 +370,13 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         } finally {
           input.repositories.releaseTaskLock(task.id, input.workerId);
         }
-      })(),
+      })(dependencyDecision.handoffs),
     );
   }
 
   await Promise.all(dispatches);
 
   return result;
-}
-
-type DependencyDecision =
-  | { kind: "ready" }
-  | { kind: "waiting"; note: string }
-  | { kind: "failed"; dependency: Task };
-
-function resolveDependencyDecision(
-  repositories: ReturnType<typeof createRepositories>,
-  task: Task,
-): DependencyDecision {
-  const dependencies = repositories.listTaskDependencies(task.id);
-
-  for (const dependency of dependencies) {
-    const upstream = repositories.getTask(dependency.dependsOnTaskId);
-    if (!upstream) {
-      continue;
-    }
-
-    if (upstream.status === "failed" || upstream.status === "blocked" || upstream.status === "cancelled") {
-      return { kind: "failed", dependency: upstream };
-    }
-
-    if (upstream.status !== "review" && upstream.status !== "complete") {
-      return { kind: "waiting", note: `Waiting for dependency: ${upstream.title} (${upstream.status}).` };
-    }
-  }
-
-  return { kind: "ready" };
 }
 
 function resolveRunWorkspace(repositories: ReturnType<typeof createRepositories>, task: Task): string | null {
@@ -340,20 +394,25 @@ function blockDirectDependencyConsumers(input: RunSchedulerOnceInput, failedTask
     if (consumer.status !== "queued") {
       continue;
     }
-    blockTaskForDependency(input, consumer, failedTask);
+    blockTaskForDependency(input, consumer, failedTask, "dependency_failed", `Blocked by failed dependency: ${failedTask.title}.`);
     blocked.push(consumer.id);
   }
   return blocked;
 }
 
-function blockTaskForDependency(input: RunSchedulerOnceInput, task: Task, dependency: Task): void {
-  const failureReason = "dependency_failed";
-  const failureMessage = `Task blocked: ${task.title} / dependency_failed / ${dependency.title} is ${dependency.status}.`;
+function blockTaskForDependency(
+  input: RunSchedulerOnceInput,
+  task: Task,
+  dependency: Task,
+  failureReason: Extract<SchedulerFailureReason, "dependency_failed" | "needs_replan">,
+  dependencyNote: string,
+): void {
+  const failureMessage = `Task blocked: ${task.title} / ${failureReason} / ${dependency.title} is ${dependency.status}.`;
   input.repositories.updateTaskStatus(task.id, "blocked");
   input.repositories.updateTaskExecutionSummary(task.id, {
     latestFailureReason: failureReason,
     latestFailureMessage: failureMessage,
-    dependencyNote: `Blocked by failed dependency: ${dependency.title}.`,
+    dependencyNote,
   });
   appendAndEmitTaskEvent(input, {
     task,
@@ -362,7 +421,32 @@ function blockTaskForDependency(input: RunSchedulerOnceInput, task: Task, depend
     status: "blocked",
     failureReason,
     failureMessage,
-    dependencyNote: `Blocked by failed dependency: ${dependency.title}.`,
+    dependencyNote,
+  });
+}
+
+function blockTaskForMissingDeliverable(
+  input: RunSchedulerOnceInput,
+  task: Task,
+  dependency: Task,
+  dependencyNote: string,
+): void {
+  const failureReason = "missing_deliverable";
+  const failureMessage = `Task blocked: ${task.title} / missing_deliverable / ${dependency.title} has no consumable proof.`;
+  input.repositories.updateTaskStatus(task.id, "blocked");
+  input.repositories.updateTaskExecutionSummary(task.id, {
+    latestFailureReason: failureReason,
+    latestFailureMessage: failureMessage,
+    dependencyNote,
+  });
+  appendAndEmitTaskEvent(input, {
+    task,
+    type: "deliverable_missing",
+    message: failureMessage,
+    status: "blocked",
+    failureReason,
+    failureMessage,
+    dependencyNote,
   });
 }
 
@@ -439,6 +523,30 @@ function createLogPath(projectRoot: string, task: Task): string {
   const logsDir = join(projectRoot, ".auto-crop", "companies", task.companyId, "logs");
   mkdirSync(logsDir, { recursive: true });
   return join(logsDir, `${task.id}.log`);
+}
+
+function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string {
+  if (handoffs.length === 0) {
+    return description;
+  }
+
+  return [
+    description,
+    "",
+    "## Upstream Handoffs",
+    "",
+    ...handoffs.flatMap((handoff, index) => [
+      `${index + 1}. Task: ${handoff.upstreamTaskTitle}`,
+      `   Proof: ${handoff.proofType} / ${handoff.proofId}`,
+      `   URI: ${handoff.uri}`,
+      `   Summary: ${handoff.summary}`,
+      ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
+    ]),
+  ].join("\n");
+}
+
+function replanMessage(task: Task, timeoutMs: number): string {
+  return `Task needs replanning: ${task.title} / exceeded long budget ${formatExecutionBudget(timeoutMs)}.`;
 }
 
 function failureMessage(task: Task, failureReason: SchedulerFailureReason, timeoutMs: number): string {

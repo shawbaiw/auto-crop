@@ -240,7 +240,7 @@ export function createRepositories(database: DatabaseClient) {
           `SELECT tasks.*
            FROM tasks
            INNER JOIN companies ON companies.id = tasks.company_id
-           WHERE tasks.status = 'queued'
+           WHERE tasks.status IN ('queued', 'waiting_dependency', 'retrying')
            ORDER BY companies.created_at ASC, tasks.position ASC, tasks.id ASC
            LIMIT ?`,
         )

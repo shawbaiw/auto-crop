@@ -259,6 +259,50 @@ describe("Dashboard App", () => {
     expect(screen.queryByText("Task failed: Create landing page / timeout after 10m.")).not.toBeInTheDocument();
   });
 
+  it("shows coordination task states in the Department Workspace from SSE", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    await waitFor(() => expect(api.lastEventHandler).toBeDefined());
+    act(() => {
+      api.lastEventHandler?.({
+        type: "dependency_waiting",
+        taskId: "task_1",
+        status: "waiting_dependency",
+        dependencyNote: "Waiting for dependency deliverable: Research brief (running).",
+        message: "Waiting for dependency deliverable: Research brief (running).",
+      });
+    });
+
+    expect(await screen.findByText("Create landing page / waiting for upstream proof")).toBeInTheDocument();
+
+    act(() => {
+      api.lastEventHandler?.({
+        type: "task_retrying",
+        taskId: "task_1",
+        status: "retrying",
+        message: "Task warning: Create landing page / timed out after 5m; retrying with long budget 10m.",
+      });
+    });
+
+    expect(await screen.findByText("Create landing page / retrying with a larger budget")).toBeInTheDocument();
+
+    act(() => {
+      api.lastEventHandler?.({
+        type: "task_needs_replan",
+        taskId: "task_1",
+        status: "needs_replan",
+        failureReason: "needs_replan",
+        message: "Task needs replanning: Create landing page / exceeded long budget 10m.",
+      });
+    });
+
+    expect(await screen.findByText("Create landing page / needs replanning")).toBeInTheDocument();
+  });
+
   it("shows agent activity on a dedicated Company Operations page", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -285,6 +329,45 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("heading", { name: "Agent Activity" })).toBeInTheDocument();
     expect(screen.getByText("Failed · Create landing page — Timed out before producing review-ready proof.")).toBeInTheDocument();
     expect(screen.queryByText("Task failed: Create landing page / timeout after 10m.")).not.toBeInTheDocument();
+  });
+
+  it("explains coordination events on the Company Operations page", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    await waitFor(() => expect(api.lastEventHandler).toBeDefined());
+    act(() => {
+      api.lastEventHandler?.({
+        type: "dependency_waiting",
+        taskId: "task_1",
+        status: "waiting_dependency",
+        dependencyNote: "Waiting for dependency deliverable: Research brief (running).",
+        message: "Waiting for dependency deliverable: Research brief (running).",
+      });
+      api.lastEventHandler?.({
+        type: "task_retrying",
+        taskId: "task_1",
+        status: "retrying",
+        message: "Task warning: Create landing page / timed out after 5m; retrying with long budget 10m.",
+      });
+      api.lastEventHandler?.({
+        type: "task_needs_replan",
+        taskId: "task_1",
+        status: "needs_replan",
+        failureReason: "needs_replan",
+        message: "Task needs replanning: Create landing page / exceeded long budget 10m.",
+      });
+    });
+
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+
+    expect(await screen.findByText("Waiting · Create landing page — Waiting for dependency deliverable: Research brief (running).")).toBeInTheDocument();
+    expect(screen.getByText("Retrying · Create landing page — Retrying with a larger execution budget.")).toBeInTheDocument();
+    expect(screen.getByText("Needs replan · Create landing page — Task is too large for the current execution budget and needs to be split.")).toBeInTheDocument();
   });
 
   it("updates task status in the operating dashboard from SSE", async () => {

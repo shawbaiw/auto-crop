@@ -150,6 +150,11 @@ export function createApiClient(baseUrl = ""): ApiClient {
       events.addEventListener("task_blocked", listener);
       events.addEventListener("task_warning", listener);
       events.addEventListener("partial_output", listener);
+      events.addEventListener("dependency_waiting", listener);
+      events.addEventListener("dependency_ready", listener);
+      events.addEventListener("task_retrying", listener);
+      events.addEventListener("task_needs_replan", listener);
+      events.addEventListener("deliverable_missing", listener);
       return () => events.close();
     },
   };

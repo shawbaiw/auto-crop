@@ -5,6 +5,7 @@ import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage, type TranslationKey } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroPanel } from "../ui/retro";
+import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 
 export type CompanyOperationsProps = {
   company: CompanySummary;
@@ -48,8 +49,11 @@ export function CompanyOperations({ company, departments, events, isPaused, menu
           <VideotexKeyValue
             items={[
               { label: t("operations.running"), value: String(taskCounts.running).padStart(2, "0") },
+              { label: t("operations.waiting"), value: String(taskCounts.waiting_dependency).padStart(2, "0") },
+              { label: t("operations.retrying"), value: String(taskCounts.retrying).padStart(2, "0") },
               { label: t("operations.review"), value: String(taskCounts.review).padStart(2, "0") },
               { label: t("operations.blocked"), value: String(taskCounts.blocked).padStart(2, "0") },
+              { label: t("operations.needsReplan"), value: String(taskCounts.needs_replan).padStart(2, "0") },
               { label: t("operations.failed"), value: String(taskCounts.failed).padStart(2, "0") },
             ]}
           />
@@ -58,8 +62,8 @@ export function CompanyOperations({ company, departments, events, isPaused, menu
           <VideotexLog
             emptyMessage={t("operations.noAttention")}
             rows={tasks
-              .filter((task) => task.status === "blocked" || task.status === "failed")
-              .map((task) => `${task.title} / ${formatTaskStatus(task)}`)}
+              .filter((task) => task.status === "blocked" || task.status === "failed" || task.status === "needs_replan")
+              .map((task) => `${task.title} / ${formatTaskStatus(task, t)}`)}
           />
         </RetroPanel>
       </Workspace>
@@ -88,22 +92,8 @@ function countTaskStates(tasks: TaskSummary[]) {
       ...counts,
       [task.status]: (counts[task.status as keyof typeof counts] ?? 0) + 1,
     }),
-    { blocked: 0, failed: 0, review: 0, running: 0 },
+    { blocked: 0, failed: 0, needs_replan: 0, retrying: 0, review: 0, running: 0, waiting_dependency: 0 },
   );
-}
-
-function formatTaskStatus(task: TaskSummary): string {
-  const details = [task.status];
-
-  if (task.failureReason) {
-    details.push(task.failureReason);
-  }
-
-  if (task.dependencyNote) {
-    details.push(task.dependencyNote);
-  }
-
-  return details.join(" · ");
 }
 
 function formatAgentActivityEvent(event: ServerEvent, task: TaskSummary | undefined, t: (key: TranslationKey) => string): string {
@@ -115,6 +105,14 @@ function formatAgentActivityState(event: ServerEvent, t: (key: TranslationKey) =
   switch (event.type) {
     case "task_started":
       return t("operations.running");
+    case "dependency_waiting":
+      return t("operations.waiting");
+    case "task_retrying":
+      return t("operations.retrying");
+    case "task_needs_replan":
+      return t("operations.needsReplan");
+    case "deliverable_missing":
+      return t("operations.missingDeliverable");
     case "task_review":
       return t("operations.readyForReview");
     case "task_failed":
@@ -139,6 +137,22 @@ function formatAgentActivityDetail(event: ServerEvent, t: (key: TranslationKey) 
 
   if (event.type === "task_review") {
     return t("operations.proofReady");
+  }
+
+  if (event.type === "dependency_waiting") {
+    return event.dependencyNote ?? cleanActivityMessage(event.message) ?? t("operations.waitingDependencyProof");
+  }
+
+  if (event.type === "task_retrying") {
+    return t("operations.retryingBudget");
+  }
+
+  if (event.type === "task_needs_replan") {
+    return t("operations.needsReplanDetail");
+  }
+
+  if (event.type === "deliverable_missing") {
+    return event.dependencyNote ?? t("operations.missingDeliverableDetail");
   }
 
   if (event.type === "task_failed") {
@@ -172,6 +186,10 @@ function formatFailureDetail(reason: string | undefined, t: (key: TranslationKey
       return t("operations.failureProofCapture");
     case "dependency_failed":
       return t("operations.failureDependency");
+    case "missing_deliverable":
+      return t("operations.failureMissingDeliverable");
+    case "needs_replan":
+      return t("operations.needsReplanDetail");
     case "agent_failed":
       return t("operations.failureAgent");
     default:

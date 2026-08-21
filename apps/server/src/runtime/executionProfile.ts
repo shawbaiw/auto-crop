@@ -38,6 +38,22 @@ export function resolveEffectiveTimeout(
   env: NodeJS.ProcessEnv = process.env,
 ): EffectiveTimeoutResolution {
   const executionProfile = resolveTaskExecutionProfile(task);
+  return resolveEffectiveTimeoutForProfile(executionProfile, env);
+}
+
+export function resolveRetryTimeout(
+  resolution: Pick<EffectiveTimeoutResolution, "executionProfile">,
+  env: NodeJS.ProcessEnv = process.env,
+): EffectiveTimeoutResolution | null {
+  const retryProfile = nextExecutionProfile(resolution.executionProfile.name);
+
+  return retryProfile ? resolveEffectiveTimeoutForProfile(retryProfile, env) : null;
+}
+
+function resolveEffectiveTimeoutForProfile(
+  executionProfile: TaskExecutionProfile,
+  env: NodeJS.ProcessEnv,
+): EffectiveTimeoutResolution {
   const requestedTimeoutMs = executionProfile.timeoutMs;
   const warnings: string[] = [];
   let effectiveTimeoutMs = requestedTimeoutMs;
@@ -90,6 +106,17 @@ function profileFromCapabilities(requiredCapabilities: string[]): TaskExecutionP
   }
 
   return mediumProfile;
+}
+
+function nextExecutionProfile(profileName: TaskExecutionProfileName): TaskExecutionProfile | null {
+  switch (profileName) {
+    case "short":
+      return mediumProfile;
+    case "medium":
+      return longProfile;
+    case "long":
+      return null;
+  }
 }
 
 function parseTimeoutEnv(

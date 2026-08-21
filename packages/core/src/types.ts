@@ -3,10 +3,13 @@ export type ObjectiveStatus = "active" | "complete" | "paused";
 export type KeyResultStatus = "active" | "met" | "missed";
 export type TaskStatus =
   | "queued"
+  | "waiting_dependency"
   | "running"
+  | "retrying"
   | "blocked"
   | "review"
   | "complete"
+  | "needs_replan"
   | "failed"
   | "cancelled";
 export type RiskLevel = "low" | "medium" | "high";
@@ -25,14 +28,23 @@ export type AgentFailureReason =
   | "agent_failed"
   | "no_proof"
   | "proof_capture_failed"
-  | "dependency_failed";
+  | "dependency_failed"
+  | "missing_deliverable"
+  | "retry_exhausted"
+  | "needs_replan"
+  | "rate_limited";
 export type TaskEventType =
   | "task_started"
   | "task_review"
   | "task_failed"
   | "task_blocked"
   | "task_warning"
-  | "partial_output";
+  | "partial_output"
+  | "dependency_waiting"
+  | "dependency_ready"
+  | "task_retrying"
+  | "task_needs_replan"
+  | "deliverable_missing";
 
 export type Company = {
   id: string;

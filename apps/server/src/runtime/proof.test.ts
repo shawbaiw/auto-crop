@@ -202,6 +202,38 @@ describe("createProofCollector", () => {
     expect(proof[0]?.type).toBe("command_output");
   });
 
+  it("captures local URL proof from successful stdout", () => {
+    const { task, workspacePath } = createFixture("deployment-url", ["deployment", "url"]);
+    const collect = createProofCollector({
+      proofSchemas: [
+        {
+          id: "deployment-url",
+          description: "deployment proof",
+          acceptedTypes: ["deployment", "url"],
+        },
+      ],
+      createId: createSequentialIdFactory(),
+    });
+
+    const proof = collect({
+      task: { ...task, workspacePath },
+      stdout: "Local runnable URL: http://127.0.0.1:5175/",
+      stderr: "",
+      logPath: join(workspacePath, "agent.log"),
+    });
+
+    expect(proof).toEqual([
+      {
+        id: "proof_1",
+        taskId: "task_1",
+        type: "url",
+        uri: "http://127.0.0.1:5175/",
+        summary: "URL proof: http://127.0.0.1:5175/",
+        verifiedAt: null,
+      },
+    ]);
+  });
+
   it("writes successful stdout to stable markdown file proof for text schemas", () => {
     const { task, workspacePath } = createFixture("product-brief", ["file"]);
     const logPath = join(workspacePath, "agent.log");

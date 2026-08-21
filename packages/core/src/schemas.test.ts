@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentFailureReasonSchema,
   ceoResponseSchema,
   companyBlueprintSchema,
   parseCeoResponse,
+  taskEventTypeSchema,
   taskSchema,
+  taskStatusSchema,
 } from "./schemas";
 
 const validBlueprint = {
@@ -122,6 +125,29 @@ describe("taskSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("runtime status schemas", () => {
+  it("accepts dependency wait, retrying, and replan task states", () => {
+    expect(taskStatusSchema.safeParse("waiting_dependency").success).toBe(true);
+    expect(taskStatusSchema.safeParse("retrying").success).toBe(true);
+    expect(taskStatusSchema.safeParse("needs_replan").success).toBe(true);
+  });
+
+  it("accepts coordination failure reasons", () => {
+    expect(agentFailureReasonSchema.safeParse("missing_deliverable").success).toBe(true);
+    expect(agentFailureReasonSchema.safeParse("retry_exhausted").success).toBe(true);
+    expect(agentFailureReasonSchema.safeParse("needs_replan").success).toBe(true);
+    expect(agentFailureReasonSchema.safeParse("rate_limited").success).toBe(true);
+  });
+
+  it("accepts coordination task events", () => {
+    expect(taskEventTypeSchema.safeParse("dependency_waiting").success).toBe(true);
+    expect(taskEventTypeSchema.safeParse("dependency_ready").success).toBe(true);
+    expect(taskEventTypeSchema.safeParse("task_retrying").success).toBe(true);
+    expect(taskEventTypeSchema.safeParse("task_needs_replan").success).toBe(true);
+    expect(taskEventTypeSchema.safeParse("deliverable_missing").success).toBe(true);
   });
 });
 

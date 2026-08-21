@@ -11,6 +11,7 @@ import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroListRow, RetroPanel } from "../ui/retro";
+import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 
 export type DepartmentWorkspaceProps = {
   agents: AgentSummary[];
@@ -88,7 +89,7 @@ export function DepartmentWorkspace({
                 <div>
                   {(tasksByDepartment.get(selectedDepartment.id) ?? []).map((task) => (
                     <RetroBadge key={task.id} tone="signal">
-                      {task.title} / {formatTaskStatus(task)}
+                      {task.title} / {formatTaskStatus(task, t)}
                     </RetroBadge>
                   ))}
                 </div>
@@ -111,7 +112,7 @@ export function DepartmentWorkspace({
                 </div>
                 <div>
                   <h3>{t("department.firstTasks")}</h3>
-                  <VideotexLog emptyMessage={t("department.noTasks")} rows={tasks.map((task) => `${task.title} / ${formatTaskStatus(task)}`)} />
+                  <VideotexLog emptyMessage={t("department.noTasks")} rows={tasks.map((task) => `${task.title} / ${formatTaskStatus(task, t)}`)} />
                 </div>
                 <p className="muted">{t("department.schedulerNote")}</p>
               </div>
@@ -121,31 +122,4 @@ export function DepartmentWorkspace({
       </Workspace>
     </AppShell>
   );
-}
-
-function formatTaskStatus(task: TaskSummary): string {
-  const details = [task.status];
-
-  if (task.failureReason) {
-    details.push(task.failureReason);
-  }
-
-  if (task.failureReason === "timeout" && task.effectiveTimeoutMs) {
-    details.push(formatBudget(task.effectiveTimeoutMs));
-  }
-
-  if (task.dependencyNote) {
-    details.push(task.dependencyNote);
-  }
-
-  if (task.artifactWorkspacePath && task.status === "failed") {
-    details.push(`Partial Output: ${task.artifactWorkspacePath}`);
-  }
-
-  return details.join(" · ");
-}
-
-function formatBudget(timeoutMs: number): string {
-  const seconds = timeoutMs / 1000;
-  return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60}m` : `${seconds}s`;
 }

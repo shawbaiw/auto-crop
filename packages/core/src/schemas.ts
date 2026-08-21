@@ -4,6 +4,45 @@ export const nonEmptyString = z.string().trim().min(1);
 
 export const riskLevelSchema = z.enum(["low", "medium", "high"]);
 
+export const taskStatusSchema = z.enum([
+  "queued",
+  "waiting_dependency",
+  "running",
+  "retrying",
+  "blocked",
+  "review",
+  "complete",
+  "needs_replan",
+  "failed",
+  "cancelled",
+]);
+
+export const agentFailureReasonSchema = z.enum([
+  "timeout",
+  "agent_failed",
+  "no_proof",
+  "proof_capture_failed",
+  "dependency_failed",
+  "missing_deliverable",
+  "retry_exhausted",
+  "needs_replan",
+  "rate_limited",
+]);
+
+export const taskEventTypeSchema = z.enum([
+  "task_started",
+  "task_review",
+  "task_failed",
+  "task_blocked",
+  "task_warning",
+  "partial_output",
+  "dependency_waiting",
+  "dependency_ready",
+  "task_retrying",
+  "task_needs_replan",
+  "deliverable_missing",
+]);
+
 export const proofTypeSchema = z.enum([
   "file",
   "diff",

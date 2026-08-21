@@ -9,7 +9,7 @@ import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { acquireTaskLock, releaseTaskLock } from "./locks";
-import { runSchedulerOnce } from "./scheduler";
+import { runSchedulerOnce, type SchedulerEvent } from "./scheduler";
 
 const createdDirs: string[] = [];
 
@@ -157,7 +157,7 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
-  it("does not collect proof from failed agent output and emits timeout reason", async () => {
+  it("does not collect proof from failed agent output and emits failure reason", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low"),
     ]);
@@ -174,7 +174,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           output: "# Partial output",
           status: "failed",
-          failureReason: "timeout",
+          failureReason: "agent_failed",
         }),
       ],
       workerId: "worker_a",
@@ -205,8 +205,85 @@ describe("runSchedulerOnce", () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: "task_failed",
       taskId: "task_1",
-      failureReason: "timeout",
-      message: "Task failed: Task task_1 / timeout after 10m.",
+      failureReason: "agent_failed",
+      message: "Task failed: Task task_1 / agent_failed.",
+    }));
+
+    client.close();
+  });
+
+  it("retries timed-out short tasks once with a medium execution budget", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "product-brief"),
+    ]);
+    const timeoutCalls: Array<number | undefined> = [];
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        {
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          detect: async () => true,
+          run: async (request) => {
+            timeoutCalls.push(request.timeoutMs);
+
+            if (timeoutCalls.length === 1) {
+              return {
+                status: "failed",
+                exitCode: null,
+                stdout: "",
+                stderr: "timed out",
+                failureReason: "timeout",
+              };
+            }
+
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "# Product brief",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "file",
+          uri: "product-brief.md",
+          summary: "file proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: (event) => events.push(event),
+    });
+
+    expect(timeoutCalls).toEqual([120_000, 300_000]);
+    expect(result.failed).toEqual([]);
+    expect(result.completed).toEqual(["task_1"]);
+    expect(repositories.getTask("task_1")).toMatchObject({
+      status: "review",
+      latestExecutionProfileName: "medium",
+      latestRequestedTimeoutMs: 300_000,
+      latestEffectiveTimeoutMs: 300_000,
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "task_retrying",
+      taskId: "task_1",
+      message: "Task warning: Task task_1 / timed out after 2m; retrying with medium budget 5m.",
+      executionProfileName: "medium",
+      requestedTimeoutMs: 300_000,
+      effectiveTimeoutMs: 300_000,
     }));
 
     client.close();
@@ -300,12 +377,282 @@ describe("runSchedulerOnce", () => {
     });
 
     expect(result.started).toEqual(["task_3"]);
-    expect(repositories.getTask("task_2")?.status).toBe("queued");
-    expect(repositories.getTask("task_2")?.dependencyNote).toBe("Waiting for dependency: Task task_1 (running).");
+    expect(repositories.getTask("task_2")?.status).toBe("waiting_dependency");
+    expect(repositories.getTask("task_2")?.dependencyNote).toBe(
+      "Waiting for dependency deliverable: Task task_1 (running).",
+    );
     expect(events).toContainEqual(expect.objectContaining({
-      type: "task_warning",
+      type: "dependency_waiting",
       taskId: "task_2",
-      dependencyNote: "Waiting for dependency: Task task_1 (running).",
+      dependencyNote: "Waiting for dependency deliverable: Task task_1 (running).",
+    }));
+
+    client.close();
+  });
+
+  it("marks dependent tasks as waiting_dependency while upstream deliverables are still running", async () => {
+    const producer = createTaskRecord("task_1", "running", "low", "landing-page-file");
+    const waiting = createTaskRecord("task_2", "queued", "low", "test-output");
+    const independent = createTaskRecord("task_3", "queued", "low", "product-brief");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, waiting, independent]);
+    repositories.createTaskDependency({ taskId: waiting.id, dependsOnTaskId: producer.id });
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "brief proof",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "file",
+          uri: "product-brief.md",
+          summary: "mock proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.started).toEqual(["task_3"]);
+    expect(repositories.getTask("task_2")?.status).toBe("waiting_dependency");
+    expect(repositories.getTask("task_2")?.dependencyNote).toBe(
+      "Waiting for dependency deliverable: Task task_1 (running).",
+    );
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "dependency_waiting",
+      taskId: "task_2",
+      dependencyNote: "Waiting for dependency deliverable: Task task_1 (running).",
+    }));
+
+    client.close();
+  });
+
+  it("blocks dependent tasks when upstream review work has no consumable proof", async () => {
+    const producer = createTaskRecord("task_1", "review", "low", "product-brief");
+    const consumer = createTaskRecord("task_2", "queued", "low", "test-output");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
+    repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.blocked).toEqual(["task_2"]);
+    expect(repositories.getTask("task_2")).toMatchObject({
+      status: "blocked",
+      latestFailureReason: "missing_deliverable",
+      dependencyNote: "Missing consumable proof from dependency: Task task_1.",
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "deliverable_missing",
+      taskId: "task_2",
+      failureReason: "missing_deliverable",
+    }));
+
+    client.close();
+  });
+
+  it("injects upstream proof handoffs into dependent agent prompts", async () => {
+    const producer = {
+      ...createTaskRecord("task_1", "review", "low", "product-brief"),
+      artifactWorkspacePath: "/tmp/artifact-workspace",
+    };
+    const consumer = createTaskRecord("task_2", "queued", "low", "test-output");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
+    repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
+    repositories.appendProof({
+      id: "proof_1",
+      taskId: producer.id,
+      type: "file",
+      uri: "/tmp/artifact-workspace/product-brief.md",
+      summary: "File proof: product-brief.md",
+      verifiedAt: null,
+    });
+    let prompt = "";
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        {
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          detect: async () => true,
+          run: async (request) => {
+            prompt = request.prompt;
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "handoff consumed",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "command_output",
+          uri: "agent.log",
+          summary: "mock proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: () => undefined,
+    });
+
+    expect(result.completed).toEqual(["task_2"]);
+    expect(prompt).toContain("## Upstream Handoffs");
+    expect(prompt).toContain("Task: Task task_1");
+    expect(prompt).toContain("Proof: file / proof_1");
+    expect(prompt).toContain("URI: /tmp/artifact-workspace/product-brief.md");
+
+    client.close();
+  });
+
+  it("retries timed-out medium tasks once with a long execution budget", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "repo-diff"),
+    ]);
+    const timeoutCalls: Array<number | undefined> = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        {
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          detect: async () => true,
+          run: async (request) => {
+            timeoutCalls.push(request.timeoutMs);
+
+            if (timeoutCalls.length === 1) {
+              return {
+                status: "failed",
+                exitCode: null,
+                stdout: "",
+                stderr: "timed out",
+                failureReason: "timeout",
+              };
+            }
+
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "diff complete",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "diff",
+          uri: "task.diff",
+          summary: "diff proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: () => undefined,
+    });
+
+    expect(timeoutCalls).toEqual([300_000, 600_000]);
+    expect(result.completed).toEqual(["task_1"]);
+    expect(repositories.getTask("task_1")).toMatchObject({
+      status: "review",
+      latestExecutionProfileName: "long",
+      latestRequestedTimeoutMs: 600_000,
+      latestEffectiveTimeoutMs: 600_000,
+    });
+
+    client.close();
+  });
+
+  it("marks long timed-out tasks as needs_replan instead of retrying forever", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "landing-page-file"),
+    ]);
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          status: "failed",
+          failureReason: "timeout",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.blocked).toEqual(["task_1"]);
+    expect(repositories.getTask("task_1")).toMatchObject({
+      status: "needs_replan",
+      latestFailureReason: "needs_replan",
+      latestFailureMessage: "Task needs replanning: Task task_1 / exceeded long budget 10m.",
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "task_needs_replan",
+      taskId: "task_1",
+      failureReason: "needs_replan",
+      message: "Task needs replanning: Task task_1 / exceeded long budget 10m.",
     }));
 
     client.close();
@@ -523,16 +870,4 @@ function createSequentialIdFactory(): (prefix: string) => string {
   };
 }
 
-type SchedulerEventRecord = {
-  type: "task_started" | "task_review" | "task_failed" | "task_blocked" | "task_warning" | "partial_output";
-  taskId: string;
-  message: string;
-  failureReason?: "timeout" | "agent_failed" | "no_proof" | "proof_capture_failed" | "dependency_failed";
-  failureMessage?: string;
-  status?: Task["status"];
-  executionProfileName?: string;
-  requestedTimeoutMs?: number;
-  effectiveTimeoutMs?: number;
-  dependencyNote?: string;
-  artifactWorkspacePath?: string;
-};
+type SchedulerEventRecord = SchedulerEvent;

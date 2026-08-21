@@ -150,6 +150,7 @@ export function createProofCollector(input: CreateProofCollectorInput) {
       workspacePath: run.task.workspacePath,
       declaredFiles,
     });
+    const urlProof = extractUrlProof(run.stdout);
 
     return captureProofs({
       task: run.task,
@@ -159,9 +160,59 @@ export function createProofCollector(input: CreateProofCollectorInput) {
       stdout: run.stdout,
       stderr: run.stderr,
       declaredFiles,
+      urls: urlProof.urls,
+      deploymentUrls: urlProof.deploymentUrls,
       createId: input.createId,
     });
   };
+}
+
+function extractUrlProof(stdout: string): { urls: string[]; deploymentUrls: string[] } {
+  const candidates = stdout.match(/https?:\/\/[^\s<>)\]]+/g) ?? [];
+  const urls: string[] = [];
+  const deploymentUrls: string[] = [];
+
+  for (const candidate of candidates) {
+    const url = trimTrailingUrlPunctuation(candidate);
+
+    if (!isValidUrl(url)) {
+      continue;
+    }
+
+    if (isLocalUrl(url)) {
+      urls.push(url);
+    } else {
+      deploymentUrls.push(url);
+    }
+  }
+
+  return {
+    urls: dedupe(urls),
+    deploymentUrls: dedupe(deploymentUrls),
+  };
+}
+
+function trimTrailingUrlPunctuation(url: string): string {
+  return url.replace(/[.,;:'"`]+$/u, "");
+}
+
+function isValidUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isLocalUrl(value: string): boolean {
+  const hostname = new URL(value).hostname;
+
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "[::1]";
+}
+
+function dedupe(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function collectDeclaredFilesForSchema(proofSchema: ProofSchema, workspacePath: string): string[] {

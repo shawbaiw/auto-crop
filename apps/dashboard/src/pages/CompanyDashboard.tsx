@@ -13,6 +13,7 @@ import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroPanel } from "../ui/retro";
+import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 
 export type DashboardFocusSection = "tasks" | "departments" | "proof" | "review" | "evidence";
 
@@ -91,7 +92,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
         >
           <VideotexLog
             emptyMessage={t("dashboard.noActiveTasks")}
-            rows={props.tasks.map((task) => `${task.title} / ${formatTaskStatus(task).toUpperCase()}`)}
+            rows={props.tasks.map((task) => `${task.title} / ${formatTaskStatus(task, t).toUpperCase()}`)}
           />
         </RetroPanel>
       </Workspace>
@@ -155,31 +156,4 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
       </RetroPanel>
     </AppShell>
   );
-}
-
-function formatTaskStatus(task: TaskSummary): string {
-  const details = [task.status];
-
-  if (task.failureReason) {
-    details.push(task.failureReason);
-  }
-
-  if (task.failureReason === "timeout" && task.effectiveTimeoutMs) {
-    details.push(formatBudget(task.effectiveTimeoutMs));
-  }
-
-  if (task.dependencyNote) {
-    details.push(task.dependencyNote);
-  }
-
-  if (task.artifactWorkspacePath && task.status === "failed") {
-    details.push(`Partial Output: ${task.artifactWorkspacePath}`);
-  }
-
-  return details.join(" · ");
-}
-
-function formatBudget(timeoutMs: number): string {
-  const seconds = timeoutMs / 1000;
-  return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60}m` : `${seconds}s`;
 }
