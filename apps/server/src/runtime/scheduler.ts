@@ -295,7 +295,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           if (agentResult.status !== "complete" || proof.length === 0) {
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
-            if (failureReason === "timeout" && timeoutResolution.executionProfile.name === "long") {
+            if (failureReason === "timeout" && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
               const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
               input.repositories.updateTaskStatus(task.id, "needs_replan");
               input.repositories.updateTaskExecutionSummary(task.id, {
@@ -353,7 +353,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 artifactWorkspacePath: task.artifactWorkspacePath,
               });
             }
-            result.blocked.push(...blockDirectDependencyConsumers(input, task));
+            const followUpTask = createPartialOutputFollowUpTask(input, task, failureReason, failure, logPath);
+            if (!followUpTask) {
+              result.blocked.push(...blockDirectDependencyConsumers(input, task));
+            }
             result.failed.push(task.id);
             return;
           }
@@ -398,6 +401,93 @@ function blockDirectDependencyConsumers(input: RunSchedulerOnceInput, failedTask
     blocked.push(consumer.id);
   }
   return blocked;
+}
+
+function createPartialOutputFollowUpTask(
+  input: RunSchedulerOnceInput,
+  failedTask: Task,
+  failureReason: SchedulerFailureReason,
+  failureMessage: string,
+  logPath: string,
+): Task | null {
+  if (!failedTask.artifactWorkspacePath || isPartialOutputFollowUpTask(failedTask)) {
+    return null;
+  }
+
+  const existingFollowUp = input.repositories
+    .listTasksForCompany(failedTask.companyId)
+    .find((task) => task.description.includes(partialOutputSourceMarker(failedTask.id)));
+
+  if (existingFollowUp) {
+    input.repositories.replaceDependencyConsumers(failedTask.id, existingFollowUp.id);
+    return existingFollowUp;
+  }
+
+  const createId = input.createId ?? defaultCreateId;
+  const followUpTask: Task = {
+    id: createId("follow_up_task"),
+    companyId: failedTask.companyId,
+    departmentId: failedTask.departmentId,
+    keyResultId: failedTask.keyResultId,
+    title: `Continue from Partial Output: ${failedTask.title}`,
+    description: buildPartialOutputFollowUpDescription(failedTask, failureReason, failureMessage, logPath),
+    assigneeAgentId: failedTask.assigneeAgentId,
+    requiredCapabilities: failedTask.requiredCapabilities,
+    proofSchemaId: failedTask.proofSchemaId,
+    workspacePath: failedTask.artifactWorkspacePath,
+    artifactWorkspacePath: failedTask.artifactWorkspacePath,
+    status: "queued",
+    riskLevel: failedTask.riskLevel,
+    position: input.repositories.getNextTaskPosition(failedTask.companyId),
+    latestFailureReason: null,
+    latestFailureMessage: null,
+    latestExecutionProfileName: null,
+    latestRequestedTimeoutMs: null,
+    latestEffectiveTimeoutMs: null,
+    dependencyNote: null,
+  };
+
+  input.repositories.createTask(followUpTask);
+  input.repositories.replaceDependencyConsumers(failedTask.id, followUpTask.id);
+  appendAndEmitTaskEvent(input, {
+    task: failedTask,
+    type: "task_warning",
+    message: `Follow-up task created: ${followUpTask.title} will continue from Partial Output at ${failedTask.artifactWorkspacePath}.`,
+    status: "failed",
+    artifactWorkspacePath: failedTask.artifactWorkspacePath,
+  });
+
+  return followUpTask;
+}
+
+function isPartialOutputFollowUpTask(task: Task): boolean {
+  return task.description.includes("Partial Output Source Task:");
+}
+
+function partialOutputSourceMarker(taskId: string): string {
+  return `Partial Output Source Task: ${taskId}`;
+}
+
+function buildPartialOutputFollowUpDescription(
+  failedTask: Task,
+  failureReason: SchedulerFailureReason,
+  failureMessage: string,
+  logPath: string,
+): string {
+  return [
+    "Continue the failed task from its Partial Output and produce valid Proof for the original proof schema.",
+    "",
+    partialOutputSourceMarker(failedTask.id),
+    `Original Task: ${failedTask.title}`,
+    `Original Proof Schema: ${failedTask.proofSchemaId}`,
+    `Failure Reason: ${failureReason}`,
+    `Failure Message: ${failureMessage}`,
+    `Partial Output Workspace: ${failedTask.artifactWorkspacePath}`,
+    `Agent Log: ${logPath}`,
+    "",
+    "Partial Output is not Proof. Inspect and improve the existing files, keep useful work, and finish the missing deliverable.",
+    "Do not mark the task complete unless you leave proof that satisfies the original proof schema.",
+  ].join("\n");
 }
 
 function blockTaskForDependency(

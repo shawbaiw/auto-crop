@@ -668,10 +668,7 @@ describe("runSchedulerOnce", () => {
   });
 
   it("immediately blocks direct dependency consumers when a producer fails", async () => {
-    const producer = {
-      ...createTaskRecord("task_1", "queued", "low", "landing-page-file"),
-      artifactWorkspacePath: ".auto-crop/workspaces/task_1",
-    };
+    const producer = createTaskRecord("task_1", "queued", "low", "landing-page-file");
     const consumer = createTaskRecord("task_2", "queued", "low", "test-output");
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
     repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
@@ -706,15 +703,146 @@ describe("runSchedulerOnce", () => {
       dependencyNote: "Blocked by failed dependency: Task task_1.",
     });
     expect(events).toContainEqual(expect.objectContaining({
+      type: "task_blocked",
+      taskId: "task_2",
+      failureReason: "dependency_failed",
+    }));
+
+    client.close();
+  });
+
+  it("creates a follow-up task from Partial Output and rewires downstream consumers", async () => {
+    const producer = {
+      ...createTaskRecord("task_1", "queued", "low", "landing-page-file"),
+      artifactWorkspacePath: ".auto-crop/workspaces/task_1",
+    };
+    const consumer = createTaskRecord("task_2", "queued", "low", "test-output");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
+    repositories.createTaskDependency({
+      taskId: consumer.id,
+      dependsOnTaskId: producer.id,
+      handoffContract: "Consume the finished prototype files.",
+    });
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          status: "failed",
+          failureReason: "agent_failed",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    const followUpTask = repositories
+      .listTasksForCompany("company_1")
+      .find((task) => task.title === "Continue from Partial Output: Task task_1");
+
+    expect(result.failed).toEqual(["task_1"]);
+    expect(result.blocked).toEqual([]);
+    expect(repositories.getTask("task_1")).toMatchObject({
+      status: "failed",
+      latestFailureReason: "agent_failed",
+    });
+    expect(followUpTask).toMatchObject({
+      id: "follow_up_task_1",
+      status: "queued",
+      workspacePath: ".auto-crop/workspaces/task_1",
+      artifactWorkspacePath: ".auto-crop/workspaces/task_1",
+      proofSchemaId: "landing-page-file",
+    });
+    expect(followUpTask?.description).toContain("Partial Output Source Task: task_1");
+    expect(followUpTask?.description).toContain("Partial Output is not Proof");
+    expect(repositories.listTaskDependencies(consumer.id)).toEqual([
+      {
+        taskId: consumer.id,
+        dependsOnTaskId: followUpTask?.id,
+        handoffContract: "Consume the finished prototype files.",
+      },
+    ]);
+    expect(events).toContainEqual(expect.objectContaining({
       type: "partial_output",
       taskId: "task_1",
       artifactWorkspacePath: ".auto-crop/workspaces/task_1",
     }));
     expect(events).toContainEqual(expect.objectContaining({
-      type: "task_blocked",
-      taskId: "task_2",
-      failureReason: "dependency_failed",
+      type: "task_warning",
+      taskId: "task_1",
+      message:
+        "Follow-up task created: Continue from Partial Output: Task task_1 will continue from Partial Output at .auto-crop/workspaces/task_1.",
     }));
+
+    client.close();
+  });
+
+  it("runs Partial Output follow-up tasks in the partial artifact workspace", async () => {
+    const followUpTask = {
+      ...createTaskRecord("follow_up_task_1", "queued", "low", "landing-page-file"),
+      title: "Continue from Partial Output: Task task_1",
+      description: [
+        "Continue the failed task from its Partial Output and produce valid Proof.",
+        "",
+        "Partial Output Source Task: task_1",
+      ].join("\n"),
+      workspacePath: ".auto-crop/workspaces/task_1",
+      artifactWorkspacePath: ".auto-crop/workspaces/task_1",
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([followUpTask]);
+    let workspacePath = "";
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        {
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          detect: async () => true,
+          run: async (request) => {
+            workspacePath = request.workspacePath;
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "finished partial output",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "file",
+          uri: "index.html",
+          summary: "file proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: () => undefined,
+    });
+
+    expect(result.completed).toEqual(["follow_up_task_1"]);
+    expect(workspacePath).toBe(".auto-crop/workspaces/task_1");
+    expect(repositories.getTask("follow_up_task_1")?.status).toBe("review");
 
     client.close();
   });
