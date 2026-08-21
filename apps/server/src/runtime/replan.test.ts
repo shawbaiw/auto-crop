@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Company, Department, KeyResult, Objective, Task } from "@auto-crop/core";
+import type { AgentAdapter, AgentRunRequest } from "../adapters/types";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
+import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { confirmReplanProposal, createReplanProposalForTask } from "./replan";
 
 const createdDirs: string[] = [];
@@ -17,12 +19,12 @@ afterEach(() => {
 });
 
 describe("replan proposals", () => {
-  it("creates a deterministic proposal for a task that needs replanning", () => {
+  it("creates a deterministic proposal for a task that needs replanning", async () => {
     const { repositories, client } = createFixture([
       createTaskRecord("source_task", "needs_replan", 0),
     ]);
 
-    const proposal = createReplanProposalForTask({
+    const proposal = await createReplanProposalForTask({
       repositories,
       taskId: "source_task",
       now: () => new Date("2026-08-17T00:00:00.000Z"),
@@ -45,30 +47,113 @@ describe("replan proposals", () => {
     client.close();
   });
 
-  it("refuses to create a proposal for a task that does not need replanning", () => {
+  it("uses planner agent output when planner context is provided", async () => {
+    const { repositories, client } = createFixture([
+      createTaskRecord("source_task", "needs_replan", 0),
+      createTaskRecord("consumer_task", "waiting_dependency", 1),
+    ]);
+    repositories.createTaskDependency({ taskId: "consumer_task", dependsOnTaskId: "source_task" });
+    const plannerRequests: AgentRunRequest[] = [];
+    const plannerAgent = createPlannerAgent({
+      output: [
+        "```json",
+        JSON.stringify({
+          rationale: "Planner split the task around an explicit handoff contract.",
+          replacementTasks: [
+            {
+              title: "Write implementation handoff",
+              description: "Define the reduced prototype scope and proof contract.",
+              requiredCapabilities: ["writing", "research"],
+              proofSchemaId: "product-brief",
+              riskLevel: "low",
+            },
+            {
+              title: "Build reduced prototype",
+              description: "Build only the approved reduced scope.",
+              requiredCapabilities: ["code", "frontend"],
+              proofSchemaId: "landing-page-file",
+              riskLevel: "medium",
+            },
+          ],
+        }),
+        "```",
+      ].join("\n"),
+      onRun: (request) => {
+        plannerRequests.push(request);
+      },
+    });
+
+    const proposal = await createReplanProposalForTask({
+      repositories,
+      taskId: "source_task",
+      projectRoot: mkdtempTracked(),
+      plannerAgent,
+      playbook: aiSaasPlaybook,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(plannerRequests[0]?.taskId).toBe("source_task_replan_planner");
+    expect(plannerRequests[0]?.prompt).toContain("Task source_task");
+    expect(plannerRequests[0]?.prompt).toContain("Task consumer_task");
+    expect(proposal.rationale).toBe("Planner split the task around an explicit handoff contract.");
+    expect(proposal.replacementTasks.map((task) => task.title)).toEqual([
+      "Write implementation handoff",
+      "Build reduced prototype",
+    ]);
+
+    client.close();
+  });
+
+  it("falls back to the deterministic template when planner output cannot be parsed", async () => {
+    const { repositories, client } = createFixture([
+      createTaskRecord("source_task", "needs_replan", 0),
+    ]);
+
+    const proposal = await createReplanProposalForTask({
+      repositories,
+      taskId: "source_task",
+      projectRoot: mkdtempTracked(),
+      plannerAgent: createPlannerAgent({ output: "not json" }),
+      playbook: aiSaasPlaybook,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(proposal.rationale).toContain("Task source_task exceeded the long execution budget");
+    expect(proposal.replacementTasks.map((task) => task.title)).toEqual([
+      "Plan smaller slice for Task source_task",
+      "Produce proof for Task source_task",
+      "Validate replacement output for Task source_task",
+    ]);
+
+    client.close();
+  });
+
+  it("refuses to create a proposal for a task that does not need replanning", async () => {
     const { repositories, client } = createFixture([
       createTaskRecord("source_task", "queued", 0),
     ]);
 
-    expect(() =>
+    await expect(
       createReplanProposalForTask({
         repositories,
         taskId: "source_task",
         now: () => new Date("2026-08-17T00:00:00.000Z"),
         createId: createSequentialIdFactory(),
       }),
-    ).toThrow(/does not need replanning/i);
+    ).rejects.toThrow(/does not need replanning/i);
 
     client.close();
   });
 
-  it("confirms a proposal by creating replacement tasks and rewiring consumers to the final replacement", () => {
+  it("confirms a proposal by creating replacement tasks and rewiring consumers to the final replacement", async () => {
     const source = createTaskRecord("source_task", "needs_replan", 0);
     const consumer = createTaskRecord("consumer_task", "waiting_dependency", 1);
     const { repositories, client } = createFixture([source, consumer]);
     repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: source.id });
     const createId = createSequentialIdFactory();
-    const proposal = createReplanProposalForTask({
+    const proposal = await createReplanProposalForTask({
       repositories,
       taskId: source.id,
       now: () => new Date("2026-08-17T00:00:00.000Z"),
@@ -199,5 +284,25 @@ function createSequentialIdFactory(): (prefix: string) => string {
     const next = (counts.get(prefix) ?? 0) + 1;
     counts.set(prefix, next);
     return `${prefix}_${next}`;
+  };
+}
+
+function createPlannerAgent(options: { output: string; onRun?: (request: AgentRunRequest) => void }): AgentAdapter {
+  return {
+    id: "codex",
+    name: "Codex",
+    capabilities: ["code", "frontend", "test", "writing", "research"],
+    async detect() {
+      return true;
+    },
+    async run(request) {
+      options.onRun?.(request);
+      return {
+        status: "complete",
+        exitCode: 0,
+        stdout: options.output,
+        stderr: "",
+      };
+    },
   };
 }

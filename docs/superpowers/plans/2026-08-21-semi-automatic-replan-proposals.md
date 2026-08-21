@@ -86,4 +86,5 @@
 
 ## Deferred
 
-- Agent-generated replan proposals remain deferred. This implementation uses deterministic split templates so confirming a proposal is predictable and safe.
+- Agent-generated replan proposals were deferred in this phase and implemented by the follow-up plan:
+  `docs/superpowers/plans/2026-08-21-agent-generated-replan-proposals.md`.

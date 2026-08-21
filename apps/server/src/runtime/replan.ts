@@ -1,10 +1,17 @@
+import { writeFileSync } from "node:fs";
 import type { ReplanProposal, Task, TaskEvent } from "@auto-crop/core";
+import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
-import { createTaskWorkspace } from "./workspace";
+import type { Playbook } from "../playbooks/types";
+import { buildReplanPlannerPrompt, parseReplanPlannerOutput } from "./replanPlanner";
+import { createCompanyWorkspace, createTaskWorkspace } from "./workspace";
 
 export type CreateReplanProposalInput = {
   repositories: ReturnType<typeof createRepositories>;
   taskId: string;
+  projectRoot?: string;
+  plannerAgent?: AgentAdapter;
+  playbook?: Playbook;
   now?: () => Date;
   createId?: (prefix: string) => string;
 };
@@ -23,7 +30,7 @@ export type ConfirmReplanProposalResult = {
   createdTasks: Task[];
 };
 
-export function createReplanProposalForTask(input: CreateReplanProposalInput): ReplanProposal {
+export async function createReplanProposalForTask(input: CreateReplanProposalInput): Promise<ReplanProposal> {
   const task = input.repositories.getTask(input.taskId);
 
   if (!task) {
@@ -44,13 +51,16 @@ export function createReplanProposalForTask(input: CreateReplanProposalInput): R
 
   const now = (input.now ?? (() => new Date()))().toISOString();
   const createId = input.createId ?? defaultCreateId;
+  const plannerResponse = await tryCreatePlannerResponse(input, task);
   const proposal: ReplanProposal = {
     id: createId("replan_proposal"),
     companyId: task.companyId,
     sourceTaskId: task.id,
     status: "proposed",
-    rationale: `${task.title} exceeded the long execution budget and should be split into smaller proof-backed tasks.`,
-    replacementTasks: buildReplacementTasks(task),
+    rationale:
+      plannerResponse?.rationale ??
+      `${task.title} exceeded the long execution budget and should be split into smaller proof-backed tasks.`,
+    replacementTasks: plannerResponse?.replacementTasks ?? buildReplacementTasks(task),
     createdAt: now,
     confirmedAt: null,
   };
@@ -58,6 +68,55 @@ export function createReplanProposalForTask(input: CreateReplanProposalInput): R
   input.repositories.createReplanProposal(proposal);
 
   return proposal;
+}
+
+async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: Task) {
+  if (!input.projectRoot || !input.plannerAgent || !input.playbook) {
+    return null;
+  }
+
+  const company = input.repositories.getCompany(task.companyId);
+
+  if (!company) {
+    return null;
+  }
+
+  const dependencies = input.repositories.listTaskDependenciesForCompany(task.companyId);
+  const downstreamTasks = dependencies
+    .filter((dependency) => dependency.dependsOnTaskId === task.id)
+    .map((dependency) => input.repositories.getTask(dependency.taskId))
+    .filter((downstream): downstream is Task => Boolean(downstream));
+  const prompt = buildReplanPlannerPrompt({
+    company,
+    sourceTask: task,
+    downstreamTasks,
+    proofSchemas: input.playbook.proofSchemas,
+  });
+  const companyWorkspace = createCompanyWorkspace(input.projectRoot, task.companyId);
+  const promptPath = `${companyWorkspace.companyRoot}/replan-${task.id}-prompt.md`;
+  writeFileSync(promptPath, prompt, "utf8");
+  const result = await input.plannerAgent.run({
+    taskId: `${task.id}_replan_planner`,
+    prompt,
+    promptPath,
+    workspacePath: companyWorkspace.companyRoot,
+    metadata: {
+      companyId: task.companyId,
+      sourceTaskId: task.id,
+      playbookId: input.playbook.id,
+      purpose: "replan_proposal",
+    },
+  });
+
+  if (result.status !== "complete") {
+    return null;
+  }
+
+  try {
+    return parseReplanPlannerOutput(result.stdout, input.playbook);
+  } catch {
+    return null;
+  }
 }
 
 export function confirmReplanProposal(input: ConfirmReplanProposalInput): ConfirmReplanProposalResult {

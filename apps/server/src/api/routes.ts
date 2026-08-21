@@ -7,6 +7,7 @@ import type { PolicyMode } from "../policies/policy";
 import { createCompany } from "../runtime/createCompany";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
+import { selectPlaybook } from "../playbooks/selectPlaybook";
 
 export type ApiServerOptions = {
   projectRoot: string;
@@ -185,9 +186,15 @@ async function routeRequest(
 
   const replanTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/replan-proposals$/);
   if (method === "POST" && replanTaskMatch) {
-    const proposal = createReplanProposalForTask({
+    const task = options.repositories.getTask(replanTaskMatch[1]);
+    const company = task ? options.repositories.getCompany(task.companyId) : null;
+    const plannerAgent = company ? options.agents.find((agent) => agent.id === company.selectedCeoAgentId) : undefined;
+    const proposal = await createReplanProposalForTask({
       repositories: options.repositories,
       taskId: replanTaskMatch[1],
+      projectRoot: options.projectRoot,
+      plannerAgent,
+      playbook: company ? selectPlaybook(company.founderVision) : undefined,
       now: options.now,
       createId: options.createId,
     });

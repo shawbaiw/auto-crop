@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Proof, TaskEvent } from "@auto-crop/core";
+import type { AgentAdapter, AgentRunRequest } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories, type ReviewRecord } from "../db/repositories";
@@ -208,9 +209,64 @@ describe("API routes", () => {
 
     await fixture.close();
   });
+
+  it("uses the selected CEO agent to generate replan proposals through the API", async () => {
+    const fixture = await startFixtureServer({
+      plannerOutput: [
+        "```json",
+        JSON.stringify({
+          rationale: "API planner split the task into a handoff and implementation.",
+          replacementTasks: [
+            {
+              title: "Write API handoff",
+              description: "Define the replacement scope and proof contract.",
+              requiredCapabilities: ["writing", "research"],
+              proofSchemaId: "product-brief",
+              riskLevel: "low",
+            },
+            {
+              title: "Build API replacement",
+              description: "Implement the replacement from the approved handoff.",
+              requiredCapabilities: ["code", "frontend"],
+              proofSchemaId: "landing-page-file",
+              riskLevel: "medium",
+            },
+          ],
+        }),
+        "```",
+      ].join("\n"),
+    });
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    fixture.repositories.updateTaskStatus(sourceTask.id, "needs_replan");
+    fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
+      latestFailureReason: "needs_replan",
+      latestFailureMessage: "Task needs replanning.",
+    });
+
+    const proposed = await postJson<{
+      proposal: { rationale: string; replacementTasks: Array<{ title: string }> };
+    }>(`${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`, {});
+
+    expect(proposed.proposal.rationale).toBe("API planner split the task into a handoff and implementation.");
+    expect(proposed.proposal.replacementTasks.map((task) => task.title)).toEqual([
+      "Write API handoff",
+      "Build API replacement",
+    ]);
+    expect(fixture.plannerRequests).toHaveLength(1);
+    expect(fixture.plannerRequests[0]?.taskId).toBe(`${sourceTask.id}_replan_planner`);
+
+    await fixture.close();
+  });
 });
 
-async function startFixtureServer() {
+async function startFixtureServer(options: { plannerOutput?: string } = {}) {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-api-"));
   createdDirs.push(projectRoot);
   const client = createDatabaseClient(":memory:");
@@ -222,12 +278,19 @@ async function startFixtureServer() {
     preferredEngineeringAgentId: "codex",
     preferredStrategyAgentId: "codex",
   });
-  const codex = createMockAgentAdapter({
-    id: "codex",
-    name: "Codex",
-    capabilities: ["code", "frontend", "test"],
-    output: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
-  });
+  const plannerRequests: AgentRunRequest[] = [];
+  const codex = options.plannerOutput
+    ? createRoutedAgent({
+        blueprintOutput: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
+        plannerOutput: options.plannerOutput,
+        plannerRequests,
+      })
+    : createMockAgentAdapter({
+        id: "codex",
+        name: "Codex",
+        capabilities: ["code", "frontend", "test"],
+        output: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
+      });
   const server = createApiServer({
     projectRoot,
     repositories,
@@ -247,11 +310,45 @@ async function startFixtureServer() {
     baseUrl: `http://127.0.0.1:${address.port}`,
     repositories,
     events: server.events,
+    plannerRequests,
     close: async () => {
       await new Promise<void>((resolve, reject) => {
         server.httpServer.close((error) => (error ? reject(error) : resolve()));
       });
       client.close();
+    },
+  };
+}
+
+function createRoutedAgent(options: {
+  blueprintOutput: string;
+  plannerOutput: string;
+  plannerRequests: AgentRunRequest[];
+}): AgentAdapter {
+  return {
+    id: "codex",
+    name: "Codex",
+    capabilities: ["code", "frontend", "test", "writing", "research"],
+    async detect() {
+      return true;
+    },
+    async run(request) {
+      if (request.metadata.purpose === "replan_proposal") {
+        options.plannerRequests.push(request);
+        return {
+          status: "complete",
+          exitCode: 0,
+          stdout: options.plannerOutput,
+          stderr: "",
+        };
+      }
+
+      return {
+        status: "complete",
+        exitCode: 0,
+        stdout: options.blueprintOutput,
+        stderr: "",
+      };
     },
   };
 }
