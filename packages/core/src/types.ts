@@ -24,6 +24,7 @@ export type ProofType =
 export type AgentRunStatus = "queued" | "running" | "complete" | "failed" | "cancelled";
 export type ApprovalStatus = "pending" | "approved" | "denied";
 export type ReplanProposalStatus = "proposed" | "confirmed" | "dismissed";
+export type ReplanProposalSource = "planner_agent" | "deterministic_template";
 export type AgentFailureReason =
   | "timeout"
   | "agent_failed"
@@ -150,6 +151,11 @@ export type ReplanProposal = {
   companyId: string;
   sourceTaskId: string;
   status: ReplanProposalStatus;
+  proposalSource: ReplanProposalSource;
+  plannerAgentId: string | null;
+  plannerPromptPath: string | null;
+  plannerFailureReason: string | null;
+  plannerFailureMessage: string | null;
   rationale: string;
   replacementTasks: ReplanReplacementTask[];
   createdAt: string;

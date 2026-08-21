@@ -105,6 +105,8 @@ export function CompanyOperations({
 
             {replanProposals.map((proposal) => {
               const sourceTask = tasksById.get(proposal.sourceTaskId);
+              const affectedDownstreamTasks = tasks.filter((task) => task.dependsOnTaskIds?.includes(proposal.sourceTaskId));
+              const finalReplacementTask = proposal.replacementTasks.at(-1);
               return (
                 <div className="replan-card" key={proposal.id}>
                   <div className="replan-card__header">
@@ -113,10 +115,59 @@ export function CompanyOperations({
                     </p>
                     <span>{proposal.status}</span>
                   </div>
-                  <VideotexLog
-                    emptyMessage={t("operations.noReplacementTasks")}
-                    rows={proposal.replacementTasks.map((task) => task.title)}
+                  <VideotexKeyValue
+                    items={[
+                      { label: t("operations.proposalSource"), value: formatProposalSource(proposal.proposalSource, t) },
+                      {
+                        label: t("operations.plannerAgent"),
+                        value: proposal.plannerAgentId ?? t("operations.notAvailable"),
+                      },
+                      {
+                        label: t("operations.plannerPrompt"),
+                        value: proposal.plannerPromptPath ?? t("operations.notAvailable"),
+                      },
+                      ...(proposal.plannerFailureReason
+                        ? [
+                            {
+                              label: t("operations.fallbackReason"),
+                              value: `${proposal.plannerFailureReason}: ${proposal.plannerFailureMessage ?? t("operations.notAvailable")}`,
+                            },
+                          ]
+                        : []),
+                    ]}
                   />
+                  <section className="replan-review-section">
+                    <h3>{t("operations.originalTask")}</h3>
+                    <VideotexLog
+                      emptyMessage={t("operations.unknownTask")}
+                      rows={sourceTask ? [`${sourceTask.title} / ${formatTaskStatus(sourceTask, t)}`] : []}
+                    />
+                  </section>
+                  <section className="replan-review-section">
+                    <h3>{t("operations.replacementChain")}</h3>
+                    <VideotexLog
+                      emptyMessage={t("operations.noReplacementTasks")}
+                      rows={proposal.replacementTasks.map((task) => task.title)}
+                    />
+                  </section>
+                  <section className="replan-review-section">
+                    <h3>{t("operations.affectedDownstream")}</h3>
+                    <VideotexLog
+                      emptyMessage={t("operations.noAffectedDownstream")}
+                      rows={affectedDownstreamTasks.map((task) => task.title)}
+                    />
+                  </section>
+                  <section className="replan-review-section">
+                    <h3>{t("operations.rewirePreview")}</h3>
+                    <VideotexLog
+                      emptyMessage={t("operations.noRewirePreview")}
+                      rows={affectedDownstreamTasks.map((task) =>
+                        finalReplacementTask
+                          ? `${task.title} ${t("operations.rewirePreviewConnector")} ${finalReplacementTask.title}.`
+                          : `${task.title} ${t("operations.rewirePreviewMissingFinalTask")}`,
+                      )}
+                    />
+                  </section>
                   {proposal.status === "proposed" ? (
                     <RetroButton onClick={() => onConfirmReplanProposal(proposal.id)} variant="primary">
                       {t("operations.confirmReplan")}
@@ -147,6 +198,14 @@ export function CompanyOperations({
       </Workspace>
     </AppShell>
   );
+}
+
+function formatProposalSource(source: ReplanProposalSummary["proposalSource"], t: (key: TranslationKey) => string): string {
+  if (source === "planner_agent") {
+    return t("operations.generatedByPlanner");
+  }
+
+  return t("operations.generatedByTemplate");
 }
 
 function countTaskStates(tasks: TaskSummary[]) {

@@ -498,6 +498,20 @@ h3 {
   text-transform: uppercase;
 }
 
+.replan-review-section {
+  display: grid;
+  gap: 8px;
+}
+
+.replan-review-section h3 {
+  background:
+    linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
+    var(--surface-alt);
+  border: var(--border-px) solid var(--border);
+  font-size: 0.72rem;
+  padding: 7px 8px;
+}
+
 .blueprint-band {
   margin-top: 0;
 }

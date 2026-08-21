@@ -147,6 +147,11 @@ export function migrate(database: DatabaseClient): void {
       company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
       source_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       status TEXT NOT NULL,
+      proposal_source TEXT NOT NULL DEFAULT 'deterministic_template',
+      planner_agent_id TEXT,
+      planner_prompt_path TEXT,
+      planner_failure_reason TEXT,
+      planner_failure_message TEXT,
       rationale TEXT NOT NULL,
       replacement_tasks TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -156,10 +161,20 @@ export function migrate(database: DatabaseClient): void {
   migrateTaskPosition(database);
   migrateTasksExecutionFields(database);
   migrateAgentRunsExecutionFields(database);
+  migrateReplanProposalDiagnostics(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_events_company_created_idx ON task_events(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS replan_proposals_company_status_idx ON replan_proposals(company_id, status)");
+}
+
+function migrateReplanProposalDiagnostics(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "replan_proposals");
+  addColumnIfMissing(database, columns, "replan_proposals", "proposal_source TEXT NOT NULL DEFAULT 'deterministic_template'");
+  addColumnIfMissing(database, columns, "replan_proposals", "planner_agent_id TEXT");
+  addColumnIfMissing(database, columns, "replan_proposals", "planner_prompt_path TEXT");
+  addColumnIfMissing(database, columns, "replan_proposals", "planner_failure_reason TEXT");
+  addColumnIfMissing(database, columns, "replan_proposals", "planner_failure_message TEXT");
 }
 
 function migrateTaskPosition(database: DatabaseClient): void {

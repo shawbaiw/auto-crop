@@ -74,6 +74,11 @@ export type ReplanProposalSummary = {
   companyId: string;
   sourceTaskId: string;
   status: string;
+  proposalSource?: "planner_agent" | "deterministic_template";
+  plannerAgentId?: string;
+  plannerPromptPath?: string;
+  plannerFailureReason?: string;
+  plannerFailureMessage?: string;
   rationale: string;
   replacementTasks: ReplanReplacementTaskSummary[];
   createdAt: string;

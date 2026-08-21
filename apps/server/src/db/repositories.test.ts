@@ -198,6 +198,11 @@ describe("repositories", () => {
       companyId: records.company.id,
       sourceTaskId: records.task.id,
       status: "proposed",
+      proposalSource: "planner_agent",
+      plannerAgentId: "codex",
+      plannerPromptPath: ".auto-crop/companies/company_1/replan-task_1-prompt.md",
+      plannerFailureReason: null,
+      plannerFailureMessage: null,
       rationale: "Original task exceeded long budget.",
       replacementTasks: [
         {

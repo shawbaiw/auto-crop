@@ -6,6 +6,25 @@ import type { Playbook } from "../playbooks/types";
 import { buildReplanPlannerPrompt, parseReplanPlannerOutput } from "./replanPlanner";
 import { createCompanyWorkspace, createTaskWorkspace } from "./workspace";
 
+type PlannerAttempt =
+  | {
+      kind: "success";
+      agentId: string;
+      promptPath: string;
+      rationale: string;
+      replacementTasks: ReplanProposal["replacementTasks"];
+    }
+  | {
+      kind: "failed";
+      agentId: string | null;
+      promptPath: string | null;
+      reason: "agent_failed" | "parse_failed";
+      message: string;
+    }
+  | {
+      kind: "not_configured";
+    };
+
 export type CreateReplanProposalInput = {
   repositories: ReturnType<typeof createRepositories>;
   taskId: string;
@@ -51,16 +70,22 @@ export async function createReplanProposalForTask(input: CreateReplanProposalInp
 
   const now = (input.now ?? (() => new Date()))().toISOString();
   const createId = input.createId ?? defaultCreateId;
-  const plannerResponse = await tryCreatePlannerResponse(input, task);
+  const plannerAttempt = await tryCreatePlannerResponse(input, task);
+  const plannerSucceeded = plannerAttempt.kind === "success";
   const proposal: ReplanProposal = {
     id: createId("replan_proposal"),
     companyId: task.companyId,
     sourceTaskId: task.id,
     status: "proposed",
+    proposalSource: plannerSucceeded ? "planner_agent" : "deterministic_template",
+    plannerAgentId: plannerAttempt.kind === "not_configured" ? null : plannerAttempt.agentId,
+    plannerPromptPath: plannerAttempt.kind === "not_configured" ? null : plannerAttempt.promptPath,
+    plannerFailureReason: plannerAttempt.kind === "failed" ? plannerAttempt.reason : null,
+    plannerFailureMessage: plannerAttempt.kind === "failed" ? plannerAttempt.message : null,
     rationale:
-      plannerResponse?.rationale ??
+      (plannerSucceeded ? plannerAttempt.rationale : null) ??
       `${task.title} exceeded the long execution budget and should be split into smaller proof-backed tasks.`,
-    replacementTasks: plannerResponse?.replacementTasks ?? buildReplacementTasks(task),
+    replacementTasks: (plannerSucceeded ? plannerAttempt.replacementTasks : null) ?? buildReplacementTasks(task),
     createdAt: now,
     confirmedAt: null,
   };
@@ -70,15 +95,15 @@ export async function createReplanProposalForTask(input: CreateReplanProposalInp
   return proposal;
 }
 
-async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: Task) {
+async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: Task): Promise<PlannerAttempt> {
   if (!input.projectRoot || !input.plannerAgent || !input.playbook) {
-    return null;
+    return { kind: "not_configured" };
   }
 
   const company = input.repositories.getCompany(task.companyId);
 
   if (!company) {
-    return null;
+    return { kind: "not_configured" };
   }
 
   const dependencies = input.repositories.listTaskDependenciesForCompany(task.companyId);
@@ -109,13 +134,30 @@ async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: 
   });
 
   if (result.status !== "complete") {
-    return null;
+    return {
+      kind: "failed",
+      agentId: input.plannerAgent.id,
+      promptPath,
+      reason: "agent_failed",
+      message: result.stderr.trim() || result.stdout.trim() || "Planner agent failed without output.",
+    };
   }
 
   try {
-    return parseReplanPlannerOutput(result.stdout, input.playbook);
-  } catch {
-    return null;
+    return {
+      kind: "success",
+      agentId: input.plannerAgent.id,
+      promptPath,
+      ...parseReplanPlannerOutput(result.stdout, input.playbook),
+    };
+  } catch (error) {
+    return {
+      kind: "failed",
+      agentId: input.plannerAgent.id,
+      promptPath,
+      reason: "parse_failed",
+      message: (error as Error).message,
+    };
   }
 }
 

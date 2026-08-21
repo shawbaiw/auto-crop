@@ -506,14 +506,20 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO replan_proposals (
-            id, company_id, source_task_id, status, rationale, replacement_tasks, created_at, confirmed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            id, company_id, source_task_id, status, proposal_source, planner_agent_id, planner_prompt_path,
+            planner_failure_reason, planner_failure_message, rationale, replacement_tasks, created_at, confirmed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           proposal.id,
           proposal.companyId,
           proposal.sourceTaskId,
           proposal.status,
+          proposal.proposalSource,
+          proposal.plannerAgentId,
+          proposal.plannerPromptPath,
+          proposal.plannerFailureReason,
+          proposal.plannerFailureMessage,
           proposal.rationale,
           JSON.stringify(proposal.replacementTasks),
           proposal.createdAt,
@@ -691,6 +697,11 @@ type ReplanProposalRow = {
   company_id: string;
   source_task_id: string;
   status: ReplanProposal["status"];
+  proposal_source: ReplanProposal["proposalSource"];
+  planner_agent_id: string | null;
+  planner_prompt_path: string | null;
+  planner_failure_reason: string | null;
+  planner_failure_message: string | null;
   rationale: string;
   replacement_tasks: string;
   created_at: string;
@@ -834,6 +845,11 @@ function mapReplanProposal(row: ReplanProposalRow): ReplanProposal {
     companyId: row.company_id,
     sourceTaskId: row.source_task_id,
     status: row.status,
+    proposalSource: row.proposal_source,
+    plannerAgentId: row.planner_agent_id,
+    plannerPromptPath: row.planner_prompt_path,
+    plannerFailureReason: row.planner_failure_reason,
+    plannerFailureMessage: row.planner_failure_message,
     rationale: row.rationale,
     replacementTasks: JSON.parse(row.replacement_tasks) as ReplanProposal["replacementTasks"],
     createdAt: row.created_at,

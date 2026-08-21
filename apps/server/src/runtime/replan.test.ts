@@ -35,6 +35,9 @@ describe("replan proposals", () => {
       id: "replan_proposal_1",
       sourceTaskId: "source_task",
       status: "proposed",
+      proposalSource: "deterministic_template",
+      plannerAgentId: null,
+      plannerPromptPath: null,
       rationale: "Task source_task exceeded the long execution budget and should be split into smaller proof-backed tasks.",
     });
     expect(proposal.replacementTasks.map((task) => task.title)).toEqual([
@@ -97,6 +100,13 @@ describe("replan proposals", () => {
     expect(plannerRequests[0]?.prompt).toContain("Task source_task");
     expect(plannerRequests[0]?.prompt).toContain("Task consumer_task");
     expect(proposal.rationale).toBe("Planner split the task around an explicit handoff contract.");
+    expect(proposal).toMatchObject({
+      proposalSource: "planner_agent",
+      plannerAgentId: "codex",
+      plannerFailureReason: null,
+      plannerFailureMessage: null,
+    });
+    expect(proposal.plannerPromptPath).toContain("replan-source_task-prompt.md");
     expect(proposal.replacementTasks.map((task) => task.title)).toEqual([
       "Write implementation handoff",
       "Build reduced prototype",
@@ -121,6 +131,13 @@ describe("replan proposals", () => {
     });
 
     expect(proposal.rationale).toContain("Task source_task exceeded the long execution budget");
+    expect(proposal).toMatchObject({
+      proposalSource: "deterministic_template",
+      plannerAgentId: "codex",
+      plannerFailureReason: "parse_failed",
+    });
+    expect(proposal.plannerPromptPath).toContain("replan-source_task-prompt.md");
+    expect(proposal.plannerFailureMessage).toMatch(/fenced json/i);
     expect(proposal.replacementTasks.map((task) => task.title)).toEqual([
       "Plan smaller slice for Task source_task",
       "Produce proof for Task source_task",

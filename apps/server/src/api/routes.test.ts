@@ -251,10 +251,19 @@ describe("API routes", () => {
     });
 
     const proposed = await postJson<{
-      proposal: { rationale: string; replacementTasks: Array<{ title: string }> };
+      proposal: {
+        rationale: string;
+        proposalSource: string;
+        plannerAgentId?: string;
+        plannerPromptPath?: string;
+        replacementTasks: Array<{ title: string }>;
+      };
     }>(`${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`, {});
 
     expect(proposed.proposal.rationale).toBe("API planner split the task into a handoff and implementation.");
+    expect(proposed.proposal.proposalSource).toBe("planner_agent");
+    expect(proposed.proposal.plannerAgentId).toBe("codex");
+    expect(proposed.proposal.plannerPromptPath).toContain(`replan-${sourceTask.id}-prompt.md`);
     expect(proposed.proposal.replacementTasks.map((task) => task.title)).toEqual([
       "Write API handoff",
       "Build API replacement",
