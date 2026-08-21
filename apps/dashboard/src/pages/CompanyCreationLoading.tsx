@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { AgentSummary } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage } from "../ui/language";
-import { AppShell, PageHeader, Workspace } from "../ui/layout";
+import { ModalFrame, PageHeader, Workspace } from "../ui/layout";
 import { RetroPanel, RetroStatus } from "../ui/retro";
 
 export type CompanyCreationLoadingProps = {
@@ -21,6 +21,7 @@ export function CompanyCreationLoading({
 }: CompanyCreationLoadingProps) {
   const { t } = useLanguage();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const titleId = "company-creation-dialog-title";
   const creationStages = [
     t("creating.stageVision"),
     t("creating.stageBlueprint"),
@@ -37,13 +38,20 @@ export function CompanyCreationLoading({
   }, []);
 
   return (
-    <AppShell menuBar={menuBar}>
+    <ModalFrame className="app-modal-card--creation" labelledBy={titleId} menuBar={menuBar}>
       <PageHeader
         eyebrow={companyName}
         status={t("creating.status")}
         statusIcon={<Building2 size={16} aria-hidden="true" />}
         title={t("app.title")}
+        titleId={titleId}
       />
+
+      <section aria-label={t("creating.status")} className="creation-progress">
+        <div aria-label={t("creating.statusText")} className="creation-progress__track" role="progressbar">
+          <span className="creation-progress__bar" />
+        </div>
+      </section>
 
       <Workspace className="creation-loading">
         <RetroPanel icon={<LoaderCircle size={18} aria-hidden="true" />} title={t("creating.panel")}>
@@ -65,6 +73,6 @@ export function CompanyCreationLoading({
       <RetroStatus icon={<LoaderCircle size={16} aria-hidden="true" />}>
         {t("creating.statusText")}
       </RetroStatus>
-    </AppShell>
+    </ModalFrame>
   );
 }

@@ -100,6 +100,11 @@ p {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.app-shell--modal {
+  grid-template-rows: auto minmax(0, 1fr);
+  max-width: none;
+}
+
 .retro-menu-bar {
   align-self: start;
   background: var(--surface);
@@ -265,6 +270,85 @@ h3 {
 
 .setup-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.app-modal-backdrop {
+  align-items: center;
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--ink) 10%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--ink) 10%, transparent) 75%),
+    linear-gradient(45deg, color-mix(in srgb, var(--ink) 10%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--ink) 10%, transparent) 75%),
+    color-mix(in srgb, var(--field) 82%, var(--ink));
+  background-position: 0 0, 4px 4px, 0 0;
+  background-size: 8px 8px, 8px 8px, auto;
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  min-height: min(780px, calc(100vh - 92px));
+  padding: clamp(14px, 3vw, 32px);
+}
+
+.app-modal-card {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  box-shadow: calc(var(--hard-shadow-offset) + 4px) calc(var(--hard-shadow-offset) + 4px) 0 var(--titlebar);
+  display: grid;
+  gap: var(--screen-gap);
+  justify-self: center;
+  max-height: min(760px, calc(100vh - 130px));
+  max-width: min(860px, 100%);
+  overflow: auto;
+  padding: var(--screen-gap);
+  width: min(860px, 100%);
+}
+
+.app-modal-card--creation {
+  max-width: min(980px, 100%);
+  width: min(980px, 100%);
+}
+
+.app-modal-card > .retro-status {
+  border: var(--border-px) solid var(--border);
+  width: fit-content;
+}
+
+.creation-progress {
+  background: var(--surface-alt);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.creation-progress__track {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--ink) 24%, transparent) 0 1px, transparent 1px 12px),
+    var(--surface);
+  border: var(--border-px) solid var(--border);
+  height: 28px;
+  overflow: hidden;
+  position: relative;
+}
+
+.creation-progress__bar {
+  animation: creation-progress-sweep 1.6s steps(8, end) infinite;
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--selected-fg) 24%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--selected-fg) 24%, transparent) 75%),
+    linear-gradient(45deg, color-mix(in srgb, var(--selected-fg) 24%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--selected-fg) 24%, transparent) 75%),
+    var(--selected-bg);
+  background-position: 0 0, 4px 4px, 0 0;
+  background-size: 8px 8px, 8px 8px, auto;
+  display: block;
+  height: 100%;
+  min-width: 38%;
+}
+
+@keyframes creation-progress-sweep {
+  from {
+    transform: translateX(-40%);
+  }
+
+  to {
+    transform: translateX(260%);
+  }
 }
 
 .onboarding-wizard {
@@ -753,8 +837,10 @@ h3 {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .creation-progress__bar,
   .retro-button:active,
   .retro-list-row:active {
+    animation: none;
     transform: none;
   }
 }
@@ -770,6 +856,18 @@ h3 {
 @media (max-width: 760px) {
   .app-shell {
     padding: 16px;
+  }
+
+  .app-modal-backdrop {
+    align-items: start;
+    min-height: calc(100vh - 86px);
+    padding: 10px;
+  }
+
+  .app-modal-card {
+    box-shadow: 4px 4px 0 var(--titlebar);
+    max-height: calc(100vh - 110px);
+    padding: 10px;
   }
 
   .retro-menu-bar__desktop {

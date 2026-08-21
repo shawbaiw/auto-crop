@@ -6,14 +6,15 @@ export type PageHeaderProps = {
   status: string;
   statusIcon?: ReactNode;
   title: string;
+  titleId?: string;
 };
 
-export function PageHeader({ eyebrow, status, statusIcon, title }: PageHeaderProps) {
+export function PageHeader({ eyebrow, status, statusIcon, title, titleId }: PageHeaderProps) {
   return (
     <header className="page-header">
       <div>
         <span className="eyebrow">{eyebrow}</span>
-        <h1>{title}</h1>
+        <h1 id={titleId}>{title}</h1>
       </div>
       <RetroStatus icon={statusIcon}>{status}</RetroStatus>
     </header>

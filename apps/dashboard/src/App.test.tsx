@@ -13,6 +13,8 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
 
     expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "CEO Office" })).toBeInTheDocument();
+    expect(document.querySelector("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Step 1 / Company Name" })).toBeInTheDocument();
     expect(screen.getByLabelText("Company name")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Step 2 / Choose CEO" })).not.toBeInTheDocument();
@@ -118,6 +120,9 @@ describe("Dashboard App", () => {
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
     expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "CEO Office" })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).toBeInTheDocument();
+    expect(document.querySelector("dialog")).not.toBeInTheDocument();
     expect(screen.getByText("Creating Company")).toBeInTheDocument();
     expect(screen.getAllByText("Pricing Page Studio").length).toBeGreaterThan(0);
     expect(screen.getByText("Codex")).toBeInTheDocument();

@@ -2,7 +2,7 @@ import { ArrowLeft, ArrowRight, Building2, CheckCircle2, Play, RefreshCw, Shield
 import type { ReactNode } from "react";
 import type { AgentSummary, CreateCompanyResponse } from "../api/client";
 import { RetroButton, RetroField, RetroListRow, RetroPanel, RetroSelect, RetroStatus, RetroTextarea } from "../ui/retro";
-import { AppShell, PageHeader, Workspace } from "../ui/layout";
+import { ModalFrame, PageHeader, Workspace } from "../ui/layout";
 import { useLanguage } from "../ui/language";
 
 export type OnboardingStep = "company" | "agents" | "vision";
@@ -36,6 +36,7 @@ export type OnboardingProps = {
 export function Onboarding(props: OnboardingProps) {
   const { t } = useLanguage();
   const selectedAgent = props.agents.find((agent) => agent.id === props.selectedAgentId);
+  const titleId = "onboarding-dialog-title";
   const permissionOptions = [
     { value: "safe", label: t("onboarding.safe") },
     { value: "balanced", label: t("onboarding.balanced") },
@@ -43,179 +44,180 @@ export function Onboarding(props: OnboardingProps) {
   ];
 
   return (
-    <AppShell menuBar={props.menuBar}>
-      <PageHeader
-        eyebrow={t("onboarding.eyebrow")}
-        status={t("app.localAgentCompany")}
-        statusIcon={<Building2 size={16} aria-hidden="true" />}
-        title={t("app.title")}
-      />
+    <ModalFrame labelledBy={titleId} menuBar={props.menuBar}>
+          <PageHeader
+            eyebrow={t("onboarding.eyebrow")}
+            status={t("app.localAgentCompany")}
+            statusIcon={<Building2 size={16} aria-hidden="true" />}
+            title={t("app.title")}
+            titleId={titleId}
+          />
 
-      <Workspace className="onboarding-wizard">
-        {props.step === "company" ? (
-          <RetroPanel title={t("onboarding.stepCompany")}>
-            <RetroField htmlFor="company-name" label={t("onboarding.companyName")}>
-              <input
-                aria-label={t("onboarding.companyName")}
-                className="retro-input"
-                id="company-name"
-                onChange={(event) => props.onCompanyNameChange(event.target.value)}
-                placeholder={t("onboarding.companyPlaceholder")}
-                value={props.companyName}
-              />
-            </RetroField>
-            {props.companyNameError ? (
-              <div className="system-message system-message--danger" role="alert">
-                {props.companyNameError}
-              </div>
+          <Workspace className="onboarding-wizard">
+            {props.step === "company" ? (
+              <RetroPanel title={t("onboarding.stepCompany")}>
+                <RetroField htmlFor="company-name" label={t("onboarding.companyName")}>
+                  <input
+                    aria-label={t("onboarding.companyName")}
+                    className="retro-input"
+                    id="company-name"
+                    onChange={(event) => props.onCompanyNameChange(event.target.value)}
+                    placeholder={t("onboarding.companyPlaceholder")}
+                    value={props.companyName}
+                  />
+                </RetroField>
+                {props.companyNameError ? (
+                  <div className="system-message system-message--danger" role="alert">
+                    {props.companyNameError}
+                  </div>
+                ) : null}
+                <div className="onboarding-wizard__actions">
+                  <RetroButton
+                    icon={<ArrowRight size={16} aria-hidden="true" />}
+                    onClick={props.onNext}
+                    variant="primary"
+                  >
+                    {t("onboarding.next")}
+                  </RetroButton>
+                </div>
+              </RetroPanel>
             ) : null}
-            <div className="onboarding-wizard__actions">
+
+            {props.step === "agents" ? (
+              <RetroPanel title={t("onboarding.stepAgents")}>
+                <div className="agent-grid">
+                  {props.agentLoadState === "loading" ? (
+                    <div className="system-message" role="status">
+                      {t("onboarding.scanningAgents")}
+                    </div>
+                  ) : null}
+                  {props.agentLoadState === "failed" ? (
+                    <div className="system-message system-message--danger" role="status">
+                      {t("onboarding.apiDisconnected")}
+                    </div>
+                  ) : null}
+                  {props.agentLoadState === "ready" && props.agents.length === 0 ? (
+                    <div className="system-message" role="status">
+                      {t("onboarding.noAgents")}
+                    </div>
+                  ) : null}
+                  {props.agents.map((agent) => (
+                    <RetroListRow
+                      disabled={!agent.detected}
+                      key={agent.id}
+                      meta={agent.detected ? t("onboarding.available") : t("onboarding.unavailable")}
+                      onClick={() => props.onSelectAgent(agent.id)}
+                      selected={agent.id === props.selectedAgentId}
+                      title={agent.name}
+                    />
+                  ))}
+                </div>
+                {props.agentSelectionError ? (
+                  <div className="system-message system-message--danger" role="alert">
+                    {props.agentSelectionError}
+                  </div>
+                ) : null}
+                <div className="onboarding-wizard__actions">
+                  <RetroButton icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
+                    {t("onboarding.back")}
+                  </RetroButton>
+                  {props.agentLoadState === "failed" ? (
+                    <RetroButton icon={<RefreshCw size={16} aria-hidden="true" />} onClick={props.onRetryAgents}>
+                      {t("onboarding.retry")}
+                    </RetroButton>
+                  ) : null}
+                  <RetroButton
+                    icon={<ArrowRight size={16} aria-hidden="true" />}
+                    onClick={props.onNext}
+                    variant="primary"
+                  >
+                    {t("onboarding.next")}
+                  </RetroButton>
+                </div>
+              </RetroPanel>
+            ) : null}
+
+            {props.step === "vision" ? (
+              <RetroPanel title={t("onboarding.stepVision")}>
+                {selectedAgent ? <p className="muted">{t("onboarding.ceoAgent")}: {selectedAgent.name}</p> : null}
+                <RetroField htmlFor="founder-vision" label={t("onboarding.founderVision")}>
+                  <RetroTextarea
+                    aria-label={t("onboarding.founderVision")}
+                    id="founder-vision"
+                    onChange={(event) => props.onVisionChange(event.target.value)}
+                    placeholder={t("onboarding.visionPlaceholder")}
+                    value={props.founderVision}
+                  />
+                </RetroField>
+                {props.founderVisionError ? (
+                  <div className="system-message system-message--danger" role="alert">
+                    {props.founderVisionError}
+                  </div>
+                ) : null}
+                <RetroField htmlFor="permission-mode" label={t("onboarding.permissionMode")}>
+                  <RetroSelect
+                    id="permission-mode"
+                    label={t("onboarding.permissionMode")}
+                    onValueChange={props.onPermissionModeChange}
+                    options={permissionOptions}
+                    value={props.permissionMode}
+                  />
+                </RetroField>
+                {props.createError ? (
+                  <div className="system-message system-message--danger" role="alert">
+                    {props.createError}
+                  </div>
+                ) : null}
+                <div className="onboarding-wizard__actions">
+                  <RetroButton disabled={props.isCreating} icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
+                    {t("onboarding.back")}
+                  </RetroButton>
+                  <RetroButton
+                    disabled={props.isCreating}
+                    icon={<Play size={16} aria-hidden="true" />}
+                    onClick={props.onCreateCompany}
+                    variant="primary"
+                  >
+                    {props.isCreating ? t("onboarding.creating") : t("menu.createCompany")}
+                  </RetroButton>
+                </div>
+              </RetroPanel>
+            ) : null}
+          </Workspace>
+
+          {props.step === "vision" && props.blueprint ? (
+            <RetroPanel className="blueprint-band" title={t("onboarding.blueprintReview")}>
+              <div>
+                <span className="eyebrow">{t("onboarding.blueprintReview")}</span>
+                <h2>{props.blueprint.editable.companyName}</h2>
+              </div>
+              <div className="review-columns">
+                <div>
+                  <h3>{t("onboarding.objectives")}</h3>
+                  {props.blueprint.editable.objectives.map((objective) => (
+                    <p key={objective}>{objective}</p>
+                  ))}
+                </div>
+                <div>
+                  <h3>{t("onboarding.firstTasks")}</h3>
+                  {props.blueprint.editable.firstTasks.map((task) => (
+                    <p key={task}>{task}</p>
+                  ))}
+                </div>
+              </div>
               <RetroButton
-                icon={<ArrowRight size={16} aria-hidden="true" />}
-                onClick={props.onNext}
+                icon={<CheckCircle2 size={16} aria-hidden="true" />}
+                onClick={props.onActivateCompany}
                 variant="primary"
               >
-                {t("onboarding.next")}
+                {t("menu.activateCompany")}
               </RetroButton>
-            </div>
-          </RetroPanel>
-        ) : null}
-
-        {props.step === "agents" ? (
-          <RetroPanel title={t("onboarding.stepAgents")}>
-          <div className="agent-grid">
-            {props.agentLoadState === "loading" ? (
-              <div className="system-message" role="status">
-                {t("onboarding.scanningAgents")}
-              </div>
-            ) : null}
-            {props.agentLoadState === "failed" ? (
-              <div className="system-message system-message--danger" role="status">
-                {t("onboarding.apiDisconnected")}
-              </div>
-            ) : null}
-            {props.agentLoadState === "ready" && props.agents.length === 0 ? (
-              <div className="system-message" role="status">
-                {t("onboarding.noAgents")}
-              </div>
-            ) : null}
-            {props.agents.map((agent) => (
-              <RetroListRow
-                disabled={!agent.detected}
-                key={agent.id}
-                meta={agent.detected ? t("onboarding.available") : t("onboarding.unavailable")}
-                onClick={() => props.onSelectAgent(agent.id)}
-                selected={agent.id === props.selectedAgentId}
-                title={agent.name}
-              />
-            ))}
-          </div>
-          {props.agentSelectionError ? (
-            <div className="system-message system-message--danger" role="alert">
-              {props.agentSelectionError}
-            </div>
+            </RetroPanel>
           ) : null}
-          <div className="onboarding-wizard__actions">
-            <RetroButton icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
-              {t("onboarding.back")}
-            </RetroButton>
-            {props.agentLoadState === "failed" ? (
-              <RetroButton icon={<RefreshCw size={16} aria-hidden="true" />} onClick={props.onRetryAgents}>
-                {t("onboarding.retry")}
-              </RetroButton>
-            ) : null}
-            <RetroButton
-              icon={<ArrowRight size={16} aria-hidden="true" />}
-              onClick={props.onNext}
-              variant="primary"
-            >
-              {t("onboarding.next")}
-            </RetroButton>
-          </div>
-        </RetroPanel>
-        ) : null}
 
-        {props.step === "vision" ? (
-          <RetroPanel title={t("onboarding.stepVision")}>
-          {selectedAgent ? <p className="muted">{t("onboarding.ceoAgent")}: {selectedAgent.name}</p> : null}
-          <RetroField htmlFor="founder-vision" label={t("onboarding.founderVision")}>
-            <RetroTextarea
-              aria-label={t("onboarding.founderVision")}
-              id="founder-vision"
-              onChange={(event) => props.onVisionChange(event.target.value)}
-              placeholder={t("onboarding.visionPlaceholder")}
-              value={props.founderVision}
-            />
-          </RetroField>
-          {props.founderVisionError ? (
-            <div className="system-message system-message--danger" role="alert">
-              {props.founderVisionError}
-              </div>
-          ) : null}
-          <RetroField htmlFor="permission-mode" label={t("onboarding.permissionMode")}>
-            <RetroSelect
-              id="permission-mode"
-              label={t("onboarding.permissionMode")}
-              onValueChange={props.onPermissionModeChange}
-              options={permissionOptions}
-              value={props.permissionMode}
-            />
-          </RetroField>
-          {props.createError ? (
-            <div className="system-message system-message--danger" role="alert">
-              {props.createError}
-            </div>
-          ) : null}
-          <div className="onboarding-wizard__actions">
-            <RetroButton disabled={props.isCreating} icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
-              {t("onboarding.back")}
-            </RetroButton>
-            <RetroButton
-              disabled={props.isCreating}
-              icon={<Play size={16} aria-hidden="true" />}
-              onClick={props.onCreateCompany}
-              variant="primary"
-            >
-              {props.isCreating ? t("onboarding.creating") : t("menu.createCompany")}
-            </RetroButton>
-          </div>
-        </RetroPanel>
-        ) : null}
-      </Workspace>
-
-      {props.step === "vision" && props.blueprint ? (
-        <RetroPanel className="blueprint-band" title={t("onboarding.blueprintReview")}>
-          <div>
-            <span className="eyebrow">{t("onboarding.blueprintReview")}</span>
-            <h2>{props.blueprint.editable.companyName}</h2>
-          </div>
-          <div className="review-columns">
-            <div>
-              <h3>{t("onboarding.objectives")}</h3>
-              {props.blueprint.editable.objectives.map((objective) => (
-                <p key={objective}>{objective}</p>
-              ))}
-            </div>
-            <div>
-              <h3>{t("onboarding.firstTasks")}</h3>
-              {props.blueprint.editable.firstTasks.map((task) => (
-                <p key={task}>{task}</p>
-              ))}
-            </div>
-          </div>
-          <RetroButton
-            icon={<CheckCircle2 size={16} aria-hidden="true" />}
-            onClick={props.onActivateCompany}
-            variant="primary"
-          >
-            {t("menu.activateCompany")}
-          </RetroButton>
-        </RetroPanel>
-      ) : null}
-
-      <RetroStatus icon={<ShieldCheck size={16} aria-hidden="true" />}>
-        {props.permissionMode} {t("onboarding.executionPolicy")}
-      </RetroStatus>
-    </AppShell>
+          <RetroStatus icon={<ShieldCheck size={16} aria-hidden="true" />}>
+            {props.permissionMode} {t("onboarding.executionPolicy")}
+          </RetroStatus>
+    </ModalFrame>
   );
 }
