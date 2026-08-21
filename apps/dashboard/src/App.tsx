@@ -387,6 +387,11 @@ export default function App({ apiClient }: AppProps) {
     setBlueprint((current) => updateBlueprintTasksAfterReplan(current, response.sourceTask, response.createdTasks));
   }
 
+  async function handleRefreshTask(taskId: string) {
+    const response = await client.refreshTask(taskId);
+    setBlueprint((current) => updateBlueprintTask(current, response.task));
+  }
+
   function handleBackToSetup() {
     setView("onboarding");
   }
@@ -506,6 +511,7 @@ export default function App({ apiClient }: AppProps) {
         departments={blueprint.departments}
         menuBar={menuBar}
         objectives={blueprint.objectives}
+        onRefreshTask={handleRefreshTask}
         selectedCeoAgentId={selectedAgentId}
         tasks={blueprint.tasks}
       />,
@@ -582,6 +588,30 @@ function upsertReplanProposal(proposals: ReplanProposalSummary[], proposal: Repl
   }
 
   return proposals.map((current) => (current.id === proposal.id ? proposal : current));
+}
+
+function updateBlueprintTask(
+  blueprint: CreateCompanyResponse | null,
+  nextTask: TaskSummary,
+): CreateCompanyResponse | null {
+  if (!blueprint) {
+    return blueprint;
+  }
+
+  return {
+    ...blueprint,
+    tasks: blueprint.tasks.map((task) =>
+      task.id === nextTask.id
+        ? {
+            ...task,
+            ...nextTask,
+            failureReason: nextTask.failureReason,
+            failureMessage: nextTask.failureMessage,
+            dependencyNote: nextTask.dependencyNote,
+          }
+        : task,
+    ),
+  };
 }
 
 function updateBlueprintTasksAfterReplan(
@@ -669,17 +699,21 @@ function updateBlueprintTaskStatus(blueprint: CreateCompanyResponse | null, even
     return {
       ...task,
       status: nextStatus ?? task.status,
-      failureReason: event.failureReason ?? (event.type === "task_started" ? undefined : task.failureReason),
-      failureMessage: event.failureMessage ?? (event.type === "task_started" ? undefined : task.failureMessage),
+      failureReason: event.failureReason ?? (clearsTaskFailure(event.type) ? undefined : task.failureReason),
+      failureMessage: event.failureMessage ?? (clearsTaskFailure(event.type) ? undefined : task.failureMessage),
       executionProfileName: event.executionProfileName ?? task.executionProfileName,
       requestedTimeoutMs: event.requestedTimeoutMs ?? task.requestedTimeoutMs,
       effectiveTimeoutMs: event.effectiveTimeoutMs ?? task.effectiveTimeoutMs,
-      dependencyNote: event.dependencyNote ?? (event.type === "task_started" ? undefined : task.dependencyNote),
+      dependencyNote: event.dependencyNote ?? (clearsTaskFailure(event.type) ? undefined : task.dependencyNote),
       artifactWorkspacePath: event.artifactWorkspacePath ?? task.artifactWorkspacePath,
     };
   });
 
   return changed ? { ...blueprint, tasks } : blueprint;
+}
+
+function clearsTaskFailure(eventType: string): boolean {
+  return eventType === "task_started" || eventType === "dependency_ready";
 }
 
 function hasTaskSummaryUpdate(event: ServerEvent) {

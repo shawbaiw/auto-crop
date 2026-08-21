@@ -7,6 +7,7 @@ import type { PolicyMode } from "../policies/policy";
 import { createCompany } from "../runtime/createCompany";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
+import { refreshTaskDependencyState } from "../runtime/taskRefresh";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
 
 export type ApiServerOptions = {
@@ -181,6 +182,27 @@ async function routeRequest(
     const taskId = cancelMatch[1];
     options.repositories.updateTaskStatus(taskId, "cancelled");
     sendJson(response, 200, { task: options.repositories.getTask(taskId) });
+    return;
+  }
+
+  const refreshTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/refresh$/);
+  if (method === "POST" && refreshTaskMatch) {
+    const result = refreshTaskDependencyState({
+      repositories: options.repositories,
+      taskId: refreshTaskMatch[1],
+      now: options.now,
+      createId: options.createId,
+    });
+    const dependencies = options.repositories.listTaskDependencies(result.task.id);
+    const event = summarizeTaskEvent(result.event);
+    events.publish(event);
+    sendJson(response, 200, {
+      task: summarizeTask(
+        result.task,
+        dependencies.map((dependency) => dependency.dependsOnTaskId),
+      ),
+      event,
+    });
     return;
   }
 

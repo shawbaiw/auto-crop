@@ -303,6 +303,44 @@ describe("Dashboard App", () => {
     expect(await screen.findByText("Create landing page / needs replanning")).toBeInTheDocument();
   });
 
+  it("refreshes a blocked task from the Department Workspace", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          status: "blocked",
+          failureReason: "dependency_failed",
+          dependencyNote: "Blocked by failed dependency: Write brief.",
+        },
+      ],
+    }));
+    api.refreshTask = vi.fn(async () => ({
+      task: {
+        ...created.tasks[0],
+        status: "queued",
+      },
+      event: {
+        type: "dependency_ready",
+        taskId: "task_1",
+        status: "queued",
+        message: "Task refreshed: Create landing page is queued because dependencies are ready.",
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    expect(await screen.findByText("Create landing page / blocked · dependency_failed · Blocked by failed dependency: Write brief.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Refresh Create landing page" }));
+
+    expect(api.refreshTask).toHaveBeenCalledWith("task_1");
+    expect(await screen.findByText("Create landing page / queued")).toBeInTheDocument();
+  });
+
   it("shows agent activity on a dedicated Company Operations page", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -945,6 +983,17 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
             createdAt: "2026-08-17T00:00:00.000Z",
           },
         ],
+      };
+    },
+    async refreshTask(taskId) {
+      return {
+        task: createCompanyResponse().tasks.find((task) => task.id === taskId) ?? createCompanyResponse().tasks[0],
+        event: {
+          type: "dependency_ready",
+          taskId,
+          status: "queued",
+          message: "Task refreshed.",
+        },
       };
     },
     async createReplanProposal() {

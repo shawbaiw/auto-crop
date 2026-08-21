@@ -137,6 +137,7 @@ export type ApiClient = {
   activateCompany(companyId: string): Promise<{ company: CompanySummary }>;
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
+  refreshTask(taskId: string): Promise<{ task: TaskSummary; event: ServerEvent }>;
   createReplanProposal(taskId: string): Promise<{ proposal: ReplanProposalSummary }>;
   confirmReplanProposal(proposalId: string): Promise<{
     proposal: ReplanProposalSummary;
@@ -166,6 +167,9 @@ export function createApiClient(baseUrl = ""): ApiClient {
     },
     async getCompanyReviews(companyId) {
       return getJson(`${baseUrl}/api/companies/${companyId}/reviews`);
+    },
+    async refreshTask(taskId) {
+      return postJson(`${baseUrl}/api/tasks/${taskId}/refresh`, {});
     },
     async createReplanProposal(taskId) {
       return postJson(`${baseUrl}/api/tasks/${taskId}/replan-proposals`, {});

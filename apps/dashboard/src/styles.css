@@ -440,6 +440,18 @@ h3 {
   gap: 8px;
 }
 
+.role-summary .task-action-list {
+  display: grid;
+  gap: 8px;
+}
+
+.task-action-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .operations-grid {
   grid-template-columns: 1.25fr 1fr 1fr;
 }

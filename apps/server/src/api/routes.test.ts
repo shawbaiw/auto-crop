@@ -210,6 +210,59 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("refreshes a blocked task after upstream dependency recovery", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const producerTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
+    fixture.repositories.createTaskDependency({ taskId: consumerTask.id, dependsOnTaskId: producerTask.id });
+    fixture.repositories.updateTaskStatus(producerTask.id, "failed");
+    fixture.repositories.updateTaskStatus(consumerTask.id, "blocked");
+    fixture.repositories.updateTaskExecutionSummary(consumerTask.id, {
+      latestFailureReason: "dependency_failed",
+      latestFailureMessage: "Task blocked by failed dependency.",
+      dependencyNote: `Blocked by failed dependency: ${producerTask.title}.`,
+    });
+    fixture.repositories.updateTaskStatus(producerTask.id, "review");
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: producerTask.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Recovered proof.",
+      verifiedAt: null,
+    });
+
+    const refreshed = await postJson<{
+      task: { id: string; status: string; failureReason?: string; dependencyNote?: string };
+      event: { type: string; status: string };
+    }>(`${fixture.baseUrl}/api/tasks/${consumerTask.id}/refresh`, {});
+
+    expect(refreshed.task).toMatchObject({
+      id: consumerTask.id,
+      status: "queued",
+    });
+    expect(refreshed.task.failureReason).toBeUndefined();
+    expect(refreshed.task.dependencyNote).toBeUndefined();
+    expect(refreshed.event).toMatchObject({
+      type: "dependency_ready",
+      status: "queued",
+    });
+
+    const state = await getJson<{ activity: Array<{ type: string; taskId?: string }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(state.activity).toContainEqual(expect.objectContaining({ type: "dependency_ready", taskId: consumerTask.id }));
+
+    await fixture.close();
+  });
+
   it("uses the selected CEO agent to generate replan proposals through the API", async () => {
     const fixture = await startFixtureServer({
       plannerOutput: [

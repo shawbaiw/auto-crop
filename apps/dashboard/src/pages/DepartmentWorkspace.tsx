@@ -1,4 +1,4 @@
-import { Building2, ClipboardCheck, Crown, ListChecks } from "lucide-react";
+import { Building2, ClipboardCheck, Crown, ListChecks, RefreshCcw } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
@@ -10,7 +10,7 @@ import type {
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
-import { RetroBadge, RetroListRow, RetroPanel } from "../ui/retro";
+import { RetroBadge, RetroButton, RetroListRow, RetroPanel } from "../ui/retro";
 import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 
 export type DepartmentWorkspaceProps = {
@@ -21,6 +21,7 @@ export type DepartmentWorkspaceProps = {
   objectives: ObjectiveSummary[];
   selectedCeoAgentId: string;
   tasks: TaskSummary[];
+  onRefreshTask?: (taskId: string) => void;
 };
 
 const ceoRoleId = "ceo";
@@ -31,6 +32,7 @@ export function DepartmentWorkspace({
   departments,
   menuBar,
   objectives,
+  onRefreshTask,
   selectedCeoAgentId,
   tasks,
 }: DepartmentWorkspaceProps) {
@@ -86,11 +88,9 @@ export function DepartmentWorkspace({
                   ]}
                 />
                 <p>{selectedDepartment.responsibility}</p>
-                <div>
+                <div className="task-action-list">
                   {(tasksByDepartment.get(selectedDepartment.id) ?? []).map((task) => (
-                    <RetroBadge key={task.id} tone="signal">
-                      {task.title} / {formatTaskStatus(task, t)}
-                    </RetroBadge>
+                    <TaskStatusAction key={task.id} onRefreshTask={onRefreshTask} task={task} />
                   ))}
                 </div>
                 <p className="muted">{t("department.chatLater")}</p>
@@ -112,7 +112,12 @@ export function DepartmentWorkspace({
                 </div>
                 <div>
                   <h3>{t("department.firstTasks")}</h3>
-                  <VideotexLog emptyMessage={t("department.noTasks")} rows={tasks.map((task) => `${task.title} / ${formatTaskStatus(task, t)}`)} />
+                  <div className="task-action-list">
+                    {tasks.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
+                    {tasks.map((task) => (
+                      <TaskStatusAction key={task.id} onRefreshTask={onRefreshTask} task={task} />
+                    ))}
+                  </div>
                 </div>
                 <p className="muted">{t("department.schedulerNote")}</p>
               </div>
@@ -122,4 +127,36 @@ export function DepartmentWorkspace({
       </Workspace>
     </AppShell>
   );
+}
+
+function TaskStatusAction({
+  onRefreshTask,
+  task,
+}: {
+  onRefreshTask?: (taskId: string) => void;
+  task: TaskSummary;
+}) {
+  const { t } = useLanguage();
+  const canRefresh = Boolean(onRefreshTask) && isRefreshableTask(task);
+
+  return (
+    <div className="task-action-row">
+      <RetroBadge tone={task.status === "blocked" || task.status === "failed" ? "danger" : "signal"}>
+        {task.title} / {formatTaskStatus(task, t)}
+      </RetroBadge>
+      {canRefresh ? (
+        <RetroButton
+          aria-label={`${t("department.refreshTask")} ${task.title}`}
+          icon={<RefreshCcw size={14} aria-hidden="true" />}
+          onClick={() => onRefreshTask?.(task.id)}
+        >
+          {t("department.refreshTask")}
+        </RetroButton>
+      ) : null}
+    </div>
+  );
+}
+
+function isRefreshableTask(task: TaskSummary): boolean {
+  return task.status === "blocked" || task.status === "failed" || task.status === "waiting_dependency";
 }
