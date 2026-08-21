@@ -1,11 +1,12 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { Company, Department, Objective, Proof, Task, TaskEvent } from "@auto-crop/core";
+import type { Company, Department, Objective, Proof, ReplanProposal, Task, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories, ReviewRecord } from "../db/repositories";
 import { EventStream } from "../events/sse";
 import type { PolicyMode } from "../policies/policy";
 import { createCompany } from "../runtime/createCompany";
 import { triggerKillSwitch } from "../runtime/killSwitch";
+import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 
 export type ApiServerOptions = {
   projectRoot: string;
@@ -182,6 +183,35 @@ async function routeRequest(
     return;
   }
 
+  const replanTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/replan-proposals$/);
+  if (method === "POST" && replanTaskMatch) {
+    const proposal = createReplanProposalForTask({
+      repositories: options.repositories,
+      taskId: replanTaskMatch[1],
+      now: options.now,
+      createId: options.createId,
+    });
+    sendJson(response, 201, { proposal: summarizeReplanProposal(proposal) });
+    return;
+  }
+
+  const confirmReplanMatch = url.pathname.match(/^\/api\/replan-proposals\/([^/]+)\/confirm$/);
+  if (method === "POST" && confirmReplanMatch) {
+    const result = confirmReplanProposal({
+      projectRoot: options.projectRoot,
+      repositories: options.repositories,
+      proposalId: confirmReplanMatch[1],
+      now: options.now,
+      createId: options.createId,
+    });
+    sendJson(response, 200, {
+      proposal: summarizeReplanProposal(result.proposal),
+      sourceTask: summarizeTask(result.sourceTask, []),
+      createdTasks: summarizeTasks(result.createdTasks, []),
+    });
+    return;
+  }
+
   const approvalMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)$/);
   if (method === "POST" && approvalMatch) {
     const body = await readJson<{ decision: "approved" | "denied" }>(request);
@@ -219,6 +249,7 @@ function buildCompanyState(company: Company, repositories: ReturnType<typeof cre
     tasks: summarizeTasks(tasks, repositories.listTaskDependenciesForCompany(company.id)),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
     reviews: repositories.listReviews(company.id).map(summarizeReview),
+    replanProposals: repositories.listReplanProposalsForCompany(company.id).map(summarizeReplanProposal),
     activity: repositories.listTaskEventsForCompany(company.id).map(summarizeTaskEvent),
     editable: {
       companyName: company.name,
@@ -265,7 +296,11 @@ function summarizeTasks(tasks: Task[], dependencies: Array<{ taskId: string; dep
     ]);
   }
 
-  return tasks.map((task) => ({
+  return tasks.map((task) => summarizeTask(task, dependenciesByTask.get(task.id) ?? []));
+}
+
+function summarizeTask(task: Task, dependsOnTaskIds: string[]) {
+  return {
     id: task.id,
     title: task.title,
     status: task.status,
@@ -280,8 +315,8 @@ function summarizeTasks(tasks: Task[], dependencies: Array<{ taskId: string; dep
     effectiveTimeoutMs: task.latestEffectiveTimeoutMs ?? undefined,
     dependencyNote: task.dependencyNote ?? undefined,
     artifactWorkspacePath: task.artifactWorkspacePath ?? undefined,
-    dependsOnTaskIds: dependenciesByTask.get(task.id) ?? [],
-  }));
+    dependsOnTaskIds,
+  };
 }
 
 function summarizeProof(proof: Proof) {
@@ -296,6 +331,19 @@ function summarizeProof(proof: Proof) {
 
 function summarizeReview(review: ReviewRecord) {
   return review;
+}
+
+function summarizeReplanProposal(proposal: ReplanProposal) {
+  return {
+    id: proposal.id,
+    companyId: proposal.companyId,
+    sourceTaskId: proposal.sourceTaskId,
+    status: proposal.status,
+    rationale: proposal.rationale,
+    replacementTasks: proposal.replacementTasks,
+    createdAt: proposal.createdAt,
+    confirmedAt: proposal.confirmedAt ?? undefined,
+  };
 }
 
 function summarizeTaskEvent(event: TaskEvent) {

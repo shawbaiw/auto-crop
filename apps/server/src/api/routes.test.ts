@@ -160,6 +160,54 @@ describe("API routes", () => {
     await firstChunk?.cancel();
     await fixture.close();
   });
+
+  it("creates and confirms replan proposals through the API", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
+    fixture.repositories.updateTaskStatus(sourceTask.id, "needs_replan");
+    fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
+      latestFailureReason: "needs_replan",
+      latestFailureMessage: "Task needs replanning.",
+    });
+    fixture.repositories.createTaskDependency({ taskId: consumerTask.id, dependsOnTaskId: sourceTask.id });
+
+    const proposed = await postJson<{
+      proposal: { id: string; sourceTaskId: string; status: string; replacementTasks: Array<{ title: string }> };
+    }>(`${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`, {});
+
+    expect(proposed.proposal).toMatchObject({
+      id: "replan_proposal_1",
+      sourceTaskId: sourceTask.id,
+      status: "proposed",
+    });
+    expect(proposed.proposal.replacementTasks).toHaveLength(3);
+
+    const state = await getJson<{ replanProposals: Array<{ id: string }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(state.replanProposals).toEqual([expect.objectContaining({ id: proposed.proposal.id })]);
+
+    const confirmed = await postJson<{
+      proposal: { status: string };
+      createdTasks: Array<{ id: string }>;
+    }>(`${fixture.baseUrl}/api/replan-proposals/${proposed.proposal.id}/confirm`, {});
+
+    expect(confirmed.proposal.status).toBe("confirmed");
+    expect(confirmed.createdTasks).toHaveLength(3);
+    expect(fixture.repositories.listTaskDependencies(consumerTask.id)).toEqual([
+      { taskId: consumerTask.id, dependsOnTaskId: confirmed.createdTasks[2]!.id },
+    ]);
+
+    await fixture.close();
+  });
 });
 
 async function startFixtureServer() {

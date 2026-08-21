@@ -1,10 +1,10 @@
-import { Activity, Building2, FileCheck2, ListChecks, ShieldAlert } from "lucide-react";
+import { Activity, Building2, FileCheck2, GitBranchPlus, ListChecks, ShieldAlert } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
-import type { CompanySummary, DepartmentSummary, ServerEvent, TaskSummary } from "../api/client";
+import type { CompanySummary, DepartmentSummary, ReplanProposalSummary, ServerEvent, TaskSummary } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage, type TranslationKey } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
-import { RetroPanel } from "../ui/retro";
+import { RetroButton, RetroPanel } from "../ui/retro";
 import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 
 export type CompanyOperationsProps = {
@@ -13,15 +13,32 @@ export type CompanyOperationsProps = {
   events: ServerEvent[];
   isPaused: boolean;
   menuBar?: ReactNode;
+  onConfirmReplanProposal(proposalId: string): void;
+  onCreateReplanProposal(taskId: string): void;
+  replanProposals: ReplanProposalSummary[];
   tasks: TaskSummary[];
 };
 
-export function CompanyOperations({ company, departments, events, isPaused, menuBar, tasks }: CompanyOperationsProps) {
+export function CompanyOperations({
+  company,
+  departments,
+  events,
+  isPaused,
+  menuBar,
+  onConfirmReplanProposal,
+  onCreateReplanProposal,
+  replanProposals,
+  tasks,
+}: CompanyOperationsProps) {
   const { t } = useLanguage();
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const activityRows = useMemo(
     () => events.map((event) => formatAgentActivityEvent(event, event.taskId ? tasksById.get(event.taskId) : undefined, t)),
     [events, tasksById, t],
+  );
+  const replanSourceTaskIds = useMemo(() => new Set(replanProposals.map((proposal) => proposal.sourceTaskId)), [replanProposals]);
+  const tasksAwaitingReplanProposal = tasks.filter(
+    (task) => task.status === "needs_replan" && !replanSourceTaskIds.has(task.id),
   );
   const taskCounts = countTaskStates(tasks);
 
@@ -65,6 +82,52 @@ export function CompanyOperations({ company, departments, events, isPaused, menu
               .filter((task) => task.status === "blocked" || task.status === "failed" || task.status === "needs_replan")
               .map((task) => `${task.title} / ${formatTaskStatus(task, t)}`)}
           />
+        </RetroPanel>
+      </Workspace>
+
+      <Workspace>
+        <RetroPanel icon={<GitBranchPlus size={18} aria-hidden="true" />} title={t("operations.replanProposals")}>
+          <div className="replan-proposals">
+            {tasksAwaitingReplanProposal.map((task) => (
+              <div className="replan-card" key={task.id}>
+                <p>
+                  {task.title} — {t("operations.replanAwaitingProposal")}
+                </p>
+                <RetroButton onClick={() => onCreateReplanProposal(task.id)} variant="primary">
+                  {t("operations.createReplanProposal")}
+                </RetroButton>
+              </div>
+            ))}
+
+            {replanProposals.length === 0 && tasksAwaitingReplanProposal.length === 0 ? (
+              <p className="muted">{t("operations.noReplanProposals")}</p>
+            ) : null}
+
+            {replanProposals.map((proposal) => {
+              const sourceTask = tasksById.get(proposal.sourceTaskId);
+              return (
+                <div className="replan-card" key={proposal.id}>
+                  <div className="replan-card__header">
+                    <p>
+                      {sourceTask?.title ?? t("operations.unknownTask")} — {proposal.rationale}
+                    </p>
+                    <span>{proposal.status}</span>
+                  </div>
+                  <VideotexLog
+                    emptyMessage={t("operations.noReplacementTasks")}
+                    rows={proposal.replacementTasks.map((task) => task.title)}
+                  />
+                  {proposal.status === "proposed" ? (
+                    <RetroButton onClick={() => onConfirmReplanProposal(proposal.id)} variant="primary">
+                      {t("operations.confirmReplan")}
+                    </RetroButton>
+                  ) : (
+                    <p className="muted">{t("operations.replanConfirmed")}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </RetroPanel>
       </Workspace>
 

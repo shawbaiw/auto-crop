@@ -7,6 +7,8 @@ import type {
   KeyResult,
   Objective,
   Proof,
+  ReplanProposal,
+  ReplanProposalStatus,
   Task,
   TaskDependency,
   TaskEvent,
@@ -276,6 +278,22 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapTaskDependency(row as TaskDependencyRow));
     },
 
+    replaceDependencyConsumers(previousDependsOnTaskId: string, nextDependsOnTaskId: string): void {
+      database
+        .prepare(
+          `UPDATE OR IGNORE task_dependencies
+           SET depends_on_task_id = ?
+           WHERE depends_on_task_id = ?`,
+        )
+        .run(nextDependsOnTaskId, previousDependsOnTaskId);
+      database
+        .prepare(
+          `DELETE FROM task_dependencies
+           WHERE depends_on_task_id = ?`,
+        )
+        .run(previousDependsOnTaskId);
+    },
+
     listTaskDependenciesForCompany(companyId: string): TaskDependency[] {
       const rows = database
         .prepare(
@@ -484,6 +502,50 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapReview(row as ReviewRow));
     },
 
+    createReplanProposal(proposal: ReplanProposal): void {
+      database
+        .prepare(
+          `INSERT INTO replan_proposals (
+            id, company_id, source_task_id, status, rationale, replacement_tasks, created_at, confirmed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          proposal.id,
+          proposal.companyId,
+          proposal.sourceTaskId,
+          proposal.status,
+          proposal.rationale,
+          JSON.stringify(proposal.replacementTasks),
+          proposal.createdAt,
+          proposal.confirmedAt,
+        );
+    },
+
+    getReplanProposal(id: string): ReplanProposal | null {
+      const row = database.prepare("SELECT * FROM replan_proposals WHERE id = ?").get(id);
+      return row ? mapReplanProposal(row as ReplanProposalRow) : null;
+    },
+
+    listReplanProposalsForCompany(companyId: string): ReplanProposal[] {
+      const rows = database
+        .prepare("SELECT * FROM replan_proposals WHERE company_id = ? ORDER BY created_at ASC, id ASC")
+        .all(companyId);
+      return rows.map((row) => mapReplanProposal(row as ReplanProposalRow));
+    },
+
+    listReplanProposalsForTask(taskId: string): ReplanProposal[] {
+      const rows = database
+        .prepare("SELECT * FROM replan_proposals WHERE source_task_id = ? ORDER BY created_at ASC, id ASC")
+        .all(taskId);
+      return rows.map((row) => mapReplanProposal(row as ReplanProposalRow));
+    },
+
+    updateReplanProposalStatus(id: string, status: ReplanProposalStatus, confirmedAt: string | null): void {
+      database
+        .prepare("UPDATE replan_proposals SET status = ?, confirmed_at = ? WHERE id = ?")
+        .run(status, confirmedAt, id);
+    },
+
     appendTaskEvent(event: TaskEvent): void {
       database
         .prepare(
@@ -624,6 +686,17 @@ type ReviewRow = {
   created_at: string;
 };
 
+type ReplanProposalRow = {
+  id: string;
+  company_id: string;
+  source_task_id: string;
+  status: ReplanProposal["status"];
+  rationale: string;
+  replacement_tasks: string;
+  created_at: string;
+  confirmed_at: string | null;
+};
+
 type TaskDependencyRow = {
   task_id: string;
   depends_on_task_id: string;
@@ -752,6 +825,19 @@ function mapReview(row: ReviewRow): ReviewRecord {
     summary: row.summary,
     reviewPath: row.review_path,
     createdAt: row.created_at,
+  };
+}
+
+function mapReplanProposal(row: ReplanProposalRow): ReplanProposal {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    sourceTaskId: row.source_task_id,
+    status: row.status,
+    rationale: row.rationale,
+    replacementTasks: JSON.parse(row.replacement_tasks) as ReplanProposal["replacementTasks"],
+    createdAt: row.created_at,
+    confirmedAt: row.confirmed_at,
   };
 }
 

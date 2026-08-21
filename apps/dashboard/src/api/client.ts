@@ -61,6 +61,25 @@ export type ReviewSummary = {
   createdAt: string;
 };
 
+export type ReplanReplacementTaskSummary = {
+  title: string;
+  description: string;
+  requiredCapabilities: string[];
+  proofSchemaId: string;
+  riskLevel: string;
+};
+
+export type ReplanProposalSummary = {
+  id: string;
+  companyId: string;
+  sourceTaskId: string;
+  status: string;
+  rationale: string;
+  replacementTasks: ReplanReplacementTaskSummary[];
+  createdAt: string;
+  confirmedAt?: string;
+};
+
 export type EditableBlueprint = {
   companyName: string;
   objectives: string[];
@@ -76,6 +95,7 @@ export type CreateCompanyResponse = {
   proof?: ProofSummary[];
   reviews?: ReviewSummary[];
   activity?: ServerEvent[];
+  replanProposals?: ReplanProposalSummary[];
 };
 
 export type ServerEvent = {
@@ -96,6 +116,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   proof: ProofSummary[];
   reviews: ReviewSummary[];
   activity: ServerEvent[];
+  replanProposals: ReplanProposalSummary[];
 };
 
 export type ApiClient = {
@@ -111,6 +132,12 @@ export type ApiClient = {
   activateCompany(companyId: string): Promise<{ company: CompanySummary }>;
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
+  createReplanProposal(taskId: string): Promise<{ proposal: ReplanProposalSummary }>;
+  confirmReplanProposal(proposalId: string): Promise<{
+    proposal: ReplanProposalSummary;
+    sourceTask: TaskSummary;
+    createdTasks: TaskSummary[];
+  }>;
   triggerKillSwitch(companyId: string): Promise<{ paused: boolean; company: CompanySummary }>;
   subscribeEvents(handler: (event: ServerEvent) => void): () => void;
 };
@@ -134,6 +161,12 @@ export function createApiClient(baseUrl = ""): ApiClient {
     },
     async getCompanyReviews(companyId) {
       return getJson(`${baseUrl}/api/companies/${companyId}/reviews`);
+    },
+    async createReplanProposal(taskId) {
+      return postJson(`${baseUrl}/api/tasks/${taskId}/replan-proposals`, {});
+    },
+    async confirmReplanProposal(proposalId) {
+      return postJson(`${baseUrl}/api/replan-proposals/${proposalId}/confirm`, {});
     },
     async triggerKillSwitch(companyId) {
       return postJson(`${baseUrl}/api/kill-switch`, { companyId });

@@ -5,8 +5,10 @@ import {
   type ApiClient,
   type CreateCompanyResponse,
   type ProofSummary,
+  type ReplanProposalSummary,
   type ReviewSummary,
   type ServerEvent,
+  type TaskSummary,
 } from "./api/client";
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
 import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
@@ -46,6 +48,7 @@ export default function App({ apiClient }: AppProps) {
   const [createError, setCreateError] = useState<string | null>(null);
   const [events, setEvents] = useState<ServerEvent[]>([]);
   const [proof, setProof] = useState<ProofSummary[]>([]);
+  const [replanProposals, setReplanProposals] = useState<ReplanProposalSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [isPaused, setIsPaused] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -70,6 +73,7 @@ export default function App({ apiClient }: AppProps) {
         setProof(response.proof);
         setReviews(response.reviews);
         setEvents(response.activity);
+        setReplanProposals(response.replanProposals);
         setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
         const restoredView = readCurrentView() ?? defaultCompanyView(response.company.status);
         setView(restoredView);
@@ -211,6 +215,7 @@ export default function App({ apiClient }: AppProps) {
     setCreateError(null);
     setBlueprint(null);
     setProof([]);
+    setReplanProposals([]);
     setReviews([]);
     setEvents([]);
     setDashboardFocusTarget(null);
@@ -224,6 +229,7 @@ export default function App({ apiClient }: AppProps) {
       });
       setBlueprint(response);
       setProof(response.proof ?? []);
+      setReplanProposals(response.replanProposals ?? []);
       setReviews(response.reviews ?? []);
       setEvents(response.activity ?? []);
       writeCurrentCompanyId(response.company.id);
@@ -370,6 +376,17 @@ export default function App({ apiClient }: AppProps) {
     });
   }
 
+  async function handleCreateReplanProposal(taskId: string) {
+    const response = await client.createReplanProposal(taskId);
+    setReplanProposals((current) => upsertReplanProposal(current, response.proposal));
+  }
+
+  async function handleConfirmReplanProposal(proposalId: string) {
+    const response = await client.confirmReplanProposal(proposalId);
+    setReplanProposals((current) => upsertReplanProposal(current, response.proposal));
+    setBlueprint((current) => updateBlueprintTasksAfterReplan(current, response.sourceTask, response.createdTasks));
+  }
+
   function handleBackToSetup() {
     setView("onboarding");
   }
@@ -503,6 +520,9 @@ export default function App({ apiClient }: AppProps) {
         events={events}
         isPaused={isPaused}
         menuBar={menuBar}
+        onConfirmReplanProposal={handleConfirmReplanProposal}
+        onCreateReplanProposal={handleCreateReplanProposal}
+        replanProposals={replanProposals}
         tasks={blueprint.tasks}
       />,
     );
@@ -553,6 +573,36 @@ export default function App({ apiClient }: AppProps) {
       step={onboardingStep}
     />,
   );
+}
+
+function upsertReplanProposal(proposals: ReplanProposalSummary[], proposal: ReplanProposalSummary): ReplanProposalSummary[] {
+  const exists = proposals.some((current) => current.id === proposal.id);
+  if (!exists) {
+    return [...proposals, proposal];
+  }
+
+  return proposals.map((current) => (current.id === proposal.id ? proposal : current));
+}
+
+function updateBlueprintTasksAfterReplan(
+  blueprint: CreateCompanyResponse | null,
+  sourceTask: TaskSummary,
+  createdTasks: TaskSummary[],
+): CreateCompanyResponse | null {
+  if (!blueprint) {
+    return blueprint;
+  }
+
+  const createdTaskIds = new Set(createdTasks.map((task) => task.id));
+  const existingTaskIds = new Set(blueprint.tasks.map((task) => task.id));
+  const tasks = [
+    ...blueprint.tasks
+      .filter((task) => !createdTaskIds.has(task.id))
+      .map((task) => (task.id === sourceTask.id ? { ...task, ...sourceTask } : task)),
+    ...createdTasks.filter((task) => !existingTaskIds.has(task.id)),
+  ];
+
+  return { ...blueprint, tasks };
 }
 
 function getInitialSkin(): PaletteId {
@@ -654,6 +704,8 @@ function taskStatusFromEvent(eventType: string) {
       return "failed";
     case "task_blocked":
       return "blocked";
+    case "task_needs_replan":
+      return "needs_replan";
     default:
       return null;
   }

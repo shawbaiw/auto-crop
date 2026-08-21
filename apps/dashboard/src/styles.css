@@ -465,6 +465,39 @@ h3 {
   padding-left: 12px;
 }
 
+.replan-proposals {
+  display: grid;
+  gap: 14px;
+}
+
+.replan-card {
+  border-left: 6px solid var(--accent-primary);
+  display: grid;
+  gap: 12px;
+  padding-left: 12px;
+}
+
+.replan-card__header {
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: space-between;
+}
+
+.replan-card__header p {
+  min-width: min(100%, 260px);
+}
+
+.replan-card__header span {
+  background: var(--titlebar);
+  color: var(--titlebar-ink);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 5px 8px;
+  text-transform: uppercase;
+}
+
 .blueprint-band {
   margin-top: 0;
 }

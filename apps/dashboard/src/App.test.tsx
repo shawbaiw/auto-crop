@@ -4,7 +4,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { ApiClient, ServerEvent } from "./api/client";
+import type { ApiClient, ReplanProposalSummary, ServerEvent } from "./api/client";
 
 describe("Dashboard App", () => {
   it("starts on the company-name step only", async () => {
@@ -370,6 +370,50 @@ describe("Dashboard App", () => {
     expect(screen.getByText("Needs replan · Create landing page — Task is too large for the current execution budget and needs to be split.")).toBeInTheDocument();
   });
 
+  it("shows and confirms replan proposals on the Company Operations page", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    api.createReplanProposal = vi.fn(async () => ({
+      proposal: createReplanProposalSummary(),
+    }));
+    api.confirmReplanProposal = vi.fn(async () => ({
+      proposal: { ...createReplanProposalSummary(), status: "confirmed", confirmedAt: "2026-08-17T00:01:00.000Z" },
+      sourceTask: { ...createCompanyResponse().tasks[0], status: "blocked", failureReason: "needs_replan" },
+      createdTasks: [
+        { ...createCompanyResponse().tasks[0], id: "task_2", title: "Plan smaller slice for Create landing page", status: "queued" },
+        { ...createCompanyResponse().tasks[0], id: "task_3", title: "Produce proof for Create landing page", status: "queued" },
+        { ...createCompanyResponse().tasks[0], id: "task_4", title: "Validate replacement output for Create landing page", status: "queued" },
+      ],
+    }));
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    await waitFor(() => expect(api.lastEventHandler).toBeDefined());
+    act(() => {
+      api.lastEventHandler?.({
+        type: "task_needs_replan",
+        taskId: "task_1",
+        status: "needs_replan",
+        failureReason: "needs_replan",
+        message: "Task needs replanning: Create landing page / exceeded long budget 10m.",
+      });
+    });
+
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+    await user.click(await screen.findByRole("button", { name: "Create Replan Proposal" }));
+
+    expect(await screen.findByText("Replan Proposals")).toBeInTheDocument();
+    expect(screen.getByText("Create landing page — Original task exceeded long budget.")).toBeInTheDocument();
+    expect(screen.getByText("Plan smaller slice for Create landing page")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Confirm Replan" }));
+
+    expect(api.confirmReplanProposal).toHaveBeenCalledWith("replan_proposal_1");
+    expect(await screen.findByText("Produce proof for Create landing page")).toBeInTheDocument();
+  });
+
   it("updates task status in the operating dashboard from SSE", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -652,6 +696,7 @@ describe("Dashboard App", () => {
           message: "Task failed: Create landing page / timeout after 10m.",
         },
       ],
+      replanProposals: created.replanProposals ?? [],
     }));
 
     try {
@@ -690,6 +735,7 @@ describe("Dashboard App", () => {
           message: "Task started: Create landing page (codex).",
         },
       ],
+      replanProposals: created.replanProposals ?? [],
     }));
 
     try {
@@ -775,6 +821,34 @@ function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>
       objectives: ["Validate first wedge"],
       firstTasks: ["Create landing page"],
     },
+    replanProposals: [],
+  };
+}
+
+function createReplanProposalSummary(): ReplanProposalSummary {
+  return {
+    id: "replan_proposal_1",
+    companyId: "company_1",
+    sourceTaskId: "task_1",
+    status: "proposed",
+    rationale: "Original task exceeded long budget.",
+    replacementTasks: [
+      {
+        title: "Plan smaller slice for Create landing page",
+        description: "Define a smaller slice.",
+        requiredCapabilities: ["writing", "research"],
+        proofSchemaId: "product-brief",
+        riskLevel: "low",
+      },
+      {
+        title: "Produce proof for Create landing page",
+        description: "Produce proof.",
+        requiredCapabilities: ["code", "frontend"],
+        proofSchemaId: "landing-page-file",
+        riskLevel: "medium",
+      },
+    ],
+    createdAt: "2026-08-17T00:00:00.000Z",
   };
 }
 
@@ -803,11 +877,13 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
       return createCompanyResponse();
     },
     async getCompanyState() {
+      const created = createCompanyResponse();
       return {
-        ...createCompanyResponse(),
+        ...created,
         proof: [],
         reviews: [],
         activity: [],
+        replanProposals: created.replanProposals ?? [],
       };
     },
     async activateCompany(companyId) {
@@ -844,6 +920,16 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
             createdAt: "2026-08-17T00:00:00.000Z",
           },
         ],
+      };
+    },
+    async createReplanProposal() {
+      return { proposal: createReplanProposalSummary() };
+    },
+    async confirmReplanProposal() {
+      return {
+        proposal: { ...createReplanProposalSummary(), status: "confirmed", confirmedAt: "2026-08-17T00:01:00.000Z" },
+        sourceTask: { ...createCompanyResponse().tasks[0], status: "blocked", failureReason: "needs_replan" },
+        createdTasks: [],
       };
     },
     async triggerKillSwitch(companyId) {

@@ -23,6 +23,7 @@ export type ProofType =
   | "deployment";
 export type AgentRunStatus = "queued" | "running" | "complete" | "failed" | "cancelled";
 export type ApprovalStatus = "pending" | "approved" | "denied";
+export type ReplanProposalStatus = "proposed" | "confirmed" | "dismissed";
 export type AgentFailureReason =
   | "timeout"
   | "agent_failed"
@@ -134,6 +135,25 @@ export type AgentRun = {
 export type TaskDependency = {
   taskId: string;
   dependsOnTaskId: string;
+};
+
+export type ReplanReplacementTask = {
+  title: string;
+  description: string;
+  requiredCapabilities: string[];
+  proofSchemaId: string;
+  riskLevel: RiskLevel;
+};
+
+export type ReplanProposal = {
+  id: string;
+  companyId: string;
+  sourceTaskId: string;
+  status: ReplanProposalStatus;
+  rationale: string;
+  replacementTasks: ReplanReplacementTask[];
+  createdAt: string;
+  confirmedAt: string | null;
 };
 
 export type TaskEvent = {
