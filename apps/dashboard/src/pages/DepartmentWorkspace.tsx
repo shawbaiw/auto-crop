@@ -64,6 +64,14 @@ export function DepartmentWorkspace({
   const [ceoIntakeDraft, setCeoIntakeDraft] = useState("");
   const selectedDepartment = departments.find((department) => department.id === selectedRoleId) ?? null;
   const selectedCeoAgent = agents.find((agent) => agent.id === selectedCeoAgentId) ?? null;
+  const departmentNamesById = useMemo(
+    () => new Map(departments.map((department) => [department.id, department.name])),
+    [departments],
+  );
+  const ceoPendingItems = useMemo(
+    () => getCeoPendingItems(tasks, departmentNamesById),
+    [departmentNamesById, tasks],
+  );
   const tasksByDepartment = useMemo(() => {
     const grouped = new Map(departments.map((department) => [department.id, [] as TaskSummary[]]));
     for (const task of tasks) {
@@ -113,6 +121,7 @@ export function DepartmentWorkspace({
                   departmentName={selectedDepartment.name}
                   draft={departmentDraft}
                   onDraftChange={setDepartmentDraft}
+                  onViewCeoPending={() => setSelectedRoleId(ceoRoleId)}
                   progressEvents={taskProgressEvents}
                   responsibility={selectedDepartment.responsibility}
                   tasks={tasksByDepartment.get(selectedDepartment.id) ?? []}
@@ -134,6 +143,7 @@ export function DepartmentWorkspace({
                   onDraftChange={setCeoIntakeDraft}
                   onRefreshTask={onRefreshTask}
                   onSubmit={onCreateCeoIntake}
+                  pendingItems={ceoPendingItems}
                   tasks={tasks}
                 />
                 <p className="muted">{t("department.schedulerNote")}</p>
@@ -144,6 +154,22 @@ export function DepartmentWorkspace({
       </Workspace>
     </AppShell>
   );
+}
+
+type CeoPendingItem = {
+  departmentName: string;
+  task: TaskSummary;
+  type: "review";
+};
+
+function getCeoPendingItems(tasks: TaskSummary[], departmentNamesById: Map<string, string>): CeoPendingItem[] {
+  return tasks
+    .filter((task) => task.taskKind !== "department_subtask" && task.status === "review")
+    .map((task) => ({
+      departmentName: departmentNamesById.get(task.departmentId) ?? task.departmentId,
+      task,
+      type: "review" as const,
+    }));
 }
 
 function departmentIcon(departmentName: string): ReactNode {
@@ -172,6 +198,7 @@ function CeoIntakeWorkspace({
   onDraftChange,
   onRefreshTask,
   onSubmit,
+  pendingItems,
   tasks,
 }: {
   draft: string;
@@ -180,6 +207,7 @@ function CeoIntakeWorkspace({
   onDraftChange: (value: string) => void;
   onRefreshTask?: (taskId: string) => void;
   onSubmit?: (body: string) => Promise<void> | void;
+  pendingItems: CeoPendingItem[];
   tasks: TaskSummary[];
 }) {
   const { t } = useLanguage();
@@ -187,11 +215,42 @@ function CeoIntakeWorkspace({
   return (
     <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
       <CeoIntakeFlows intakes={intakes} />
+      <CeoPendingQueue items={pendingItems} />
       <CeoBlueprintSummary objectives={objectives} onRefreshTask={onRefreshTask} tasks={tasks} />
       <div className="department-leader-report__spacer" aria-hidden="true" />
       <CeoIntakeMessageBox draft={draft} onDraftChange={onDraftChange} onSubmit={onSubmit} />
     </section>
   );
+}
+
+function CeoPendingQueue({ items }: { items: CeoPendingItem[] }) {
+  const { t } = useLanguage();
+
+  return (
+    <section className="ceo-pending-queue" aria-label={t("department.ceoPending")}>
+      <h3>{t("department.ceoPending")}</h3>
+      {items.length === 0 ? <p className="muted">{t("department.noCeoPending")}</p> : null}
+      {items.map((item) => (
+        <article className="ceo-pending-item" key={item.task.id}>
+          <div>
+            <p>{formatCeoPendingType(item, t)}</p>
+            <h4>{item.task.title}</h4>
+          </div>
+          <RetroButton aria-label={`${t("department.viewTask")} ${item.task.title}`}>
+            {t("department.viewTask")}
+          </RetroButton>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function formatCeoPendingType(item: CeoPendingItem, t: ReturnType<typeof useLanguage>["t"]): string {
+  if (item.type === "review") {
+    return `${t("department.ceoPendingReviewRequestFrom")} ${item.departmentName}`;
+  }
+
+  return item.departmentName;
 }
 
 function CeoBlueprintSummary({
@@ -338,6 +397,7 @@ function DepartmentLeaderReport({
   departmentName,
   draft,
   onDraftChange,
+  onViewCeoPending,
   progressEvents,
   responsibility,
   tasks,
@@ -346,6 +406,7 @@ function DepartmentLeaderReport({
   departmentName: string;
   draft: string;
   onDraftChange: (value: string) => void;
+  onViewCeoPending: () => void;
   progressEvents: TaskProgressEventSummary[];
   responsibility: string;
   tasks: TaskSummary[];
@@ -357,7 +418,12 @@ function DepartmentLeaderReport({
       <p className="department-leader-report__mission">
         <strong>{t("department.currentResponsibility")}:</strong> {responsibility}
       </p>
-      <DepartmentProgressFlows departmentId={departmentId} progressEvents={progressEvents} tasks={tasks} />
+      <DepartmentProgressFlows
+        departmentId={departmentId}
+        onViewCeoPending={onViewCeoPending}
+        progressEvents={progressEvents}
+        tasks={tasks}
+      />
       <div className="department-leader-report__spacer" aria-hidden="true" />
       <DepartmentMessageBox departmentName={departmentName} draft={draft} onDraftChange={onDraftChange} />
     </section>
@@ -366,10 +432,12 @@ function DepartmentLeaderReport({
 
 function DepartmentProgressFlows({
   departmentId,
+  onViewCeoPending,
   progressEvents,
   tasks,
 }: {
   departmentId: string;
+  onViewCeoPending: () => void;
   progressEvents: TaskProgressEventSummary[];
   tasks: TaskSummary[];
 }) {
@@ -393,7 +461,14 @@ function DepartmentProgressFlows({
             {flow.events.map((event) => (
               <li className={`department-progress-flow__step department-progress-flow__step--${event.status}`} key={event.id}>
                 <span aria-hidden="true">{progressMarker(event.status)}</span>
-                <p>{formatProgressLabel(event, flow.task.title, t)}</p>
+                <div className="department-progress-flow__content">
+                  <p>{formatProgressLabel(event, flow.task.title, t)}</p>
+                  {isCeoReviewProgressEvent(event) ? (
+                    <RetroButton className="department-progress-flow__action" onClick={onViewCeoPending}>
+                      {t("department.viewCeoPendingItem")}
+                    </RetroButton>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ol>
@@ -487,7 +562,7 @@ function formatProgressLabel(event: TaskProgressEventSummary, parentTaskTitle: s
     case "summarizing_proof":
       return t("department.flowSummarizingProof");
     case "awaiting_review":
-      return t("department.flowAwaitingReview");
+      return formatCeoReviewSubmittedLabel(parentTaskTitle, t);
     case "complete":
       return t("department.flowComplete");
     case "blocked":
@@ -507,7 +582,23 @@ function formatExecutingProgressLabel(label: string, parentTaskTitle: string, t:
 
   const [, , taskTitle, status] = match;
   const displayTitle = taskTitle.trim() || parentTaskTitle;
+  if (status === "review") {
+    return formatCeoReviewSubmittedLabel(displayTitle, t);
+  }
+
   return `${t("department.flowTask")} (${displayTitle}) ${formatFlowTaskStatus(status, t)}`;
+}
+
+function formatCeoReviewSubmittedLabel(title: string, t: ReturnType<typeof useLanguage>["t"]): string {
+  return `${t("department.flowTask")} (${title}) ${t("department.flowSubmittedToCeoReview")}`;
+}
+
+function isCeoReviewProgressEvent(event: TaskProgressEventSummary): boolean {
+  if (event.step === "awaiting_review") {
+    return true;
+  }
+
+  return event.step === "executing" && /\sreview$/i.test(event.label);
 }
 
 function formatFlowTaskStatus(status: string, t: ReturnType<typeof useLanguage>["t"]): string {

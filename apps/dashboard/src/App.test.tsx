@@ -273,6 +273,60 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("button", { name: /send engineering/i })).toBeDisabled();
   });
 
+  it("routes department review-ready tasks to CEO Pending without approval controls", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => {
+      const created = createCompanyResponse();
+      const taskProgressEvents = created.taskProgressEvents ?? [];
+      return {
+        ...created,
+        tasks: [
+          {
+            ...created.tasks[0],
+            title: "Validate the prototype",
+            status: "review" as const,
+          },
+        ],
+        taskProgressEvents: [
+          ...taskProgressEvents.slice(0, 2),
+          {
+            id: "task_progress_3",
+            companyId: "company_1",
+            departmentId: "department_1",
+            parentTaskId: "task_1",
+            subjectTaskId: "task_1",
+            step: "awaiting_review" as const,
+            status: "current" as const,
+            label: "Awaiting review",
+            detail: null,
+            createdAt: "2026-08-17T00:02:00.000Z",
+          },
+        ],
+      };
+    });
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(leaderReport).toHaveTextContent("Task (Validate the prototype) submitted to CEO Office for review");
+    expect(within(leaderReport).getByRole("button", { name: "View CEO Pending Item" })).toBeInTheDocument();
+    expect(leaderReport).not.toHaveTextContent("awaiting review");
+
+    await user.click(within(leaderReport).getByRole("button", { name: "View CEO Pending Item" }));
+
+    expect(screen.getByRole("button", { name: "CEO" })).toHaveAttribute("aria-pressed", "true");
+    const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
+    expect(ceoPending).toHaveTextContent("Review request from Engineering");
+    expect(ceoPending).toHaveTextContent("Validate the prototype");
+    expect(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" })).toBeInTheDocument();
+    expect(within(ceoPending).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
+    expect(within(ceoPending).queryByRole("button", { name: /return/i })).not.toBeInTheDocument();
+  });
+
   it("returns to setup from workspace views without showing the generated blueprint", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();

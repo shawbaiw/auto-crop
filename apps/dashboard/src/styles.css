@@ -462,6 +462,35 @@ h3 {
   gap: 12px;
 }
 
+.ceo-pending-queue {
+  display: grid;
+  gap: 10px;
+}
+
+.ceo-pending-item {
+  align-items: center;
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+.ceo-pending-item p {
+  color: var(--accent-secondary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.ceo-pending-item h4 {
+  font-size: 0.86rem;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
 .department-overview {
   display: grid;
   gap: 10px;
@@ -590,12 +619,23 @@ h3 {
   color: var(--ink);
 }
 
-.department-progress-flow__step > p {
+.department-progress-flow__content {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.department-progress-flow__content > p {
   font-size: 0.86rem;
   font-weight: 700;
   line-height: 1.35;
   padding-top: 5px;
   text-transform: uppercase;
+}
+
+.department-progress-flow__action {
+  min-height: 30px;
 }
 
 .department-message-box__header,

@@ -15,11 +15,13 @@
 - **Session Policy**: Runtime rules that decide whether an Agent Run is eligible to attempt an Agent Session. Session Policy is separate from Proof Schema, which defines the required deliverable.
 - **Task Deliverable**: The artifact a task must produce to be eligible for review. A Task Deliverable must be represented by Proof that matches the task's proof schema.
 - **Proof**: A runtime-recorded artifact, command output, URL, screenshot, diff, deployment, or other accepted evidence that satisfies a task's proof schema. Tasks without Proof are not complete, even when the agent produced useful Agent Output.
+- **CEO Review Request**: A department-submitted request for CEO Office to approve or return work after execution. Departments can submit and track CEO Review Requests, but CEO Office owns the approve/return decision. A checkpoint CEO Review Request returns the task to execution when approved; a completion CEO Review Request completes the task when approved.
 - **Partial Output**: Useful Agent Output left behind by a failed or timed-out task. Partial Output should remain visible for diagnosis and follow-up, but it does not make the task complete.
 - **Task Execution Profile**: A task execution contract that sets the expected time budget and failure explanation style for a task based on its deliverable shape. It is part of how Auto-Crop decides how long an agent should be allowed to work before the run is considered failed.
 - **Effective Timeout**: The final timeout budget actually enforced for an Agent Run after Task Execution Profile and environment override rules are resolved. _Avoid_: displayed budget, requested timeout.
 - **Task Execution Summary**: The latest durable outcome facts shown on a task, including failure reason, failure message, execution profile, and Effective Timeout. _Avoid_: activity text, run log.
 - **Task Dependency**: A relationship where one task can only run after another task has produced review-ready Proof. _Avoid_: task order, follow-up note.
+- **CEO Reassignment Request**: A department-submitted request asking CEO Office to clarify, split, replan, or reassign a task before or during execution. It is not a CEO Review Request because no Task Deliverable is being approved.
 - **Consumable Proof**: Proof that is recorded by the runtime and can be handed to downstream tasks as input. _Avoid_: promising stdout, informal result.
 - **Dependency Readiness**: The scheduler decision that all upstream Task Dependencies have Consumable Proof and the downstream task may start. _Avoid_: dependency status check.
 - **Bounded Recovery**: Automatic task recovery that changes execution conditions and has a hard stop, such as escalating an Effective Timeout before requiring replanning. _Avoid_: infinite retry.
