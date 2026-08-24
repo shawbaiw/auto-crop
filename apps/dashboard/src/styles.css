@@ -612,12 +612,23 @@ h3 {
 
 .department-message-box .retro-textarea {
   min-height: 116px;
+  padding-bottom: 56px;
+  padding-right: 112px;
+  width: 100%;
 }
 
-.department-message-box__send:disabled {
-  background: var(--surface-alt);
-  color: color-mix(in srgb, var(--ink) 58%, var(--surface));
-  cursor: not-allowed;
+.department-message-box__composer {
+  display: grid;
+  position: relative;
+}
+
+.department-message-box__send {
+  background: color-mix(in srgb, var(--surface) 70%, var(--border));
+  bottom: 10px;
+  box-shadow: none;
+  min-height: 34px;
+  position: absolute;
+  right: 10px;
 }
 
 .department-message-box__field {
@@ -625,11 +636,17 @@ h3 {
   gap: 8px;
 }
 
-.department-message-box__field > span {
+.department-message-box__field > label {
   color: var(--accent-secondary);
   font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.department-message-box__send:disabled {
+  background: color-mix(in srgb, var(--surface) 78%, var(--border));
+  color: color-mix(in srgb, var(--ink) 58%, var(--surface));
+  cursor: not-allowed;
 }
 
 .task-action-row {

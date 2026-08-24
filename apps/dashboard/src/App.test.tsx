@@ -235,6 +235,9 @@ describe("Dashboard App", () => {
     await user.type(screen.getByRole("textbox", { name: "Question, material, or task" }), "Use this launch copy.");
     expect(screen.getByRole("button", { name: /send engineering/i })).toHaveTextContent("Send");
     expect(screen.getByRole("button", { name: /send engineering/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /send engineering/i }).closest(".department-message-box__composer")).toContainElement(
+      screen.getByRole("textbox", { name: "Question, material, or task" }),
+    );
     expect(screen.queryByRole("button", { name: "Send to CEO Office" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /send engineering/i }));
     expect(screen.getByText("Input staged for the department agent.")).toBeInTheDocument();
