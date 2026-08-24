@@ -425,6 +425,10 @@ h3 {
   min-height: 0;
 }
 
+.department-workspace__main > .retro-panel {
+  grid-column: 1 / -1;
+}
+
 .app-shell--department-workspace .department-workspace,
 .app-shell--department-workspace .department-workspace > .retro-panel,
 .app-shell--department-workspace .department-workspace__main > .retro-panel {
