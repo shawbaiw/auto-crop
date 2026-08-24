@@ -342,6 +342,8 @@ function CeoTaskReviewDetail({
     setSubmitting(true);
     try {
       await onDecision({ taskId: item.task.id, decision: "approve" });
+    } catch (decisionError) {
+      setError((decisionError as Error).message);
     } finally {
       setSubmitting(false);
     }
@@ -366,6 +368,8 @@ function CeoTaskReviewDetail({
         returnReason,
         note: note.trim() || undefined,
       });
+    } catch (decisionError) {
+      setError((decisionError as Error).message);
     } finally {
       setSubmitting(false);
     }

@@ -8,9 +8,7 @@ import type { ApiClient, ReplanProposalSummary, ServerEvent } from "./api/client
 
 describe("Dashboard App", () => {
   it("starts on the company-name step only", async () => {
-    const api = createMockApiClient() as ReturnType<typeof createMockApiClient> & {
-      createCeoReviewDecision: ReturnType<typeof vi.fn>;
-    };
+    const api = createMockApiClient();
 
     render(<App apiClient={api} />);
 
@@ -26,9 +24,7 @@ describe("Dashboard App", () => {
   });
 
   it("opens a recent company when browser storage has no current company", async () => {
-    const api = createMockApiClient() as ReturnType<typeof createMockApiClient> & {
-      createCeoReviewDecision: ReturnType<typeof vi.fn>;
-    };
+    const api = createMockApiClient();
     const user = userEvent.setup();
     api.listCompanies = vi.fn(async () => ({
       companies: [
@@ -446,6 +442,28 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("region", { name: "Department Leader Report" })).toHaveTextContent(
       "CEO Office returned this, waiting for the department to rework it.",
     );
+  });
+
+  it("shows CEO review API errors instead of silently doing nothing", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createReviewReadyCompanyResponse());
+    api.createCeoReviewDecision = vi.fn(async () => {
+      throw new Error("Request failed: 404");
+    });
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
+    await user.click(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" }));
+    const taskReview = screen.getByRole("region", { name: "Task Review" });
+    await user.selectOptions(within(taskReview).getByLabelText("Return reason"), "needs_changes");
+    await user.type(within(taskReview).getByLabelText("Next step note"), "Add proof.");
+    await user.click(within(taskReview).getByRole("button", { name: "Return to department" }));
+
+    expect(await within(taskReview).findByRole("alert")).toHaveTextContent("Request failed: 404");
+    expect(within(taskReview).getByRole("button", { name: "Return to department" })).toBeEnabled();
   });
 
   it("returns to setup from workspace views without showing the generated blueprint", async () => {
