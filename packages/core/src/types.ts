@@ -37,6 +37,8 @@ export type CeoIntakeStatus =
   | "dispatching"
   | "dispatched"
   | "failed";
+export type CeoReviewDecisionKind = "approve" | "return";
+export type CeoReviewReturnReason = "needs_changes" | "unclear_task_definition" | "scope_too_large" | "wrong_direction";
 export type AgentFailureReason =
   | "timeout"
   | "agent_failed"
@@ -50,6 +52,7 @@ export type AgentFailureReason =
 export type TaskEventType =
   | "task_started"
   | "task_review"
+  | "ceo_review_decision"
   | "task_failed"
   | "task_blocked"
   | "task_warning"
@@ -93,6 +96,21 @@ export type CeoIntake = {
   status: CeoIntakeStatus;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CeoReviewDecision = {
+  id: string;
+  companyId: string;
+  taskId: string;
+  departmentId: string;
+  decision: CeoReviewDecisionKind;
+  returnReason: CeoReviewReturnReason | null;
+  note: string | null;
+  proofId: string | null;
+  proofType: ProofType | null;
+  proofUri: string | null;
+  actor: string;
+  createdAt: string;
 };
 
 export type Department = {

@@ -307,6 +307,119 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("records CEO review decisions and applies approve or return effects", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const [approvedTask, returnedTask] = fixture.repositories.fetchQueuedTasks(2);
+    expect(approvedTask).toBeDefined();
+    expect(returnedTask).toBeDefined();
+    fixture.repositories.updateTaskStatus(approvedTask!.id, "review");
+    fixture.repositories.updateTaskStatus(returnedTask!.id, "review");
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: approvedTask!.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Playable prototype exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+
+    const approved = await postJson<{
+      decision: { id: string; taskId: string; decision: string; proofId?: string };
+      task: { id: string; status: string };
+    }>(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      taskId: approvedTask!.id,
+      decision: "approve",
+      note: "Looks good.",
+    });
+
+    expect(approved.decision).toMatchObject({
+      id: "ceo_review_decision_1",
+      taskId: approvedTask!.id,
+      decision: "approve",
+      proofId: "proof_1",
+    });
+    expect(approved.task.status).toBe("complete");
+    expect(fixture.repositories.getTask(approvedTask!.id)?.status).toBe("complete");
+
+    const returned = await postJson<{
+      decision: { id: string; taskId: string; decision: string; returnReason: string; note: string };
+      task: { id: string; status: string };
+      progressEvent: { label: string; detail: string };
+    }>(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      taskId: returnedTask!.id,
+      decision: "return",
+      returnReason: "needs_changes",
+      note: "Add proof and explain the next step.",
+    });
+
+    expect(returned.decision).toMatchObject({
+      id: "ceo_review_decision_2",
+      taskId: returnedTask!.id,
+      decision: "return",
+      returnReason: "needs_changes",
+      note: "Add proof and explain the next step.",
+    });
+    expect(returned.task.status).toBe("queued");
+    expect(returned.progressEvent.label).toBe("CEO Office returned this, waiting for the department to rework it.");
+    expect(returned.progressEvent.detail).toContain("Add proof and explain the next step.");
+
+    const stale = await fetch(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: returnedTask!.id, decision: "approve" }),
+    });
+    expect(stale.status).toBe(409);
+
+    const state = await getJson<{
+      ceoReviewDecisions: Array<{ id: string; taskId: string; decision: string; returnReason?: string }>;
+      keyResults: Array<{ currentValue: string; status: string }>;
+      taskProgressEvents: Array<{ label: string; detail?: string }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    expect(state.ceoReviewDecisions).toEqual([
+      expect.objectContaining({ id: "ceo_review_decision_1", taskId: approvedTask!.id, decision: "approve" }),
+      expect.objectContaining({ id: "ceo_review_decision_2", taskId: returnedTask!.id, decision: "return", returnReason: "needs_changes" }),
+    ]);
+    expect(state.keyResults).toContainEqual(expect.objectContaining({ currentValue: "proof_received", status: "met" }));
+    expect(state.taskProgressEvents).toContainEqual(
+      expect.objectContaining({ label: "CEO Office returned this, waiting for the department to rework it." }),
+    );
+
+    await fixture.close();
+  });
+
+  it("rejects CEO approval when a review task has no proof", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    fixture.repositories.updateTaskStatus(task.id, "review");
+
+    const response = await fetch(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: task.id, decision: "approve" }),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/no checkable proof/i);
+    expect(fixture.repositories.getTask(task.id)?.status).toBe("review");
+
+    await fixture.close();
+  });
+
   it("uses the selected CEO agent to generate replan proposals through the API", async () => {
     const fixture = await startFixtureServer({
       plannerOutput: [

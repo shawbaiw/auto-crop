@@ -35,6 +35,7 @@ export const agentFailureReasonSchema = z.enum([
 export const taskEventTypeSchema = z.enum([
   "task_started",
   "task_review",
+  "ceo_review_decision",
   "task_failed",
   "task_blocked",
   "task_warning",
@@ -72,6 +73,14 @@ export const ceoIntakeStatusSchema = z.enum([
   "dispatching",
   "dispatched",
   "failed",
+]);
+
+export const ceoReviewDecisionKindSchema = z.enum(["approve", "return"]);
+export const ceoReviewReturnReasonSchema = z.enum([
+  "needs_changes",
+  "unclear_task_definition",
+  "scope_too_large",
+  "wrong_direction",
 ]);
 
 export const proofTypeSchema = z.enum([

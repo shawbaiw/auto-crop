@@ -8,7 +8,9 @@ import type { ApiClient, ReplanProposalSummary, ServerEvent } from "./api/client
 
 describe("Dashboard App", () => {
   it("starts on the company-name step only", async () => {
-    const api = createMockApiClient();
+    const api = createMockApiClient() as ReturnType<typeof createMockApiClient> & {
+      createCeoReviewDecision: ReturnType<typeof vi.fn>;
+    };
 
     render(<App apiClient={api} />);
 
@@ -24,7 +26,9 @@ describe("Dashboard App", () => {
   });
 
   it("opens a recent company when browser storage has no current company", async () => {
-    const api = createMockApiClient();
+    const api = createMockApiClient() as ReturnType<typeof createMockApiClient> & {
+      createCeoReviewDecision: ReturnType<typeof vi.fn>;
+    };
     const user = userEvent.setup();
     api.listCompanies = vi.fn(async () => ({
       companies: [
@@ -325,6 +329,123 @@ describe("Dashboard App", () => {
     expect(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" })).toBeInTheDocument();
     expect(within(ceoPending).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
     expect(within(ceoPending).queryByRole("button", { name: /return/i })).not.toBeInTheDocument();
+  });
+
+  it("opens CEO task review details and approves proof-backed completion review items", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => ({
+      ...createReviewReadyCompanyResponse(),
+      proof: [
+        {
+          id: "proof_1",
+          taskId: "task_1",
+          type: "file",
+          uri: "proof.md",
+          summary: "Prototype is playable locally.",
+        },
+      ],
+    }));
+    api.createCeoReviewDecision = vi.fn(async () => ({
+      decision: {
+        id: "ceo_review_decision_1",
+        taskId: "task_1",
+        decision: "approve" as const,
+        note: "Looks good.",
+        proofId: "proof_1",
+        createdAt: "2026-08-17T00:03:00.000Z",
+      },
+      task: {
+        ...createCompanyResponse().tasks[0],
+        status: "complete" as const,
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
+    await user.click(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" }));
+
+    const taskReview = screen.getByRole("region", { name: "Task Review" });
+    expect(within(taskReview).getByRole("heading", { name: "Task Review" })).toBeInTheDocument();
+    expect(within(taskReview).getByText("This task can pass now because the department submitted checkable proof.")).toBeInTheDocument();
+    expect(within(taskReview).getByText("Prototype is playable locally.")).toBeInTheDocument();
+    expect(within(taskReview).getByText("file / proof.md")).toBeInTheDocument();
+
+    await user.click(within(taskReview).getByRole("button", { name: "Approve, mark complete" }));
+
+    expect(api.createCeoReviewDecision).toHaveBeenCalledWith({
+      taskId: "task_1",
+      decision: "approve",
+    });
+    expect(await screen.findByText("CEO Office approved the task.")).toBeInTheDocument();
+    expect(screen.queryByText("Validate the prototype")).not.toBeInTheDocument();
+  });
+
+  it("blocks missing-proof CEO approval and returns tasks with a reason and next step", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createReviewReadyCompanyResponse());
+    api.createCeoReviewDecision = vi.fn(async () => ({
+      decision: {
+        id: "ceo_review_decision_1",
+        taskId: "task_1",
+        decision: "return" as const,
+        returnReason: "needs_changes" as const,
+        note: "Add proof and explain the next step.",
+        createdAt: "2026-08-17T00:03:00.000Z",
+      },
+      task: {
+        ...createCompanyResponse().tasks[0],
+        status: "queued" as const,
+      },
+      progressEvent: {
+        id: "task_progress_4",
+        companyId: "company_1",
+        departmentId: "department_1",
+        parentTaskId: "task_1",
+        subjectTaskId: "task_1",
+        step: "blocked" as const,
+        status: "current" as const,
+        label: "CEO Office returned this, waiting for the department to rework it.",
+        detail: "Reason: needs changes. Next step: Add proof and explain the next step.",
+        createdAt: "2026-08-17T00:03:00.000Z",
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
+    await user.click(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" }));
+
+    const taskReview = screen.getByRole("region", { name: "Task Review" });
+    expect(
+      within(taskReview).getByText(
+        "The department has not submitted a checkable result yet, so this cannot pass. You can return it to the department for more results or explanation.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(taskReview).queryByRole("button", { name: "Approve, mark complete" })).not.toBeInTheDocument();
+
+    await user.click(within(taskReview).getByRole("button", { name: "Return to department" }));
+    expect(within(taskReview).getByRole("alert")).toHaveTextContent("Choose why this is being returned.");
+
+    await user.selectOptions(within(taskReview).getByLabelText("Return reason"), "needs_changes");
+    await user.type(within(taskReview).getByLabelText("Next step note"), "Add proof and explain the next step.");
+    await user.click(within(taskReview).getByRole("button", { name: "Return to department" }));
+
+    expect(api.createCeoReviewDecision).toHaveBeenCalledWith({
+      taskId: "task_1",
+      decision: "return",
+      returnReason: "needs_changes",
+      note: "Add proof and explain the next step.",
+    });
+    expect(await screen.findByText("CEO Office returned the task to the department.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    expect(screen.getByRole("region", { name: "Department Leader Report" })).toHaveTextContent(
+      "CEO Office returned this, waiting for the department to rework it.",
+    );
   });
 
   it("returns to setup from workspace views without showing the generated blueprint", async () => {
@@ -1074,6 +1195,39 @@ function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>
   };
 }
 
+function createReviewReadyCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
+  const created = createCompanyResponse();
+  return {
+    ...created,
+    tasks: [
+      {
+        ...created.tasks[0],
+        title: "Validate the prototype",
+        status: "review",
+        executionProfileName: "short",
+        requestedTimeoutMs: 120_000,
+        effectiveTimeoutMs: 120_000,
+        artifactWorkspacePath: ".auto-crop/workspaces/task_1",
+      },
+    ],
+    taskProgressEvents: [
+      ...created.taskProgressEvents!.slice(0, 2),
+      {
+        id: "task_progress_3",
+        companyId: "company_1",
+        departmentId: "department_1",
+        parentTaskId: "task_1",
+        subjectTaskId: "task_1",
+        step: "awaiting_review",
+        status: "current",
+        label: "Awaiting review",
+        detail: null,
+        createdAt: "2026-08-17T00:02:00.000Z",
+      },
+    ],
+  };
+}
+
 function createReplanProposalSummary(): ReplanProposalSummary {
   return {
     id: "replan_proposal_1",
@@ -1137,6 +1291,21 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         status: "received" as const,
         createdAt: "2026-08-17T00:00:00.000Z",
         updatedAt: "2026-08-17T00:00:00.000Z",
+      },
+    })),
+    createCeoReviewDecision: vi.fn(async (input) => ({
+      decision: {
+        id: "ceo_review_decision_1",
+        taskId: input.taskId,
+        decision: input.decision,
+        returnReason: input.returnReason ?? null,
+        note: input.note ?? null,
+        createdAt: "2026-08-17T00:03:00.000Z",
+      },
+      task: {
+        ...createCompanyResponse().tasks[0],
+        id: input.taskId,
+        status: input.decision === "approve" ? "complete" : "queued",
       },
     })),
     async getCompanyState() {

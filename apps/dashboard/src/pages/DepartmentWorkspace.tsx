@@ -15,11 +15,14 @@ import {
 import { useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
+  CeoReviewDecisionResponse,
+  CeoReviewReturnReason,
   CeoIntakeSummary,
   CeoIntakeStatus,
   CompanySummary,
   DepartmentSummary,
   ObjectiveSummary,
+  ProofSummary,
   TaskProgressEventSummary,
   TaskSummary,
 } from "../api/client";
@@ -39,8 +42,15 @@ export type DepartmentWorkspaceProps = {
   tasks: TaskSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
   ceoIntakes?: CeoIntakeSummary[];
+  proof?: ProofSummary[];
   onRefreshTask?: (taskId: string) => void;
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
+  onCreateCeoReviewDecision?: (input: {
+    taskId: string;
+    decision: "approve" | "return";
+    returnReason?: CeoReviewReturnReason;
+    note?: string;
+  }) => Promise<CeoReviewDecisionResponse> | CeoReviewDecisionResponse;
 };
 
 const ceoRoleId = "ceo";
@@ -52,10 +62,12 @@ export function DepartmentWorkspace({
   menuBar,
   objectives,
   onCreateCeoIntake,
+  onCreateCeoReviewDecision,
   onRefreshTask,
   selectedCeoAgentId,
   tasks,
   ceoIntakes = [],
+  proof = [],
   taskProgressEvents = [],
 }: DepartmentWorkspaceProps) {
   const { t } = useLanguage();
@@ -141,9 +153,11 @@ export function DepartmentWorkspace({
                   intakes={ceoIntakes}
                   objectives={objectives}
                   onDraftChange={setCeoIntakeDraft}
+                  onCreateCeoReviewDecision={onCreateCeoReviewDecision}
                   onRefreshTask={onRefreshTask}
                   onSubmit={onCreateCeoIntake}
                   pendingItems={ceoPendingItems}
+                  proof={proof}
                   tasks={tasks}
                 />
                 <p className="muted">{t("department.schedulerNote")}</p>
@@ -195,27 +209,60 @@ function CeoIntakeWorkspace({
   draft,
   intakes,
   objectives,
+  onCreateCeoReviewDecision,
   onDraftChange,
   onRefreshTask,
   onSubmit,
   pendingItems,
+  proof,
   tasks,
 }: {
   draft: string;
   intakes: CeoIntakeSummary[];
   objectives: ObjectiveSummary[];
+  onCreateCeoReviewDecision?: DepartmentWorkspaceProps["onCreateCeoReviewDecision"];
   onDraftChange: (value: string) => void;
   onRefreshTask?: (taskId: string) => void;
   onSubmit?: (body: string) => Promise<void> | void;
   pendingItems: CeoPendingItem[];
+  proof: ProofSummary[];
   tasks: TaskSummary[];
 }) {
   const { t } = useLanguage();
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const selectedPendingItem = pendingItems.find((item) => item.task.id === selectedTaskId) ?? null;
+  const proofsByTask = useMemo(() => groupProofByTask(proof), [proof]);
+
+  const handleDecision = async (input: Parameters<NonNullable<DepartmentWorkspaceProps["onCreateCeoReviewDecision"]>>[0]) => {
+    const response = await onCreateCeoReviewDecision?.(input);
+    setSelectedTaskId(null);
+    setSuccessMessage(
+      response?.decision.decision === "return"
+        ? t("department.ceoReviewReturnedSuccess")
+        : t("department.ceoReviewApprovedSuccess"),
+    );
+  };
 
   return (
     <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
       <CeoIntakeFlows intakes={intakes} />
-      <CeoPendingQueue items={pendingItems} />
+      <CeoPendingQueue
+        items={pendingItems}
+        onViewTask={(taskId) => {
+          setSelectedTaskId(taskId);
+          setSuccessMessage(null);
+        }}
+        successMessage={successMessage}
+      />
+      {selectedPendingItem ? (
+        <CeoTaskReviewDetail
+          item={selectedPendingItem}
+          onDecision={handleDecision}
+          onRefreshTask={onRefreshTask}
+          proofs={proofsByTask.get(selectedPendingItem.task.id) ?? []}
+        />
+      ) : null}
       <CeoBlueprintSummary objectives={objectives} onRefreshTask={onRefreshTask} tasks={tasks} />
       <div className="department-leader-report__spacer" aria-hidden="true" />
       <CeoIntakeMessageBox draft={draft} onDraftChange={onDraftChange} onSubmit={onSubmit} />
@@ -223,12 +270,29 @@ function CeoIntakeWorkspace({
   );
 }
 
-function CeoPendingQueue({ items }: { items: CeoPendingItem[] }) {
+function groupProofByTask(proof: ProofSummary[]): Map<string, ProofSummary[]> {
+  const grouped = new Map<string, ProofSummary[]>();
+  for (const item of proof) {
+    grouped.set(item.taskId, [...(grouped.get(item.taskId) ?? []), item]);
+  }
+  return grouped;
+}
+
+function CeoPendingQueue({
+  items,
+  onViewTask,
+  successMessage,
+}: {
+  items: CeoPendingItem[];
+  onViewTask: (taskId: string) => void;
+  successMessage: string | null;
+}) {
   const { t } = useLanguage();
 
   return (
     <section className="ceo-pending-queue" aria-label={t("department.ceoPending")}>
       <h3>{t("department.ceoPending")}</h3>
+      {successMessage ? <p className="system-message">{successMessage}</p> : null}
       {items.length === 0 ? <p className="muted">{t("department.noCeoPending")}</p> : null}
       {items.map((item) => (
         <article className="ceo-pending-item" key={item.task.id}>
@@ -236,13 +300,165 @@ function CeoPendingQueue({ items }: { items: CeoPendingItem[] }) {
             <p>{formatCeoPendingType(item, t)}</p>
             <h4>{item.task.title}</h4>
           </div>
-          <RetroButton aria-label={`${t("department.viewTask")} ${item.task.title}`}>
+          <RetroButton aria-label={`${t("department.viewTask")} ${item.task.title}`} onClick={() => onViewTask(item.task.id)}>
             {t("department.viewTask")}
           </RetroButton>
         </article>
       ))}
     </section>
   );
+}
+
+function CeoTaskReviewDetail({
+  item,
+  onDecision,
+  onRefreshTask,
+  proofs,
+}: {
+  item: CeoPendingItem;
+  onDecision: (input: {
+    taskId: string;
+    decision: "approve" | "return";
+    returnReason?: CeoReviewReturnReason;
+    note?: string;
+  }) => Promise<void>;
+  onRefreshTask?: (taskId: string) => void;
+  proofs: ProofSummary[];
+}) {
+  const { t } = useLanguage();
+  const [returnReason, setReturnReason] = useState<CeoReviewReturnReason | "">("");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const noteInputId = useId();
+  const reasonInputId = useId();
+  const hasProof = proofs.length > 0;
+
+  const handleApprove = async () => {
+    if (!hasProof || submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await onDecision({ taskId: item.task.id, decision: "approve" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReturn = async () => {
+    if (submitting) {
+      return;
+    }
+
+    if (!returnReason) {
+      setError(t("department.ceoReviewReturnReasonRequired"));
+      return;
+    }
+
+    setError(null);
+    setSubmitting(true);
+    try {
+      await onDecision({
+        taskId: item.task.id,
+        decision: "return",
+        returnReason,
+        note: note.trim() || undefined,
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section className="ceo-task-review-detail" aria-label={t("department.ceoTaskReview")}>
+      <h3>{t("department.ceoTaskReview")}</h3>
+      <p className={hasProof ? "system-message" : "warning-message"}>
+        {hasProof ? t("department.ceoReviewCanPass") : t("department.ceoReviewMissingProof")}
+      </p>
+      <div className="ceo-task-review-detail__grid">
+        <section>
+          <h4>{t("department.ceoReviewTaskContent")}</h4>
+          <p>{item.task.title}</p>
+          {item.task.description ? <p className="muted">{item.task.description}</p> : null}
+        </section>
+        <section>
+          <h4>{t("department.ceoReviewDepartmentSubmission")}</h4>
+          {proofs.length === 0 ? <p className="muted">{t("department.ceoReviewNoProof")}</p> : null}
+          {proofs.map((proof) => (
+            <article className="ceo-task-review-proof" key={proof.id}>
+              <p>{proof.summary}</p>
+              <p className="muted">{`${proof.type} / ${proof.uri}`}</p>
+            </article>
+          ))}
+        </section>
+        <section>
+          <h4>{t("department.ceoReviewRunStatus")}</h4>
+          <VideotexKeyValue
+            items={[
+              { label: t("department.status"), value: formatTaskStatus(item.task, t) },
+              { label: t("department.ceoPendingReviewRequestFrom"), value: item.departmentName },
+              ...(item.task.executionProfileName ? [{ label: "Profile", value: item.task.executionProfileName }] : []),
+              ...(item.task.effectiveTimeoutMs ? [{ label: "Budget", value: `${Math.round(item.task.effectiveTimeoutMs / 60_000)}m` }] : []),
+              ...(item.task.failureReason ? [{ label: "Issue", value: item.task.failureReason }] : []),
+              ...(item.task.failureMessage ? [{ label: "Detail", value: item.task.failureMessage }] : []),
+              ...(item.task.artifactWorkspacePath ? [{ label: t("department.partialOutput"), value: item.task.artifactWorkspacePath }] : []),
+            ]}
+          />
+        </section>
+        <section>
+          <h4>{t("department.ceoReviewDecision")}</h4>
+          <label className="retro-field" htmlFor={reasonInputId}>
+            <span>{t("department.ceoReviewReturnReason")}</span>
+            <select
+              id={reasonInputId}
+              className="retro-input"
+              value={returnReason}
+              onChange={(event) => setReturnReason(event.target.value as CeoReviewReturnReason | "")}
+            >
+              <option value="">{t("department.ceoReviewChooseReason")}</option>
+              {ceoReturnReasonOptions(t).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="retro-field" htmlFor={noteInputId}>
+            <span>{t("department.ceoReviewNextStepNote")}</span>
+            <textarea
+              id={noteInputId}
+              className="retro-textarea ceo-task-review-detail__note"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </label>
+          {error ? <p role="alert" className="warning-message">{error}</p> : null}
+          <div className="ceo-task-review-detail__actions">
+            <RetroButton onClick={() => onRefreshTask?.(item.task.id)}>{t("department.viewTask")}</RetroButton>
+            {hasProof ? (
+              <RetroButton disabled={submitting} onClick={handleApprove}>
+                {t("department.ceoReviewApprove")}
+              </RetroButton>
+            ) : null}
+            <RetroButton disabled={submitting} onClick={handleReturn}>
+              {t("department.ceoReviewReturn")}
+            </RetroButton>
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function ceoReturnReasonOptions(t: ReturnType<typeof useLanguage>["t"]): Array<{ value: CeoReviewReturnReason; label: string }> {
+  return [
+    { value: "needs_changes", label: t("department.returnReasonNeedsChanges") },
+    { value: "unclear_task_definition", label: t("department.returnReasonUnclearTask") },
+    { value: "scope_too_large", label: t("department.returnReasonScopeTooLarge") },
+    { value: "wrong_direction", label: t("department.returnReasonWrongDirection") },
+  ];
 }
 
 function formatCeoPendingType(item: CeoPendingItem, t: ReturnType<typeof useLanguage>["t"]): string {
@@ -566,6 +782,9 @@ function formatProgressLabel(event: TaskProgressEventSummary, parentTaskTitle: s
     case "complete":
       return t("department.flowComplete");
     case "blocked":
+      if (event.label.startsWith("CEO Office returned")) {
+        return event.detail ? `${event.label} ${event.detail}` : event.label;
+      }
       return t("department.flowBlocked");
     case "needs_ceo_reassignment":
       return t("department.flowNeedsCeoReassignment");

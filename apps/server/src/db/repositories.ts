@@ -4,6 +4,7 @@ import type {
   Approval,
   CeoIntake,
   CeoIntakeStatus,
+  CeoReviewDecision,
   Company,
   Department,
   KeyResult,
@@ -91,6 +92,37 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare("UPDATE ceo_intakes SET status = ?, updated_at = ? WHERE id = ?")
         .run(status, updatedAt, id);
+    },
+
+    createCeoReviewDecision(decision: CeoReviewDecision): void {
+      database
+        .prepare(
+          `INSERT INTO ceo_review_decisions (
+            id, company_id, task_id, department_id, decision, return_reason, note,
+            proof_id, proof_type, proof_uri, actor, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          decision.id,
+          decision.companyId,
+          decision.taskId,
+          decision.departmentId,
+          decision.decision,
+          decision.returnReason,
+          decision.note,
+          decision.proofId,
+          decision.proofType,
+          decision.proofUri,
+          decision.actor,
+          decision.createdAt,
+        );
+    },
+
+    listCeoReviewDecisionsForCompany(companyId: string): CeoReviewDecision[] {
+      const rows = database
+        .prepare("SELECT * FROM ceo_review_decisions WHERE company_id = ? ORDER BY created_at ASC, id ASC")
+        .all(companyId);
+      return rows.map((row) => mapCeoReviewDecision(row as CeoReviewDecisionRow));
     },
 
     createDepartment(department: Department): void {
@@ -700,6 +732,21 @@ type CeoIntakeRow = {
   updated_at: string;
 };
 
+type CeoReviewDecisionRow = {
+  id: string;
+  company_id: string;
+  task_id: string;
+  department_id: string;
+  decision: CeoReviewDecision["decision"];
+  return_reason: CeoReviewDecision["returnReason"];
+  note: string | null;
+  proof_id: string | null;
+  proof_type: CeoReviewDecision["proofType"];
+  proof_uri: string | null;
+  actor: string;
+  created_at: string;
+};
+
 type DepartmentRow = {
   id: string;
   company_id: string;
@@ -865,6 +912,23 @@ function mapCeoIntake(row: CeoIntakeRow): CeoIntake {
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapCeoReviewDecision(row: CeoReviewDecisionRow): CeoReviewDecision {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    taskId: row.task_id,
+    departmentId: row.department_id,
+    decision: row.decision,
+    returnReason: row.return_reason,
+    note: row.note,
+    proofId: row.proof_id,
+    proofType: row.proof_type,
+    proofUri: row.proof_uri,
+    actor: row.actor,
+    createdAt: row.created_at,
   };
 }
 

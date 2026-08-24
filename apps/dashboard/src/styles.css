@@ -491,6 +491,57 @@ h3 {
   text-transform: uppercase;
 }
 
+.ceo-task-review-detail {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.ceo-task-review-detail__grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ceo-task-review-detail__grid > section {
+  border: 1px solid color-mix(in srgb, var(--border) 56%, var(--surface));
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.ceo-task-review-detail h4 {
+  color: var(--accent-secondary);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+}
+
+.ceo-task-review-proof {
+  display: grid;
+  gap: 4px;
+}
+
+.ceo-task-review-detail__note {
+  min-height: 76px;
+}
+
+.ceo-task-review-detail__actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.warning-message {
+  background: color-mix(in srgb, var(--surface) 74%, var(--danger));
+  border: var(--border-px) solid color-mix(in srgb, var(--danger) 54%, var(--surface));
+  color: var(--ink);
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
 .department-overview {
   display: grid;
   gap: 10px;

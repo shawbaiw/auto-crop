@@ -456,6 +456,18 @@ export default function App({ apiClient }: AppProps) {
     setCeoIntakes((current) => upsertCeoIntake(current, response.intake));
   }
 
+  async function handleCreateCeoReviewDecision(input: Parameters<ApiClient["createCeoReviewDecision"]>[0]) {
+    const response = await client.createCeoReviewDecision(input);
+    setBlueprint((current) => updateBlueprintTask(current, response.task));
+    if (response.event) {
+      setEvents((current) => [...current.slice(-49), response.event!]);
+    }
+    if (response.progressEvent) {
+      setTaskProgressEvents((current) => [...current, response.progressEvent!]);
+    }
+    return response;
+  }
+
   function handleCreateNewCompany() {
     clearCurrentCompanyId();
     setBlueprint(null);
@@ -609,6 +621,8 @@ export default function App({ apiClient }: AppProps) {
         objectives={blueprint.objectives}
         onRefreshTask={handleRefreshTask}
         onCreateCeoIntake={handleCreateCeoIntake}
+        onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
+        proof={proof}
         selectedCeoAgentId={selectedAgentId}
         tasks={blueprint.tasks}
         taskProgressEvents={taskProgressEvents}

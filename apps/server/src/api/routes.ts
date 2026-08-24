@@ -1,6 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type {
   CeoIntake,
+  CeoReviewDecision,
+  CeoReviewDecisionKind,
+  CeoReviewReturnReason,
   Company,
   Department,
   Objective,
@@ -232,6 +235,65 @@ async function routeRequest(
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/ceo-review-decisions") {
+    const body = await readJson<{
+      taskId?: string;
+      decision?: CeoReviewDecisionKind;
+      returnReason?: CeoReviewReturnReason;
+      note?: string;
+    }>(request);
+    const taskId = body.taskId?.trim() ?? "";
+    const decisionKind = body.decision;
+
+    if (!taskId) {
+      sendJson(response, 400, { error: "Task id is required." });
+      return;
+    }
+
+    if (decisionKind !== "approve" && decisionKind !== "return") {
+      sendJson(response, 400, { error: "Decision must be approve or return." });
+      return;
+    }
+
+    if (decisionKind === "return" && !isCeoReviewReturnReason(body.returnReason)) {
+      sendJson(response, 400, { error: "Return reason is required." });
+      return;
+    }
+
+    const result = createCeoReviewDecision({
+      repositories: options.repositories,
+      taskId,
+      decision: decisionKind,
+      returnReason: decisionKind === "return" ? body.returnReason! : null,
+      note: body.note?.trim() ? body.note.trim() : null,
+      now: options.now,
+      createId: options.createId,
+    });
+
+    if (result.kind === "not_found") {
+      sendJson(response, 404, { error: `Task not found: ${taskId}` });
+      return;
+    }
+
+    if (result.kind === "not_in_review") {
+      sendJson(response, 409, { error: "Task is no longer waiting for CEO review." });
+      return;
+    }
+
+    if (result.kind === "missing_proof") {
+      sendJson(response, 409, { error: "Task has no checkable proof and cannot be approved." });
+      return;
+    }
+
+    sendJson(response, 201, {
+      decision: summarizeCeoReviewDecision(result.decision),
+      task: summarizeTask(result.task, options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId)),
+      event: summarizeTaskEvent(result.event),
+      progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
+    });
+    return;
+  }
+
   const cancelMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
   if (method === "POST" && cancelMatch) {
     const taskId = cancelMatch[1];
@@ -334,6 +396,7 @@ function buildCompanyState(company: Company, repositories: ReturnType<typeof cre
     tasks: summarizeTasks(tasks, repositories.listTaskDependenciesForCompany(company.id)),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
     reviews: repositories.listReviews(company.id).map(summarizeReview),
+    ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(company.id).map(summarizeCeoReviewDecision),
     replanProposals: repositories.listReplanProposalsForCompany(company.id).map(summarizeReplanProposal),
     activity: repositories.listTaskEventsForCompany(company.id).map(summarizeTaskEvent),
     taskProgressEvents: repositories.listTaskProgressEventsForCompany(company.id).map(summarizeTaskProgressEvent),
@@ -344,6 +407,139 @@ function buildCompanyState(company: Company, repositories: ReturnType<typeof cre
       firstTasks: tasks.map((task) => task.title),
     },
   };
+}
+
+type CeoReviewDecisionResult =
+  | { kind: "created"; decision: CeoReviewDecision; task: Task; event: TaskEvent; progressEvent?: TaskProgressEvent }
+  | { kind: "not_found" }
+  | { kind: "not_in_review" }
+  | { kind: "missing_proof" };
+
+function createCeoReviewDecision(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  taskId: string;
+  decision: CeoReviewDecisionKind;
+  returnReason: CeoReviewReturnReason | null;
+  note: string | null;
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+}): CeoReviewDecisionResult {
+  const task = input.repositories.getTask(input.taskId);
+
+  if (!task) {
+    return { kind: "not_found" };
+  }
+
+  if (task.status !== "review") {
+    return { kind: "not_in_review" };
+  }
+
+  const proofs = input.repositories.listProofsForTask(task.id);
+  const proof = proofs[0] ?? null;
+
+  if (input.decision === "approve" && !proof) {
+    return { kind: "missing_proof" };
+  }
+
+  const timestamp = (input.now ?? (() => new Date()))().toISOString();
+  const decision: CeoReviewDecision = {
+    id: input.createId?.("ceo_review_decision") ?? `ceo_review_decision_${Date.now()}`,
+    companyId: task.companyId,
+    taskId: task.id,
+    departmentId: task.departmentId,
+    decision: input.decision,
+    returnReason: input.returnReason,
+    note: input.note,
+    proofId: proof?.id ?? null,
+    proofType: proof?.type ?? null,
+    proofUri: proof?.uri ?? null,
+    actor: "ceo_office",
+    createdAt: timestamp,
+  };
+  input.repositories.createCeoReviewDecision(decision);
+
+  const nextStatus = input.decision === "approve" ? "complete" : "queued";
+  input.repositories.updateTaskStatus(task.id, nextStatus);
+  if (input.decision === "approve" && task.keyResultId) {
+    input.repositories.updateKeyResultProgress(task.keyResultId, "proof_received", "met");
+  }
+
+  const event: TaskEvent = {
+    id: input.createId?.("task_event") ?? `task_event_${Date.now()}`,
+    companyId: task.companyId,
+    taskId: task.id,
+    type: "ceo_review_decision",
+    message:
+      input.decision === "approve"
+        ? `CEO Office approved task: ${task.title}.`
+        : `CEO Office returned task: ${task.title}.`,
+    createdAt: timestamp,
+    status: nextStatus,
+    failureReason: null,
+    failureMessage: null,
+    executionProfileName: task.latestExecutionProfileName ?? null,
+    requestedTimeoutMs: task.latestRequestedTimeoutMs ?? null,
+    effectiveTimeoutMs: task.latestEffectiveTimeoutMs ?? null,
+    dependencyNote: task.dependencyNote ?? null,
+    artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+  };
+  input.repositories.appendTaskEvent(event);
+
+  let progressEvent: TaskProgressEvent | undefined;
+  if (input.decision === "return") {
+    progressEvent = {
+      id: input.createId?.("task_progress") ?? `task_progress_${Date.now()}`,
+      companyId: task.companyId,
+      departmentId: task.departmentId,
+      parentTaskId: task.parentTaskId ?? task.id,
+      subjectTaskId: task.id,
+      step: "blocked",
+      status: "current",
+      label: "CEO Office returned this, waiting for the department to rework it.",
+      detail: formatCeoReturnProgressDetail(input.returnReason, input.note),
+      createdAt: timestamp,
+    };
+    input.repositories.appendTaskProgressEvent(progressEvent);
+  }
+
+  return {
+    kind: "created",
+    decision,
+    task: {
+      ...task,
+      status: nextStatus,
+    },
+    event,
+    progressEvent,
+  };
+}
+
+function isCeoReviewReturnReason(reason: unknown): reason is CeoReviewReturnReason {
+  return (
+    reason === "needs_changes" ||
+    reason === "unclear_task_definition" ||
+    reason === "scope_too_large" ||
+    reason === "wrong_direction"
+  );
+}
+
+function formatCeoReturnProgressDetail(reason: CeoReviewReturnReason | null, note: string | null): string {
+  const reasonText = reason ? formatCeoReturnReason(reason) : "returned";
+  const nextStep = note?.trim() ? note.trim() : "Please rework the task and submit checkable proof.";
+  return `Reason: ${reasonText}. Next step: ${nextStep}`;
+}
+
+function formatCeoReturnReason(reason: CeoReviewReturnReason): string {
+  switch (reason) {
+    case "needs_changes":
+      return "needs changes";
+    case "unclear_task_definition":
+      return "task is unclear";
+    case "scope_too_large":
+      return "task is too large";
+    case "wrong_direction":
+      return "direction is wrong";
+  }
 }
 
 function createRouteId(options: ApiServerOptions, prefix: string): string {
@@ -372,6 +568,10 @@ function summarizeCompanyListItem(company: Company, repositories: ReturnType<typ
 
 function summarizeCeoIntake(intake: CeoIntake) {
   return intake;
+}
+
+function summarizeCeoReviewDecision(decision: CeoReviewDecision) {
+  return decision;
 }
 
 function summarizeDepartment(department: Department) {

@@ -138,6 +138,30 @@ export type ReplanProposalSummary = {
   confirmedAt?: string;
 };
 
+export type CeoReviewReturnReason = "needs_changes" | "unclear_task_definition" | "scope_too_large" | "wrong_direction";
+
+export type CeoReviewDecisionSummary = {
+  id: string;
+  companyId?: string;
+  taskId: string;
+  departmentId?: string;
+  decision: "approve" | "return";
+  returnReason?: CeoReviewReturnReason | null;
+  note?: string | null;
+  proofId?: string | null;
+  proofType?: string | null;
+  proofUri?: string | null;
+  actor?: string;
+  createdAt: string;
+};
+
+export type CeoReviewDecisionResponse = {
+  decision: CeoReviewDecisionSummary;
+  task: TaskSummary;
+  event?: ServerEvent;
+  progressEvent?: TaskProgressEventSummary;
+};
+
 export type EditableBlueprint = {
   companyName: string;
   objectives: string[];
@@ -156,6 +180,7 @@ export type CreateCompanyResponse = {
   replanProposals?: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
   ceoIntakes?: CeoIntakeSummary[];
+  ceoReviewDecisions?: CeoReviewDecisionSummary[];
 };
 
 export type ServerEvent = {
@@ -179,6 +204,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   replanProposals: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
   ceoIntakes?: CeoIntakeSummary[];
+  ceoReviewDecisions?: CeoReviewDecisionSummary[];
 };
 
 export type ApiClient = {
@@ -193,6 +219,12 @@ export type ApiClient = {
   }): Promise<CreateCompanyResponse>;
   getCompanyState(companyId: string): Promise<CompanyStateResponse>;
   createCeoIntake(companyId: string, input: { body: string }): Promise<{ intake: CeoIntakeSummary }>;
+  createCeoReviewDecision(input: {
+    taskId: string;
+    decision: "approve" | "return";
+    returnReason?: CeoReviewReturnReason;
+    note?: string;
+  }): Promise<CeoReviewDecisionResponse>;
   activateCompany(companyId: string): Promise<{ company: CompanySummary }>;
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
@@ -223,6 +255,9 @@ export function createApiClient(baseUrl = ""): ApiClient {
     },
     async createCeoIntake(companyId, input) {
       return postJson(`${baseUrl}/api/companies/${companyId}/ceo-intakes`, input);
+    },
+    async createCeoReviewDecision(input) {
+      return postJson(`${baseUrl}/api/ceo-review-decisions`, input);
     },
     async activateCompany(companyId) {
       return postJson(`${baseUrl}/api/companies/${companyId}/activate`, {});
