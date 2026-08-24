@@ -175,3 +175,7 @@ On this development machine, Playwright browser launch is currently blocked by m
 ## Documentation Rule
 
 When functionality changes, update this README and the implementation documentation in the same change. This project is open source, so installation, architecture, local permissions, supported agents, and known limitations must stay visible to users.
+
+## Credits
+
+本项目由 MAH 制作，MAH 链接：[https://mah.bot/](https://mah.bot/)
