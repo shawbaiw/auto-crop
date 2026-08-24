@@ -94,7 +94,6 @@ export function DepartmentWorkspace({
                   progressEvents={taskProgressEvents}
                   tasks={tasksByDepartment.get(selectedDepartment.id) ?? []}
                 />
-                <DepartmentTaskList onRefreshTask={onRefreshTask} tasks={tasksByDepartment.get(selectedDepartment.id) ?? []} />
                 <DepartmentMessageBox
                   departmentName={selectedDepartment.name}
                   draft={departmentDraft}
@@ -341,30 +340,6 @@ function formatFlowTaskStatus(status: string, t: ReturnType<typeof useLanguage>[
     default:
       return status;
   }
-}
-
-function DepartmentTaskList({
-  onRefreshTask,
-  tasks,
-}: {
-  onRefreshTask?: (taskId: string) => void;
-  tasks: TaskSummary[];
-}) {
-  const { t } = useLanguage();
-  const parentTasks = tasks.filter((task) => task.taskKind !== "department_subtask");
-
-  return (
-    <section className="department-task-list" aria-label={t("department.assignedTasks")}>
-      <h3>{t("department.assignedTasks")}</h3>
-      <p className="muted">{t("department.assignedTasksNote")}</p>
-      <div className="task-action-list">
-        {parentTasks.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
-        {parentTasks.map((task) => (
-          <TaskStatusAction key={task.id} onRefreshTask={onRefreshTask} task={task} />
-        ))}
-      </div>
-    </section>
-  );
 }
 
 function DepartmentMessageBox({

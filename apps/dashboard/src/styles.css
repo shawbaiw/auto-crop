@@ -468,7 +468,6 @@ h3 {
 .department-responsibility,
 .department-progress-flows,
 .department-progress-flow,
-.department-task-list,
 .department-message-box {
   background:
     linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
@@ -493,8 +492,7 @@ h3 {
   line-height: 1.45;
 }
 
-.department-progress-flows,
-.department-task-list {
+.department-progress-flows {
   align-content: start;
 }
 

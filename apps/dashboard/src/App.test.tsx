@@ -226,7 +226,8 @@ describe("Dashboard App", () => {
     expect(screen.getByText("Received CEO task")).toBeInTheDocument();
     expect(screen.getByText("Assessment complete")).toBeInTheDocument();
     expect(screen.getByText("Task 1 (Create landing page) waiting")).toBeInTheDocument();
-    expect(screen.getByText("Create landing page / queued")).toBeInTheDocument();
+    expect(screen.queryByText("CEO Assigned Tasks")).not.toBeInTheDocument();
+    expect(screen.queryByText("Create landing page / queued")).not.toBeInTheDocument();
     expect(screen.getByText("Role")).toBeInTheDocument();
     expect(screen.queryByText("Memory")).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "Question, material, or task" }), "Use this launch copy.");
