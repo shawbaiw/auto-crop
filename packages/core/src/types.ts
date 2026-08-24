@@ -28,6 +28,15 @@ export type AgentRunStatus = "queued" | "running" | "complete" | "failed" | "can
 export type ApprovalStatus = "pending" | "approved" | "denied";
 export type ReplanProposalStatus = "proposed" | "confirmed" | "dismissed";
 export type ReplanProposalSource = "planner_agent" | "deterministic_template";
+export type CeoIntakeStatus =
+  | "received"
+  | "assessing"
+  | "assessment_complete"
+  | "planning"
+  | "planned"
+  | "dispatching"
+  | "dispatched"
+  | "failed";
 export type AgentFailureReason =
   | "timeout"
   | "agent_failed"
@@ -73,6 +82,15 @@ export type Company = {
   playbookId: string;
   permissionMode?: PermissionMode | null;
   status: CompanyStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CeoIntake = {
+  id: string;
+  companyId: string;
+  body: string;
+  status: CeoIntakeStatus;
   createdAt: string;
   updatedAt: string;
 };

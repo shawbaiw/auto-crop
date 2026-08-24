@@ -2,6 +2,8 @@ import { Building2, ClipboardCheck, Crown, ListChecks, MessageSquareText, Refres
 import { useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
+  CeoIntakeSummary,
+  CeoIntakeStatus,
   CompanySummary,
   DepartmentSummary,
   ObjectiveSummary,
@@ -23,7 +25,9 @@ export type DepartmentWorkspaceProps = {
   selectedCeoAgentId: string;
   tasks: TaskSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
+  ceoIntakes?: CeoIntakeSummary[];
   onRefreshTask?: (taskId: string) => void;
+  onCreateCeoIntake?: (body: string) => Promise<void> | void;
 };
 
 const ceoRoleId = "ceo";
@@ -34,14 +38,17 @@ export function DepartmentWorkspace({
   departments,
   menuBar,
   objectives,
+  onCreateCeoIntake,
   onRefreshTask,
   selectedCeoAgentId,
   tasks,
+  ceoIntakes = [],
   taskProgressEvents = [],
 }: DepartmentWorkspaceProps) {
   const { t } = useLanguage();
   const [selectedRoleId, setSelectedRoleId] = useState(ceoRoleId);
   const [departmentDraft, setDepartmentDraft] = useState("");
+  const [ceoIntakeDraft, setCeoIntakeDraft] = useState("");
   const selectedDepartment = departments.find((department) => department.id === selectedRoleId) ?? null;
   const selectedCeoAgent = agents.find((agent) => agent.id === selectedCeoAgentId) ?? null;
   const tasksByDepartment = useMemo(() => {
@@ -105,9 +112,13 @@ export function DepartmentWorkspace({
                 <VideotexKeyValue
                   items={[
                     { label: t("department.ceo"), value: selectedCeoAgent?.name ?? selectedCeoAgentId },
-                    { label: t("department.status"), value: company.status },
-                    { label: t("department.playbook"), value: company.playbookId },
                   ]}
+                />
+                <CeoIntakeWorkspace
+                  draft={ceoIntakeDraft}
+                  intakes={ceoIntakes}
+                  onDraftChange={setCeoIntakeDraft}
+                  onSubmit={onCreateCeoIntake}
                 />
                 <div>
                   <h3>{t("department.objectives")}</h3>
@@ -130,6 +141,104 @@ export function DepartmentWorkspace({
       </Workspace>
     </AppShell>
   );
+}
+
+function CeoIntakeWorkspace({
+  draft,
+  intakes,
+  onDraftChange,
+  onSubmit,
+}: {
+  draft: string;
+  intakes: CeoIntakeSummary[];
+  onDraftChange: (value: string) => void;
+  onSubmit?: (body: string) => Promise<void> | void;
+}) {
+  const { t } = useLanguage();
+
+  return (
+    <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
+      <CeoIntakeFlows intakes={intakes} />
+      <div className="department-leader-report__spacer" aria-hidden="true" />
+      <CeoIntakeMessageBox draft={draft} onDraftChange={onDraftChange} onSubmit={onSubmit} />
+    </section>
+  );
+}
+
+function CeoIntakeFlows({ intakes }: { intakes: CeoIntakeSummary[] }) {
+  const { t } = useLanguage();
+
+  return (
+    <section className="department-progress-flows ceo-intake-flows" aria-label={t("department.ceoIntakeProgress")}>
+      <h3>{t("department.ceoIntakeProgress")}</h3>
+      <p className="muted">{t("department.ceoIntakeProgressNote")}</p>
+      {intakes.length === 0 ? <p className="muted">{t("department.noCeoIntakes")}</p> : null}
+      {intakes.map((intake) => (
+        <article className="department-progress-flow ceo-intake-flow" key={intake.id}>
+          <h4>
+            {t("department.ceoIntakeRequest")}: {summarizeIntakeBody(intake.body)}
+          </h4>
+          <ol className="department-progress-flow__steps">
+            {getCeoIntakeSteps(intake.status, t).map((step) => (
+              <li className={`department-progress-flow__step department-progress-flow__step--${step.status}`} key={step.label}>
+                <span aria-hidden="true">{progressMarker(step.status)}</span>
+                <p>{step.label}</p>
+              </li>
+            ))}
+          </ol>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function getCeoIntakeSteps(
+  intakeStatus: CeoIntakeStatus,
+  t: ReturnType<typeof useLanguage>["t"],
+): Array<{ label: string; status: TaskProgressEventSummary["status"] }> {
+  const steps: Array<{ key: Exclude<CeoIntakeStatus, "failed">; label: string }> = [
+    { key: "received", label: t("department.ceoIntakeReceived") },
+    { key: "assessing", label: t("department.ceoIntakeAssessing") },
+    { key: "assessment_complete", label: t("department.ceoIntakeAssessmentComplete") },
+    { key: "planning", label: t("department.ceoIntakePlanning") },
+    { key: "planned", label: t("department.ceoIntakePlanned") },
+    { key: "dispatching", label: t("department.ceoIntakeDispatching") },
+    { key: "dispatched", label: t("department.ceoIntakeDispatched") },
+  ];
+
+  if (intakeStatus === "failed") {
+    return [
+      ...steps.map((step) => ({ label: step.label, status: "waiting" as const })),
+      { label: t("department.ceoIntakeFailed"), status: "blocked" as const },
+    ];
+  }
+
+  const currentIndex = steps.findIndex((step) => step.key === intakeStatus);
+  const milestoneStatuses: CeoIntakeStatus[] = ["received", "assessment_complete", "planned", "dispatched"];
+
+  return steps.map((step, index) => {
+    if (index < currentIndex) {
+      return { label: step.label, status: "complete" as const };
+    }
+
+    if (index === currentIndex) {
+      return {
+        label: step.label,
+        status: milestoneStatuses.includes(intakeStatus) ? "complete" as const : "current" as const,
+      };
+    }
+
+    if (index === currentIndex + 1 && intakeStatus !== "dispatched" && milestoneStatuses.includes(intakeStatus)) {
+      return { label: step.label, status: "current" as const };
+    }
+
+    return { label: step.label, status: "waiting" as const };
+  });
+}
+
+function summarizeIntakeBody(body: string): string {
+  const trimmed = body.trim();
+  return trimmed.length > 90 ? `${trimmed.slice(0, 87)}...` : trimmed;
 }
 
 function DepartmentRoleSummary({ department }: { department: DepartmentSummary }) {
@@ -363,6 +472,68 @@ function formatFlowTaskStatus(status: string, t: ReturnType<typeof useLanguage>[
     default:
       return status;
   }
+}
+
+function CeoIntakeMessageBox({
+  draft,
+  onDraftChange,
+  onSubmit,
+}: {
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onSubmit?: (body: string) => Promise<void> | void;
+}) {
+  const { t } = useLanguage();
+  const messageInputId = useId();
+  const [sent, setSent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const hasDraft = draft.trim().length > 0;
+  const handleSend = async () => {
+    if (!hasDraft || submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await onSubmit?.(draft.trim());
+      setSent(true);
+      onDraftChange("");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section className="department-message-box" aria-label={t("department.ceoIntakeBox")}>
+      <div className="department-message-box__header">
+        <MessageSquareText size={16} aria-hidden="true" />
+        <h3>{t("department.ceoIntakeBox")}</h3>
+      </div>
+      <div className="department-message-box__field">
+        <label htmlFor={messageInputId}>{t("department.ceoIntakeLabel")}</label>
+        <div className="department-message-box__composer">
+          <textarea
+            id={messageInputId}
+            className="retro-textarea"
+            placeholder={t("department.ceoIntakePlaceholder")}
+            value={draft}
+            onChange={(event) => onDraftChange(event.target.value)}
+          />
+          <RetroButton
+            aria-label={`${t("department.send")} ${t("department.ceoOffice")}`}
+            className="department-message-box__send"
+            disabled={!hasDraft || submitting}
+            icon={<Send size={14} aria-hidden="true" />}
+            onClick={handleSend}
+          >
+            {t("department.send")}
+          </RetroButton>
+        </div>
+      </div>
+      {sent ? <p className="system-message">{t("department.sentToCeoOffice")}</p> : null}
+      <p className="muted">{t("department.ceoIntakeNote")}</p>
+    </section>
+  );
 }
 
 function DepartmentMessageBox({

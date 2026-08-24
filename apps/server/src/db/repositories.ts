@@ -2,6 +2,8 @@ import type {
   AgentRun,
   AgentFailureReason,
   Approval,
+  CeoIntake,
+  CeoIntakeStatus,
   Company,
   Department,
   KeyResult,
@@ -65,6 +67,29 @@ export function createRepositories(database: DatabaseClient) {
     updateCompanyStatus(id: string, status: Company["status"], updatedAt: string): void {
       database
         .prepare("UPDATE companies SET status = ?, updated_at = ? WHERE id = ?")
+        .run(status, updatedAt, id);
+    },
+
+    createCeoIntake(intake: CeoIntake): void {
+      database
+        .prepare(
+          `INSERT INTO ceo_intakes (
+            id, company_id, body, status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(intake.id, intake.companyId, intake.body, intake.status, intake.createdAt, intake.updatedAt);
+    },
+
+    listCeoIntakesForCompany(companyId: string): CeoIntake[] {
+      const rows = database
+        .prepare("SELECT * FROM ceo_intakes WHERE company_id = ? ORDER BY created_at ASC, id ASC")
+        .all(companyId);
+      return rows.map((row) => mapCeoIntake(row as CeoIntakeRow));
+    },
+
+    updateCeoIntakeStatus(id: string, status: CeoIntakeStatus, updatedAt: string): void {
+      database
+        .prepare("UPDATE ceo_intakes SET status = ?, updated_at = ? WHERE id = ?")
         .run(status, updatedAt, id);
     },
 
@@ -666,6 +691,15 @@ type CompanyRow = {
   updated_at: string;
 };
 
+type CeoIntakeRow = {
+  id: string;
+  company_id: string;
+  body: string;
+  status: CeoIntakeStatus;
+  created_at: string;
+  updated_at: string;
+};
+
 type DepartmentRow = {
   id: string;
   company_id: string;
@@ -817,6 +851,17 @@ function mapCompany(row: CompanyRow): Company {
     selectedCeoAgentId: row.selected_ceo_agent_id,
     playbookId: row.playbook_id,
     permissionMode: row.permission_mode ?? null,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCeoIntake(row: CeoIntakeRow): CeoIntake {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    body: row.body,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

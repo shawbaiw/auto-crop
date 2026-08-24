@@ -1,5 +1,15 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { Company, Department, Objective, Proof, ReplanProposal, Task, TaskEvent, TaskProgressEvent } from "@auto-crop/core";
+import type {
+  CeoIntake,
+  Company,
+  Department,
+  Objective,
+  Proof,
+  ReplanProposal,
+  Task,
+  TaskEvent,
+  TaskProgressEvent,
+} from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories, ReviewRecord } from "../db/repositories";
 import { EventStream } from "../events/sse";
@@ -126,6 +136,7 @@ async function routeRequest(
       reviews: [],
       activity: options.repositories.listTaskEventsForCompany(result.company.id).map(summarizeTaskEvent),
       taskProgressEvents: options.repositories.listTaskProgressEventsForCompany(result.company.id).map(summarizeTaskProgressEvent),
+      ceoIntakes: [],
     });
     return;
   }
@@ -153,6 +164,39 @@ async function routeRequest(
     }
 
     sendJson(response, 200, buildCompanyState(company, options.repositories));
+    return;
+  }
+
+  const ceoIntakeMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/ceo-intakes$/);
+  if (method === "POST" && ceoIntakeMatch) {
+    const companyId = ceoIntakeMatch[1];
+    const company = options.repositories.getCompany(companyId);
+
+    if (!company) {
+      sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      return;
+    }
+
+    const body = await readJson<{ body?: string }>(request);
+    const intakeBody = body.body?.trim() ?? "";
+
+    if (!intakeBody) {
+      sendJson(response, 400, { error: "CEO intake body is required." });
+      return;
+    }
+
+    const timestamp = (options.now ?? (() => new Date()))().toISOString();
+    const intake: CeoIntake = {
+      id: createRouteId(options, "ceo_intake"),
+      companyId,
+      body: intakeBody,
+      status: "received",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    options.repositories.createCeoIntake(intake);
+    sendJson(response, 201, { intake: summarizeCeoIntake(intake) });
     return;
   }
 
@@ -293,12 +337,17 @@ function buildCompanyState(company: Company, repositories: ReturnType<typeof cre
     replanProposals: repositories.listReplanProposalsForCompany(company.id).map(summarizeReplanProposal),
     activity: repositories.listTaskEventsForCompany(company.id).map(summarizeTaskEvent),
     taskProgressEvents: repositories.listTaskProgressEventsForCompany(company.id).map(summarizeTaskProgressEvent),
+    ceoIntakes: repositories.listCeoIntakesForCompany(company.id).map(summarizeCeoIntake),
     editable: {
       companyName: company.name,
       objectives: repositories.listObjectives(company.id).map((objective) => objective.title),
       firstTasks: tasks.map((task) => task.title),
     },
   };
+}
+
+function createRouteId(options: ApiServerOptions, prefix: string): string {
+  return options.createId?.(prefix) ?? `${prefix}_${Date.now()}`;
 }
 
 function summarizeCompany(company: Company) {
@@ -319,6 +368,10 @@ function summarizeCompanyListItem(company: Company, repositories: ReturnType<typ
     updatedAt: company.updatedAt,
     taskCount: repositories.listTasksForCompany(company.id).length,
   };
+}
+
+function summarizeCeoIntake(intake: CeoIntake) {
+  return intake;
 }
 
 function summarizeDepartment(department: Department) {

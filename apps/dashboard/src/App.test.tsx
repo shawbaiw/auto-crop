@@ -206,6 +206,29 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("button", { name: /Engineering 01/i })).toBeInTheDocument();
     expect(screen.getByText("Validate first wedge")).toBeInTheDocument();
     expect(screen.getByText("Create landing page / queued")).toBeInTheDocument();
+    expect(screen.queryByText("Status")).not.toBeInTheDocument();
+    expect(screen.queryByText("Playbook")).not.toBeInTheDocument();
+  });
+
+  it("creates a durable CEO intake from the CEO Workspace", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+    await user.type(screen.getByRole("textbox", { name: "New vision, material, or task" }), "Add multiplayer mode.");
+    await user.click(screen.getByRole("button", { name: /send ceo office/i }));
+
+    expect(api.createCeoIntake).toHaveBeenCalledWith("company_1", { body: "Add multiplayer mode." });
+    expect(screen.getByText("Request: Add multiplayer mode.")).toBeInTheDocument();
+    expect(screen.getByText("Received")).toBeInTheDocument();
+    expect(screen.getByText("CEO assessing")).toBeInTheDocument();
+    expect(screen.getByText("Assessment complete")).toBeInTheDocument();
+    expect(screen.getByText("Planning")).toBeInTheDocument();
+    expect(screen.getByText("Generated objectives/tasks/department assignments")).toBeInTheDocument();
+    expect(screen.getByText("Dispatching")).toBeInTheDocument();
+    expect(screen.getByText("Dispatched to departments")).toBeInTheDocument();
   });
 
   it("shows department agent, task completion, and input controls", async () => {
@@ -950,6 +973,7 @@ function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>
       firstTasks: ["Create landing page"],
     },
     replanProposals: [],
+    ceoIntakes: [],
     taskProgressEvents: [
       {
         id: "task_progress_1",
@@ -1046,6 +1070,16 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
     async createCompany() {
       return createCompanyResponse();
     },
+    createCeoIntake: vi.fn(async (companyId, input) => ({
+      intake: {
+        id: "ceo_intake_1",
+        companyId,
+        body: input.body,
+        status: "received" as const,
+        createdAt: "2026-08-17T00:00:00.000Z",
+        updatedAt: "2026-08-17T00:00:00.000Z",
+      },
+    })),
     async getCompanyState() {
       const created = createCompanyResponse();
       return {

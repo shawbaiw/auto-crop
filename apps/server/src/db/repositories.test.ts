@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDatabaseClient } from "./client";
 import { migrate } from "./schema";
 import { createRepositories } from "./repositories";
-import type { Company, Department, KeyResult, Objective, Proof, ReplanProposal, Task } from "@auto-crop/core";
+import type { CeoIntake, Company, Department, KeyResult, Objective, Proof, ReplanProposal, Task } from "@auto-crop/core";
 
 const createdDirs: string[] = [];
 
@@ -80,6 +80,30 @@ describe("repositories", () => {
     expect(repos.listTaskProgressEventsForCompany(records.company.id).map((event) => event.step)).toEqual([
       "received",
       "assessment_complete",
+    ]);
+
+    close();
+  });
+
+  it("persists CEO intakes in chronological order", () => {
+    const { repos, close } = openTestRepositories();
+    const records = createRecords();
+    const intake: CeoIntake = {
+      id: "ceo_intake_1",
+      companyId: records.company.id,
+      body: "Add a multiplayer competitive mode.",
+      status: "received",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    };
+
+    repos.createCompany(records.company);
+    repos.createCeoIntake({ ...intake, id: "ceo_intake_2", createdAt: "2026-08-17T00:01:00.000Z" });
+    repos.createCeoIntake(intake);
+
+    expect(repos.listCeoIntakesForCompany(records.company.id)).toEqual([
+      intake,
+      { ...intake, id: "ceo_intake_2", createdAt: "2026-08-17T00:01:00.000Z" },
     ]);
 
     close();

@@ -19,6 +19,25 @@ export type CompanyListItem = CompanySummary & {
   taskCount: number;
 };
 
+export type CeoIntakeStatus =
+  | "received"
+  | "assessing"
+  | "assessment_complete"
+  | "planning"
+  | "planned"
+  | "dispatching"
+  | "dispatched"
+  | "failed";
+
+export type CeoIntakeSummary = {
+  id: string;
+  companyId: string;
+  body: string;
+  status: CeoIntakeStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type DepartmentSummary = {
   id: string;
   name: string;
@@ -136,6 +155,7 @@ export type CreateCompanyResponse = {
   activity?: ServerEvent[];
   replanProposals?: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
+  ceoIntakes?: CeoIntakeSummary[];
 };
 
 export type ServerEvent = {
@@ -158,6 +178,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   activity: ServerEvent[];
   replanProposals: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
+  ceoIntakes?: CeoIntakeSummary[];
 };
 
 export type ApiClient = {
@@ -171,6 +192,7 @@ export type ApiClient = {
     assets: string[];
   }): Promise<CreateCompanyResponse>;
   getCompanyState(companyId: string): Promise<CompanyStateResponse>;
+  createCeoIntake(companyId: string, input: { body: string }): Promise<{ intake: CeoIntakeSummary }>;
   activateCompany(companyId: string): Promise<{ company: CompanySummary }>;
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
@@ -198,6 +220,9 @@ export function createApiClient(baseUrl = ""): ApiClient {
     },
     async getCompanyState(companyId) {
       return getJson(`${baseUrl}/api/companies/${companyId}/state`);
+    },
+    async createCeoIntake(companyId, input) {
+      return postJson(`${baseUrl}/api/companies/${companyId}/ceo-intakes`, input);
     },
     async activateCompany(companyId) {
       return postJson(`${baseUrl}/api/companies/${companyId}/activate`, {});

@@ -3,6 +3,7 @@ import {
   createApiClient,
   type AgentSummary,
   type ApiClient,
+  type CeoIntakeSummary,
   type CompanyListItem,
   type CreateCompanyResponse,
   type ProofSummary,
@@ -52,6 +53,7 @@ export default function App({ apiClient }: AppProps) {
   const [createError, setCreateError] = useState<string | null>(null);
   const [events, setEvents] = useState<ServerEvent[]>([]);
   const [taskProgressEvents, setTaskProgressEvents] = useState<TaskProgressEventSummary[]>([]);
+  const [ceoIntakes, setCeoIntakes] = useState<CeoIntakeSummary[]>([]);
   const [proof, setProof] = useState<ProofSummary[]>([]);
   const [replanProposals, setReplanProposals] = useState<ReplanProposalSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
@@ -130,6 +132,7 @@ export default function App({ apiClient }: AppProps) {
     setReviews(response.reviews ?? []);
     setEvents(response.activity ?? []);
     setTaskProgressEvents(response.taskProgressEvents ?? []);
+    setCeoIntakes(response.ceoIntakes ?? []);
     setReplanProposals(response.replanProposals ?? []);
     setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
     setView(nextView);
@@ -267,6 +270,7 @@ export default function App({ apiClient }: AppProps) {
     setReviews([]);
     setEvents([]);
     setTaskProgressEvents([]);
+    setCeoIntakes([]);
     setDashboardFocusTarget(null);
     try {
       const response = await client.createCompany({
@@ -282,6 +286,7 @@ export default function App({ apiClient }: AppProps) {
       setReviews(response.reviews ?? []);
       setEvents(response.activity ?? []);
       setTaskProgressEvents(response.taskProgressEvents ?? []);
+      setCeoIntakes(response.ceoIntakes ?? []);
       writeCurrentCompanyId(response.company.id);
       setView("department-workspace");
     } catch (error) {
@@ -442,6 +447,15 @@ export default function App({ apiClient }: AppProps) {
     setBlueprint((current) => updateBlueprintTask(current, response.task));
   }
 
+  async function handleCreateCeoIntake(body: string) {
+    if (!blueprint) {
+      return;
+    }
+
+    const response = await client.createCeoIntake(blueprint.company.id, { body });
+    setCeoIntakes((current) => upsertCeoIntake(current, response.intake));
+  }
+
   function handleCreateNewCompany() {
     clearCurrentCompanyId();
     setBlueprint(null);
@@ -449,6 +463,7 @@ export default function App({ apiClient }: AppProps) {
     setReviews([]);
     setEvents([]);
     setTaskProgressEvents([]);
+    setCeoIntakes([]);
     setReplanProposals([]);
     setDashboardFocusTarget(null);
     setCompanyName("");
@@ -593,9 +608,11 @@ export default function App({ apiClient }: AppProps) {
         menuBar={menuBar}
         objectives={blueprint.objectives}
         onRefreshTask={handleRefreshTask}
+        onCreateCeoIntake={handleCreateCeoIntake}
         selectedCeoAgentId={selectedAgentId}
         tasks={blueprint.tasks}
         taskProgressEvents={taskProgressEvents}
+        ceoIntakes={ceoIntakes}
       />,
     );
   }
@@ -661,6 +678,15 @@ export default function App({ apiClient }: AppProps) {
       step={onboardingStep}
     />,
   );
+}
+
+function upsertCeoIntake(intakes: CeoIntakeSummary[], intake: CeoIntakeSummary): CeoIntakeSummary[] {
+  const exists = intakes.some((current) => current.id === intake.id);
+  if (!exists) {
+    return [...intakes, intake];
+  }
+
+  return intakes.map((current) => (current.id === intake.id ? intake : current));
 }
 
 function upsertReplanProposal(proposals: ReplanProposalSummary[], proposal: ReplanProposalSummary): ReplanProposalSummary[] {

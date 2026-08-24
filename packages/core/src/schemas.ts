@@ -63,6 +63,17 @@ export const taskProgressStepSchema = z.enum([
 
 export const taskProgressStatusSchema = z.enum(["complete", "current", "waiting", "blocked"]);
 
+export const ceoIntakeStatusSchema = z.enum([
+  "received",
+  "assessing",
+  "assessment_complete",
+  "planning",
+  "planned",
+  "dispatching",
+  "dispatched",
+  "failed",
+]);
+
 export const proofTypeSchema = z.enum([
   "file",
   "diff",

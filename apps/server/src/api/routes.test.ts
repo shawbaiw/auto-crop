@@ -275,6 +275,38 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("creates CEO intakes and returns them in company state", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+
+    const submitted = await postJson<{
+      intake: { id: string; companyId: string; body: string; status: string; createdAt: string };
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/ceo-intakes`, {
+      body: "Add a multiplayer competitive mode and build a prototype first.",
+    });
+
+    expect(submitted.intake).toMatchObject({
+      id: "ceo_intake_1",
+      companyId: created.company.id,
+      body: "Add a multiplayer competitive mode and build a prototype first.",
+      status: "received",
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    const state = await getJson<{ ceoIntakes: Array<{ id: string; body: string; status: string }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(state.ceoIntakes).toEqual([expect.objectContaining({ id: submitted.intake.id, status: "received" })]);
+
+    await fixture.close();
+  });
+
   it("uses the selected CEO agent to generate replan proposals through the API", async () => {
     const fixture = await startFixtureServer({
       plannerOutput: [

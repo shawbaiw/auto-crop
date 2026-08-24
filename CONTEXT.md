@@ -5,6 +5,7 @@
 - **Auto-Crop**: Local-first runtime that coordinates installed AI coding agents as a small operating company.
 - **CEO Agent**: The user-selected local agent, such as Claude Code or Codex, that converts founder input into a company blueprint.
 - **Founder Vision**: The user's natural-language description of what the company should build or pursue.
+- **CEO Intake**: A post-creation natural-language input submitted by the user to CEO Office. A CEO Intake can describe a new vision, task, material, constraint, or direction. It is appended to company context for CEO evaluation and planning; it does not overwrite the original Founder Vision.
 - **Permission Mode**: Runtime policy level for local execution. Current values are `safe`, `balanced`, and `autonomous`.
 - **Company Blueprint**: The structured result returned by the CEO Agent, including company metadata, departments, objectives, key results, proof schemas, and first tasks.
 - **Agent Output**: The raw stdout/stderr content and workspace side effects produced by an agent run. Agent Output can be useful evidence for humans, but it is not itself a completed task deliverable unless the runtime captures it as Proof.
