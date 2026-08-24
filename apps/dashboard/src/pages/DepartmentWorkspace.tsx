@@ -5,6 +5,7 @@ import type {
   CompanySummary,
   DepartmentSummary,
   ObjectiveSummary,
+  TaskProgressEventSummary,
   TaskSummary,
 } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
@@ -21,6 +22,7 @@ export type DepartmentWorkspaceProps = {
   objectives: ObjectiveSummary[];
   selectedCeoAgentId: string;
   tasks: TaskSummary[];
+  taskProgressEvents?: TaskProgressEventSummary[];
   onRefreshTask?: (taskId: string) => void;
 };
 
@@ -35,6 +37,7 @@ export function DepartmentWorkspace({
   onRefreshTask,
   selectedCeoAgentId,
   tasks,
+  taskProgressEvents = [],
 }: DepartmentWorkspaceProps) {
   const { t } = useLanguage();
   const [selectedRoleId, setSelectedRoleId] = useState(ceoRoleId);
@@ -86,7 +89,11 @@ export function DepartmentWorkspace({
                   <DepartmentRoleSummary department={selectedDepartment} />
                 </section>
                 <DepartmentResponsibility responsibility={selectedDepartment.responsibility} />
-                <TaskCompletionSummary tasks={tasksByDepartment.get(selectedDepartment.id) ?? []} />
+                <DepartmentProgressFlows
+                  departmentId={selectedDepartment.id}
+                  progressEvents={taskProgressEvents}
+                  tasks={tasksByDepartment.get(selectedDepartment.id) ?? []}
+                />
                 <DepartmentTaskList onRefreshTask={onRefreshTask} tasks={tasksByDepartment.get(selectedDepartment.id) ?? []} />
                 <DepartmentMessageBox
                   departmentName={selectedDepartment.name}
@@ -172,31 +179,168 @@ function DepartmentResponsibility({ responsibility }: { responsibility: string }
   );
 }
 
-function TaskCompletionSummary({ tasks }: { tasks: TaskSummary[] }) {
+function DepartmentProgressFlows({
+  departmentId,
+  progressEvents,
+  tasks,
+}: {
+  departmentId: string;
+  progressEvents: TaskProgressEventSummary[];
+  tasks: TaskSummary[];
+}) {
   const { t } = useLanguage();
-  const total = tasks.length;
-  const complete = tasks.filter((task) => task.status === "complete" || task.status === "review").length;
-  const running = tasks.filter((task) => task.status === "running" || task.status === "retrying").length;
-  const waiting = tasks.filter((task) => task.status === "queued" || task.status === "waiting_dependency").length;
-  const blocked = tasks.filter((task) => task.status === "blocked" || task.status === "failed" || task.status === "needs_replan").length;
-  const details = [
-    running > 0 ? `${running} ${t("department.inProgressTasks")}` : null,
-    waiting > 0 ? `${waiting} ${t("department.waitingTasks")}` : null,
-    blocked > 0 ? `${blocked} ${t("department.blockedTasks")}` : null,
-  ].filter((detail): detail is string => Boolean(detail));
+  const parentTasks = tasks.filter((task) => task.taskKind !== "department_subtask");
+  const progressEventsByParent = groupProgressEvents(progressEvents.filter((event) => event.departmentId === departmentId));
+  const flows = parentTasks.map((task) => ({
+    task,
+    events: progressEventsByParent.get(task.id) ?? fallbackProgressEvents(task),
+  }));
 
   return (
-    <section className="department-task-progress" aria-label={t("department.taskCompletion")}>
-      <h3>{t("department.taskCompletion")}</h3>
-      <div className="department-task-progress__meter" aria-label={`${complete} / ${total}`}>
-        <span style={{ width: total > 0 ? `${Math.round((complete / total) * 100)}%` : "0%" }} />
-      </div>
-      <p className="department-task-progress__summary">
-        {complete} / {total} {t("department.tasksComplete")}
-      </p>
-      <p className="muted">{details.length > 0 ? details.join(" / ") : t("department.noOpenTaskIssues")}</p>
+    <section className="department-progress-flows" aria-label={t("department.ceoTaskProgress")}>
+      <h3>{t("department.ceoTaskProgress")}</h3>
+      <p className="muted">{t("department.ceoTaskProgressNote")}</p>
+      {flows.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
+      {flows.map((flow) => (
+        <article className="department-progress-flow" key={flow.task.id}>
+          <h4>{flow.task.title}</h4>
+          <ol className="department-progress-flow__steps">
+            {flow.events.map((event) => (
+              <li className={`department-progress-flow__step department-progress-flow__step--${event.status}`} key={event.id}>
+                <span aria-hidden="true">{progressMarker(event.status)}</span>
+                <p>{formatProgressLabel(event, t)}</p>
+              </li>
+            ))}
+          </ol>
+        </article>
+      ))}
     </section>
   );
+}
+
+function groupProgressEvents(events: TaskProgressEventSummary[]): Map<string, TaskProgressEventSummary[]> {
+  const grouped = new Map<string, TaskProgressEventSummary[]>();
+  for (const event of events) {
+    grouped.set(event.parentTaskId, [...(grouped.get(event.parentTaskId) ?? []), event]);
+  }
+  return grouped;
+}
+
+function fallbackProgressEvents(task: TaskSummary): TaskProgressEventSummary[] {
+  const isDone = task.status === "review" || task.status === "complete";
+  const isBlocked = task.status === "blocked" || task.status === "failed" || task.status === "needs_replan";
+  const currentStatus = isDone ? "complete" : isBlocked ? "blocked" : task.status === "queued" ? "waiting" : "current";
+
+  return [
+    {
+      id: `${task.id}_received`,
+      companyId: "",
+      departmentId: task.departmentId,
+      parentTaskId: task.id,
+      subjectTaskId: null,
+      step: "received",
+      status: "complete",
+      label: "Received CEO task",
+      detail: null,
+      createdAt: "",
+    },
+    {
+      id: `${task.id}_assessment`,
+      companyId: "",
+      departmentId: task.departmentId,
+      parentTaskId: task.id,
+      subjectTaskId: null,
+      step: "assessment_complete",
+      status: task.status === "queued" ? "waiting" : "complete",
+      label: task.status === "queued" ? "Assessment pending" : "Assessment complete",
+      detail: null,
+      createdAt: "",
+    },
+    {
+      id: `${task.id}_execution`,
+      companyId: "",
+      departmentId: task.departmentId,
+      parentTaskId: task.id,
+      subjectTaskId: task.id,
+      step: "executing",
+      status: currentStatus,
+      label: `Task 1 (${task.title}) ${task.status}`,
+      detail: null,
+      createdAt: "",
+    },
+  ];
+}
+
+function progressMarker(status: TaskProgressEventSummary["status"]): string {
+  if (status === "complete") {
+    return "✓";
+  }
+  if (status === "current") {
+    return "●";
+  }
+  return "○";
+}
+
+function formatProgressLabel(event: TaskProgressEventSummary, t: ReturnType<typeof useLanguage>["t"]): string {
+  switch (event.step) {
+    case "received":
+      return t("department.flowReceived");
+    case "assessing":
+      return t("department.flowAssessing");
+    case "assessment_complete":
+      return t("department.flowAssessmentComplete");
+    case "splitting":
+      return t("department.flowSplitting");
+    case "split_complete":
+      return t("department.flowSplitComplete");
+    case "no_split_needed":
+      return t("department.flowNoSplitNeeded");
+    case "summarizing_proof":
+      return t("department.flowSummarizingProof");
+    case "awaiting_review":
+      return t("department.flowAwaitingReview");
+    case "complete":
+      return t("department.flowComplete");
+    case "blocked":
+      return t("department.flowBlocked");
+    case "needs_ceo_reassignment":
+      return t("department.flowNeedsCeoReassignment");
+    case "executing":
+      return formatExecutingProgressLabel(event.label, t);
+  }
+}
+
+function formatExecutingProgressLabel(label: string, t: ReturnType<typeof useLanguage>["t"]): string {
+  const match = label.match(/^Task (\d+) \((.+)\) ([a-z_]+)$/i);
+  if (!match) {
+    return label;
+  }
+
+  const [, taskNumber, taskTitle, status] = match;
+  return `${t("department.flowTask")} ${taskNumber} (${taskTitle}) ${formatFlowTaskStatus(status, t)}`;
+}
+
+function formatFlowTaskStatus(status: string, t: ReturnType<typeof useLanguage>["t"]): string {
+  switch (status) {
+    case "waiting":
+      return t("department.flowStatusWaiting");
+    case "queued":
+      return t("department.flowStatusWaiting");
+    case "running":
+      return t("department.flowStatusRunning");
+    case "retrying":
+      return t("department.flowStatusRunning");
+    case "blocked":
+      return t("department.flowStatusBlocked");
+    case "failed":
+      return t("department.flowStatusBlocked");
+    case "review":
+      return t("department.flowStatusReview");
+    case "complete":
+      return t("department.flowStatusComplete");
+    default:
+      return status;
+  }
 }
 
 function DepartmentTaskList({
@@ -207,14 +351,15 @@ function DepartmentTaskList({
   tasks: TaskSummary[];
 }) {
   const { t } = useLanguage();
+  const parentTasks = tasks.filter((task) => task.taskKind !== "department_subtask");
 
   return (
     <section className="department-task-list" aria-label={t("department.assignedTasks")}>
       <h3>{t("department.assignedTasks")}</h3>
       <p className="muted">{t("department.assignedTasksNote")}</p>
       <div className="task-action-list">
-        {tasks.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
-        {tasks.map((task) => (
+        {parentTasks.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
+        {parentTasks.map((task) => (
           <TaskStatusAction key={task.id} onRefreshTask={onRefreshTask} task={task} />
         ))}
       </div>

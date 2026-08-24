@@ -42,6 +42,49 @@ describe("repositories", () => {
     close();
   });
 
+  it("persists department task progress events in chronological order", () => {
+    const { repos, close } = openTestRepositories();
+    const records = createRecords();
+
+    repos.createCompany(records.company);
+    repos.createDepartment(records.department);
+    repos.createObjective(records.objective);
+    repos.createKeyResult(records.keyResult);
+    repos.createTask(records.task);
+
+    repos.appendTaskProgressEvent({
+      id: "task_progress_2",
+      companyId: records.company.id,
+      departmentId: records.department.id,
+      parentTaskId: records.task.id,
+      subjectTaskId: null,
+      step: "assessment_complete",
+      status: "complete",
+      label: "Assessment complete",
+      detail: null,
+      createdAt: "2026-08-17T00:01:00.000Z",
+    });
+    repos.appendTaskProgressEvent({
+      id: "task_progress_1",
+      companyId: records.company.id,
+      departmentId: records.department.id,
+      parentTaskId: records.task.id,
+      subjectTaskId: null,
+      step: "received",
+      status: "complete",
+      label: "Received CEO task",
+      detail: null,
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    expect(repos.listTaskProgressEventsForCompany(records.company.id).map((event) => event.step)).toEqual([
+      "received",
+      "assessment_complete",
+    ]);
+
+    close();
+  });
+
   it("recovers queued tasks after reopening the same SQLite database", () => {
     const dir = mkdtempSync(join(tmpdir(), "auto-crop-db-"));
     createdDirs.push(dir);

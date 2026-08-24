@@ -60,6 +60,7 @@ textarea:focus-visible {
 h1,
 h2,
 h3,
+h4,
 p,
 dl,
 dd,
@@ -465,7 +466,8 @@ h3 {
 .department-agent-summary,
 .department-role-summary,
 .department-responsibility,
-.department-task-progress,
+.department-progress-flows,
+.department-progress-flow,
 .department-task-list,
 .department-message-box {
   background:
@@ -479,7 +481,7 @@ h3 {
 
 .department-agent-summary > div > p,
 .department-role-summary > p,
-.department-task-progress__summary {
+.department-progress-flow > h4 {
   font-size: 0.86rem;
   font-weight: 700;
   line-height: 1.35;
@@ -491,26 +493,71 @@ h3 {
   line-height: 1.45;
 }
 
-.department-task-progress__meter {
-  background: var(--surface);
-  border: var(--border-px) solid var(--border);
-  height: 18px;
-  overflow: hidden;
-}
-
-.department-task-progress__meter span {
-  background:
-    linear-gradient(45deg, color-mix(in srgb, var(--selected-fg) 24%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--selected-fg) 24%, transparent) 75%),
-    linear-gradient(45deg, color-mix(in srgb, var(--selected-fg) 24%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--selected-fg) 24%, transparent) 75%),
-    var(--selected-bg);
-  background-position: 0 0, 4px 4px, 0 0;
-  background-size: 8px 8px, 8px 8px, auto;
-  display: block;
-  height: 100%;
-}
-
+.department-progress-flows,
 .department-task-list {
   align-content: start;
+}
+
+.department-progress-flow__steps {
+  display: grid;
+  gap: 0;
+  list-style: none;
+  padding: 0;
+}
+
+.department-progress-flow__step {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  min-height: 36px;
+  position: relative;
+}
+
+.department-progress-flow__step::after {
+  background: var(--border);
+  content: "";
+  height: 100%;
+  left: 13px;
+  position: absolute;
+  top: 20px;
+  width: 2px;
+}
+
+.department-progress-flow__step:last-child::after {
+  display: none;
+}
+
+.department-progress-flow__step > span {
+  align-items: center;
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 700;
+  height: 28px;
+  justify-content: center;
+  position: relative;
+  width: 28px;
+  z-index: 1;
+}
+
+.department-progress-flow__step--complete > span,
+.department-progress-flow__step--current > span {
+  background: var(--selected-bg);
+  color: var(--selected-fg);
+}
+
+.department-progress-flow__step--blocked > span {
+  background: var(--danger);
+  color: var(--titlebar-ink);
+}
+
+.department-progress-flow__step > p {
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.35;
+  padding-top: 5px;
+  text-transform: uppercase;
 }
 
 .department-message-box__header,

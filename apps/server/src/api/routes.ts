@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { Company, Department, Objective, Proof, ReplanProposal, Task, TaskEvent } from "@auto-crop/core";
+import type { Company, Department, Objective, Proof, ReplanProposal, Task, TaskEvent, TaskProgressEvent } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories, ReviewRecord } from "../db/repositories";
 import { EventStream } from "../events/sse";
@@ -125,6 +125,7 @@ async function routeRequest(
       proof: [],
       reviews: [],
       activity: options.repositories.listTaskEventsForCompany(result.company.id).map(summarizeTaskEvent),
+      taskProgressEvents: options.repositories.listTaskProgressEventsForCompany(result.company.id).map(summarizeTaskProgressEvent),
     });
     return;
   }
@@ -291,6 +292,7 @@ function buildCompanyState(company: Company, repositories: ReturnType<typeof cre
     reviews: repositories.listReviews(company.id).map(summarizeReview),
     replanProposals: repositories.listReplanProposalsForCompany(company.id).map(summarizeReplanProposal),
     activity: repositories.listTaskEventsForCompany(company.id).map(summarizeTaskEvent),
+    taskProgressEvents: repositories.listTaskProgressEventsForCompany(company.id).map(summarizeTaskProgressEvent),
     editable: {
       companyName: company.name,
       objectives: repositories.listObjectives(company.id).map((objective) => objective.title),
@@ -366,6 +368,9 @@ function summarizeTask(task: Task, dependsOnTaskIds: string[]) {
     dependencyNote: task.dependencyNote ?? undefined,
     artifactWorkspacePath: task.artifactWorkspacePath ?? undefined,
     dependsOnTaskIds,
+    parentTaskId: task.parentTaskId ?? undefined,
+    taskKind: task.taskKind ?? "parent",
+    source: task.source ?? "ceo",
   };
 }
 
@@ -415,6 +420,10 @@ function summarizeTaskEvent(event: TaskEvent) {
     dependencyNote: event.dependencyNote ?? undefined,
     artifactWorkspacePath: event.artifactWorkspacePath ?? undefined,
   };
+}
+
+function summarizeTaskProgressEvent(event: TaskProgressEvent) {
+  return event;
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {

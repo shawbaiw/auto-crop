@@ -13,6 +13,11 @@ import type {
   TaskDependency,
   TaskEvent,
   TaskEventType,
+  TaskKind,
+  TaskProgressEvent,
+  TaskProgressStatus,
+  TaskProgressStep,
+  TaskSource,
   TaskStatus,
 } from "@auto-crop/core";
 import type { DatabaseClient } from "./client";
@@ -153,8 +158,8 @@ export function createRepositories(database: DatabaseClient) {
             assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, artifact_workspace_path,
             status, risk_level, position, latest_failure_reason, latest_failure_message,
             latest_execution_profile_name, latest_requested_timeout_ms, latest_effective_timeout_ms,
-            dependency_note
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            dependency_note, parent_task_id, task_kind, source
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           task.id,
@@ -177,6 +182,9 @@ export function createRepositories(database: DatabaseClient) {
           task.latestRequestedTimeoutMs ?? null,
           task.latestEffectiveTimeoutMs ?? null,
           task.dependencyNote ?? null,
+          task.parentTaskId ?? null,
+          task.taskKind ?? "parent",
+          task.source ?? "ceo",
         );
     },
 
@@ -261,6 +269,51 @@ export function createRepositories(database: DatabaseClient) {
         .prepare("SELECT * FROM tasks WHERE company_id = ? ORDER BY position ASC, id ASC")
         .all(companyId);
       return rows.map((row) => mapTask(row as TaskRow));
+    },
+
+    appendTaskProgressEvent(event: TaskProgressEvent): void {
+      database
+        .prepare(
+          `INSERT INTO task_progress_events (
+            id, company_id, department_id, parent_task_id, subject_task_id, step, status, label, detail, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          event.id,
+          event.companyId,
+          event.departmentId,
+          event.parentTaskId,
+          event.subjectTaskId,
+          event.step,
+          event.status,
+          event.label,
+          event.detail,
+          event.createdAt,
+        );
+    },
+
+    listTaskProgressEventsForCompany(companyId: string): TaskProgressEvent[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM task_progress_events
+           WHERE company_id = ?
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapTaskProgressEvent(row as TaskProgressEventRow));
+    },
+
+    listTaskProgressEventsForParentTask(parentTaskId: string): TaskProgressEvent[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM task_progress_events
+           WHERE parent_task_id = ?
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all(parentTaskId);
+      return rows.map((row) => mapTaskProgressEvent(row as TaskProgressEventRow));
     },
 
     createTaskDependency(dependency: TaskDependency): void {
@@ -661,6 +714,9 @@ type TaskRow = {
   latest_requested_timeout_ms: number | null;
   latest_effective_timeout_ms: number | null;
   dependency_note: string | null;
+  parent_task_id: string | null;
+  task_kind: TaskKind;
+  source: TaskSource;
 };
 
 type ProofRow = {
@@ -740,6 +796,19 @@ type TaskEventRow = {
   artifact_workspace_path: string | null;
 };
 
+type TaskProgressEventRow = {
+  id: string;
+  company_id: string;
+  department_id: string;
+  parent_task_id: string;
+  subject_task_id: string | null;
+  step: TaskProgressStep;
+  status: TaskProgressStatus;
+  label: string;
+  detail: string | null;
+  created_at: string;
+};
+
 function mapCompany(row: CompanyRow): Company {
   return {
     id: row.id,
@@ -809,6 +878,9 @@ function mapTask(row: TaskRow): Task {
     latestRequestedTimeoutMs: row.latest_requested_timeout_ms,
     latestEffectiveTimeoutMs: row.latest_effective_timeout_ms,
     dependencyNote: row.dependency_note,
+    parentTaskId: row.parent_task_id,
+    taskKind: row.task_kind,
+    source: row.source,
   };
 }
 
@@ -892,5 +964,20 @@ function mapTaskEvent(row: TaskEventRow): TaskEvent {
     effectiveTimeoutMs: row.effective_timeout_ms,
     dependencyNote: row.dependency_note,
     artifactWorkspacePath: row.artifact_workspace_path,
+  };
+}
+
+function mapTaskProgressEvent(row: TaskProgressEventRow): TaskProgressEvent {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    departmentId: row.department_id,
+    parentTaskId: row.parent_task_id,
+    subjectTaskId: row.subject_task_id,
+    step: row.step,
+    status: row.status,
+    label: row.label,
+    detail: row.detail,
+    createdAt: row.created_at,
   };
 }

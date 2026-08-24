@@ -17,6 +17,9 @@ export const taskStatusSchema = z.enum([
   "cancelled",
 ]);
 
+export const taskKindSchema = z.enum(["parent", "department_subtask"]);
+export const taskSourceSchema = z.enum(["ceo", "department", "user"]);
+
 export const agentFailureReasonSchema = z.enum([
   "timeout",
   "agent_failed",
@@ -42,6 +45,23 @@ export const taskEventTypeSchema = z.enum([
   "task_needs_replan",
   "deliverable_missing",
 ]);
+
+export const taskProgressStepSchema = z.enum([
+  "received",
+  "assessing",
+  "assessment_complete",
+  "splitting",
+  "split_complete",
+  "no_split_needed",
+  "executing",
+  "summarizing_proof",
+  "awaiting_review",
+  "complete",
+  "blocked",
+  "needs_ceo_reassignment",
+]);
+
+export const taskProgressStatusSchema = z.enum(["complete", "current", "waiting", "blocked"]);
 
 export const proofTypeSchema = z.enum([
   "file",

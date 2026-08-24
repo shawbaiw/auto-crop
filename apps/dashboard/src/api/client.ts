@@ -49,6 +49,34 @@ export type TaskSummary = {
   dependencyNote?: string;
   artifactWorkspacePath?: string;
   dependsOnTaskIds?: string[];
+  parentTaskId?: string;
+  taskKind?: "parent" | "department_subtask";
+  source?: "ceo" | "department" | "user";
+};
+
+export type TaskProgressEventSummary = {
+  id: string;
+  companyId: string;
+  departmentId: string;
+  parentTaskId: string;
+  subjectTaskId: string | null;
+  step:
+    | "received"
+    | "assessing"
+    | "assessment_complete"
+    | "splitting"
+    | "split_complete"
+    | "no_split_needed"
+    | "executing"
+    | "summarizing_proof"
+    | "awaiting_review"
+    | "complete"
+    | "blocked"
+    | "needs_ceo_reassignment";
+  status: "complete" | "current" | "waiting" | "blocked";
+  label: string;
+  detail: string | null;
+  createdAt: string;
 };
 
 export type ProofSummary = {
@@ -107,6 +135,7 @@ export type CreateCompanyResponse = {
   reviews?: ReviewSummary[];
   activity?: ServerEvent[];
   replanProposals?: ReplanProposalSummary[];
+  taskProgressEvents?: TaskProgressEventSummary[];
 };
 
 export type ServerEvent = {
@@ -128,6 +157,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   reviews: ReviewSummary[];
   activity: ServerEvent[];
   replanProposals: ReplanProposalSummary[];
+  taskProgressEvents?: TaskProgressEventSummary[];
 };
 
 export type ApiClient = {

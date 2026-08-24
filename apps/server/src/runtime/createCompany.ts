@@ -193,8 +193,23 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       latestRequestedTimeoutMs: null,
       latestEffectiveTimeoutMs: null,
       dependencyNote: null,
+      parentTaskId: null,
+      taskKind: "parent",
+      source: "ceo",
     };
     input.repositories.createTask(task);
+    input.repositories.appendTaskProgressEvent({
+      id: createId("task_progress"),
+      companyId: company.id,
+      departmentId,
+      parentTaskId: task.id,
+      subjectTaskId: null,
+      step: "received",
+      status: "complete",
+      label: "Received CEO task",
+      detail: null,
+      createdAt: now,
+    });
     taskIdsByBlueprintKey.set(taskBlueprint.key, task.id);
     handoffContractsByBlueprintKey.set(taskBlueprint.key, taskBlueprint.handoffContract);
     if (schemaDecision.warning) {

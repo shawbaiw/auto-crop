@@ -61,7 +61,10 @@ export function migrate(database: DatabaseClient): void {
       latest_execution_profile_name TEXT,
       latest_requested_timeout_ms INTEGER,
       latest_effective_timeout_ms INTEGER,
-      dependency_note TEXT
+      dependency_note TEXT,
+      parent_task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+      task_kind TEXT NOT NULL DEFAULT 'parent',
+      source TEXT NOT NULL DEFAULT 'ceo'
     );
 
     CREATE INDEX IF NOT EXISTS tasks_status_idx ON tasks(status);
@@ -126,6 +129,19 @@ export function migrate(database: DatabaseClient): void {
       artifact_workspace_path TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS task_progress_events (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+      parent_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      subject_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+      step TEXT NOT NULL,
+      status TEXT NOT NULL,
+      label TEXT NOT NULL,
+      detail TEXT,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS approvals (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -163,12 +179,15 @@ export function migrate(database: DatabaseClient): void {
   migrateTaskPosition(database);
   migrateCompanyPermissionMode(database);
   migrateTasksExecutionFields(database);
+  migrateTaskHierarchyFields(database);
   migrateAgentRunsExecutionFields(database);
   migrateTaskDependencyContracts(database);
   migrateReplanProposalDiagnostics(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_events_company_created_idx ON task_events(company_id, created_at, id)");
+  database.exec("CREATE INDEX IF NOT EXISTS task_progress_events_company_created_idx ON task_progress_events(company_id, created_at, id)");
+  database.exec("CREATE INDEX IF NOT EXISTS task_progress_events_parent_created_idx ON task_progress_events(parent_task_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS replan_proposals_company_status_idx ON replan_proposals(company_id, status)");
 }
 
@@ -223,6 +242,13 @@ function migrateTasksExecutionFields(database: DatabaseClient): void {
   addColumnIfMissing(database, columns, "tasks", "latest_requested_timeout_ms INTEGER");
   addColumnIfMissing(database, columns, "tasks", "latest_effective_timeout_ms INTEGER");
   addColumnIfMissing(database, columns, "tasks", "dependency_note TEXT");
+}
+
+function migrateTaskHierarchyFields(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "tasks");
+  addColumnIfMissing(database, columns, "tasks", "parent_task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE");
+  addColumnIfMissing(database, columns, "tasks", "task_kind TEXT NOT NULL DEFAULT 'parent'");
+  addColumnIfMissing(database, columns, "tasks", "source TEXT NOT NULL DEFAULT 'ceo'");
 }
 
 function migrateAgentRunsExecutionFields(database: DatabaseClient): void {

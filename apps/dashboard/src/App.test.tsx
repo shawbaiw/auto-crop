@@ -220,13 +220,12 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("heading", { name: "Engineering Workspace" })).toBeInTheDocument();
     expect(screen.getByText("Current Agent")).toBeInTheDocument();
     expect(screen.getByText("Capabilities: code / frontend / test")).toBeInTheDocument();
-    expect(screen.getByText("Task Completion")).toBeInTheDocument();
-    expect(screen.getByText("0 / 1 tasks complete")).toBeInTheDocument();
-    expect(screen.getByText("1 waiting")).toBeInTheDocument();
     expect(screen.getByText("Department Mission")).toBeInTheDocument();
     expect(screen.getByText("Build prototype.")).toBeInTheDocument();
-    expect(screen.getByText("CEO Assigned Tasks")).toBeInTheDocument();
-    expect(screen.getByText("These tasks are created by CEO Office from the company vision, then assigned to this department.")).toBeInTheDocument();
+    expect(screen.getByText("CEO Task Progress")).toBeInTheDocument();
+    expect(screen.getByText("Received CEO task")).toBeInTheDocument();
+    expect(screen.getByText("Assessment complete")).toBeInTheDocument();
+    expect(screen.getByText("Task 1 (Create landing page) waiting")).toBeInTheDocument();
     expect(screen.getByText("Create landing page / queued")).toBeInTheDocument();
     expect(screen.getByText("Role")).toBeInTheDocument();
     expect(screen.queryByText("Memory")).not.toBeInTheDocument();
@@ -944,6 +943,44 @@ function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>
       firstTasks: ["Create landing page"],
     },
     replanProposals: [],
+    taskProgressEvents: [
+      {
+        id: "task_progress_1",
+        companyId: "company_1",
+        departmentId: "department_1",
+        parentTaskId: "task_1",
+        subjectTaskId: null,
+        step: "received",
+        status: "complete",
+        label: "Received CEO task",
+        detail: null,
+        createdAt: "2026-08-17T00:00:00.000Z",
+      },
+      {
+        id: "task_progress_2",
+        companyId: "company_1",
+        departmentId: "department_1",
+        parentTaskId: "task_1",
+        subjectTaskId: null,
+        step: "assessment_complete",
+        status: "complete",
+        label: "Assessment complete",
+        detail: null,
+        createdAt: "2026-08-17T00:01:00.000Z",
+      },
+      {
+        id: "task_progress_3",
+        companyId: "company_1",
+        departmentId: "department_1",
+        parentTaskId: "task_1",
+        subjectTaskId: "task_1",
+        step: "executing",
+        status: "waiting",
+        label: "Task 1 (Create landing page) waiting",
+        detail: null,
+        createdAt: "2026-08-17T00:02:00.000Z",
+      },
+    ],
   };
 }
 

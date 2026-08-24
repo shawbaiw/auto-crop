@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
-import type { AgentFailureReason, Proof, Task, TaskEvent, TaskStatus } from "@auto-crop/core";
+import type { AgentFailureReason, Proof, Task, TaskEvent, TaskProgressEvent, TaskStatus } from "@auto-crop/core";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { createHandoffPackage } from "./proof";
@@ -64,6 +64,11 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
   for (const task of queuedTasks) {
     if (dispatches.length >= input.maxTasks) {
       break;
+    }
+
+    const assessmentDecision = assessDepartmentTask(input, task);
+    if (assessmentDecision === "deferred") {
+      continue;
     }
 
     const dependencyDecision = resolveDependencyReadiness(input.repositories, task);
@@ -157,6 +162,13 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             executionProfileName: initialTimeoutResolution.executionProfile.name,
             requestedTimeoutMs: initialTimeoutResolution.requestedTimeoutMs,
             effectiveTimeoutMs: initialTimeoutResolution.effectiveTimeoutMs,
+          });
+          appendTaskProgressEvent(input, {
+            task,
+            step: "executing",
+            status: "current",
+            label: `Task ${task.position + 1} (${task.title}) in progress`,
+            subjectTaskId: task.id,
           });
 
           const taskWorkspace = task.workspacePath
@@ -372,6 +384,13 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           input.repositories.updateTaskStatus(task.id, "review");
           input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
+          appendTaskProgressEvent(input, {
+            task,
+            step: "awaiting_review",
+            status: "current",
+            label: "Awaiting review",
+            subjectTaskId: task.id,
+          });
           appendAndEmitTaskEvent(input, {
             task,
             type: "task_review",
@@ -406,6 +425,174 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
   await Promise.all(dispatches);
 
   return result;
+}
+
+function assessDepartmentTask(input: RunSchedulerOnceInput, task: Task): "ready" | "deferred" {
+  if ((task.taskKind ?? "parent") !== "parent" || hasAssessment(input.repositories, task.id)) {
+    return "ready";
+  }
+
+  appendTaskProgressEvent(input, {
+    task,
+    step: "received",
+    status: "complete",
+    label: "Received CEO task",
+    subjectTaskId: null,
+  });
+  appendTaskProgressEvent(input, {
+    task,
+    step: "assessment_complete",
+    status: "complete",
+    label: "Assessment complete",
+    subjectTaskId: null,
+  });
+
+  if (!isLargeDepartmentTask(task)) {
+    appendTaskProgressEvent(input, {
+      task,
+      step: "no_split_needed",
+      status: "complete",
+      label: "No split needed",
+      subjectTaskId: task.id,
+    });
+    return "ready";
+  }
+
+  const subtasks = createDepartmentSubtasks(input, task);
+  input.repositories.updateTaskStatus(task.id, "waiting_dependency");
+  input.repositories.updateTaskExecutionSummary(task.id, {
+    dependencyNote: `Waiting for department subtasks: ${subtasks.map((subtask) => subtask.title).join(", ")}.`,
+  });
+  appendTaskProgressEvent(input, {
+    task,
+    step: "split_complete",
+    status: "complete",
+    label: "Split complete",
+    subjectTaskId: null,
+  });
+  appendTaskProgressEvent(input, {
+    task,
+    step: "executing",
+    status: "current",
+    label: `Task 1 (${subtasks[0].title}) waiting`,
+    subjectTaskId: subtasks[0].id,
+  });
+
+  return "deferred";
+}
+
+function hasAssessment(repositories: ReturnType<typeof createRepositories>, taskId: string): boolean {
+  return repositories
+    .listTaskProgressEventsForParentTask(taskId)
+    .some((event) => event.step === "assessment_complete");
+}
+
+function isLargeDepartmentTask(task: Task): boolean {
+  const text = `${task.title} ${task.description}`.toLowerCase();
+  return (
+    (task.proofSchemaId === "landing-page-file" || task.proofSchemaId === "deployment") &&
+    text.includes("prototype") &&
+    (text.includes("validate") || text.includes("deployment"))
+  );
+}
+
+function createDepartmentSubtasks(input: RunSchedulerOnceInput, parentTask: Task): Task[] {
+  const createId = input.createId ?? defaultCreateId;
+  const subtaskBlueprints = [
+    {
+      title: `Define executable slice for ${parentTask.title}`,
+      description: `Assess scope, dependencies, and proof criteria for the parent task: ${parentTask.title}.`,
+      proofSchemaId: "product-brief",
+    },
+    {
+      title: `Execute ${parentTask.title}`,
+      description: parentTask.description,
+      proofSchemaId: parentTask.proofSchemaId,
+    },
+    {
+      title: `Validate proof for ${parentTask.title}`,
+      description: `Validate the output and prepare parent-task proof for: ${parentTask.title}.`,
+      proofSchemaId: "test-output",
+    },
+  ];
+
+  return subtaskBlueprints.map((blueprint) => {
+    const subtaskId = createId("department_subtask");
+    const taskWorkspace = createTaskWorkspace(input.projectRoot, subtaskId);
+    const subtask: Task = {
+      id: subtaskId,
+      companyId: parentTask.companyId,
+      departmentId: parentTask.departmentId,
+      keyResultId: parentTask.keyResultId,
+      title: blueprint.title,
+      description: blueprint.description,
+      assigneeAgentId: parentTask.assigneeAgentId,
+      requiredCapabilities: parentTask.requiredCapabilities,
+      proofSchemaId: blueprint.proofSchemaId,
+      workspacePath: taskWorkspace.root,
+      artifactWorkspacePath: blueprint.proofSchemaId === parentTask.proofSchemaId ? taskWorkspace.root : null,
+      status: "queued",
+      riskLevel: parentTask.riskLevel,
+      position: input.repositories.getNextTaskPosition(parentTask.companyId),
+      latestFailureReason: null,
+      latestFailureMessage: null,
+      latestExecutionProfileName: null,
+      latestRequestedTimeoutMs: null,
+      latestEffectiveTimeoutMs: null,
+      dependencyNote: null,
+      parentTaskId: parentTask.id,
+      taskKind: "department_subtask",
+      source: "department",
+    };
+    input.repositories.createTask(subtask);
+    input.repositories.createTaskDependency({
+      taskId: parentTask.id,
+      dependsOnTaskId: subtask.id,
+      handoffContract: "Contribute to the parent task proof summary.",
+    });
+    return subtask;
+  });
+}
+
+function appendTaskProgressEvent(
+  input: RunSchedulerOnceInput,
+  event: {
+    task: Task;
+    step: TaskProgressEvent["step"];
+    status: TaskProgressEvent["status"];
+    label: string;
+    detail?: string | null;
+    subjectTaskId: string | null;
+  },
+): void {
+  const now = input.now ?? (() => new Date());
+  const createId = input.createId ?? defaultCreateId;
+  const parentTaskId = event.task.parentTaskId ?? event.task.id;
+  const existing = input.repositories
+    .listTaskProgressEventsForParentTask(parentTaskId)
+    .some(
+      (candidate) =>
+        candidate.step === event.step &&
+        candidate.subjectTaskId === event.subjectTaskId &&
+        candidate.label === event.label,
+    );
+
+  if (existing) {
+    return;
+  }
+
+  input.repositories.appendTaskProgressEvent({
+    id: createId("task_progress"),
+    companyId: event.task.companyId,
+    departmentId: event.task.departmentId,
+    parentTaskId,
+    subjectTaskId: event.subjectTaskId,
+    step: event.step,
+    status: event.status,
+    label: event.label,
+    detail: event.detail ?? null,
+    createdAt: now().toISOString(),
+  });
 }
 
 function resolveRunWorkspace(repositories: ReturnType<typeof createRepositories>, task: Task): string | null {

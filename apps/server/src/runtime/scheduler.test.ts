@@ -100,6 +100,60 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("assesses large department parent tasks and creates department subtasks before execution", async () => {
+    const largeParentTask = {
+      ...createTaskRecord("task_1", "queued", "low", "landing-page-file"),
+      title: "Build the playable web prototype",
+      description: "Build the playable web prototype, validate it locally, capture proof, and prepare it for deployment.",
+      requiredCapabilities: ["code", "frontend", "test"],
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([largeParentTask]);
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "proof: created artifact",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: () => undefined,
+    });
+
+    const tasks = repositories.listTasksForCompany("company_1");
+    const subtaskTitles = tasks.filter((task) => task.parentTaskId === "task_1").map((task) => task.title);
+
+    expect(result.started).toEqual([]);
+    expect(repositories.getTask("task_1")?.status).toBe("waiting_dependency");
+    expect(subtaskTitles).toEqual([
+      "Define executable slice for Build the playable web prototype",
+      "Execute Build the playable web prototype",
+      "Validate proof for Build the playable web prototype",
+    ]);
+    expect(repositories.listTaskDependencies("task_1").map((dependency) => dependency.dependsOnTaskId)).toEqual([
+      "department_subtask_1",
+      "department_subtask_2",
+      "department_subtask_3",
+    ]);
+    expect(repositories.listTaskProgressEventsForCompany("company_1").map((event) => event.step)).toEqual([
+      "received",
+      "assessment_complete",
+      "split_complete",
+      "executing",
+    ]);
+
+    client.close();
+  });
+
   it("cleans generated dependency directories after task execution while preserving artifacts", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low", "landing-page-file"),

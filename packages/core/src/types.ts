@@ -13,6 +13,8 @@ export type TaskStatus =
   | "needs_replan"
   | "failed"
   | "cancelled";
+export type TaskKind = "parent" | "department_subtask";
+export type TaskSource = "ceo" | "department" | "user";
 export type RiskLevel = "low" | "medium" | "high";
 export type ProofType =
   | "file"
@@ -48,6 +50,20 @@ export type TaskEventType =
   | "task_retrying"
   | "task_needs_replan"
   | "deliverable_missing";
+export type TaskProgressStep =
+  | "received"
+  | "assessing"
+  | "assessment_complete"
+  | "splitting"
+  | "split_complete"
+  | "no_split_needed"
+  | "executing"
+  | "summarizing_proof"
+  | "awaiting_review"
+  | "complete"
+  | "blocked"
+  | "needs_ceo_reassignment";
+export type TaskProgressStatus = "complete" | "current" | "waiting" | "blocked";
 
 export type Company = {
   id: string;
@@ -109,6 +125,22 @@ export type Task = {
   latestRequestedTimeoutMs?: number | null;
   latestEffectiveTimeoutMs?: number | null;
   dependencyNote?: string | null;
+  parentTaskId?: string | null;
+  taskKind?: TaskKind;
+  source?: TaskSource;
+};
+
+export type TaskProgressEvent = {
+  id: string;
+  companyId: string;
+  departmentId: string;
+  parentTaskId: string;
+  subjectTaskId: string | null;
+  step: TaskProgressStep;
+  status: TaskProgressStatus;
+  label: string;
+  detail: string | null;
+  createdAt: string;
 };
 
 export type Proof = {

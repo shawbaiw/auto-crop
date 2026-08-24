@@ -9,6 +9,7 @@ import {
   type ReplanProposalSummary,
   type ReviewSummary,
   type ServerEvent,
+  type TaskProgressEventSummary,
   type TaskSummary,
 } from "./api/client";
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
@@ -50,6 +51,7 @@ export default function App({ apiClient }: AppProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [events, setEvents] = useState<ServerEvent[]>([]);
+  const [taskProgressEvents, setTaskProgressEvents] = useState<TaskProgressEventSummary[]>([]);
   const [proof, setProof] = useState<ProofSummary[]>([]);
   const [replanProposals, setReplanProposals] = useState<ReplanProposalSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
@@ -127,6 +129,7 @@ export default function App({ apiClient }: AppProps) {
     setProof(response.proof ?? []);
     setReviews(response.reviews ?? []);
     setEvents(response.activity ?? []);
+    setTaskProgressEvents(response.taskProgressEvents ?? []);
     setReplanProposals(response.replanProposals ?? []);
     setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
     setView(nextView);
@@ -263,6 +266,7 @@ export default function App({ apiClient }: AppProps) {
     setReplanProposals([]);
     setReviews([]);
     setEvents([]);
+    setTaskProgressEvents([]);
     setDashboardFocusTarget(null);
     try {
       const response = await client.createCompany({
@@ -277,6 +281,7 @@ export default function App({ apiClient }: AppProps) {
       setReplanProposals(response.replanProposals ?? []);
       setReviews(response.reviews ?? []);
       setEvents(response.activity ?? []);
+      setTaskProgressEvents(response.taskProgressEvents ?? []);
       writeCurrentCompanyId(response.company.id);
       setView("department-workspace");
     } catch (error) {
@@ -443,6 +448,7 @@ export default function App({ apiClient }: AppProps) {
     setProof([]);
     setReviews([]);
     setEvents([]);
+    setTaskProgressEvents([]);
     setReplanProposals([]);
     setDashboardFocusTarget(null);
     setCompanyName("");
@@ -589,6 +595,7 @@ export default function App({ apiClient }: AppProps) {
         onRefreshTask={handleRefreshTask}
         selectedCeoAgentId={selectedAgentId}
         tasks={blueprint.tasks}
+        taskProgressEvents={taskProgressEvents}
       />,
     );
   }
