@@ -464,11 +464,7 @@ h3 {
 }
 
 .department-agent-summary,
-.department-role-summary,
-.department-responsibility,
-.department-progress-flows,
-.department-progress-flow,
-.department-message-box {
+.department-role-summary {
   background:
     linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
     var(--surface-alt);
@@ -479,21 +475,57 @@ h3 {
 }
 
 .department-agent-summary > div > p,
-.department-role-summary > p,
-.department-progress-flow > h4 {
+.department-role-summary > p {
   font-size: 0.86rem;
   font-weight: 700;
   line-height: 1.35;
   text-transform: uppercase;
 }
 
-.department-responsibility > p {
+.department-leader-report {
+  background:
+    linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
+    var(--surface-alt);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 12px;
+  grid-template-rows: auto auto minmax(120px, 1fr) auto;
+  min-height: clamp(520px, 62vh, 760px);
+  padding: 12px;
+}
+
+.department-leader-report__mission {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
   font-size: 0.9rem;
   line-height: 1.45;
+  padding: 8px 10px;
+}
+
+.department-leader-report__mission > strong {
+  color: var(--accent-secondary);
+}
+
+.department-leader-report__spacer {
+  min-height: clamp(120px, 18vh, 280px);
 }
 
 .department-progress-flows {
   align-content: start;
+  display: grid;
+  gap: 10px;
+}
+
+.department-progress-flow {
+  display: grid;
+  gap: 8px;
+}
+
+.department-progress-flow > h4 {
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-transform: uppercase;
 }
 
 .department-progress-flow__steps {
@@ -564,6 +596,19 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.department-message-box {
+  align-self: end;
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.department-message-box .retro-textarea {
+  min-height: 116px;
 }
 
 .department-message-box__field {

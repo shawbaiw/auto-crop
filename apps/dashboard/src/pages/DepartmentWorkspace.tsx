@@ -88,16 +88,14 @@ export function DepartmentWorkspace({
                   <DepartmentAgentSummary agents={agents} department={selectedDepartment} />
                   <DepartmentRoleSummary department={selectedDepartment} />
                 </section>
-                <DepartmentResponsibility responsibility={selectedDepartment.responsibility} />
-                <DepartmentProgressFlows
+                <DepartmentLeaderReport
                   departmentId={selectedDepartment.id}
-                  progressEvents={taskProgressEvents}
-                  tasks={tasksByDepartment.get(selectedDepartment.id) ?? []}
-                />
-                <DepartmentMessageBox
                   departmentName={selectedDepartment.name}
                   draft={departmentDraft}
                   onDraftChange={setDepartmentDraft}
+                  progressEvents={taskProgressEvents}
+                  responsibility={selectedDepartment.responsibility}
+                  tasks={tasksByDepartment.get(selectedDepartment.id) ?? []}
                 />
               </div>
             </RetroPanel>
@@ -167,13 +165,33 @@ function DepartmentAgentSummary({
   );
 }
 
-function DepartmentResponsibility({ responsibility }: { responsibility: string }) {
+function DepartmentLeaderReport({
+  departmentId,
+  departmentName,
+  draft,
+  onDraftChange,
+  progressEvents,
+  responsibility,
+  tasks,
+}: {
+  departmentId: string;
+  departmentName: string;
+  draft: string;
+  onDraftChange: (value: string) => void;
+  progressEvents: TaskProgressEventSummary[];
+  responsibility: string;
+  tasks: TaskSummary[];
+}) {
   const { t } = useLanguage();
 
   return (
-    <section className="department-responsibility" aria-label={t("department.responsibility")}>
-      <h3>{t("department.responsibility")}</h3>
-      <p>{responsibility}</p>
+    <section className="department-leader-report" aria-label={t("department.leaderReport")}>
+      <p className="department-leader-report__mission">
+        <strong>{t("department.currentResponsibility")}:</strong> {responsibility}
+      </p>
+      <DepartmentProgressFlows departmentId={departmentId} progressEvents={progressEvents} tasks={tasks} />
+      <div className="department-leader-report__spacer" aria-hidden="true" />
+      <DepartmentMessageBox departmentName={departmentName} draft={draft} onDraftChange={onDraftChange} />
     </section>
   );
 }

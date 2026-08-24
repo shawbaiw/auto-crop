@@ -220,12 +220,12 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("heading", { name: "Engineering Workspace" })).toBeInTheDocument();
     expect(screen.getByText("Current Agent")).toBeInTheDocument();
     expect(screen.getByText("Capabilities: code / frontend / test")).toBeInTheDocument();
-    expect(screen.getByText("Department Mission")).toBeInTheDocument();
-    expect(screen.getByText("Build prototype.")).toBeInTheDocument();
-    expect(screen.getByText("CEO Task Progress")).toBeInTheDocument();
-    expect(screen.getByText("Received CEO task")).toBeInTheDocument();
-    expect(screen.getByText("Assessment complete")).toBeInTheDocument();
-    expect(screen.getByText("Task 1 (Create landing page) waiting")).toBeInTheDocument();
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(leaderReport).toHaveTextContent("Current department mission: Build prototype.");
+    expect(leaderReport).toHaveTextContent("CEO Task Progress");
+    expect(leaderReport).toHaveTextContent("Received CEO task");
+    expect(leaderReport).toHaveTextContent("Assessment complete");
+    expect(leaderReport).toHaveTextContent("Task 1 (Create landing page) waiting");
     expect(screen.queryByText("CEO Assigned Tasks")).not.toBeInTheDocument();
     expect(screen.queryByText("Create landing page / queued")).not.toBeInTheDocument();
     expect(screen.getByText("Role")).toBeInTheDocument();
