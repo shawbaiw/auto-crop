@@ -218,14 +218,14 @@ function DepartmentProgressFlows({
       <h3>{t("department.ceoTaskProgress")}</h3>
       <p className="muted">{t("department.ceoTaskProgressNote")}</p>
       {flows.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
-      {flows.map((flow) => (
+      {flows.map((flow, index) => (
         <article className="department-progress-flow" key={flow.task.id}>
-          <h4>{flow.task.title}</h4>
+          <h4>{formatDepartmentTaskTitle(index, flow.task.title, t)}</h4>
           <ol className="department-progress-flow__steps">
             {flow.events.map((event) => (
               <li className={`department-progress-flow__step department-progress-flow__step--${event.status}`} key={event.id}>
                 <span aria-hidden="true">{progressMarker(event.status)}</span>
-                <p>{formatProgressLabel(event, t)}</p>
+                <p>{formatProgressLabel(event, flow.task.title, t)}</p>
               </li>
             ))}
           </ol>
@@ -233,6 +233,10 @@ function DepartmentProgressFlows({
       ))}
     </section>
   );
+}
+
+function formatDepartmentTaskTitle(taskIndex: number, title: string, t: ReturnType<typeof useLanguage>["t"]): string {
+  return `${t("department.taskTitlePrefix")}${taskIndex + 1}${t("department.taskTitleSeparator")}${title}`;
 }
 
 function groupProgressEvents(events: TaskProgressEventSummary[]): Map<string, TaskProgressEventSummary[]> {
@@ -298,7 +302,7 @@ function progressMarker(status: TaskProgressEventSummary["status"]): string {
   return "○";
 }
 
-function formatProgressLabel(event: TaskProgressEventSummary, t: ReturnType<typeof useLanguage>["t"]): string {
+function formatProgressLabel(event: TaskProgressEventSummary, parentTaskTitle: string, t: ReturnType<typeof useLanguage>["t"]): string {
   switch (event.step) {
     case "received":
       return t("department.flowReceived");
@@ -323,18 +327,19 @@ function formatProgressLabel(event: TaskProgressEventSummary, t: ReturnType<type
     case "needs_ceo_reassignment":
       return t("department.flowNeedsCeoReassignment");
     case "executing":
-      return formatExecutingProgressLabel(event.label, t);
+      return formatExecutingProgressLabel(event.label, parentTaskTitle, t);
   }
 }
 
-function formatExecutingProgressLabel(label: string, t: ReturnType<typeof useLanguage>["t"]): string {
+function formatExecutingProgressLabel(label: string, parentTaskTitle: string, t: ReturnType<typeof useLanguage>["t"]): string {
   const match = label.match(/^Task (\d+) \((.+)\) ([a-z_]+)$/i);
   if (!match) {
     return label;
   }
 
-  const [, taskNumber, taskTitle, status] = match;
-  return `${t("department.flowTask")} ${taskNumber} (${taskTitle}) ${formatFlowTaskStatus(status, t)}`;
+  const [, , taskTitle, status] = match;
+  const displayTitle = taskTitle.trim() || parentTaskTitle;
+  return `${t("department.flowTask")} (${displayTitle}) ${formatFlowTaskStatus(status, t)}`;
 }
 
 function formatFlowTaskStatus(status: string, t: ReturnType<typeof useLanguage>["t"]): string {
@@ -370,14 +375,14 @@ function DepartmentMessageBox({
   onDraftChange: (value: string) => void;
 }) {
   const { t } = useLanguage();
-  const [lastTarget, setLastTarget] = useState<"ceo" | "department" | null>(null);
+  const [sent, setSent] = useState(false);
   const hasDraft = draft.trim().length > 0;
-  const handleSend = (target: "ceo" | "department") => {
+  const handleSend = () => {
     if (!hasDraft) {
       return;
     }
 
-    setLastTarget(target);
+    setSent(true);
     onDraftChange("");
   };
 
@@ -398,25 +403,16 @@ function DepartmentMessageBox({
       </label>
       <div className="department-message-box__actions">
         <RetroButton
-          aria-label={`${t("department.sendToDepartment")} ${departmentName}`}
+          aria-label={`${t("department.send")} ${departmentName}`}
+          className="department-message-box__send"
           disabled={!hasDraft}
           icon={<Send size={14} aria-hidden="true" />}
-          onClick={() => handleSend("department")}
+          onClick={handleSend}
         >
-          {t("department.sendToDepartment")}
-        </RetroButton>
-        <RetroButton
-          aria-label={t("department.sendToCeoOffice")}
-          disabled={!hasDraft}
-          icon={<Send size={14} aria-hidden="true" />}
-          onClick={() => handleSend("ceo")}
-        >
-          {t("department.sendToCeoOffice")}
+          {t("department.send")}
         </RetroButton>
       </div>
-      {lastTarget ? (
-        <p className="system-message">{lastTarget === "department" ? t("department.sentToDepartment") : t("department.sentToCeoOffice")}</p>
-      ) : null}
+      {sent ? <p className="system-message">{t("department.sentToDepartment")}</p> : null}
       <p className="muted">{t("department.messageNote")}</p>
     </section>
   );

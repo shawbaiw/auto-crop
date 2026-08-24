@@ -559,8 +559,9 @@ h3 {
 
 .department-progress-flow__step > span {
   align-items: center;
-  background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  background: color-mix(in srgb, var(--surface) 82%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--border) 36%, var(--surface));
+  color: color-mix(in srgb, var(--ink) 72%, var(--surface));
   display: inline-flex;
   font-size: 0.75rem;
   font-weight: 700;
@@ -573,13 +574,15 @@ h3 {
 
 .department-progress-flow__step--complete > span,
 .department-progress-flow__step--current > span {
-  background: var(--selected-bg);
-  color: var(--selected-fg);
+  background: color-mix(in srgb, var(--surface) 74%, var(--border));
+  border-color: color-mix(in srgb, var(--border) 46%, var(--surface));
+  color: var(--ink);
 }
 
 .department-progress-flow__step--blocked > span {
-  background: var(--danger);
-  color: var(--titlebar-ink);
+  background: color-mix(in srgb, var(--surface) 68%, var(--danger));
+  border-color: color-mix(in srgb, var(--danger) 54%, var(--surface));
+  color: var(--ink);
 }
 
 .department-progress-flow__step > p {
@@ -609,6 +612,12 @@ h3 {
 
 .department-message-box .retro-textarea {
   min-height: 116px;
+}
+
+.department-message-box__send:disabled {
+  background: var(--surface-alt);
+  color: color-mix(in srgb, var(--ink) 58%, var(--surface));
+  cursor: not-allowed;
 }
 
 .department-message-box__field {
