@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "./test/setup";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -202,10 +202,15 @@ describe("Dashboard App", () => {
     await createCompany(user);
 
     expect(screen.getByText("Department Workspace")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /CEO Codex/i })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: /Engineering 01/i })).toBeInTheDocument();
-    expect(screen.getByText("Validate first wedge")).toBeInTheDocument();
-    expect(screen.getByText("Create landing page / queued")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "CEO" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Engineering" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /CEO Codex/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Engineering 01/i })).not.toBeInTheDocument();
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    expect(within(ceoReport).getByRole("heading", { name: "Objectives" })).toBeInTheDocument();
+    expect(within(ceoReport).getByText("Validate first wedge")).toBeInTheDocument();
+    expect(within(ceoReport).getByRole("heading", { name: "First Tasks" })).toBeInTheDocument();
+    expect(within(ceoReport).getByText("Create landing page / queued")).toBeInTheDocument();
     expect(screen.queryByText("Status")).not.toBeInTheDocument();
     expect(screen.queryByText("Playbook")).not.toBeInTheDocument();
   });
@@ -238,7 +243,7 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
 
     await createCompany(user);
-    await user.click(screen.getByRole("button", { name: /Engineering 01/i }));
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
 
     expect(screen.getByRole("heading", { name: "Engineering Workspace" })).toBeInTheDocument();
     expect(screen.getByText("Current Agent")).toBeInTheDocument();

@@ -1,4 +1,17 @@
-import { Building2, ClipboardCheck, Crown, ListChecks, MessageSquareText, RefreshCcw, Send } from "lucide-react";
+import {
+  Building2,
+  ClipboardCheck,
+  Code2,
+  Crown,
+  FlaskConical,
+  LineChart,
+  ListChecks,
+  Megaphone,
+  MessageSquareText,
+  Package,
+  RefreshCcw,
+  Send,
+} from "lucide-react";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
@@ -71,7 +84,7 @@ export function DepartmentWorkspace({
       <Workspace className="department-workspace">
         <RetroPanel className="department-workspace__rail" icon={<ClipboardCheck size={18} aria-hidden="true" />} title={t("department.departments")}>
           <RetroListRow
-            meta={selectedCeoAgent?.name ?? selectedCeoAgentId}
+            icon={<Crown size={18} aria-hidden="true" />}
             onClick={() => setSelectedRoleId(ceoRoleId)}
             selected={selectedRoleId === ceoRoleId}
             title={t("department.ceo")}
@@ -79,7 +92,7 @@ export function DepartmentWorkspace({
           {departments.map((department) => (
             <RetroListRow
               key={department.id}
-              meta={String((tasksByDepartment.get(department.id) ?? []).length).padStart(2, "0")}
+              icon={departmentIcon(department.name)}
               onClick={() => setSelectedRoleId(department.id)}
               selected={selectedRoleId === department.id}
               title={department.name}
@@ -117,22 +130,12 @@ export function DepartmentWorkspace({
                 <CeoIntakeWorkspace
                   draft={ceoIntakeDraft}
                   intakes={ceoIntakes}
+                  objectives={objectives}
                   onDraftChange={setCeoIntakeDraft}
+                  onRefreshTask={onRefreshTask}
                   onSubmit={onCreateCeoIntake}
+                  tasks={tasks}
                 />
-                <div>
-                  <h3>{t("department.objectives")}</h3>
-                  <VideotexLog emptyMessage={t("department.noObjectives")} rows={objectives.map((objective) => objective.title)} />
-                </div>
-                <div>
-                  <h3>{t("department.firstTasks")}</h3>
-                  <div className="task-action-list">
-                    {tasks.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
-                    {tasks.map((task) => (
-                      <TaskStatusAction key={task.id} onRefreshTask={onRefreshTask} task={task} />
-                    ))}
-                  </div>
-                </div>
                 <p className="muted">{t("department.schedulerNote")}</p>
               </div>
             </RetroPanel>
@@ -143,24 +146,80 @@ export function DepartmentWorkspace({
   );
 }
 
+function departmentIcon(departmentName: string): ReactNode {
+  const normalizedName = departmentName.toLowerCase();
+
+  if (normalizedName.includes("growth")) {
+    return <LineChart size={18} aria-hidden="true" />;
+  }
+  if (normalizedName.includes("engineer")) {
+    return <Code2 size={18} aria-hidden="true" />;
+  }
+  if (normalizedName.includes("research")) {
+    return <FlaskConical size={18} aria-hidden="true" />;
+  }
+  if (normalizedName.includes("product")) {
+    return <Package size={18} aria-hidden="true" />;
+  }
+
+  return <Megaphone size={18} aria-hidden="true" />;
+}
+
 function CeoIntakeWorkspace({
   draft,
   intakes,
+  objectives,
   onDraftChange,
+  onRefreshTask,
   onSubmit,
+  tasks,
 }: {
   draft: string;
   intakes: CeoIntakeSummary[];
+  objectives: ObjectiveSummary[];
   onDraftChange: (value: string) => void;
+  onRefreshTask?: (taskId: string) => void;
   onSubmit?: (body: string) => Promise<void> | void;
+  tasks: TaskSummary[];
 }) {
   const { t } = useLanguage();
 
   return (
     <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
       <CeoIntakeFlows intakes={intakes} />
+      <CeoBlueprintSummary objectives={objectives} onRefreshTask={onRefreshTask} tasks={tasks} />
       <div className="department-leader-report__spacer" aria-hidden="true" />
       <CeoIntakeMessageBox draft={draft} onDraftChange={onDraftChange} onSubmit={onSubmit} />
+    </section>
+  );
+}
+
+function CeoBlueprintSummary({
+  objectives,
+  onRefreshTask,
+  tasks,
+}: {
+  objectives: ObjectiveSummary[];
+  onRefreshTask?: (taskId: string) => void;
+  tasks: TaskSummary[];
+}) {
+  const { t } = useLanguage();
+
+  return (
+    <section className="ceo-blueprint-summary" aria-label={t("department.ceoBlueprintSummary")}>
+      <div>
+        <h3>{t("department.objectives")}</h3>
+        <VideotexLog emptyMessage={t("department.noObjectives")} rows={objectives.map((objective) => objective.title)} />
+      </div>
+      <div>
+        <h3>{t("department.firstTasks")}</h3>
+        <div className="task-action-list">
+          {tasks.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
+          {tasks.map((task) => (
+            <TaskStatusAction key={task.id} onRefreshTask={onRefreshTask} task={task} />
+          ))}
+        </div>
+      </div>
     </section>
   );
 }

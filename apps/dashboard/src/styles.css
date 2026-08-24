@@ -457,6 +457,11 @@ h3 {
   gap: 8px;
 }
 
+.ceo-blueprint-summary {
+  display: grid;
+  gap: 12px;
+}
+
 .department-overview {
   display: grid;
   gap: 10px;
@@ -960,9 +965,18 @@ h3 {
 }
 
 .retro-list-row strong {
+  align-items: center;
+  display: inline-flex;
   font-size: 1rem;
+  gap: 8px;
   line-height: 1.15;
   text-transform: uppercase;
+}
+
+.retro-list-row__icon {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
 }
 
 .retro-list-row span {
