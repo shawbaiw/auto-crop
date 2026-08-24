@@ -208,7 +208,7 @@ describe("Dashboard App", () => {
     expect(screen.getByText("Create landing page / queued")).toBeInTheDocument();
   });
 
-  it("shows department responsibility and tasks without a chat input", async () => {
+  it("shows department agent, task completion, and input controls", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
@@ -218,9 +218,25 @@ describe("Dashboard App", () => {
     await user.click(screen.getByRole("button", { name: /Engineering 01/i }));
 
     expect(screen.getByRole("heading", { name: "Engineering Workspace" })).toBeInTheDocument();
+    expect(screen.getByText("Current Agent")).toBeInTheDocument();
+    expect(screen.getByText("Capabilities: code / frontend / test")).toBeInTheDocument();
+    expect(screen.getByText("Task Completion")).toBeInTheDocument();
+    expect(screen.getByText("0 / 1 tasks complete")).toBeInTheDocument();
+    expect(screen.getByText("1 waiting")).toBeInTheDocument();
+    expect(screen.getByText("Department Mission")).toBeInTheDocument();
     expect(screen.getByText("Build prototype.")).toBeInTheDocument();
+    expect(screen.getByText("CEO Assigned Tasks")).toBeInTheDocument();
+    expect(screen.getByText("These tasks are created by CEO Office from the company vision, then assigned to this department.")).toBeInTheDocument();
     expect(screen.getByText("Create landing page / queued")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: /chat/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Role")).toBeInTheDocument();
+    expect(screen.queryByText("Memory")).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "Question, material, or task" }), "Use this launch copy.");
+    expect(screen.getByRole("button", { name: /send to agent engineering/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /send to agent engineering/i }));
+    expect(screen.getByText("Input staged for the department agent.")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Question, material, or task" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: /send to agent engineering/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send to CEO Office" })).toBeDisabled();
   });
 
   it("returns to setup from workspace views without showing the generated blueprint", async () => {

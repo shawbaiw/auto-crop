@@ -451,15 +451,86 @@ h3 {
   gap: 14px;
 }
 
-.role-summary > div:last-of-type {
+.role-summary .task-action-list {
+  display: grid;
+  gap: 8px;
+}
+
+.department-overview {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.department-agent-summary,
+.department-role-summary,
+.department-responsibility,
+.department-task-progress,
+.department-task-list,
+.department-message-box {
+  background:
+    linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
+    var(--surface-alt);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.department-agent-summary > div > p,
+.department-role-summary > p,
+.department-task-progress__summary {
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.department-responsibility > p {
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.department-task-progress__meter {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  height: 18px;
+  overflow: hidden;
+}
+
+.department-task-progress__meter span {
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--selected-fg) 24%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--selected-fg) 24%, transparent) 75%),
+    linear-gradient(45deg, color-mix(in srgb, var(--selected-fg) 24%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--selected-fg) 24%, transparent) 75%),
+    var(--selected-bg);
+  background-position: 0 0, 4px 4px, 0 0;
+  background-size: 8px 8px, 8px 8px, auto;
+  display: block;
+  height: 100%;
+}
+
+.department-task-list {
+  align-content: start;
+}
+
+.department-message-box__header,
+.department-message-box__actions {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.role-summary .task-action-list {
+.department-message-box__field {
   display: grid;
   gap: 8px;
+}
+
+.department-message-box__field > span {
+  color: var(--accent-secondary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .task-action-row {
@@ -1005,6 +1076,10 @@ h3 {
   }
 
   .app-shell--department-workspace .department-workspace__main {
+    grid-template-columns: 1fr;
+  }
+
+  .department-overview {
     grid-template-columns: 1fr;
   }
 
