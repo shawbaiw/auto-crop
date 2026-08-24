@@ -178,4 +178,4 @@ When functionality changes, update this README and the implementation documentat
 
 ## Credits
 
-本项目由 MAH 制作，MAH 链接：[https://mah.bot/](https://mah.bot/)
+This project is made by MAH. MAH link: [https://mah.bot/](https://mah.bot/)
