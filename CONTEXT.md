@@ -26,6 +26,7 @@
 - **Effective Timeout**: The final timeout budget actually enforced for an Agent Run after Task Execution Profile and environment override rules are resolved. _Avoid_: displayed budget, requested timeout.
 - **Task Execution Summary**: The latest durable outcome facts shown on a task, including failure reason, failure message, execution profile, and Effective Timeout. _Avoid_: activity text, run log.
 - **Task Dependency**: A relationship where one task can only run after another task has produced review-ready Proof. _Avoid_: task order, follow-up note.
+- **CEO Task Dependency Graph**: A CEO Workspace projection that shows first tasks by owning department, user-facing status, and real Task Dependencies so the user can see what is blocked and where to inspect next. It is read-only and does not show department subtasks by default. _Avoid_: task list, department progress flow, editable task graph.
 - **CEO Reassignment Request**: A department-submitted request asking CEO Office to clarify, split, replan, or reassign a task before or during execution. It is not a CEO Review Request because no Task Deliverable is being approved.
 - **Consumable Proof**: Proof that is recorded by the runtime and can be handed to downstream tasks as input. _Avoid_: promising stdout, informal result.
 - **Dependency Readiness**: The scheduler decision that all upstream Task Dependencies have Consumable Proof and the downstream task may start. _Avoid_: dependency status check.

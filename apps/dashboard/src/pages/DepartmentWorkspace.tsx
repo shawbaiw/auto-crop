@@ -152,11 +152,13 @@ export function DepartmentWorkspace({
                 />
                 <CeoIntakeWorkspace
                   draft={ceoIntakeDraft}
+                  departments={departments}
                   intakes={ceoIntakes}
                   objectives={objectives}
                   onDraftChange={setCeoIntakeDraft}
                   onCreateCeoReviewDecision={onCreateCeoReviewDecision}
                   onRefreshTask={onRefreshTask}
+                  onSelectDepartment={setSelectedRoleId}
                   onSubmit={onCreateCeoIntake}
                   pendingItems={ceoPendingItems}
                   proof={proof}
@@ -208,23 +210,27 @@ function departmentIcon(departmentName: string): ReactNode {
 }
 
 function CeoIntakeWorkspace({
+  departments,
   draft,
   intakes,
   objectives,
   onCreateCeoReviewDecision,
   onDraftChange,
   onRefreshTask,
+  onSelectDepartment,
   onSubmit,
   pendingItems,
   proof,
   tasks,
 }: {
+  departments: DepartmentSummary[];
   draft: string;
   intakes: CeoIntakeSummary[];
   objectives: ObjectiveSummary[];
   onCreateCeoReviewDecision?: DepartmentWorkspaceProps["onCreateCeoReviewDecision"];
   onDraftChange: (value: string) => void;
   onRefreshTask?: (taskId: string) => void;
+  onSelectDepartment: (departmentId: string) => void;
   onSubmit?: (body: string) => Promise<void> | void;
   pendingItems: CeoPendingItem[];
   proof: ProofSummary[];
@@ -265,7 +271,17 @@ function CeoIntakeWorkspace({
           proofs={proofsByTask.get(selectedPendingItem.task.id) ?? []}
         />
       ) : null}
-      <CeoBlueprintSummary objectives={objectives} onRefreshTask={onRefreshTask} tasks={tasks} />
+      <CeoBlueprintSummary
+        departments={departments}
+        objectives={objectives}
+        onSelectDepartment={onSelectDepartment}
+        onViewPendingTask={(taskId) => {
+          setSelectedTaskId(taskId);
+          setSuccessMessage(null);
+        }}
+        pendingItems={pendingItems}
+        tasks={tasks}
+      />
       <div className="department-leader-report__spacer" aria-hidden="true" />
       <CeoIntakeMessageBox draft={draft} onDraftChange={onDraftChange} onSubmit={onSubmit} />
     </section>
@@ -476,12 +492,18 @@ function formatCeoPendingType(item: CeoPendingItem, t: ReturnType<typeof useLang
 }
 
 function CeoBlueprintSummary({
+  departments,
   objectives,
-  onRefreshTask,
+  onSelectDepartment,
+  onViewPendingTask,
+  pendingItems,
   tasks,
 }: {
+  departments: DepartmentSummary[];
   objectives: ObjectiveSummary[];
-  onRefreshTask?: (taskId: string) => void;
+  onSelectDepartment: (departmentId: string) => void;
+  onViewPendingTask: (taskId: string) => void;
+  pendingItems: CeoPendingItem[];
   tasks: TaskSummary[];
 }) {
   const { t } = useLanguage();
@@ -493,16 +515,272 @@ function CeoBlueprintSummary({
         <VideotexLog emptyMessage={t("department.noObjectives")} rows={objectives.map((objective) => objective.title)} />
       </div>
       <div>
-        <h3>{t("department.firstTasks")}</h3>
-        <div className="task-action-list">
-          {tasks.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
-          {tasks.map((task) => (
-            <TaskStatusAction key={task.id} onRefreshTask={onRefreshTask} task={task} />
-          ))}
-        </div>
+        <h3>{t("department.taskRelationships")}</h3>
+        <CeoTaskDependencyGraph
+          departments={departments}
+          onSelectDepartment={onSelectDepartment}
+          onViewPendingTask={onViewPendingTask}
+          pendingItems={pendingItems}
+          tasks={tasks}
+        />
       </div>
     </section>
   );
+}
+
+function CeoTaskDependencyGraph({
+  departments,
+  onSelectDepartment,
+  onViewPendingTask,
+  pendingItems,
+  tasks,
+}: {
+  departments: DepartmentSummary[];
+  onSelectDepartment: (departmentId: string) => void;
+  onViewPendingTask: (taskId: string) => void;
+  pendingItems: CeoPendingItem[];
+  tasks: TaskSummary[];
+}) {
+  const { t } = useLanguage();
+  const parentTasks = useMemo(
+    () => tasks.filter((task) => task.taskKind !== "department_subtask"),
+    [tasks],
+  );
+  const graph = useMemo(() => buildCeoTaskGraph(parentTasks), [parentTasks]);
+  const departmentsById = useMemo(
+    () => new Map(departments.map((department) => [department.id, department])),
+    [departments],
+  );
+  const pendingTaskIds = useMemo(
+    () => new Set(pendingItems.map((item) => item.task.id)),
+    [pendingItems],
+  );
+  const lanes = departments
+    .map((department) => ({
+      department,
+      tasks: graph.connectedTasks.filter((task) => task.departmentId === department.id),
+    }))
+    .filter((lane) => lane.tasks.length > 0);
+
+  return (
+    <section className="ceo-task-dependency-graph" aria-label={t("department.ceoTaskDependencyGraph")}>
+      {parentTasks.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
+      {graph.connectedTasks.length > 0 ? (
+        <>
+          <div className="ceo-task-dependency-graph__lanes">
+            {lanes.map((lane) => (
+              <section className="ceo-task-dependency-graph__lane" key={lane.department.id}>
+                <h4>
+                  {departmentIcon(lane.department.name)}
+                  <span>{lane.department.name}</span>
+                </h4>
+                <div className="ceo-task-dependency-graph__lane-stack">
+                  {lane.tasks.map((task) => (
+                    <CeoTaskDependencyNode
+                      key={task.id}
+                      departmentName={departmentsById.get(task.departmentId)?.name ?? task.departmentId}
+                      graph={graph}
+                      isPending={pendingTaskIds.has(task.id)}
+                      onSelectDepartment={onSelectDepartment}
+                      onViewPendingTask={onViewPendingTask}
+                      task={task}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+          {graph.edges.length > 0 ? (
+            <div className="ceo-task-dependency-graph__edges" aria-label={t("department.taskDependencyEdges")}>
+              {graph.edges.map((edge) => (
+                <span key={`${edge.from.id}-${edge.to.id}`}>
+                  {taskNumber(edge.from, graph.tasks)} → {taskNumber(edge.to, graph.tasks)}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+      {graph.unlinkedTasks.length > 0 ? (
+        <section className="ceo-task-dependency-graph__unlinked">
+          <h4>{t("department.unlinkedTasks")}</h4>
+          <p className="muted">{t("department.unlinkedTasksNote")}</p>
+          <div className="ceo-task-dependency-graph__unlinked-list">
+            {graph.unlinkedTasks.map((task) => (
+              <CeoTaskDependencyNode
+                key={task.id}
+                departmentName={departmentsById.get(task.departmentId)?.name ?? task.departmentId}
+                graph={graph}
+                isPending={pendingTaskIds.has(task.id)}
+                onSelectDepartment={onSelectDepartment}
+                onViewPendingTask={onViewPendingTask}
+                task={task}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </section>
+  );
+}
+
+type CeoTaskGraph = {
+  connectedTasks: TaskSummary[];
+  edges: Array<{ from: TaskSummary; to: TaskSummary }>;
+  tasks: TaskSummary[];
+  tasksById: Map<string, TaskSummary>;
+  unlinkedTasks: TaskSummary[];
+};
+
+function buildCeoTaskGraph(tasks: TaskSummary[]): CeoTaskGraph {
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const downstreamTaskIds = new Set<string>();
+  const edges: Array<{ from: TaskSummary; to: TaskSummary }> = [];
+
+  for (const task of tasks) {
+    for (const dependencyId of task.dependsOnTaskIds ?? []) {
+      const dependency = tasksById.get(dependencyId);
+      if (!dependency) {
+        continue;
+      }
+      downstreamTaskIds.add(dependency.id);
+      edges.push({ from: dependency, to: task });
+    }
+  }
+
+  const unlinkedTasks = tasks.length > 1
+    ? tasks.filter((task) => (task.dependsOnTaskIds?.length ?? 0) === 0 && !downstreamTaskIds.has(task.id))
+    : [];
+  const unlinkedTaskIds = new Set(unlinkedTasks.map((task) => task.id));
+
+  return {
+    connectedTasks: tasks.filter((task) => !unlinkedTaskIds.has(task.id)),
+    edges,
+    tasks,
+    tasksById,
+    unlinkedTasks,
+  };
+}
+
+function CeoTaskDependencyNode({
+  departmentName,
+  graph,
+  isPending,
+  onSelectDepartment,
+  onViewPendingTask,
+  task,
+}: {
+  departmentName: string;
+  graph: CeoTaskGraph;
+  isPending: boolean;
+  onSelectDepartment: (departmentId: string) => void;
+  onViewPendingTask: (taskId: string) => void;
+  task: TaskSummary;
+}) {
+  const { t } = useLanguage();
+  const blockers = getUnfinishedDependencies(task, graph.tasksById);
+  const primaryBlocker = blockers[0] ?? null;
+  const shouldShowOtherDependencies = Boolean(primaryBlocker);
+  const completedDependencyNumbers = shouldShowOtherDependencies
+    ? (task.dependsOnTaskIds ?? [])
+      .map((dependencyId) => graph.tasksById.get(dependencyId))
+      .filter((dependency): dependency is TaskSummary => dependency != null && dependency.id !== primaryBlocker?.id)
+      .map((dependency) => taskNumber(dependency, graph.tasks))
+    : [];
+  const taskLabel = `${t("department.taskTitlePrefix")}${taskNumber(task, graph.tasks)} ${departmentName} ${task.title} ${formatGraphTaskStatus(task, t)}`;
+
+  return (
+    <article className={`ceo-task-node ceo-task-node--${graphTaskTone(task)}`}>
+      <button
+        aria-label={[
+          taskLabel,
+          primaryBlocker ? `${t("department.waitingOnTask")} ${taskNumber(primaryBlocker, graph.tasks)}: ${primaryBlocker.title}` : null,
+          completedDependencyNumbers.length > 0 ? `${t("department.alsoDependsOn")}: ${completedDependencyNumbers.join(", ")}` : null,
+        ].filter(Boolean).join(" ")}
+        className="ceo-task-node__main"
+        onClick={() => onSelectDepartment(task.departmentId)}
+        type="button"
+      >
+        <span className="ceo-task-node__meta">
+          {t("department.taskTitlePrefix")}{taskNumber(task, graph.tasks)} · {departmentName}
+        </span>
+        <strong>{task.title}</strong>
+        <span>{formatGraphTaskStatus(task, t)}</span>
+        {primaryBlocker ? (
+          <span className="ceo-task-node__blocker">
+            {t("department.waitingOnTask")} {taskNumber(primaryBlocker, graph.tasks)}: {primaryBlocker.title}
+          </span>
+        ) : null}
+        {completedDependencyNumbers.length > 0 ? (
+          <span className="ceo-task-node__depends">
+            {t("department.alsoDependsOn")}: {completedDependencyNumbers.join(", ")}
+          </span>
+        ) : null}
+      </button>
+      {primaryBlocker ? (
+        <button className="ceo-task-node__link" onClick={() => onSelectDepartment(primaryBlocker.departmentId)} type="button">
+          {t("department.viewUpstreamTask")} {taskNumber(primaryBlocker, graph.tasks)}
+        </button>
+      ) : null}
+      {isPending ? (
+        <RetroButton className="ceo-task-node__action" onClick={() => onViewPendingTask(task.id)}>
+          {t("department.viewTask")}
+        </RetroButton>
+      ) : null}
+    </article>
+  );
+}
+
+function getUnfinishedDependencies(task: TaskSummary, tasksById: Map<string, TaskSummary>): TaskSummary[] {
+  return (task.dependsOnTaskIds ?? [])
+    .map((dependencyId) => tasksById.get(dependencyId))
+    .filter((dependency): dependency is TaskSummary => dependency != null && dependency.status !== "complete");
+}
+
+function taskNumber(task: TaskSummary, tasks: TaskSummary[]): string {
+  const index = tasks.findIndex((candidate) => candidate.id === task.id);
+  return String(index >= 0 ? index + 1 : 0).padStart(2, "0");
+}
+
+function graphTaskTone(task: TaskSummary): string {
+  if (task.status === "complete") {
+    return "complete";
+  }
+  if (task.status === "waiting_dependency") {
+    return "waiting";
+  }
+  if (task.status === "review") {
+    return "review";
+  }
+  if (task.status === "blocked" || task.status === "failed" || task.status === "needs_replan") {
+    return "blocked";
+  }
+  if (task.status === "running" || task.status === "retrying") {
+    return "running";
+  }
+  return "queued";
+}
+
+function formatGraphTaskStatus(task: TaskSummary, t: ReturnType<typeof useLanguage>["t"]): string {
+  switch (task.status) {
+    case "complete":
+      return t("department.graphStatusComplete");
+    case "running":
+    case "retrying":
+      return t("department.graphStatusRunning");
+    case "waiting_dependency":
+      return t("department.graphStatusWaitingDependency");
+    case "review":
+      return t("department.graphStatusReview");
+    case "blocked":
+      return t("department.graphStatusBlocked");
+    case "failed":
+      return t("department.graphStatusFailed");
+    case "needs_replan":
+      return t("department.graphStatusNeedsReplan");
+    default:
+      return t("department.graphStatusQueued");
+  }
 }
 
 function CeoIntakeFlows({ intakes }: { intakes: CeoIntakeSummary[] }) {

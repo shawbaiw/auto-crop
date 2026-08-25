@@ -462,6 +462,156 @@ h3 {
   gap: 12px;
 }
 
+.ceo-task-dependency-graph {
+  display: grid;
+  gap: 10px;
+}
+
+.ceo-task-dependency-graph__lanes {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.ceo-task-dependency-graph__lane {
+  border: 1px solid color-mix(in srgb, var(--border) 62%, var(--surface));
+  display: grid;
+  gap: 10px;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  padding: 8px;
+}
+
+.ceo-task-dependency-graph__lane > h4 {
+  align-items: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 46%, var(--surface));
+  color: var(--accent-secondary);
+  display: flex;
+  font-size: 0.76rem;
+  gap: 7px;
+  padding-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.ceo-task-dependency-graph__lane-stack,
+.ceo-task-dependency-graph__unlinked-list {
+  align-content: start;
+  display: grid;
+  gap: 10px;
+}
+
+.ceo-task-dependency-graph__edges {
+  border-top: 1px dashed color-mix(in srgb, var(--border) 52%, var(--surface));
+  color: var(--accent-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.ceo-task-dependency-graph__edges > span {
+  border: 1px solid color-mix(in srgb, var(--border) 46%, var(--surface));
+  font-size: 0.72rem;
+  padding: 2px 6px;
+}
+
+.ceo-task-dependency-graph__unlinked {
+  border-top: 1px solid color-mix(in srgb, var(--border) 52%, var(--surface));
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.ceo-task-node {
+  display: grid;
+  gap: 6px;
+}
+
+.ceo-task-node__main {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  color: var(--ink);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 6px;
+  min-height: 108px;
+  padding: 9px;
+  text-align: left;
+  width: 100%;
+}
+
+.ceo-task-node__main:hover,
+.ceo-task-node__main:focus-visible {
+  background: color-mix(in srgb, var(--surface) 78%, var(--accent-primary));
+  outline: 2px solid var(--accent-secondary);
+  outline-offset: 2px;
+}
+
+.ceo-task-node__meta,
+.ceo-task-node__depends,
+.ceo-task-node__blocker {
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.ceo-task-node__meta {
+  color: var(--accent-secondary);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ceo-task-node__main > strong {
+  font-size: 0.8rem;
+  line-height: 1.32;
+  text-transform: uppercase;
+}
+
+.ceo-task-node__main > span:not(.ceo-task-node__meta):not(.ceo-task-node__depends):not(.ceo-task-node__blocker) {
+  border: 1px solid currentColor;
+  font-size: 0.7rem;
+  font-weight: 700;
+  justify-self: start;
+  padding: 2px 6px;
+  text-transform: uppercase;
+}
+
+.ceo-task-node--complete .ceo-task-node__main > span:not(.ceo-task-node__meta):not(.ceo-task-node__depends):not(.ceo-task-node__blocker) {
+  color: color-mix(in srgb, var(--accent-secondary) 82%, var(--ink));
+}
+
+.ceo-task-node--running .ceo-task-node__main > span:not(.ceo-task-node__meta):not(.ceo-task-node__depends):not(.ceo-task-node__blocker),
+.ceo-task-node--waiting .ceo-task-node__main > span:not(.ceo-task-node__meta):not(.ceo-task-node__depends):not(.ceo-task-node__blocker),
+.ceo-task-node__blocker {
+  color: color-mix(in srgb, var(--accent-secondary) 72%, var(--ink));
+}
+
+.ceo-task-node--blocked .ceo-task-node__main > span:not(.ceo-task-node__meta):not(.ceo-task-node__depends):not(.ceo-task-node__blocker) {
+  color: color-mix(in srgb, var(--danger) 72%, var(--ink));
+}
+
+.ceo-task-node__depends {
+  color: var(--accent-secondary);
+}
+
+.ceo-task-node__link {
+  background: transparent;
+  border: 0;
+  color: var(--accent-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  justify-self: start;
+  padding: 0;
+  text-decoration: underline;
+  text-transform: uppercase;
+}
+
+.ceo-task-node__action {
+  justify-self: start;
+  min-height: 30px;
+}
+
 .ceo-pending-queue {
   display: grid;
   gap: 10px;

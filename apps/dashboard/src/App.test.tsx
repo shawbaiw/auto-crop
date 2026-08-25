@@ -209,10 +209,39 @@ describe("Dashboard App", () => {
     const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
     expect(within(ceoReport).getByRole("heading", { name: "Objectives" })).toBeInTheDocument();
     expect(within(ceoReport).getByText("Validate first wedge")).toBeInTheDocument();
-    expect(within(ceoReport).getByRole("heading", { name: "First Tasks" })).toBeInTheDocument();
-    expect(within(ceoReport).getByText("Create landing page / queued")).toBeInTheDocument();
+    expect(within(ceoReport).getByRole("heading", { name: "Task Relationships" })).toBeInTheDocument();
+    expect(within(ceoReport).getByRole("region", { name: "CEO Task Dependency Graph" })).toHaveTextContent("Create landing page");
+    expect(within(ceoReport).queryByRole("heading", { name: "First Tasks" })).not.toBeInTheDocument();
+    expect(within(ceoReport).queryByText("Create landing page / queued")).not.toBeInTheDocument();
     expect(screen.queryByText("Status")).not.toBeInTheDocument();
     expect(screen.queryByText("Playbook")).not.toBeInTheDocument();
+  });
+
+  it("shows CEO first tasks as a department dependency graph with blockers and unlinked tasks", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createDependencyGraphCompanyResponse());
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    const graph = within(ceoReport).getByRole("region", { name: "CEO Task Dependency Graph" });
+    expect(within(graph).getByText("Research")).toBeInTheDocument();
+    expect(within(graph).getByText("Product")).toBeInTheDocument();
+    expect(within(graph).getByText("Engineering")).toBeInTheDocument();
+    expect(within(graph).getByText("Growth")).toBeInTheDocument();
+    expect(within(graph).getByRole("button", { name: "Task 01 Research Find SEO keyword opportunity Completed" })).toBeInTheDocument();
+    expect(within(graph).getByRole("button", { name: "Task 04 Engineering Validate prototype locally Running" })).toBeInTheDocument();
+    expect(within(graph).getByRole("button", { name: "Task 05 Growth Prepare SEO launch and indexing assets Waiting on upstream Waiting on task 04: Validate prototype locally Also depends on: 01, 02" })).toBeInTheDocument();
+    expect(within(graph).getByLabelText("Task dependency edges")).toHaveTextContent("01 → 02");
+    expect(within(graph).getByRole("heading", { name: "Unlinked Tasks" })).toBeInTheDocument();
+    expect(within(graph).getByText("These tasks do not have a recorded upstream relationship yet.")).toBeInTheDocument();
+    expect(within(graph).getByRole("button", { name: "Task 06 Engineering Continue from Partial Output: Record implementation changes Completed" })).toBeInTheDocument();
+
+    await user.click(within(graph).getByRole("button", { name: "Task 05 Growth Prepare SEO launch and indexing assets Waiting on upstream Waiting on task 04: Validate prototype locally Also depends on: 01, 02" }));
+    expect(screen.getByRole("button", { name: "Growth" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("creates a durable CEO intake from the CEO Workspace", async () => {
@@ -681,6 +710,8 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
     await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
 
     await waitFor(() => expect(api.lastEventHandler).toBeDefined());
     act(() => {
@@ -691,7 +722,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    expect(await screen.findByText("Create landing page / running")).toBeInTheDocument();
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) in progress"));
     expect(screen.queryByRole("heading", { name: "Agent Activity" })).not.toBeInTheDocument();
     expect(screen.queryByText("Task started: Create landing page (codex).")).not.toBeInTheDocument();
   });
@@ -702,6 +733,8 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
     await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
 
     await waitFor(() => expect(api.lastEventHandler).toBeDefined());
     act(() => {
@@ -713,7 +746,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    expect(await screen.findByText("Create landing page / failed · timeout")).toBeInTheDocument();
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) blocked"));
     expect(screen.queryByRole("heading", { name: "Agent Activity" })).not.toBeInTheDocument();
     expect(screen.queryByText("Task failed: Create landing page / timeout after 10m.")).not.toBeInTheDocument();
   });
@@ -724,6 +757,8 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
     await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
 
     await waitFor(() => expect(api.lastEventHandler).toBeDefined());
     act(() => {
@@ -736,7 +771,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    expect(await screen.findByText("Create landing page / waiting for upstream proof")).toBeInTheDocument();
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting for upstream proof"));
 
     act(() => {
       api.lastEventHandler?.({
@@ -747,7 +782,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    expect(await screen.findByText("Create landing page / retrying with a larger budget")).toBeInTheDocument();
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) in progress"));
 
     act(() => {
       api.lastEventHandler?.({
@@ -759,7 +794,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    expect(await screen.findByText("Create landing page / needs replanning")).toBeInTheDocument();
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) needs replanning"));
   });
 
   it("refreshes a blocked task from the Department Workspace", async () => {
@@ -792,12 +827,14 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
     await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
 
-    expect(await screen.findByText("Create landing page / blocked · dependency_failed · Blocked by failed dependency: Write brief.")).toBeInTheDocument();
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) blocked"));
     await user.click(screen.getByRole("button", { name: "Refresh Create landing page" }));
 
     expect(api.refreshTask).toHaveBeenCalledWith("task_1");
-    expect(await screen.findByText("Create landing page / queued")).toBeInTheDocument();
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting"));
   });
 
   it("does not show proof recovery refresh for tasks that are waiting on upstream proof", async () => {
@@ -1503,6 +1540,89 @@ function createReviewReadyCompanyResponse(): Awaited<ReturnType<ApiClient["creat
         createdAt: "2026-08-17T00:02:00.000Z",
       },
     ],
+  };
+}
+
+function createDependencyGraphCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
+  const created = createCompanyResponse();
+  return {
+    ...created,
+    departments: [
+      {
+        id: "department_research",
+        name: "Research",
+        responsibility: "Find viable market proof.",
+        leadAgentId: "codex",
+      },
+      {
+        id: "department_product",
+        name: "Product",
+        responsibility: "Define the sellable MVP.",
+        leadAgentId: "codex",
+      },
+      {
+        id: "department_engineering",
+        name: "Engineering",
+        responsibility: "Build and validate the product.",
+        leadAgentId: "codex",
+      },
+      {
+        id: "department_growth",
+        name: "Growth",
+        responsibility: "Prepare launch channels.",
+        leadAgentId: "codex",
+      },
+    ],
+    tasks: [
+      {
+        ...created.tasks[0],
+        id: "task_1",
+        title: "Find SEO keyword opportunity",
+        status: "complete",
+        departmentId: "department_research",
+        dependsOnTaskIds: [],
+      },
+      {
+        ...created.tasks[0],
+        id: "task_2",
+        title: "Define MVP and revenue path",
+        status: "complete",
+        departmentId: "department_product",
+        dependsOnTaskIds: ["task_1"],
+      },
+      {
+        ...created.tasks[0],
+        id: "task_3",
+        title: "Build runnable prototype",
+        status: "complete",
+        departmentId: "department_engineering",
+        dependsOnTaskIds: ["task_2"],
+      },
+      {
+        ...created.tasks[0],
+        id: "task_4",
+        title: "Validate prototype locally",
+        status: "running",
+        departmentId: "department_engineering",
+        dependsOnTaskIds: ["task_3"],
+      },
+      {
+        ...created.tasks[0],
+        id: "task_5",
+        title: "Prepare SEO launch and indexing assets",
+        status: "waiting_dependency",
+        departmentId: "department_growth",
+        dependsOnTaskIds: ["task_1", "task_2", "task_4"],
+      },
+      {
+        ...created.tasks[0],
+        id: "task_6",
+        title: "Continue from Partial Output: Record implementation changes",
+        status: "complete",
+        departmentId: "department_engineering",
+      },
+    ],
+    taskProgressEvents: [],
   };
 }
 
