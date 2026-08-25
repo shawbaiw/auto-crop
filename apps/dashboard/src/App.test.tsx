@@ -721,6 +721,30 @@ describe("Dashboard App", () => {
     expect(await screen.findByText("Create landing page / queued")).toBeInTheDocument();
   });
 
+  it("does not show proof recovery refresh for tasks that are waiting on upstream proof", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          status: "waiting_dependency",
+          dependencyNote: "Waiting for dependency deliverable: Research brief (running).",
+        },
+      ],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting for upstream proof");
+    expect(within(leaderReport).queryByRole("button", { name: "Refresh Create landing page" })).not.toBeInTheDocument();
+  });
+
   it("shows proof recovery feedback after refreshing a failed no-proof task", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();

@@ -812,12 +812,11 @@ function formatExecutingProgressLabel(label: string, task: TaskSummary, t: Retur
   }
 
   const [, , taskTitle, status] = match;
-  const displayTitle = taskTitle.trim() || task.title;
   if (status === "review") {
     return formatReviewProgressLabel(task, t);
   }
 
-  return `${t("department.flowTask")} (${displayTitle}) ${formatFlowTaskStatus(status, t)}`;
+  return `${t("department.flowTask")} (${task.title}) ${formatFlowTaskStatus(task.status, t)}`;
 }
 
 function formatReviewProgressLabel(task: TaskSummary, t: ReturnType<typeof useLanguage>["t"]): string {
@@ -1031,5 +1030,9 @@ function TaskStatusAction({
 }
 
 function isRefreshableTask(task: TaskSummary): boolean {
-  return task.status === "blocked" || task.status === "failed" || task.status === "waiting_dependency";
+  return (
+    task.status === "blocked" ||
+    ((task.status === "failed" || task.status === "needs_replan") &&
+      (task.failureReason === "no_proof" || task.failureReason === "missing_deliverable"))
+  );
 }
