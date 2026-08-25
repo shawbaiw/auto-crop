@@ -31,6 +31,7 @@
 - **CEO Reassignment Request**: A department-submitted request asking CEO Office to clarify, split, replan, or reassign a task before or during execution. It is not a CEO Review Request because no Task Deliverable is being approved.
 - **Consumable Proof**: Proof that is recorded by the runtime and can be handed to downstream tasks as input. _Avoid_: promising stdout, informal result.
 - **Dependency Readiness**: The scheduler decision that all upstream Task Dependencies have Consumable Proof and the downstream task may start. _Avoid_: dependency status check.
+- **Dependency Cascade**: Runtime propagation that re-evaluates direct downstream tasks after an upstream task's Proof is accepted by CEO Office, moving dependency-blocked tasks back to `queued` when all dependencies are ready. _Avoid_: manual refresh, automatic execution.
 - **Bounded Recovery**: Automatic task recovery that changes execution conditions and has a hard stop, such as escalating an Effective Timeout before requiring replanning. _Avoid_: infinite retry.
 - **Replan Required**: A task outcome where the current task is too broad or expensive for the available execution profile and should be split or rewritten before downstream work continues. _Avoid_: timeout failure.
 - **Agent Activity**: Durable, user-facing timeline entries that explain task execution progress and outcomes. _Avoid_: debug log, raw stdout.
