@@ -673,7 +673,7 @@ function DepartmentProgressFlows({
   const progressEventsByParent = groupProgressEvents(progressEvents.filter((event) => event.departmentId === departmentId));
   const flows = parentTasks.map((task) => ({
     task,
-    events: progressEventsByParent.get(task.id) ?? fallbackProgressEvents(task),
+    events: resolveTaskProgressEvents(task, progressEventsByParent.get(task.id)),
   }));
 
   return (
@@ -716,6 +716,74 @@ function groupProgressEvents(events: TaskProgressEventSummary[]): Map<string, Ta
     grouped.set(event.parentTaskId, [...(grouped.get(event.parentTaskId) ?? []), event]);
   }
   return grouped;
+}
+
+function resolveTaskProgressEvents(task: TaskSummary, events: TaskProgressEventSummary[] | undefined): TaskProgressEventSummary[] {
+  const baseEvents = events ?? fallbackProgressEvents(task);
+  const derivedEvent = deriveCurrentTaskProgressEvent(task);
+
+  if (!derivedEvent || progressEventsAlreadyReflectTaskStatus(baseEvents, task)) {
+    return baseEvents;
+  }
+
+  return [...baseEvents, derivedEvent];
+}
+
+function deriveCurrentTaskProgressEvent(task: TaskSummary): TaskProgressEventSummary | null {
+  const status = taskProgressStatusForTask(task);
+
+  if (!status) {
+    return null;
+  }
+
+  return {
+    id: `${task.id}_derived_current_status`,
+    companyId: "",
+    departmentId: task.departmentId,
+    parentTaskId: task.parentTaskId ?? task.id,
+    subjectTaskId: task.id,
+    step: task.status === "review" ? "awaiting_review" : "executing",
+    status,
+    label: `Task (${task.title}) ${task.status}`,
+    detail: null,
+    createdAt: "",
+  };
+}
+
+function taskProgressStatusForTask(task: TaskSummary): TaskProgressEventSummary["status"] | null {
+  switch (task.status) {
+    case "queued":
+      return "waiting";
+    case "running":
+    case "retrying":
+    case "review":
+      return "current";
+    case "waiting_dependency":
+      return "waiting";
+    case "complete":
+      return "complete";
+    case "blocked":
+    case "failed":
+    case "needs_replan":
+      return "blocked";
+    default:
+      return null;
+  }
+}
+
+function progressEventsAlreadyReflectTaskStatus(events: TaskProgressEventSummary[], task: TaskSummary): boolean {
+  return events.some((event) => {
+    if (task.status === "review") {
+      return event.step === "awaiting_review" || (event.step === "executing" && /\sreview$/i.test(event.label));
+    }
+
+    if (event.step !== "executing") {
+      return false;
+    }
+
+    const match = event.label.match(/^Task(?: \d+)? \((.+)\) ([a-z_]+)$/i);
+    return Boolean(match && match[2] === task.status);
+  });
 }
 
 function fallbackProgressEvents(task: TaskSummary): TaskProgressEventSummary[] {
@@ -806,12 +874,12 @@ function formatProgressLabel(event: TaskProgressEventSummary, task: TaskSummary,
 }
 
 function formatExecutingProgressLabel(label: string, task: TaskSummary, t: ReturnType<typeof useLanguage>["t"]): string {
-  const match = label.match(/^Task (\d+) \((.+)\) ([a-z_]+)$/i);
+  const match = label.match(/^Task(?: \d+)? \((.+)\) ([a-z_]+)$/i);
   if (!match) {
     return label;
   }
 
-  const [, , taskTitle, status] = match;
+  const [, taskTitle, status] = match;
   if (status === "review") {
     return formatReviewProgressLabel(task, t);
   }

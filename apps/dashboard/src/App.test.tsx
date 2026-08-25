@@ -327,6 +327,85 @@ describe("Dashboard App", () => {
     expect(within(ceoPending).queryByRole("button", { name: /return/i })).not.toBeInTheDocument();
   });
 
+  it("derives a waiting-upstream step when department progress stops before the current task state", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          title: "Prepare SEO launch and indexing assets",
+          status: "waiting_dependency",
+          dependencyNote: "Waiting for dependency deliverable: Validate the prototype locally.",
+        },
+      ],
+      taskProgressEvents: [
+        ...created.taskProgressEvents!.slice(0, 2),
+        {
+          id: "task_progress_no_split",
+          companyId: "company_1",
+          departmentId: "department_1",
+          parentTaskId: "task_1",
+          subjectTaskId: null,
+          step: "no_split_needed" as const,
+          status: "complete" as const,
+          label: "No split needed",
+          detail: null,
+          createdAt: "2026-08-17T00:02:00.000Z",
+        },
+      ],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(leaderReport).toHaveTextContent("No split needed");
+    expect(leaderReport).toHaveTextContent("Task (Prepare SEO launch and indexing assets) waiting for upstream proof");
+  });
+
+  it("derives a running step when department progress stops before execution", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          title: "Validate the prototype locally",
+          status: "running",
+        },
+      ],
+      taskProgressEvents: [
+        ...created.taskProgressEvents!.slice(0, 2),
+        {
+          id: "task_progress_no_split",
+          companyId: "company_1",
+          departmentId: "department_1",
+          parentTaskId: "task_1",
+          subjectTaskId: null,
+          step: "no_split_needed" as const,
+          status: "complete" as const,
+          label: "No split needed",
+          detail: null,
+          createdAt: "2026-08-17T00:02:00.000Z",
+        },
+      ],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(leaderReport).toHaveTextContent("No split needed");
+    expect(leaderReport).toHaveTextContent("Task (Validate the prototype locally) in progress");
+  });
+
   it("opens CEO task review details and approves proof-backed completion review items", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => ({
