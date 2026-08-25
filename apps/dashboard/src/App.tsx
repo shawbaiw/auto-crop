@@ -455,6 +455,19 @@ export default function App({ apiClient }: AppProps) {
     return response;
   }
 
+  async function handleRecoverTask(taskId: string) {
+    const response = await client.recoverTask(taskId);
+    setBlueprint((current) => updateBlueprintTasksAfterRecovery(current, response.task, response.followUpTask));
+    setEvents((current) => [...current.slice(-49), response.event]);
+    if (response.progressEvent) {
+      setTaskProgressEvents((current) => [...current, response.progressEvent!]);
+    }
+    if (response.proof) {
+      setProof((current) => upsertProofs(current, response.proof ?? []));
+    }
+    return response;
+  }
+
   async function handleCreateCeoIntake(body: string) {
     if (!blueprint) {
       return;
@@ -628,6 +641,7 @@ export default function App({ apiClient }: AppProps) {
         menuBar={menuBar}
         objectives={blueprint.objectives}
         onRefreshTask={handleRefreshTask}
+        onRecoverTask={handleRecoverTask}
         onCreateCeoIntake={handleCreateCeoIntake}
         onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
         proof={proof}
@@ -755,6 +769,25 @@ function updateBlueprintTask(
   };
 }
 
+function updateBlueprintTasksAfterRecovery(
+  blueprint: CreateCompanyResponse | null,
+  task: TaskSummary,
+  followUpTask?: TaskSummary,
+): CreateCompanyResponse | null {
+  const updated = updateBlueprintTask(blueprint, task);
+  if (!updated || !followUpTask) {
+    return updated;
+  }
+
+  const exists = updated.tasks.some((current) => current.id === followUpTask.id);
+  return {
+    ...updated,
+    tasks: exists
+      ? updated.tasks.map((current) => (current.id === followUpTask.id ? { ...current, ...followUpTask } : current))
+      : [...updated.tasks, followUpTask],
+  };
+}
+
 function updateBlueprintTasksAfterReplan(
   blueprint: CreateCompanyResponse | null,
   sourceTask: TaskSummary,
@@ -854,7 +887,7 @@ function updateBlueprintTaskStatus(blueprint: CreateCompanyResponse | null, even
 }
 
 function clearsTaskFailure(eventType: string): boolean {
-  return eventType === "task_started" || eventType === "dependency_ready";
+  return eventType === "task_started" || eventType === "dependency_ready" || eventType === "task_recovered";
 }
 
 function hasTaskSummaryUpdate(event: ServerEvent) {
@@ -879,6 +912,8 @@ function taskStatusFromEvent(eventType: string) {
       return "failed";
     case "task_blocked":
       return "blocked";
+    case "task_recovered":
+      return "queued";
     case "task_needs_replan":
       return "needs_replan";
     default:

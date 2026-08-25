@@ -119,6 +119,20 @@ export type TaskRefreshResponse = {
   recovery?: TaskRefreshRecoverySummary;
 };
 
+export type TaskRecoverySummary = {
+  status: "queued" | "follow_up_created" | "proof_recovered";
+  message: string;
+};
+
+export type TaskRecoveryResponse = {
+  task: TaskSummary;
+  followUpTask?: TaskSummary;
+  event: ServerEvent;
+  progressEvent?: TaskProgressEventSummary;
+  proof?: ProofSummary[];
+  recovery: TaskRecoverySummary;
+};
+
 export type ReviewSummary = {
   id: string;
   companyId: string;
@@ -242,6 +256,7 @@ export type ApiClient = {
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
   refreshTask(taskId: string): Promise<TaskRefreshResponse>;
+  recoverTask(taskId: string): Promise<TaskRecoveryResponse>;
   createReplanProposal(taskId: string): Promise<{ proposal: ReplanProposalSummary }>;
   confirmReplanProposal(proposalId: string): Promise<{
     proposal: ReplanProposalSummary;
@@ -284,6 +299,9 @@ export function createApiClient(baseUrl = ""): ApiClient {
     async refreshTask(taskId) {
       return postJson(`${baseUrl}/api/tasks/${taskId}/refresh`, {});
     },
+    async recoverTask(taskId) {
+      return postJson(`${baseUrl}/api/tasks/${taskId}/recover`, {});
+    },
     async createReplanProposal(taskId) {
       return postJson(`${baseUrl}/api/tasks/${taskId}/replan-proposals`, {});
     },
@@ -308,6 +326,7 @@ export function createApiClient(baseUrl = ""): ApiClient {
       events.addEventListener("dependency_waiting", listener);
       events.addEventListener("dependency_ready", listener);
       events.addEventListener("task_retrying", listener);
+      events.addEventListener("task_recovered", listener);
       events.addEventListener("task_needs_replan", listener);
       events.addEventListener("deliverable_missing", listener);
       return () => events.close();

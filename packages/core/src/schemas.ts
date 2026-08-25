@@ -44,6 +44,7 @@ export const taskEventTypeSchema = z.enum([
   "dependency_waiting",
   "dependency_ready",
   "task_retrying",
+  "task_recovered",
   "task_needs_replan",
   "deliverable_missing",
 ]);

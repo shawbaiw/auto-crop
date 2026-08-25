@@ -6,6 +6,7 @@ import type { AgentFailureReason, Proof, Task, TaskEvent, TaskProgressEvent, Tas
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { createHandoffPackage } from "./proof";
+import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
 
 export type SchedulerFailureReason = AgentFailureReason;
@@ -56,6 +57,15 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
   if (input.repositories.isGlobalPaused()) {
     return result;
+  }
+
+  for (const company of input.repositories.listCompanies()) {
+    reconcileStaleRunningTasks({
+      repositories: input.repositories,
+      companyId: company.id,
+      now,
+      createId,
+    });
   }
 
   const queuedTasks = input.repositories.fetchQueuedTasks(Math.max(input.maxTasks * 5, 20));

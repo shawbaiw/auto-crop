@@ -275,6 +275,78 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("reconciles stale running tasks when reading company state", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    fixture.repositories.updateTaskStatus(task.id, "running");
+    fixture.repositories.acquireTaskLock(task.id, "worker_1", "2026-08-16T23:59:00.000Z");
+    fixture.repositories.createAgentRun({
+      id: "agent_run_1",
+      taskId: task.id,
+      agentId: "codex",
+      status: "running",
+      logPath: "agent.log",
+      startedAt: "2026-08-16T23:59:00.000Z",
+      finishedAt: null,
+      executionProfileName: "short",
+      requestedTimeoutMs: 1_000,
+      effectiveTimeoutMs: 1_000,
+      failureReason: null,
+      failureMessage: null,
+    });
+
+    const state = await getJson<{
+      tasks: Array<{ id: string; status: string; failureReason?: string }>;
+      activity: Array<{ type: string; taskId?: string; failureReason?: string }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: task.id, status: "failed", failureReason: "timeout" }));
+    expect(state.activity).toContainEqual(expect.objectContaining({ type: "task_failed", taskId: task.id, failureReason: "timeout" }));
+    expect(fixture.repositories.listTaskLocks()).toEqual([]);
+
+    await fixture.close();
+  });
+
+  it("recovers failed timeout tasks through the API", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    fixture.repositories.updateTaskStatus(task.id, "failed");
+    fixture.repositories.updateTaskExecutionSummary(task.id, {
+      latestFailureReason: "timeout",
+      latestFailureMessage: "Task failed: Create landing page / timeout after 3m.",
+    });
+
+    const recovered = await postJson<{
+      task: { id: string; status: string; failureReason?: string };
+      event: { type: string; status: string };
+      recovery: { status: string; message: string };
+    }>(`${fixture.baseUrl}/api/tasks/${task.id}/recover`, {});
+
+    expect(recovered.task).toMatchObject({ id: task.id, status: "queued" });
+    expect(recovered.task.failureReason).toBeUndefined();
+    expect(recovered.event).toMatchObject({ type: "task_recovered", status: "queued" });
+    expect(recovered.recovery).toEqual({
+      status: "queued",
+      message: "Task recovered and queued for another run.",
+    });
+
+    await fixture.close();
+  });
+
   it("creates CEO intakes and returns them in company state", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {

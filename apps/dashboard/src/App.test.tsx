@@ -930,6 +930,63 @@ describe("Dashboard App", () => {
     );
   });
 
+  it("recovers a failed timeout task from the Department Workspace", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          status: "failed",
+          failureReason: "timeout",
+          failureMessage: "Task failed: Create landing page / timeout after 3m.",
+        },
+      ],
+    }));
+    api.recoverTask = vi.fn(async () => ({
+      task: {
+        ...created.tasks[0],
+        status: "queued",
+      },
+      event: {
+        type: "task_recovered",
+        taskId: "task_1",
+        status: "queued",
+        message: "Task recovered: Create landing page is queued for another run.",
+      },
+      progressEvent: {
+        id: "task_progress_recovered",
+        companyId: "company_1",
+        departmentId: "department_1",
+        parentTaskId: "task_1",
+        subjectTaskId: "task_1",
+        step: "executing" as const,
+        status: "waiting" as const,
+        label: "Task recovered and queued for another run.",
+        detail: null,
+        createdAt: "2026-08-25T00:00:00.000Z",
+      },
+      recovery: {
+        status: "queued" as const,
+        message: "Task recovered and queued for another run.",
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+
+    expect(within(leaderReport).queryByRole("button", { name: "Refresh Create landing page" })).not.toBeInTheDocument();
+    await user.click(within(leaderReport).getByRole("button", { name: "Recover Task Create landing page" }));
+
+    expect(api.recoverTask).toHaveBeenCalledWith("task_1");
+    await waitFor(() => expect(screen.getAllByText("Task recovered and queued for another run.").length).toBeGreaterThan(0));
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting"));
+  });
+
   it("shows agent activity on a dedicated Company Operations page", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -1763,6 +1820,21 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
           taskId,
           status: "queued",
           message: "Task refreshed.",
+        },
+      };
+    },
+    async recoverTask(taskId) {
+      return {
+        task: createCompanyResponse().tasks.find((task) => task.id === taskId) ?? createCompanyResponse().tasks[0],
+        event: {
+          type: "task_recovered",
+          taskId,
+          status: "queued",
+          message: "Task recovered.",
+        },
+        recovery: {
+          status: "queued",
+          message: "Task recovered and queued for another run.",
         },
       };
     },

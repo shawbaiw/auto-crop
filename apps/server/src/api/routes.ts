@@ -21,6 +21,7 @@ import { createCompany } from "../runtime/createCompany";
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
+import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
@@ -167,7 +168,10 @@ async function routeRequest(
       return;
     }
 
-    sendJson(response, 200, buildCompanyState(company, options.repositories));
+    sendJson(response, 200, buildCompanyState(company, options.repositories, {
+      now: options.now,
+      createId: options.createId,
+    }));
     return;
   }
 
@@ -328,6 +332,36 @@ async function routeRequest(
     return;
   }
 
+  const recoverTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/recover$/);
+  if (method === "POST" && recoverTaskMatch) {
+    const result = recoverTask({
+      repositories: options.repositories,
+      taskId: recoverTaskMatch[1],
+      proofSchemas: aiSaasPlaybook.proofSchemas,
+      now: options.now,
+      createId: options.createId,
+    });
+    const event = summarizeTaskEvent(result.event);
+    events.publish(event);
+    sendJson(response, 200, {
+      task: summarizeTask(
+        result.task,
+        options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId),
+      ),
+      followUpTask: result.followUpTask
+        ? summarizeTask(
+          result.followUpTask,
+          options.repositories.listTaskDependencies(result.followUpTask.id).map((dependency) => dependency.dependsOnTaskId),
+        )
+        : undefined,
+      event,
+      progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
+      proof: result.proof?.map(summarizeProof),
+      recovery: result.recovery,
+    });
+    return;
+  }
+
   const replanTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/replan-proposals$/);
   if (method === "POST" && replanTaskMatch) {
     const task = options.repositories.getTask(replanTaskMatch[1]);
@@ -390,7 +424,17 @@ async function routeRequest(
   sendJson(response, 404, { error: "Not found" });
 }
 
-function buildCompanyState(company: Company, repositories: ReturnType<typeof createRepositories>) {
+function buildCompanyState(
+  company: Company,
+  repositories: ReturnType<typeof createRepositories>,
+  options?: { now?: () => Date; createId?: (prefix: string) => string },
+) {
+  reconcileStaleRunningTasks({
+    repositories,
+    companyId: company.id,
+    now: options?.now,
+    createId: options?.createId,
+  });
   const tasks = repositories.listTasksForCompany(company.id);
 
   return {

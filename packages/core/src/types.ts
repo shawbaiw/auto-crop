@@ -61,6 +61,7 @@ export type TaskEventType =
   | "dependency_waiting"
   | "dependency_ready"
   | "task_retrying"
+  | "task_recovered"
   | "task_needs_replan"
   | "deliverable_missing";
 export type TaskProgressStep =

@@ -222,6 +222,7 @@ export const englishTranslations = {
   "department.schedulerNote": "Scheduler, proof, and review views are available from the menu.",
   "department.partialOutput": "Partial Output",
   "department.refreshTask": "Refresh",
+  "department.recoverTask": "Recover Task",
 
   "taskStatus.waitingDependency": "waiting for upstream proof",
   "taskStatus.retrying": "retrying with a larger budget",
@@ -523,6 +524,7 @@ export const chineseTranslations: Record<TranslationKey, string> = {
   "department.schedulerNote": "调度器、证明和审查视图可从菜单打开。",
   "department.partialOutput": "部分输出",
   "department.refreshTask": "刷新",
+  "department.recoverTask": "重新开始任务",
 
   "taskStatus.waitingDependency": "等待上游证明",
   "taskStatus.retrying": "正在用更高预算重试",

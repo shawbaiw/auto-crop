@@ -23,6 +23,7 @@ import type {
   DepartmentSummary,
   ObjectiveSummary,
   ProofSummary,
+  TaskRecoveryResponse,
   TaskRefreshResponse,
   TaskProgressEventSummary,
   TaskSummary,
@@ -45,6 +46,7 @@ export type DepartmentWorkspaceProps = {
   ceoIntakes?: CeoIntakeSummary[];
   proof?: ProofSummary[];
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
+  onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
   onCreateCeoReviewDecision?: (input: {
     taskId: string;
@@ -65,6 +67,7 @@ export function DepartmentWorkspace({
   onCreateCeoIntake,
   onCreateCeoReviewDecision,
   onRefreshTask,
+  onRecoverTask,
   selectedCeoAgentId,
   tasks,
   ceoIntakes = [],
@@ -136,6 +139,7 @@ export function DepartmentWorkspace({
                   onDraftChange={setDepartmentDraft}
                   onViewCeoPending={() => setSelectedRoleId(ceoRoleId)}
                   onRefreshTask={onRefreshTask}
+                  onRecoverTask={onRecoverTask}
                   progressEvents={taskProgressEvents}
                   responsibility={selectedDepartment.responsibility}
                   tasks={tasksByDepartment.get(selectedDepartment.id) ?? []}
@@ -867,6 +871,7 @@ function DepartmentLeaderReport({
   departmentName,
   draft,
   onDraftChange,
+  onRecoverTask,
   onRefreshTask,
   onViewCeoPending,
   progressEvents,
@@ -878,6 +883,7 @@ function DepartmentLeaderReport({
   draft: string;
   onDraftChange: (value: string) => void;
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
+  onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
   onViewCeoPending: () => void;
   progressEvents: TaskProgressEventSummary[];
   responsibility: string;
@@ -893,6 +899,7 @@ function DepartmentLeaderReport({
       <DepartmentProgressFlows
         departmentId={departmentId}
         onRefreshTask={onRefreshTask}
+        onRecoverTask={onRecoverTask}
         onViewCeoPending={onViewCeoPending}
         progressEvents={progressEvents}
         tasks={tasks}
@@ -906,12 +913,14 @@ function DepartmentLeaderReport({
 function DepartmentProgressFlows({
   departmentId,
   onRefreshTask,
+  onRecoverTask,
   onViewCeoPending,
   progressEvents,
   tasks,
 }: {
   departmentId: string;
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
+  onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
   onViewCeoPending: () => void;
   progressEvents: TaskProgressEventSummary[];
   tasks: TaskSummary[];
@@ -947,7 +956,12 @@ function DepartmentProgressFlows({
               </li>
             ))}
           </ol>
-          <TaskStatusAction onRefreshTask={onRefreshTask} showStatusBadge={false} task={flow.task} />
+          <TaskStatusAction
+            onRefreshTask={onRefreshTask}
+            onRecoverTask={onRecoverTask}
+            showStatusBadge={false}
+            task={flow.task}
+          />
         </article>
       ))}
     </section>
@@ -1309,10 +1323,12 @@ function DepartmentMessageBox({
 }
 
 function TaskStatusAction({
+  onRecoverTask,
   onRefreshTask,
   showStatusBadge = true,
   task,
 }: {
+  onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
   showStatusBadge?: boolean;
   task: TaskSummary;
@@ -1320,13 +1336,19 @@ function TaskStatusAction({
   const { t } = useLanguage();
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const canRefresh = Boolean(onRefreshTask) && isRefreshableTask(task);
+  const canRecover = Boolean(onRecoverTask) && isRecoverableTask(task);
 
   const handleRefresh = async () => {
     const response = await onRefreshTask?.(task.id);
     setRefreshMessage(response?.recovery?.message ?? null);
   };
 
-  if (!showStatusBadge && !canRefresh && !refreshMessage) {
+  const handleRecover = async () => {
+    const response = await onRecoverTask?.(task.id);
+    setRefreshMessage(response?.recovery?.message ?? null);
+  };
+
+  if (!showStatusBadge && !canRefresh && !canRecover && !refreshMessage) {
     return null;
   }
 
@@ -1346,6 +1368,15 @@ function TaskStatusAction({
           {t("department.refreshTask")}
         </RetroButton>
       ) : null}
+      {canRecover ? (
+        <RetroButton
+          aria-label={`${t("department.recoverTask")} ${task.title}`}
+          icon={<RefreshCcw size={14} aria-hidden="true" />}
+          onClick={handleRecover}
+        >
+          {t("department.recoverTask")}
+        </RetroButton>
+      ) : null}
       {refreshMessage ? <p className="system-message">{refreshMessage}</p> : null}
     </div>
   );
@@ -1357,4 +1388,12 @@ function isRefreshableTask(task: TaskSummary): boolean {
     ((task.status === "failed" || task.status === "needs_replan") &&
       (task.failureReason === "no_proof" || task.failureReason === "missing_deliverable"))
   );
+}
+
+function isRecoverableTask(task: TaskSummary): boolean {
+  if (task.status === "failed" || task.status === "needs_replan") {
+    return task.failureReason !== "no_proof" && task.failureReason !== "missing_deliverable";
+  }
+
+  return false;
 }

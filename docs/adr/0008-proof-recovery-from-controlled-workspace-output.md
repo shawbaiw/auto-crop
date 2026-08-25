@@ -31,11 +31,11 @@ For `repo-diff` tasks, the runtime may record recovered diff Proof from:
 
 Recovery must ignore empty files and must not recursively scan the entire workspace. When multiple diff or patch files are found, the runtime should merge them into one canonical `.auto-crop-proof/<taskId>.diff` Proof and include source filenames in the summary.
 
-The recovery trigger will be `POST /api/tasks/:id/refresh`. Refresh should try Proof Recovery before the existing dependency refresh logic. If recovery succeeds, the task moves to `review`, recovered Proof is persisted, and the department flow records that checkable Proof was found and submitted to CEO Office.
+The recovery trigger for checking existing output remains the task refresh path where it already exists. Task Recovery Requests use a separate `POST /api/tasks/:id/recover` endpoint, and should try controlled Proof Recovery before rerunning or creating follow-up work. If Proof Recovery succeeds, the task moves to `review`, recovered Proof is persisted, and the department flow records that checkable Proof was found and submitted to CEO Office.
 
 Recovery is allowed only for proof-missing states such as `failed/no_proof` or dependency states caused by missing deliverables. It must not convert unrelated failures into review-ready tasks.
 
-CEO Office will not own Proof Recovery. Departments own turning their output into reviewable Proof; CEO Office owns approval and return decisions after Proof is submitted.
+CEO Office will not own Proof Recovery. Departments own turning their output into reviewable Proof; CEO Office owns approval and return decisions after Proof is submitted. Task Recovery is also not Proof Recovery: it restarts progress after failure, timeout, or stale running state, while Proof Recovery only registers valid existing output as Proof.
 
 ## Consequences
 

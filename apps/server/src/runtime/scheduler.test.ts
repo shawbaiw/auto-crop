@@ -37,6 +37,57 @@ describe("task locks", () => {
 });
 
 describe("runSchedulerOnce", () => {
+  it("reconciles stale running tasks before dispatching queued work", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "running", "low"),
+    ]);
+    repositories.acquireTaskLock("task_1", "worker_old", "2026-08-17T00:00:00.000Z");
+    repositories.createAgentRun({
+      id: "agent_run_1",
+      taskId: "task_1",
+      agentId: "mock-worker",
+      status: "running",
+      logPath: "agent.log",
+      startedAt: "2026-08-17T00:00:00.000Z",
+      finishedAt: null,
+      executionProfileName: "short",
+      requestedTimeoutMs: 1_000,
+      effectiveTimeoutMs: 1_000,
+      failureReason: null,
+      failureMessage: null,
+    });
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "proof: should not run",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:02.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: () => undefined,
+    });
+
+    expect(result.started).toEqual([]);
+    expect(repositories.getTask("task_1")).toMatchObject({
+      status: "failed",
+      latestFailureReason: "timeout",
+    });
+    expect(repositories.listTaskLocks()).toEqual([]);
+    expect(repositories.listRunningAgentRuns("company_1")).toEqual([]);
+
+    client.close();
+  });
+
   it("claims queued tasks, dispatches mock agents, writes logs, appends proof, and moves tasks to review", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low"),

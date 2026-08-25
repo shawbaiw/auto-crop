@@ -129,7 +129,7 @@ export function refreshTaskDependencyState(
   };
 }
 
-function recoverProofIfPossible(
+export function recoverProofIfPossible(
   input: RefreshTaskDependencyStateInput,
   task: Task,
 ):
