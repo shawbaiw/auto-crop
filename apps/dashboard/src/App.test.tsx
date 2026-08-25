@@ -217,7 +217,7 @@ describe("Dashboard App", () => {
     expect(screen.queryByText("Playbook")).not.toBeInTheDocument();
   });
 
-  it("shows CEO first tasks as a department dependency graph with blockers and unlinked tasks", async () => {
+  it("shows CEO first tasks as a department dependency graph with blockers and unlinked tasks in lanes", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => createDependencyGraphCompanyResponse());
     const user = userEvent.setup();
@@ -236,8 +236,8 @@ describe("Dashboard App", () => {
     expect(within(graph).getByRole("button", { name: "Task 04 Engineering Validate prototype locally Running" })).toBeInTheDocument();
     expect(within(graph).getByRole("button", { name: "Task 05 Growth Prepare SEO launch and indexing assets Waiting on upstream Waiting on task 04: Validate prototype locally Also depends on: 01, 02" })).toBeInTheDocument();
     expect(within(graph).getByLabelText("Task dependency edges")).toHaveTextContent("01 → 02");
-    expect(within(graph).getByRole("heading", { name: "Unlinked Tasks" })).toBeInTheDocument();
-    expect(within(graph).getByText("These tasks do not have a recorded upstream relationship yet.")).toBeInTheDocument();
+    expect(within(graph).queryByRole("heading", { name: "Unlinked Tasks" })).not.toBeInTheDocument();
+    expect(within(graph).queryByText("These tasks do not have a recorded upstream relationship yet.")).not.toBeInTheDocument();
     expect(within(graph).getByRole("button", { name: "Task 06 Engineering Continue from Partial Output: Record implementation changes Completed" })).toBeInTheDocument();
 
     await user.click(within(graph).getByRole("button", { name: "Task 05 Growth Prepare SEO launch and indexing assets Waiting on upstream Waiting on task 04: Validate prototype locally Also depends on: 01, 02" }));
@@ -576,6 +576,9 @@ describe("Dashboard App", () => {
     const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
     expect(leaderReport).not.toHaveTextContent("Task (Record implementation changes) submitted to CEO Office for review");
     expect(leaderReport).toHaveTextContent("Task (Continue from Partial Output: Record implementation changes) complete");
+    const completeLabels = within(leaderReport).getAllByText("Task (Continue from Partial Output: Record implementation changes) complete");
+    expect(completeLabels).toHaveLength(1);
+    expect(completeLabels[0].closest("li")).toHaveClass("department-progress-flow__step--complete");
   });
 
   it("blocks missing-proof CEO approval and returns tasks with a reason and next step", async () => {

@@ -493,8 +493,7 @@ h3 {
   text-transform: uppercase;
 }
 
-.ceo-task-dependency-graph__lane-stack,
-.ceo-task-dependency-graph__unlinked-list {
+.ceo-task-dependency-graph__lane-stack {
   align-content: start;
   display: grid;
   gap: 10px;
@@ -513,13 +512,6 @@ h3 {
   border: 1px solid color-mix(in srgb, var(--border) 46%, var(--surface));
   font-size: 0.72rem;
   padding: 2px 6px;
-}
-
-.ceo-task-dependency-graph__unlinked {
-  border-top: 1px solid color-mix(in srgb, var(--border) 52%, var(--surface));
-  display: grid;
-  gap: 8px;
-  padding-top: 10px;
 }
 
 .ceo-task-node {

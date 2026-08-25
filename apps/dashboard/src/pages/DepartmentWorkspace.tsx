@@ -558,14 +558,14 @@ function CeoTaskDependencyGraph({
   const lanes = departments
     .map((department) => ({
       department,
-      tasks: graph.connectedTasks.filter((task) => task.departmentId === department.id),
+      tasks: graph.tasks.filter((task) => task.departmentId === department.id),
     }))
     .filter((lane) => lane.tasks.length > 0);
 
   return (
     <section className="ceo-task-dependency-graph" aria-label={t("department.ceoTaskDependencyGraph")}>
       {parentTasks.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
-      {graph.connectedTasks.length > 0 ? (
+      {parentTasks.length > 0 ? (
         <>
           <div className="ceo-task-dependency-graph__lanes">
             {lanes.map((lane) => (
@@ -601,40 +601,18 @@ function CeoTaskDependencyGraph({
           ) : null}
         </>
       ) : null}
-      {graph.unlinkedTasks.length > 0 ? (
-        <section className="ceo-task-dependency-graph__unlinked">
-          <h4>{t("department.unlinkedTasks")}</h4>
-          <p className="muted">{t("department.unlinkedTasksNote")}</p>
-          <div className="ceo-task-dependency-graph__unlinked-list">
-            {graph.unlinkedTasks.map((task) => (
-              <CeoTaskDependencyNode
-                key={task.id}
-                departmentName={departmentsById.get(task.departmentId)?.name ?? task.departmentId}
-                graph={graph}
-                isPending={pendingTaskIds.has(task.id)}
-                onSelectDepartment={onSelectDepartment}
-                onViewPendingTask={onViewPendingTask}
-                task={task}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
     </section>
   );
 }
 
 type CeoTaskGraph = {
-  connectedTasks: TaskSummary[];
   edges: Array<{ from: TaskSummary; to: TaskSummary }>;
   tasks: TaskSummary[];
   tasksById: Map<string, TaskSummary>;
-  unlinkedTasks: TaskSummary[];
 };
 
 function buildCeoTaskGraph(tasks: TaskSummary[]): CeoTaskGraph {
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
-  const downstreamTaskIds = new Set<string>();
   const edges: Array<{ from: TaskSummary; to: TaskSummary }> = [];
 
   for (const task of tasks) {
@@ -643,22 +621,14 @@ function buildCeoTaskGraph(tasks: TaskSummary[]): CeoTaskGraph {
       if (!dependency) {
         continue;
       }
-      downstreamTaskIds.add(dependency.id);
       edges.push({ from: dependency, to: task });
     }
   }
 
-  const unlinkedTasks = tasks.length > 1
-    ? tasks.filter((task) => (task.dependsOnTaskIds?.length ?? 0) === 0 && !downstreamTaskIds.has(task.id))
-    : [];
-  const unlinkedTaskIds = new Set(unlinkedTasks.map((task) => task.id));
-
   return {
-    connectedTasks: tasks.filter((task) => !unlinkedTaskIds.has(task.id)),
     edges,
     tasks,
     tasksById,
-    unlinkedTasks,
   };
 }
 
@@ -1050,6 +1020,8 @@ function taskProgressStatusForTask(task: TaskSummary): TaskProgressEventSummary[
 }
 
 function progressEventsAlreadyReflectTaskStatus(events: TaskProgressEventSummary[], task: TaskSummary): boolean {
+  const currentProgressStatus = taskProgressStatusForTask(task);
+
   return events.some((event) => {
     if (task.status === "review") {
       return event.step === "awaiting_review" || (event.step === "executing" && /\sreview$/i.test(event.label));
@@ -1057,6 +1029,10 @@ function progressEventsAlreadyReflectTaskStatus(events: TaskProgressEventSummary
 
     if (event.step !== "executing") {
       return false;
+    }
+
+    if (currentProgressStatus && event.status === currentProgressStatus) {
+      return true;
     }
 
     const match = event.label.match(/^Task(?: \d+)? \((.+)\) ([a-z_]+)$/i);
