@@ -23,6 +23,7 @@ import type {
   DepartmentSummary,
   ObjectiveSummary,
   ProofSummary,
+  TaskRefreshResponse,
   TaskProgressEventSummary,
   TaskSummary,
 } from "../api/client";
@@ -43,7 +44,7 @@ export type DepartmentWorkspaceProps = {
   taskProgressEvents?: TaskProgressEventSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   proof?: ProofSummary[];
-  onRefreshTask?: (taskId: string) => void;
+  onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
   onCreateCeoReviewDecision?: (input: {
     taskId: string;
@@ -134,6 +135,7 @@ export function DepartmentWorkspace({
                   draft={departmentDraft}
                   onDraftChange={setDepartmentDraft}
                   onViewCeoPending={() => setSelectedRoleId(ceoRoleId)}
+                  onRefreshTask={onRefreshTask}
                   progressEvents={taskProgressEvents}
                   responsibility={selectedDepartment.responsibility}
                   tasks={tasksByDepartment.get(selectedDepartment.id) ?? []}
@@ -617,6 +619,7 @@ function DepartmentLeaderReport({
   departmentName,
   draft,
   onDraftChange,
+  onRefreshTask,
   onViewCeoPending,
   progressEvents,
   responsibility,
@@ -626,6 +629,7 @@ function DepartmentLeaderReport({
   departmentName: string;
   draft: string;
   onDraftChange: (value: string) => void;
+  onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
   onViewCeoPending: () => void;
   progressEvents: TaskProgressEventSummary[];
   responsibility: string;
@@ -640,6 +644,7 @@ function DepartmentLeaderReport({
       </p>
       <DepartmentProgressFlows
         departmentId={departmentId}
+        onRefreshTask={onRefreshTask}
         onViewCeoPending={onViewCeoPending}
         progressEvents={progressEvents}
         tasks={tasks}
@@ -652,11 +657,13 @@ function DepartmentLeaderReport({
 
 function DepartmentProgressFlows({
   departmentId,
+  onRefreshTask,
   onViewCeoPending,
   progressEvents,
   tasks,
 }: {
   departmentId: string;
+  onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
   onViewCeoPending: () => void;
   progressEvents: TaskProgressEventSummary[];
   tasks: TaskSummary[];
@@ -692,6 +699,7 @@ function DepartmentProgressFlows({
               </li>
             ))}
           </ol>
+          <TaskStatusAction onRefreshTask={onRefreshTask} showStatusBadge={false} task={flow.task} />
         </article>
       ))}
     </section>
@@ -830,6 +838,9 @@ function formatFlowTaskStatus(status: string, t: ReturnType<typeof useLanguage>[
       return t("department.flowStatusWaiting");
     case "queued":
       return t("department.flowStatusWaiting");
+    case "waiting_dependency":
+    case "needs_replan":
+      return formatTaskStatus({ status } as TaskSummary, t);
     case "running":
       return t("department.flowStatusRunning");
     case "retrying":
@@ -966,28 +977,43 @@ function DepartmentMessageBox({
 
 function TaskStatusAction({
   onRefreshTask,
+  showStatusBadge = true,
   task,
 }: {
-  onRefreshTask?: (taskId: string) => void;
+  onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
+  showStatusBadge?: boolean;
   task: TaskSummary;
 }) {
   const { t } = useLanguage();
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const canRefresh = Boolean(onRefreshTask) && isRefreshableTask(task);
+
+  const handleRefresh = async () => {
+    const response = await onRefreshTask?.(task.id);
+    setRefreshMessage(response?.recovery?.message ?? null);
+  };
+
+  if (!showStatusBadge && !canRefresh && !refreshMessage) {
+    return null;
+  }
 
   return (
     <div className="task-action-row">
-      <RetroBadge tone={task.status === "blocked" || task.status === "failed" ? "danger" : "signal"}>
-        {task.title} / {formatTaskStatus(task, t)}
-      </RetroBadge>
+      {showStatusBadge ? (
+        <RetroBadge tone={task.status === "blocked" || task.status === "failed" ? "danger" : "signal"}>
+          {task.title} / {formatTaskStatus(task, t)}
+        </RetroBadge>
+      ) : null}
       {canRefresh ? (
         <RetroButton
           aria-label={`${t("department.refreshTask")} ${task.title}`}
           icon={<RefreshCcw size={14} aria-hidden="true" />}
-          onClick={() => onRefreshTask?.(task.id)}
+          onClick={handleRefresh}
         >
           {t("department.refreshTask")}
         </RetroButton>
       ) : null}
+      {refreshMessage ? <p className="system-message">{refreshMessage}</p> : null}
     </div>
   );
 }

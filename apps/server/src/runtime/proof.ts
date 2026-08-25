@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { Proof, ProofSchema, ProofType, Task } from "@auto-crop/core";
 
@@ -95,6 +95,22 @@ export function captureProofs(input: CaptureProofsInput): Proof[] {
       summary: "Diff proof captured.",
       verifiedAt: null,
     });
+  } else if (accepts(input.proofSchema, "diff")) {
+    const recoveredDiff = recoverControlledDiffProof(input.workspacePath);
+    if (recoveredDiff) {
+      const proofDir = join(input.workspacePath, ".auto-crop-proof");
+      mkdirSync(proofDir, { recursive: true });
+      const diffPath = join(proofDir, `${input.task.id}.diff`);
+      writeFileSync(diffPath, recoveredDiff.content, "utf8");
+      proof.push({
+        id: createId("proof"),
+        taskId: input.task.id,
+        type: "diff",
+        uri: diffPath,
+        summary: `Diff proof recovered from ${recoveredDiff.sourceNames.join(", ")}.`,
+        verifiedAt: null,
+      });
+    }
   }
 
   if (input.stdout.trim().length > 0 && accepts(input.proofSchema, "command_output")) {
@@ -274,6 +290,63 @@ function extractUrlProof(stdout: string): { urls: string[]; deploymentUrls: stri
     urls: dedupe(urls),
     deploymentUrls: dedupe(deploymentUrls),
   };
+}
+
+function recoverControlledDiffProof(workspacePath: string): { content: string; sourceNames: string[] } | null {
+  const candidates = listControlledDiffCandidates(workspacePath);
+  const parts: string[] = [];
+  const sourceNames: string[] = [];
+
+  for (const candidate of candidates) {
+    const content = readFileSync(candidate.path, "utf8");
+    if (content.trim().length === 0) {
+      continue;
+    }
+    sourceNames.push(candidate.name);
+    parts.push(content.trimEnd());
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return {
+    content: parts.join("\n\n") + "\n",
+    sourceNames,
+  };
+}
+
+function listControlledDiffCandidates(workspacePath: string): Array<{ path: string; name: string }> {
+  const candidates: Array<{ path: string; name: string }> = [];
+  const seen = new Set<string>();
+  const addCandidate = (path: string, name: string) => {
+    if (seen.has(path) || !existsSync(path)) {
+      return;
+    }
+    const stat = statSync(path);
+    if (!stat.isFile()) {
+      return;
+    }
+    seen.add(path);
+    candidates.push({ path, name });
+  };
+
+  const proofDir = join(workspacePath, ".auto-crop-proof");
+  if (existsSync(proofDir) && statSync(proofDir).isDirectory()) {
+    for (const entry of readdirSync(proofDir).sort()) {
+      if (entry.endsWith(".diff")) {
+        addCandidate(resolvePathInsideWorkspace(workspacePath, join(".auto-crop-proof", entry)), entry);
+      }
+    }
+  }
+
+  for (const entry of readdirSync(workspacePath).sort()) {
+    if (entry.endsWith(".diff") || entry.endsWith(".patch")) {
+      addCandidate(resolvePathInsideWorkspace(workspacePath, entry), entry);
+    }
+  }
+
+  return candidates;
 }
 
 function trimTrailingUrlPunctuation(url: string): string {

@@ -22,6 +22,7 @@ import { defaultAgentSessionManager } from "../runtime/agentSessions";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
+import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
 
 export type ApiServerOptions = {
@@ -307,6 +308,7 @@ async function routeRequest(
     const result = refreshTaskDependencyState({
       repositories: options.repositories,
       taskId: refreshTaskMatch[1],
+      proofSchemas: aiSaasPlaybook.proofSchemas,
       now: options.now,
       createId: options.createId,
     });
@@ -319,6 +321,9 @@ async function routeRequest(
         dependencies.map((dependency) => dependency.dependsOnTaskId),
       ),
       event,
+      progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
+      proof: result.proof?.map(summarizeProof),
+      recovery: result.recovery,
     });
     return;
   }

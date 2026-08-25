@@ -630,6 +630,72 @@ describe("Dashboard App", () => {
     expect(await screen.findByText("Create landing page / queued")).toBeInTheDocument();
   });
 
+  it("shows proof recovery feedback after refreshing a failed no-proof task", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          status: "failed",
+          failureReason: "no_proof",
+          failureMessage: "Task failed: Create landing page / no_proof.",
+        },
+      ],
+    }));
+    api.refreshTask = vi.fn(async () => ({
+      task: {
+        ...created.tasks[0],
+        status: "review",
+      },
+      event: {
+        type: "proof_recovered",
+        taskId: "task_1",
+        status: "review",
+        message: "Proof recovered: Create landing page submitted to CEO Office for review.",
+      },
+      progressEvent: {
+        id: "task_progress_recovered",
+        companyId: "company_1",
+        departmentId: "department_1",
+        parentTaskId: "task_1",
+        subjectTaskId: "task_1",
+        step: "awaiting_review" as const,
+        status: "current" as const,
+        label: "Found checkable proof and submitted it to CEO Office for review.",
+        detail: "Diff proof recovered from prototype-audit-trail.patch.",
+        createdAt: "2026-08-25T00:00:00.000Z",
+      },
+      proof: [
+        {
+          id: "proof_1",
+          taskId: "task_1",
+          type: "diff",
+          uri: ".auto-crop-proof/task_1.diff",
+          summary: "Diff proof recovered from prototype-audit-trail.patch.",
+        },
+      ],
+      recovery: {
+        status: "recovered" as const,
+        message: "Found checkable proof and submitted it to CEO Office for review.",
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    await user.click(screen.getByRole("button", { name: "Refresh Create landing page" }));
+
+    expect(await screen.findByText("Task (Create landing page) submitted to CEO Office for review")).toBeInTheDocument();
+    expect(screen.getByText("Found checkable proof and submitted it to CEO Office for review.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Department Leader Report" })).toHaveTextContent(
+      "Found checkable proof and submitted it to CEO Office for review.",
+    );
+  });
+
   it("shows agent activity on a dedicated Company Operations page", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();

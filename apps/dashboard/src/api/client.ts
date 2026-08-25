@@ -106,6 +106,19 @@ export type ProofSummary = {
   summary: string;
 };
 
+export type TaskRefreshRecoverySummary = {
+  status: "recovered" | "not_found" | "not_applicable";
+  message: string;
+};
+
+export type TaskRefreshResponse = {
+  task: TaskSummary;
+  event: ServerEvent;
+  progressEvent?: TaskProgressEventSummary;
+  proof?: ProofSummary[];
+  recovery?: TaskRefreshRecoverySummary;
+};
+
 export type ReviewSummary = {
   id: string;
   companyId: string;
@@ -228,7 +241,7 @@ export type ApiClient = {
   activateCompany(companyId: string): Promise<{ company: CompanySummary }>;
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
-  refreshTask(taskId: string): Promise<{ task: TaskSummary; event: ServerEvent }>;
+  refreshTask(taskId: string): Promise<TaskRefreshResponse>;
   createReplanProposal(taskId: string): Promise<{ proposal: ReplanProposalSummary }>;
   confirmReplanProposal(proposalId: string): Promise<{
     proposal: ReplanProposalSummary;

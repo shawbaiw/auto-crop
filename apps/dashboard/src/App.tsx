@@ -445,6 +445,14 @@ export default function App({ apiClient }: AppProps) {
   async function handleRefreshTask(taskId: string) {
     const response = await client.refreshTask(taskId);
     setBlueprint((current) => updateBlueprintTask(current, response.task));
+    setEvents((current) => [...current.slice(-49), response.event]);
+    if (response.progressEvent) {
+      setTaskProgressEvents((current) => [...current, response.progressEvent!]);
+    }
+    if (response.proof) {
+      setProof((current) => upsertProofs(current, response.proof ?? []));
+    }
+    return response;
   }
 
   async function handleCreateCeoIntake(body: string) {
@@ -701,6 +709,17 @@ function upsertCeoIntake(intakes: CeoIntakeSummary[], intake: CeoIntakeSummary):
   }
 
   return intakes.map((current) => (current.id === intake.id ? intake : current));
+}
+
+function upsertProofs(proofs: ProofSummary[], nextProofs: ProofSummary[]): ProofSummary[] {
+  let result = proofs;
+  for (const proof of nextProofs) {
+    const exists = result.some((current) => current.id === proof.id);
+    result = exists
+      ? result.map((current) => (current.id === proof.id ? proof : current))
+      : [...result, proof];
+  }
+  return result;
 }
 
 function upsertReplanProposal(proposals: ReplanProposalSummary[], proposal: ReplanProposalSummary): ReplanProposalSummary[] {

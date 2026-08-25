@@ -65,6 +65,73 @@ describe("captureProofs", () => {
     expect(existsSync(proof[0]?.uri ?? "")).toBe(true);
   });
 
+  it("recovers diff proof from controlled workspace patch files", () => {
+    const { task, workspacePath } = createFixture("repo-diff", ["diff"]);
+    writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
+
+    const proof = captureProofs({
+      task,
+      proofSchema: { id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] },
+      workspacePath,
+      logPath: join(workspacePath, "agent.log"),
+      stdout: "",
+      stderr: "",
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(proof).toEqual([
+      {
+        id: "proof_1",
+        taskId: "task_1",
+        type: "diff",
+        uri: join(workspacePath, ".auto-crop-proof", "task_1.diff"),
+        summary: "Diff proof recovered from prototype-audit-trail.patch.",
+        verifiedAt: null,
+      },
+    ]);
+    expect(readProofFile(proof[0]?.uri ?? "")).toContain("diff --git a/app/page.tsx b/app/page.tsx");
+  });
+
+  it("merges multiple controlled diff proof files into one canonical proof", () => {
+    const { task, workspacePath } = createFixture("repo-diff", ["diff"]);
+    const proofDir = join(workspacePath, ".auto-crop-proof");
+    mkdirSync(proofDir, { recursive: true });
+    writeFileSync(join(proofDir, "first.diff"), "diff --git a/first b/first\n", "utf8");
+    writeFileSync(join(workspacePath, "second.patch"), "diff --git a/second b/second\n", "utf8");
+
+    const proof = captureProofs({
+      task,
+      proofSchema: { id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] },
+      workspacePath,
+      logPath: join(workspacePath, "agent.log"),
+      stdout: "",
+      stderr: "",
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(proof).toHaveLength(1);
+    expect(proof[0]?.summary).toBe("Diff proof recovered from first.diff, second.patch.");
+    expect(readProofFile(proof[0]?.uri ?? "")).toContain("diff --git a/first b/first");
+    expect(readProofFile(proof[0]?.uri ?? "")).toContain("diff --git a/second b/second");
+  });
+
+  it("ignores empty controlled diff proof files", () => {
+    const { task, workspacePath } = createFixture("repo-diff", ["diff"]);
+    writeFileSync(join(workspacePath, "empty.patch"), "\n", "utf8");
+
+    const proof = captureProofs({
+      task,
+      proofSchema: { id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] },
+      workspacePath,
+      logPath: join(workspacePath, "agent.log"),
+      stdout: "",
+      stderr: "",
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(proof).toEqual([]);
+  });
+
   it("captures command output proof from log excerpts", () => {
     const { task, workspacePath } = createFixture("test-output", ["command_output", "test_result"]);
     const logPath = join(workspacePath, "agent.log");
