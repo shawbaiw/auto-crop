@@ -379,6 +379,54 @@ describe("Dashboard App", () => {
     expect(screen.queryByText("Validate the prototype")).not.toBeInTheDocument();
   });
 
+  it("removes the CEO pending shortcut after the review request is handled", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => ({
+      ...createReviewReadyCompanyResponse(),
+      proof: [
+        {
+          id: "proof_1",
+          taskId: "task_1",
+          type: "file",
+          uri: "proof.md",
+          summary: "Prototype is playable locally.",
+        },
+      ],
+    }));
+    api.createCeoReviewDecision = vi.fn(async () => ({
+      decision: {
+        id: "ceo_review_decision_1",
+        taskId: "task_1",
+        decision: "approve" as const,
+        proofId: "proof_1",
+        createdAt: "2026-08-17T00:03:00.000Z",
+      },
+      task: {
+        ...createReviewReadyCompanyResponse().tasks[0],
+        status: "complete" as const,
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReportBeforeReview = screen.getByRole("region", { name: "Department Leader Report" });
+    await user.click(within(leaderReportBeforeReview).getByRole("button", { name: "View CEO Pending Item" }));
+
+    const ceoPending = await screen.findByRole("region", { name: "CEO Pending" });
+    await user.click(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" }));
+
+    const taskReview = await screen.findByRole("region", { name: "Task Review" });
+    await user.click(within(taskReview).getByRole("button", { name: "Approve, mark complete" }));
+    await screen.findByText("CEO Office approved the task.");
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReportAfterReview = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(within(leaderReportAfterReview).queryByRole("button", { name: "View CEO Pending Item" })).not.toBeInTheDocument();
+  });
+
   it("blocks missing-proof CEO approval and returns tasks with a reason and next step", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => createReviewReadyCompanyResponse());

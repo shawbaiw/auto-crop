@@ -690,7 +690,7 @@ function DepartmentProgressFlows({
                 <span aria-hidden="true">{progressMarker(event.status)}</span>
                 <div className="department-progress-flow__content">
                   <p>{formatProgressLabel(event, flow.task.title, t)}</p>
-                  {isCeoReviewProgressEvent(event) ? (
+                  {isActiveCeoReviewProgressEvent(event, flow.task) ? (
                     <RetroButton className="department-progress-flow__action" onClick={onViewCeoPending}>
                       {t("department.viewCeoPendingItem")}
                     </RetroButton>
@@ -824,7 +824,11 @@ function formatCeoReviewSubmittedLabel(title: string, t: ReturnType<typeof useLa
   return `${t("department.flowTask")} (${title}) ${t("department.flowSubmittedToCeoReview")}`;
 }
 
-function isCeoReviewProgressEvent(event: TaskProgressEventSummary): boolean {
+function isActiveCeoReviewProgressEvent(event: TaskProgressEventSummary, task: TaskSummary): boolean {
+  if (task.status !== "review") {
+    return false;
+  }
+
   if (event.step === "awaiting_review") {
     return true;
   }
