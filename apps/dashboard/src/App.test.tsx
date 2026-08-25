@@ -425,6 +425,49 @@ describe("Dashboard App", () => {
 
     const leaderReportAfterReview = screen.getByRole("region", { name: "Department Leader Report" });
     expect(within(leaderReportAfterReview).queryByRole("button", { name: "View CEO Pending Item" })).not.toBeInTheDocument();
+    expect(leaderReportAfterReview).not.toHaveTextContent("Task (Validate the prototype) submitted to CEO Office for review");
+    expect(leaderReportAfterReview).toHaveTextContent("Task (Validate the prototype) complete");
+  });
+
+  it("uses the current task title when a handled review came from an older execution label", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => {
+      const created = createCompanyResponse();
+      return {
+        ...created,
+        tasks: [
+          {
+            ...created.tasks[0],
+            title: "Continue from Partial Output: Record implementation changes",
+            status: "complete" as const,
+          },
+        ],
+        taskProgressEvents: [
+          ...created.taskProgressEvents!.slice(0, 2),
+          {
+            id: "task_progress_3",
+            companyId: "company_1",
+            departmentId: "department_1",
+            parentTaskId: "task_1",
+            subjectTaskId: "task_1",
+            step: "executing" as const,
+            status: "complete" as const,
+            label: "Task 1 (Record implementation changes) review",
+            detail: null,
+            createdAt: "2026-08-17T00:02:00.000Z",
+          },
+        ],
+      };
+    });
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(leaderReport).not.toHaveTextContent("Task (Record implementation changes) submitted to CEO Office for review");
+    expect(leaderReport).toHaveTextContent("Task (Continue from Partial Output: Record implementation changes) complete");
   });
 
   it("blocks missing-proof CEO approval and returns tasks with a reason and next step", async () => {

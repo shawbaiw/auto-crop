@@ -689,7 +689,7 @@ function DepartmentProgressFlows({
               <li className={`department-progress-flow__step department-progress-flow__step--${event.status}`} key={event.id}>
                 <span aria-hidden="true">{progressMarker(event.status)}</span>
                 <div className="department-progress-flow__content">
-                  <p>{formatProgressLabel(event, flow.task.title, t)}</p>
+                  <p>{formatProgressLabel(event, flow.task, t)}</p>
                   {isActiveCeoReviewProgressEvent(event, flow.task) ? (
                     <RetroButton className="department-progress-flow__action" onClick={onViewCeoPending}>
                       {t("department.viewCeoPendingItem")}
@@ -773,7 +773,7 @@ function progressMarker(status: TaskProgressEventSummary["status"]): string {
   return "○";
 }
 
-function formatProgressLabel(event: TaskProgressEventSummary, parentTaskTitle: string, t: ReturnType<typeof useLanguage>["t"]): string {
+function formatProgressLabel(event: TaskProgressEventSummary, task: TaskSummary, t: ReturnType<typeof useLanguage>["t"]): string {
   switch (event.step) {
     case "received":
       return t("department.flowReceived");
@@ -790,7 +790,7 @@ function formatProgressLabel(event: TaskProgressEventSummary, parentTaskTitle: s
     case "summarizing_proof":
       return t("department.flowSummarizingProof");
     case "awaiting_review":
-      return formatCeoReviewSubmittedLabel(parentTaskTitle, t);
+      return formatReviewProgressLabel(task, t);
     case "complete":
       return t("department.flowComplete");
     case "blocked":
@@ -801,23 +801,31 @@ function formatProgressLabel(event: TaskProgressEventSummary, parentTaskTitle: s
     case "needs_ceo_reassignment":
       return t("department.flowNeedsCeoReassignment");
     case "executing":
-      return formatExecutingProgressLabel(event.label, parentTaskTitle, t);
+      return formatExecutingProgressLabel(event.label, task, t);
   }
 }
 
-function formatExecutingProgressLabel(label: string, parentTaskTitle: string, t: ReturnType<typeof useLanguage>["t"]): string {
+function formatExecutingProgressLabel(label: string, task: TaskSummary, t: ReturnType<typeof useLanguage>["t"]): string {
   const match = label.match(/^Task (\d+) \((.+)\) ([a-z_]+)$/i);
   if (!match) {
     return label;
   }
 
   const [, , taskTitle, status] = match;
-  const displayTitle = taskTitle.trim() || parentTaskTitle;
+  const displayTitle = taskTitle.trim() || task.title;
   if (status === "review") {
-    return formatCeoReviewSubmittedLabel(displayTitle, t);
+    return formatReviewProgressLabel(task, t);
   }
 
   return `${t("department.flowTask")} (${displayTitle}) ${formatFlowTaskStatus(status, t)}`;
+}
+
+function formatReviewProgressLabel(task: TaskSummary, t: ReturnType<typeof useLanguage>["t"]): string {
+  if (task.status === "review") {
+    return formatCeoReviewSubmittedLabel(task.title, t);
+  }
+
+  return `${t("department.flowTask")} (${task.title}) ${formatFlowTaskStatus(task.status, t)}`;
 }
 
 function formatCeoReviewSubmittedLabel(title: string, t: ReturnType<typeof useLanguage>["t"]): string {
