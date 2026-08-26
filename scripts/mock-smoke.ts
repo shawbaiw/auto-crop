@@ -55,6 +55,7 @@ try {
     company: { id: string; name: string; status: string };
     tasks: Array<{ id: string }>;
   }>(`${baseUrl}/api/companies`, {
+    companyName: "Pricing Page Studio",
     founderVision: "Build an AI SaaS that creates pricing pages.",
     selectedCeoAgentId: "codex",
     permissionMode: "balanced",
