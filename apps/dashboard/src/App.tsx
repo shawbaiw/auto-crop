@@ -440,6 +440,7 @@ export default function App({ apiClient }: AppProps) {
     const response = await client.confirmReplanProposal(proposalId);
     setReplanProposals((current) => upsertReplanProposal(current, response.proposal));
     setBlueprint((current) => updateBlueprintTasksAfterReplan(current, response.sourceTask, response.createdTasks));
+    applyDependencyCascadeResponse(response.dependencyCascade);
   }
 
   async function handleRefreshTask(taskId: string) {
@@ -486,26 +487,37 @@ export default function App({ apiClient }: AppProps) {
     if (response.progressEvent) {
       setTaskProgressEvents((current) => [...current, response.progressEvent!]);
     }
-    if (response.dependencyCascade) {
-      setBlueprint((current) => updateBlueprintTasks(current, response.dependencyCascade?.updatedTasks ?? []));
-      if (response.dependencyCascade.events.length > 0) {
-        setEvents((current) => [...current.slice(-49), ...response.dependencyCascade!.events]);
-      }
-      if (response.dependencyCascade.progressEvents.length > 0) {
-        setTaskProgressEvents((current) => [...current, ...response.dependencyCascade!.progressEvents]);
-      }
-      if (response.dependencyCascade.errors?.length) {
-        setEvents((current) => [
-          ...current.slice(-49),
-          ...response.dependencyCascade!.errors!.map((error) => ({
-            type: "task_warning",
-            taskId: error.taskId,
-            message: `Dependency cascade warning: ${error.message}`,
-          })),
-        ]);
-      }
-    }
+    applyDependencyCascadeResponse(response.dependencyCascade);
     return response;
+  }
+
+  function applyDependencyCascadeResponse(dependencyCascade?: {
+    updatedTasks: TaskSummary[];
+    events: ServerEvent[];
+    progressEvents: TaskProgressEventSummary[];
+    errors?: Array<{ taskId: string; message: string }>;
+  }) {
+    if (!dependencyCascade) {
+      return;
+    }
+
+    setBlueprint((current) => updateBlueprintTasks(current, dependencyCascade.updatedTasks));
+    if (dependencyCascade.events.length > 0) {
+      setEvents((current) => [...current.slice(-49), ...dependencyCascade.events]);
+    }
+    if (dependencyCascade.progressEvents.length > 0) {
+      setTaskProgressEvents((current) => [...current, ...dependencyCascade.progressEvents]);
+    }
+    if (dependencyCascade.errors?.length) {
+      setEvents((current) => [
+        ...current.slice(-49),
+        ...dependencyCascade.errors!.map((error) => ({
+          type: "task_warning",
+          taskId: error.taskId,
+          message: `Dependency cascade warning: ${error.message}`,
+        })),
+      ]);
+    }
   }
 
   function handleCreateNewCompany() {

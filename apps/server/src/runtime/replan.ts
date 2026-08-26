@@ -51,6 +51,7 @@ export type ConfirmReplanProposalResult = {
   proposal: ReplanProposal;
   sourceTask: Task;
   createdTasks: Task[];
+  affectedConsumers: Task[];
 };
 
 export async function createReplanProposalForTask(input: CreateReplanProposalInput): Promise<ReplanProposal> {
@@ -196,6 +197,7 @@ export function confirmReplanProposal(input: ConfirmReplanProposalInput): Confir
     throw new Error(`Source task not found: ${proposal.sourceTaskId}`);
   }
 
+  const affectedConsumers = input.repositories.listDependencyConsumers(sourceTask.id);
   const now = (input.now ?? (() => new Date()))().toISOString();
   const createId = input.createId ?? defaultCreateId;
   const basePosition = input.repositories.getNextTaskPosition(sourceTask.companyId);
@@ -269,6 +271,7 @@ export function confirmReplanProposal(input: ConfirmReplanProposalInput): Confir
     proposal: input.repositories.getReplanProposal(proposal.id) ?? proposal,
     sourceTask: input.repositories.getTask(sourceTask.id) ?? sourceTask,
     createdTasks,
+    affectedConsumers,
   };
 }
 

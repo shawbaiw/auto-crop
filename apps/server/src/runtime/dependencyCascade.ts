@@ -4,7 +4,7 @@ import { resolveDependencyReadiness } from "./dependencyReadiness";
 
 export type DependencyCascadeUpdate = {
   task: Task;
-  event: TaskEvent;
+  event?: TaskEvent;
   progressEvent?: TaskProgressEvent;
 };
 
@@ -35,6 +35,19 @@ type DependencyUpdate = {
   progressLabel?: string;
 };
 
+type DependencyRefreshContext = Pick<RefreshDependencyTasksInput, "repositories" | "now" | "createId">;
+
+export type RefreshDependencyTasksInput = {
+  repositories: ReturnType<typeof createRepositories>;
+  tasks: Task[];
+  forceEvent?: boolean;
+  includeUnchangedTasks?: boolean;
+  ignoreCascadeEligibility?: boolean;
+  progressLabel?: string;
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+};
+
 export function propagateDependencyCascade(input: PropagateDependencyCascadeInput): DependencyCascadeResult {
   const maxDepth = input.maxDepth ?? 1;
   const visitedTaskIds = input.visitedTaskIds ?? new Set<string>();
@@ -51,7 +64,7 @@ export function propagateDependencyCascade(input: PropagateDependencyCascadeInpu
 
   for (const consumer of input.repositories.listDependencyConsumers(input.sourceTaskId)) {
     try {
-      const update = refreshDependencyConsumer(input, consumer);
+      const update = refreshDependencyTask(input, consumer);
       if (update) {
         result.updatedTasks.push(update);
       }
@@ -66,18 +79,84 @@ export function propagateDependencyCascade(input: PropagateDependencyCascadeInpu
   return result;
 }
 
-function refreshDependencyConsumer(
-  input: PropagateDependencyCascadeInput,
+export function refreshDependencyTasks(input: RefreshDependencyTasksInput): DependencyCascadeResult {
+  const result: DependencyCascadeResult = {
+    updatedTasks: [],
+    errors: [],
+  };
+
+  for (const task of input.tasks) {
+    try {
+      const update = refreshDependencyTask(input, task, {
+        forceEvent: input.forceEvent ?? false,
+        includeUnchangedTask: input.includeUnchangedTasks ?? false,
+        ignoreCascadeEligibility: input.ignoreCascadeEligibility ?? false,
+        progressLabel: input.progressLabel,
+      });
+      if (update) {
+        result.updatedTasks.push(update);
+      }
+    } catch (error) {
+      result.errors.push({
+        taskId: task.id,
+        message: (error as Error).message,
+      });
+    }
+  }
+
+  return result;
+}
+
+function refreshDependencyTask(
+  input: DependencyRefreshContext,
   task: Task,
+  options: {
+    forceEvent?: boolean;
+    includeUnchangedTask?: boolean;
+    ignoreCascadeEligibility?: boolean;
+    progressLabel?: string;
+  } = {},
 ): DependencyCascadeUpdate | null {
-  if (!isCascadeEligible(task)) {
+  if (!options.ignoreCascadeEligibility && !isCascadeEligible(task)) {
+    if (options.includeUnchangedTask) {
+      return refreshedTaskOnly(input.repositories, task);
+    }
     return null;
   }
 
   const readiness = resolveDependencyReadiness(input.repositories, task);
   const update = dependencyUpdateForTask(task, readiness);
 
-  if (!update || !hasMeaningfulChange(task, update)) {
+  if (!update) {
+    return null;
+  }
+
+  if (!hasMeaningfulChange(task, update)) {
+    if (options.forceEvent) {
+      const event = createTaskEvent(input, task, update);
+      input.repositories.appendTaskEvent(event);
+
+      const progressLabel = options.progressLabel ?? update.progressLabel;
+      const progressEvent = progressLabel ? createTaskProgressEvent(input, task, progressLabel) : undefined;
+      if (progressEvent) {
+        input.repositories.appendTaskProgressEvent(progressEvent);
+      }
+
+      const refreshedTask = input.repositories.getTask(task.id);
+      if (!refreshedTask) {
+        throw new Error(`Task disappeared after dependency refresh: ${task.id}`);
+      }
+
+      return {
+        task: refreshedTask,
+        event,
+        progressEvent,
+      };
+    }
+
+    if (options.includeUnchangedTask) {
+      return refreshedTaskOnly(input.repositories, task);
+    }
     return null;
   }
 
@@ -91,7 +170,8 @@ function refreshDependencyConsumer(
   const event = createTaskEvent(input, task, update);
   input.repositories.appendTaskEvent(event);
 
-  const progressEvent = update.progressLabel ? createTaskProgressEvent(input, task, update.progressLabel) : undefined;
+  const progressLabel = options.progressLabel ?? update.progressLabel;
+  const progressEvent = progressLabel ? createTaskProgressEvent(input, task, progressLabel) : undefined;
   if (progressEvent) {
     input.repositories.appendTaskProgressEvent(progressEvent);
   }
@@ -120,8 +200,20 @@ function isCascadeEligible(task: Task): boolean {
   return (
     task.latestFailureReason === "dependency_failed" ||
     task.latestFailureReason === "missing_deliverable" ||
+    task.latestFailureReason === "needs_replan" ||
     Boolean(task.dependencyNote)
   );
+}
+
+function refreshedTaskOnly(
+  repositories: ReturnType<typeof createRepositories>,
+  task: Task,
+): DependencyCascadeUpdate | null {
+  const refreshedTask = repositories.getTask(task.id);
+  if (!refreshedTask) {
+    throw new Error(`Task disappeared during dependency refresh: ${task.id}`);
+  }
+  return { task: refreshedTask };
 }
 
 function dependencyUpdateForTask(
@@ -185,7 +277,7 @@ function hasMeaningfulChange(task: Task, update: DependencyUpdate): boolean {
 }
 
 function createTaskEvent(
-  input: PropagateDependencyCascadeInput,
+  input: DependencyRefreshContext,
   task: Task,
   update: DependencyUpdate,
 ): TaskEvent {
@@ -211,7 +303,7 @@ function createTaskEvent(
 }
 
 function createTaskProgressEvent(
-  input: PropagateDependencyCascadeInput,
+  input: DependencyRefreshContext,
   task: Task,
   label: string,
 ): TaskProgressEvent {

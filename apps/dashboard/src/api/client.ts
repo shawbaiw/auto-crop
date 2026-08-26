@@ -271,6 +271,15 @@ export type ApiClient = {
     proposal: ReplanProposalSummary;
     sourceTask: TaskSummary;
     createdTasks: TaskSummary[];
+    dependencyCascade?: {
+      updatedTasks: TaskSummary[];
+      events: ServerEvent[];
+      progressEvents: TaskProgressEventSummary[];
+      errors?: Array<{
+        taskId: string;
+        message: string;
+      }>;
+    };
   }>;
   triggerKillSwitch(companyId: string): Promise<{ paused: boolean; company: CompanySummary }>;
   subscribeEvents(handler: (event: ServerEvent) => void): () => void;

@@ -191,6 +191,12 @@ describe("API routes", () => {
       latestFailureMessage: "Task needs replanning.",
     });
     fixture.repositories.createTaskDependency({ taskId: consumerTask.id, dependsOnTaskId: sourceTask.id });
+    fixture.repositories.updateTaskStatus(consumerTask.id, "blocked");
+    fixture.repositories.updateTaskExecutionSummary(consumerTask.id, {
+      latestFailureReason: "needs_replan",
+      latestFailureMessage: `Task blocked: ${consumerTask.title} / needs_replan / ${sourceTask.title} is needs_replan.`,
+      dependencyNote: `Waiting for dependency to be replanned: ${sourceTask.title}.`,
+    });
 
     const proposed = await postJson<{
       proposal: { id: string; sourceTaskId: string; status: string; replacementTasks: Array<{ title: string }> };
@@ -211,6 +217,11 @@ describe("API routes", () => {
     const confirmed = await postJson<{
       proposal: { status: string };
       createdTasks: Array<{ id: string }>;
+      dependencyCascade: {
+        updatedTasks: Array<{ id: string; status: string; failureReason?: string; dependencyNote?: string; dependsOnTaskIds?: string[] }>;
+        events: Array<{ type: string; taskId?: string; status?: string; dependencyNote?: string }>;
+        progressEvents: Array<{ subjectTaskId: string | null; label: string; detail: string | null }>;
+      };
     }>(`${fixture.baseUrl}/api/replan-proposals/${proposed.proposal.id}/confirm`, {});
 
     expect(confirmed.proposal.status).toBe("confirmed");
@@ -218,6 +229,33 @@ describe("API routes", () => {
     expect(fixture.repositories.listTaskDependencies(consumerTask.id)).toEqual([
       { taskId: consumerTask.id, dependsOnTaskId: confirmed.createdTasks[2]!.id },
     ]);
+    expect(confirmed.dependencyCascade.updatedTasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: consumerTask.id,
+        status: "waiting_dependency",
+        dependsOnTaskIds: [confirmed.createdTasks[2]!.id],
+        dependencyNote: `Waiting for dependency deliverable: Validate replacement output for ${sourceTask.title} (queued).`,
+      }),
+    ]));
+    expect(confirmed.dependencyCascade.updatedTasks.find((task) => task.id === consumerTask.id)?.failureReason).toBeUndefined();
+    expect(confirmed.dependencyCascade.events).toContainEqual(
+      expect.objectContaining({
+        type: "dependency_waiting",
+        taskId: consumerTask.id,
+        status: "waiting_dependency",
+      }),
+    );
+    expect(confirmed.dependencyCascade.progressEvents).toContainEqual(
+      expect.objectContaining({
+        subjectTaskId: consumerTask.id,
+        label: "Dependency path updated after replan; waiting for replacement deliverable.",
+      }),
+    );
+    expect(fixture.repositories.getTask(consumerTask.id)).toMatchObject({
+      status: "waiting_dependency",
+      latestFailureReason: null,
+      dependencyNote: `Waiting for dependency deliverable: Validate replacement output for ${sourceTask.title} (queued).`,
+    });
 
     await fixture.close();
   });

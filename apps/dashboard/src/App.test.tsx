@@ -1164,10 +1164,44 @@ describe("Dashboard App", () => {
       proposal: { ...createReplanProposalSummary(), status: "confirmed", confirmedAt: "2026-08-17T00:01:00.000Z" },
       sourceTask: { ...createCompanyResponse().tasks[0], status: "blocked", failureReason: "needs_replan" },
       createdTasks: [
-        { ...createCompanyResponse().tasks[0], id: "task_2", title: "Plan smaller slice for Create landing page", status: "queued" },
-        { ...createCompanyResponse().tasks[0], id: "task_3", title: "Produce proof for Create landing page", status: "queued" },
-        { ...createCompanyResponse().tasks[0], id: "task_4", title: "Validate replacement output for Create landing page", status: "queued" },
+        { ...createCompanyResponse().tasks[0], id: "task_3", title: "Plan smaller slice for Create landing page", status: "queued" },
+        { ...createCompanyResponse().tasks[0], id: "task_4", title: "Produce proof for Create landing page", status: "queued" },
+        { ...createCompanyResponse().tasks[0], id: "task_5", title: "Validate replacement output for Create landing page", status: "queued" },
       ],
+      dependencyCascade: {
+        updatedTasks: [
+          {
+            ...createCompanyResponse().tasks[0],
+            id: "task_2",
+            title: "Validate landing page",
+            status: "waiting_dependency" as const,
+            dependsOnTaskIds: ["task_5"],
+            dependencyNote: "Waiting for dependency deliverable: Validate replacement output for Create landing page (queued).",
+          },
+        ],
+        events: [
+          {
+            type: "dependency_waiting",
+            taskId: "task_2",
+            status: "waiting_dependency",
+            message: "Waiting for dependency deliverable: Validate replacement output for Create landing page (queued).",
+          },
+        ],
+        progressEvents: [
+          {
+            id: "task_progress_4",
+            companyId: "company_1",
+            departmentId: "department_1",
+            parentTaskId: "task_2",
+            subjectTaskId: "task_2",
+            step: "executing" as const,
+            status: "current" as const,
+            label: "Dependency path updated after replan; waiting for replacement deliverable.",
+            detail: null,
+            createdAt: "2026-08-17T00:01:00.000Z",
+          },
+        ],
+      },
     }));
 
     render(<App apiClient={api} />);
@@ -1204,6 +1238,14 @@ describe("Dashboard App", () => {
 
     expect(api.confirmReplanProposal).toHaveBeenCalledWith("replan_proposal_1");
     expect(await screen.findByText("Produce proof for Create landing page")).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Departments" }));
+
+    expect(
+      await screen.findByRole("button", {
+        name: /Task 02 Engineering Validate landing page Waiting on upstream Waiting on task 05: Validate replacement output for Create landing page/i,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("updates task status in the operating dashboard from SSE", async () => {

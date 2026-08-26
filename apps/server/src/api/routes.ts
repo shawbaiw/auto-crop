@@ -23,7 +23,7 @@ import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
-import { propagateDependencyCascade, type DependencyCascadeResult } from "../runtime/dependencyCascade";
+import { propagateDependencyCascade, refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
 
@@ -301,8 +301,10 @@ async function routeRequest(
           createId: options.createId,
         })
         : undefined;
-    for (const cascadeEvent of dependencyCascade?.updatedTasks ?? []) {
-      events.publish(summarizeTaskEvent(cascadeEvent.event));
+    for (const cascadeUpdate of dependencyCascade?.updatedTasks ?? []) {
+      if (cascadeUpdate.event) {
+        events.publish(summarizeTaskEvent(cascadeUpdate.event));
+      }
     }
 
     sendJson(response, 201, {
@@ -405,10 +407,27 @@ async function routeRequest(
       now: options.now,
       createId: options.createId,
     });
+    const affectedConsumers = result.affectedConsumers
+      .map((consumer) => options.repositories.getTask(consumer.id))
+      .filter((consumer): consumer is Task => Boolean(consumer));
+    const dependencyCascade = refreshDependencyTasks({
+      repositories: options.repositories,
+      tasks: affectedConsumers,
+      includeUnchangedTasks: true,
+      progressLabel: "Dependency path updated after replan; waiting for replacement deliverable.",
+      now: options.now,
+      createId: options.createId,
+    });
+    for (const cascadeUpdate of dependencyCascade.updatedTasks) {
+      if (cascadeUpdate.event) {
+        events.publish(summarizeTaskEvent(cascadeUpdate.event));
+      }
+    }
     sendJson(response, 200, {
       proposal: summarizeReplanProposal(result.proposal),
       sourceTask: summarizeTask(result.sourceTask, []),
       createdTasks: summarizeTasks(result.createdTasks, []),
+      dependencyCascade: summarizeDependencyCascade(dependencyCascade, options.repositories),
     });
     return;
   }
@@ -650,7 +669,10 @@ function summarizeDependencyCascade(
         repositories.listTaskDependencies(update.task.id).map((dependency) => dependency.dependsOnTaskId),
       ),
     ),
-    events: cascade.updatedTasks.map((update) => summarizeTaskEvent(update.event)),
+    events: cascade.updatedTasks
+      .map((update) => update.event)
+      .filter((event): event is TaskEvent => Boolean(event))
+      .map(summarizeTaskEvent),
     progressEvents: cascade.updatedTasks
       .map((update) => update.progressEvent)
       .filter((event): event is TaskProgressEvent => Boolean(event))
