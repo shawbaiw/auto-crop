@@ -31,11 +31,6 @@ export type CreateCompanyResult = {
   objectives: Objective[];
   keyResults: KeyResult[];
   tasks: Task[];
-  editable: {
-    companyName: string;
-    objectives: string[];
-    firstTasks: string[];
-  };
 };
 
 export async function createCompany(input: CreateCompanyInput): Promise<CreateCompanyResult> {
@@ -245,11 +240,6 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     objectives,
     keyResults,
     tasks,
-    editable: {
-      companyName: company.name,
-      objectives: objectives.map((objective) => objective.title),
-      firstTasks: tasks.map((task) => task.title),
-    },
   };
 }
 

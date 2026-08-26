@@ -209,26 +209,6 @@ async function routeRequest(
     return;
   }
 
-  const blueprintMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/blueprint$/);
-  if (method === "PATCH" && blueprintMatch) {
-    const companyId = blueprintMatch[1];
-    const body = await readJson<{ companyName?: string }>(request);
-    const company = options.repositories.getCompany(companyId);
-
-    if (!company) {
-      sendJson(response, 404, { error: `Company not found: ${companyId}` });
-      return;
-    }
-
-    sendJson(response, 200, {
-      company: {
-        ...company,
-        name: body.companyName ?? company.name,
-      },
-    });
-    return;
-  }
-
   const reviewsMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/reviews$/);
   if (method === "GET" && reviewsMatch) {
     sendJson(response, 200, { reviews: options.repositories.listReviews(reviewsMatch[1]) });
@@ -485,11 +465,6 @@ function buildCompanyState(
     activity: repositories.listTaskEventsForCompany(company.id).map(summarizeTaskEvent),
     taskProgressEvents: repositories.listTaskProgressEventsForCompany(company.id).map(summarizeTaskProgressEvent),
     ceoIntakes: repositories.listCeoIntakesForCompany(company.id).map(summarizeCeoIntake),
-    editable: {
-      companyName: company.name,
-      objectives: repositories.listObjectives(company.id).map((objective) => objective.title),
-      firstTasks: tasks.map((task) => task.title),
-    },
   };
 }
 
@@ -800,7 +775,7 @@ function applyCors(response: ServerResponse): void {
 function corsHeaders(): Record<string, string> {
   return {
     "access-control-allow-headers": "content-type",
-    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-origin": "*",
   };
 }

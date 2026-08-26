@@ -314,7 +314,7 @@ type Approval = {
 - [x] Select the AI SaaS playbook when appropriate.
 - [x] Run CEO adapter or mock CEO to produce a blueprint.
 - [x] Store company, departments, objectives, key results, tasks, and memory files.
-- [x] Return editable key fields before activation.
+- [x] Return editable key fields before activation. (removed — the `editable` response field and its `PATCH /api/companies/:id/blueprint` counterpart were never wired to any client and were deleted as dead code.)
 - [x] Verify with `pnpm --filter @auto-crop/server test`.
 
 ## Task 10: SQLite-Backed Scheduler
@@ -483,7 +483,7 @@ Local verification note: Playwright Chromium may need an unrestricted local run 
 
 - A user can run the project locally from a clone.
 - The dashboard lets the user choose Claude Code, Codex, or a custom command-template agent as CEO.
-- The user can enter a founder vision and generate an editable company blueprint.
+- The user can enter a founder vision and generate a company blueprint with departments, objectives, and tasks.
 - The AI SaaS playbook creates Product, Research, Growth, and Engineering departments.
 - The OKR system stores objectives, key results, tasks, priorities, and review updates.
 - Multiple worker tasks can run in isolated workspaces.

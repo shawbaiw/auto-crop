@@ -52,8 +52,7 @@ try {
   assert(detected.agents.some((agent) => agent.id === "codex" && agent.detected), "Codex mock agent should be detected.");
 
   const created = await postJson<{
-    company: { id: string; status: string };
-    editable: { companyName: string };
+    company: { id: string; name: string; status: string };
     tasks: Array<{ id: string }>;
   }>(`${baseUrl}/api/companies`, {
     founderVision: "Build an AI SaaS that creates pricing pages.",
@@ -62,7 +61,7 @@ try {
     assets: [],
   });
   assert(created.company.status === "draft", "Company should start as draft.");
-  assert(created.editable.companyName === "Pricing Page Studio", "CEO blueprint should be reviewable.");
+  assert(created.company.name === "Pricing Page Studio", "CEO blueprint should be reviewable.");
 
   const activated = await postJson<{ company: { status: string } }>(
     `${baseUrl}/api/companies/${created.company.id}/activate`,

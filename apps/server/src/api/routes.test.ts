@@ -28,7 +28,7 @@ describe("API routes", () => {
     );
     expect(agents.agents).toContainEqual({ id: "codex", name: "Codex", capabilities: ["code", "frontend", "test"], detected: true });
 
-    const created = await postJson<{ company: { id: string; status: string }; editable: { companyName: string } }>(
+    const created = await postJson<{ company: { id: string; name: string; status: string } }>(
       `${fixture.baseUrl}/api/companies`,
       {
         companyName: "Pricing Page Studio",
@@ -39,7 +39,7 @@ describe("API routes", () => {
       },
     );
     expect(created.company.status).toBe("draft");
-    expect(created.editable.companyName).toBe("Pricing Page Studio");
+    expect(created.company.name).toBe("Pricing Page Studio");
 
     const companies = await getJson<{
       companies: Array<{ id: string; name: string; taskCount: number; updatedAt: string }>;

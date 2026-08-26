@@ -198,18 +198,11 @@ export type CeoReviewDecisionResponse = {
   };
 };
 
-export type EditableBlueprint = {
-  companyName: string;
-  objectives: string[];
-  firstTasks: string[];
-};
-
 export type CreateCompanyResponse = {
   company: CompanySummary;
   departments: DepartmentSummary[];
   objectives: ObjectiveSummary[];
   tasks: TaskSummary[];
-  editable: EditableBlueprint;
   proof?: ProofSummary[];
   reviews?: ReviewSummary[];
   activity?: ServerEvent[];

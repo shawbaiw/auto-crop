@@ -60,10 +60,7 @@ describe("createCompany", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(result.editable.companyName).toBe("Pricing Page Studio");
     expect(result.company.name).toBe("Pricing Page Studio");
-    expect(result.editable.objectives).toEqual(["Validate the first AI SaaS wedge"]);
-    expect(result.editable.firstTasks.length).toBeGreaterThan(0);
     expect(result.company.playbookId).toBe("ai-saas");
     expect(result.company.permissionMode).toBe("balanced");
     expect(result.company.status).toBe("draft");

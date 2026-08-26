@@ -1678,11 +1678,6 @@ function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>
         riskLevel: "medium",
       },
     ],
-    editable: {
-      companyName: "Pricing Page Studio",
-      objectives: ["Validate first wedge"],
-      firstTasks: ["Create landing page"],
-    },
     replanProposals: [],
     ceoIntakes: [],
     taskProgressEvents: [

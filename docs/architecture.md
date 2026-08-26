@@ -78,7 +78,6 @@ The local API server currently exposes:
 - `GET /api/agents`
 - `POST /api/companies`
 - `POST /api/companies/:id/activate`
-- `PATCH /api/companies/:id/blueprint`
 - `GET /api/companies/:id/reviews`
 - `GET /api/tasks/:id/proof`
 - `POST /api/tasks/:id/cancel`
@@ -148,5 +147,5 @@ The global kill switch sets global pause, prevents new scheduler claims, cancels
 
 - `node:sqlite` is experimental on Node 24.
 - The packaged dashboard serving/opening flow is still future work.
-- Advanced blueprint editing, approval decision UI, and real-agent smoke tests remain planned.
+- Approval decision UI and real-agent smoke tests remain planned.
 - Playwright E2E requires a working Chromium environment.
