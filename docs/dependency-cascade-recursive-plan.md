@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned. This plan follows the direct-consumer Dependency Cascade and the replan-confirm trigger expansion. Before implementation, close the remaining trigger-expansion test gaps so recursive propagation builds on stable readiness-writing behavior.
+Implemented for CEO approve decisions with `maxDepth: 2`, breadth-first traversal, visited-task protection, partial-failure reporting, and dashboard consumption through the existing `dependencyCascade` response shape. The current selected next scope is [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
 
 ## Goal
 
@@ -22,7 +22,7 @@ CEO Office approves task `A` with Consumable Proof in a chain `A -> B -> C`. `B`
 
 ## Preconditions
 
-Before implementing recursive propagation, close the current trigger-expansion test gaps:
+These trigger-expansion test gaps were closed before recursive propagation was implemented:
 
 - API integration: confirming a replan with an already-`queued` affected consumer returns the consumer with updated `dependsOnTaskIds` and writes no dependency event.
 - API integration: a consumer refresh failure during replan confirmation appears in `dependencyCascade.errors` without rolling back the replan confirmation.
@@ -140,4 +140,3 @@ Long-lived node labels should not mention recursive cascade mechanics.
 - API integration: CEO approve in `A -> B -> C` returns breadth-first updates for `B` then `C`.
 - API integration: unchanged queued downstream tasks are not returned solely because they were reached.
 - Dashboard test: CEO approve updates a depth-2 task's dependency note without manual Refresh.
-

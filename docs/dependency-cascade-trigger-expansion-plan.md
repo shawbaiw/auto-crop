@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented for replan confirmation and shared readiness writing on the main path. Remaining test-hardening items are listed as preconditions in [Bounded Recursive Dependency Cascade Plan](dependency-cascade-recursive-plan.md).
+Implemented for replan confirmation and shared readiness writing. The follow-on bounded recursive propagation work is tracked in [Bounded Recursive Dependency Cascade Plan](dependency-cascade-recursive-plan.md).
 
 ## Goal
 

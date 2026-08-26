@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented as the direct-consumer foundation for Dependency Cascade. The next bounded-depth expansion is tracked in [Bounded Recursive Dependency Cascade Plan](dependency-cascade-recursive-plan.md).
+Implemented as the direct-consumer foundation for Dependency Cascade. Later continuity work added replan-confirm refreshes and bounded recursive propagation; the currently selected next scope is [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
 
 ## Goal
 
@@ -110,13 +110,12 @@ The task graph should reflect the new status. Long-lived node labels should not 
 
 ## Next-Version Direction
 
-The next scoped plan is [Dependency Cascade Trigger Expansion](dependency-cascade-trigger-expansion-plan.md). It focuses on replan confirmation as the next trigger and shared readiness writing, not recursive cascade or parent aggregation.
+The direct-consumer path has now been extended by [Dependency Cascade Trigger Expansion](dependency-cascade-trigger-expansion-plan.md) and [Bounded Recursive Dependency Cascade](dependency-cascade-recursive-plan.md). The next selected scope is parent task aggregation, tracked in [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
 
-After the direct-consumer path is stable, extend the same concept in these directions:
+Remaining directions after the implemented cascade work:
 
-- **Bounded recursive cascade:** allow propagation through longer dependency chains using `maxDepth` and visited-task protection.
-- **More trigger points:** invoke Dependency Cascade after task recovery, Proof Recovery approval, replan confirmation, and follow-up task approval.
 - **Parent aggregation:** define a separate rule for parent tasks that wait on department subtasks, including whether and when a parent can move to `queued` or `review`.
+- **More trigger points:** invoke Dependency Cascade after task recovery, Proof Recovery approval, and follow-up task approval.
 - **Scheduler wakeup:** optionally wake the scheduler after a successful cascade if waiting for the normal scheduler interval feels too slow, while keeping cascade separate from task execution.
 
 ## Test Plan
