@@ -296,7 +296,7 @@ async function routeRequest(
         ? propagateDependencyCascade({
           repositories: options.repositories,
           sourceTaskId: result.task.id,
-          maxDepth: 1,
+          maxDepth: 2,
           now: options.now,
           createId: options.createId,
         })

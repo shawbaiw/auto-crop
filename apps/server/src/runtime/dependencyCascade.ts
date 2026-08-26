@@ -49,7 +49,7 @@ export type RefreshDependencyTasksInput = {
 };
 
 export function propagateDependencyCascade(input: PropagateDependencyCascadeInput): DependencyCascadeResult {
-  const maxDepth = input.maxDepth ?? 1;
+  const maxDepth = clampCascadeDepth(input.maxDepth ?? 1);
   const visitedTaskIds = input.visitedTaskIds ?? new Set<string>();
   const result: DependencyCascadeResult = {
     updatedTasks: [],
@@ -61,18 +61,45 @@ export function propagateDependencyCascade(input: PropagateDependencyCascadeInpu
   }
 
   visitedTaskIds.add(input.sourceTaskId);
+  let frontierTaskIds = [input.sourceTaskId];
 
-  for (const consumer of input.repositories.listDependencyConsumers(input.sourceTaskId)) {
-    try {
-      const update = refreshDependencyTask(input, consumer);
-      if (update) {
-        result.updatedTasks.push(update);
+  for (let depth = 1; depth <= maxDepth && frontierTaskIds.length > 0; depth += 1) {
+    const candidatesById = new Map<string, Task>();
+
+    for (const frontierTaskId of frontierTaskIds) {
+      try {
+        for (const consumer of input.repositories.listDependencyConsumers(frontierTaskId)) {
+          if (!visitedTaskIds.has(consumer.id) && !candidatesById.has(consumer.id)) {
+            candidatesById.set(consumer.id, consumer);
+          }
+        }
+      } catch (error) {
+        result.errors.push({
+          taskId: frontierTaskId,
+          message: (error as Error).message,
+        });
       }
-    } catch (error) {
-      result.errors.push({
-        taskId: consumer.id,
-        message: (error as Error).message,
-      });
+    }
+
+    frontierTaskIds = [];
+
+    for (const consumer of candidatesById.values()) {
+      visitedTaskIds.add(consumer.id);
+
+      try {
+        const update = refreshDependencyTask(input, consumer);
+        if (update) {
+          result.updatedTasks.push(update);
+          if (update.task.status === "queued") {
+            frontierTaskIds.push(update.task.id);
+          }
+        }
+      } catch (error) {
+        result.errors.push({
+          taskId: consumer.id,
+          message: (error as Error).message,
+        });
+      }
     }
   }
 
@@ -326,4 +353,8 @@ function createTaskProgressEvent(
 
 function defaultCreateId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
+}
+
+function clampCascadeDepth(depth: number): number {
+  return Math.min(Math.max(Math.trunc(depth), 0), 5);
 }

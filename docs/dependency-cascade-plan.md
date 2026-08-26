@@ -1,5 +1,9 @@
 # Dependency Cascade Plan
 
+## Status
+
+Implemented as the direct-consumer foundation for Dependency Cascade. The next bounded-depth expansion is tracked in [Bounded Recursive Dependency Cascade Plan](dependency-cascade-recursive-plan.md).
+
 ## Goal
 
 Make task handoffs feel continuous after CEO Office accepts upstream Proof.

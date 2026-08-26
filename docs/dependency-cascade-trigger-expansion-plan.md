@@ -1,5 +1,9 @@
 # Dependency Cascade Trigger Expansion Plan
 
+## Status
+
+Implemented for replan confirmation and shared readiness writing on the main path. Remaining test-hardening items are listed as preconditions in [Bounded Recursive Dependency Cascade Plan](dependency-cascade-recursive-plan.md).
+
 ## Goal
 
 Extend Dependency Cascade beyond CEO approval by handling the next concrete continuity gap: replan confirmation changes dependency edges, but affected downstream tasks should not require a manual Refresh to understand the new dependency path.

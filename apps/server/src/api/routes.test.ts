@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Proof, TaskEvent } from "@auto-crop/core";
+import type { Proof, Task, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter, AgentRunRequest } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
@@ -256,6 +256,112 @@ describe("API routes", () => {
       latestFailureReason: null,
       dependencyNote: `Waiting for dependency deliverable: Validate replacement output for ${sourceTask.title} (queued).`,
     });
+
+    await fixture.close();
+  });
+
+  it("returns queued affected consumers after replan dependency rewiring without writing dependency events", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
+    fixture.repositories.updateTaskStatus(sourceTask.id, "needs_replan");
+    fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
+      latestFailureReason: "needs_replan",
+      latestFailureMessage: "Task needs replanning.",
+    });
+    fixture.repositories.createTaskDependency({ taskId: consumerTask.id, dependsOnTaskId: sourceTask.id });
+
+    const proposed = await postJson<{ proposal: { id: string } }>(
+      `${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`,
+      {},
+    );
+    const confirmed = await postJson<{
+      createdTasks: Array<{ id: string }>;
+      dependencyCascade: {
+        updatedTasks: Array<{ id: string; status: string; dependsOnTaskIds?: string[] }>;
+        events: Array<{ type: string; taskId?: string }>;
+        progressEvents: Array<{ subjectTaskId: string | null }>;
+      };
+    }>(`${fixture.baseUrl}/api/replan-proposals/${proposed.proposal.id}/confirm`, {});
+
+    expect(confirmed.dependencyCascade.updatedTasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: consumerTask.id,
+        status: "queued",
+        dependsOnTaskIds: [confirmed.createdTasks[2]!.id],
+      }),
+    ]));
+    expect(confirmed.dependencyCascade.events).toEqual([]);
+    expect(confirmed.dependencyCascade.progressEvents).toEqual([]);
+
+    await fixture.close();
+  });
+
+  it("keeps replan confirmation successful when affected consumer refresh fails", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
+    fixture.repositories.updateTaskStatus(sourceTask.id, "needs_replan");
+    fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
+      latestFailureReason: "needs_replan",
+      latestFailureMessage: "Task needs replanning.",
+    });
+    fixture.repositories.createTaskDependency({ taskId: consumerTask.id, dependsOnTaskId: sourceTask.id });
+    fixture.repositories.updateTaskStatus(consumerTask.id, "blocked");
+    fixture.repositories.updateTaskExecutionSummary(consumerTask.id, {
+      latestFailureReason: "needs_replan",
+      latestFailureMessage: `Task blocked: ${consumerTask.title} / needs_replan / ${sourceTask.title} is needs_replan.`,
+      dependencyNote: `Waiting for dependency to be replanned: ${sourceTask.title}.`,
+    });
+
+    const proposed = await postJson<{ proposal: { id: string } }>(
+      `${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`,
+      {},
+    );
+    const originalUpdateTaskStatus = fixture.repositories.updateTaskStatus;
+    fixture.repositories.updateTaskStatus = (taskId, status) => {
+      if (taskId === consumerTask.id) {
+        throw new Error("consumer refresh failed");
+      }
+      originalUpdateTaskStatus(taskId, status);
+    };
+
+    const confirmed = await postJson<{
+      proposal: { status: string };
+      createdTasks: Array<{ id: string }>;
+      dependencyCascade: {
+        updatedTasks: Array<{ id: string; status: string }>;
+        events: Array<{ type: string; taskId?: string }>;
+        errors?: Array<{ taskId: string; message: string }>;
+      };
+    }>(`${fixture.baseUrl}/api/replan-proposals/${proposed.proposal.id}/confirm`, {});
+
+    expect(confirmed.proposal.status).toBe("confirmed");
+    expect(confirmed.createdTasks).toHaveLength(3);
+    expect(confirmed.dependencyCascade.updatedTasks).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: consumerTask.id }),
+    ]));
+    expect(confirmed.dependencyCascade.events).toEqual([]);
+    expect(confirmed.dependencyCascade.errors).toEqual([
+      { taskId: consumerTask.id, message: "consumer refresh failed" },
+    ]);
+    expect(fixture.repositories.listTaskDependencies(consumerTask.id)).toEqual([
+      { taskId: consumerTask.id, dependsOnTaskId: confirmed.createdTasks[2]!.id },
+    ]);
 
     await fixture.close();
   });
@@ -567,6 +673,79 @@ describe("API routes", () => {
     );
     expect(state.tasks).toContainEqual(expect.objectContaining({ id: consumerTask!.id, status: "queued" }));
     expect(state.activity).toContainEqual(expect.objectContaining({ type: "dependency_ready", taskId: consumerTask!.id }));
+
+    await fixture.close();
+  });
+
+  it("cascades dependency readiness to a second-level consumer after CEO approval", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const sourceTask = createIsolatedTask(templateTask, "cascade_source", "Source cascade task", "review", 100);
+    const firstConsumer = createIsolatedTask(templateTask, "cascade_first", "First cascade consumer", "blocked", 101);
+    const secondConsumer = createIsolatedTask(templateTask, "cascade_second", "Second cascade consumer", "blocked", 102);
+    fixture.repositories.createTask(sourceTask);
+    fixture.repositories.createTask(firstConsumer);
+    fixture.repositories.createTask(secondConsumer);
+    fixture.repositories.createTaskDependency({ taskId: firstConsumer.id, dependsOnTaskId: sourceTask.id });
+    fixture.repositories.createTaskDependency({ taskId: secondConsumer.id, dependsOnTaskId: firstConsumer.id });
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: sourceTask.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Source proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.updateTaskExecutionSummary(firstConsumer.id, {
+      latestFailureReason: "missing_deliverable",
+      latestFailureMessage: "Task blocked by missing upstream proof.",
+      dependencyNote: `Missing consumable proof from dependency: ${sourceTask.title}.`,
+    });
+    fixture.repositories.updateTaskExecutionSummary(secondConsumer.id, {
+      latestFailureReason: "dependency_failed",
+      latestFailureMessage: "Task blocked by stale upstream dependency state.",
+      dependencyNote: `Blocked by failed dependency: ${firstConsumer.title}.`,
+    });
+
+    const approved = await postJson<{
+      dependencyCascade: {
+        updatedTasks: Array<{ id: string; status: string; dependencyNote?: string }>;
+        events: Array<{ type: string; taskId?: string; status?: string }>;
+        progressEvents: Array<{ subjectTaskId: string | null; label: string }>;
+      };
+    }>(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      taskId: sourceTask.id,
+      decision: "approve",
+    });
+
+    expect(approved.dependencyCascade.updatedTasks).toEqual([
+      expect.objectContaining({
+        id: firstConsumer.id,
+        status: "queued",
+      }),
+      expect.objectContaining({
+        id: secondConsumer.id,
+        status: "waiting_dependency",
+        dependencyNote: `Waiting for dependency deliverable: ${firstConsumer.title} (queued).`,
+      }),
+    ]);
+    expect(approved.dependencyCascade.events).toEqual([
+      expect.objectContaining({ type: "dependency_ready", taskId: firstConsumer.id, status: "queued" }),
+      expect.objectContaining({ type: "dependency_waiting", taskId: secondConsumer.id, status: "waiting_dependency" }),
+    ]);
+    expect(approved.dependencyCascade.progressEvents).toEqual([
+      expect.objectContaining({
+        subjectTaskId: firstConsumer.id,
+        label: "Dependency ready after upstream approval; queued for scheduler.",
+      }),
+    ]);
 
     await fixture.close();
   });
@@ -906,6 +1085,30 @@ function createRoutedAgent(options: {
         stderr: "",
       };
     },
+  };
+}
+
+function createIsolatedTask(
+  template: Task,
+  id: string,
+  title: string,
+  status: Task["status"],
+  position: number,
+): Task {
+  return {
+    ...template,
+    id,
+    title,
+    description: `${title}.`,
+    status,
+    position,
+    latestFailureReason: null,
+    latestFailureMessage: null,
+    latestExecutionProfileName: null,
+    latestRequestedTimeoutMs: null,
+    latestEffectiveTimeoutMs: null,
+    dependencyNote: null,
+    artifactWorkspacePath: null,
   };
 }
 

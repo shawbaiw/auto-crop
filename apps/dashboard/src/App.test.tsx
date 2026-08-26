@@ -492,18 +492,30 @@ describe("Dashboard App", () => {
     const created = createDependencyGraphCompanyResponse();
     api.createCompany = vi.fn(async () => ({
       ...created,
-      tasks: created.tasks.map((task) =>
-        task.id === "task_4"
-          ? { ...task, status: "review" as const }
-          : task.id === "task_5"
-            ? {
-                ...task,
-                status: "blocked" as const,
-                failureReason: "missing_deliverable",
-                dependencyNote: "Missing consumable proof from dependency: Validate prototype locally.",
-              }
-            : task,
-      ),
+      tasks: [
+        ...created.tasks.map((task) =>
+          task.id === "task_4"
+            ? { ...task, status: "review" as const }
+            : task.id === "task_5"
+              ? {
+                  ...task,
+                  status: "blocked" as const,
+                  failureReason: "missing_deliverable",
+                  dependencyNote: "Missing consumable proof from dependency: Validate prototype locally.",
+                }
+              : task,
+        ),
+        {
+          ...created.tasks[0],
+          id: "task_7",
+          title: "Amplify launch pipeline",
+          status: "blocked" as const,
+          departmentId: "department_growth",
+          dependsOnTaskIds: ["task_5"],
+          failureReason: "dependency_failed",
+          dependencyNote: "Blocked by failed dependency: Prepare SEO launch and indexing assets.",
+        },
+      ],
       proof: [
         {
           id: "proof_1",
@@ -533,6 +545,16 @@ describe("Dashboard App", () => {
             status: "queued" as const,
             failureReason: undefined,
             dependencyNote: undefined,
+          },
+          {
+            ...created.tasks[0],
+            id: "task_7",
+            title: "Amplify launch pipeline",
+            status: "waiting_dependency" as const,
+            departmentId: "department_growth",
+            dependsOnTaskIds: ["task_5"],
+            failureReason: undefined,
+            dependencyNote: "Waiting for dependency deliverable: Prepare SEO launch and indexing assets (queued).",
           },
         ],
         events: [
@@ -565,12 +587,18 @@ describe("Dashboard App", () => {
     await createCompany(user);
 
     expect(screen.getByRole("button", { name: /Task 05 Growth Prepare SEO launch and indexing assets Blocked/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Task 07 Growth Amplify launch pipeline Blocked/i })).toBeInTheDocument();
     const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
     await user.click(within(ceoPending).getByRole("button", { name: "View Task Validate prototype locally" }));
     const taskReview = screen.getByRole("region", { name: "Task Review" });
     await user.click(within(taskReview).getByRole("button", { name: "Approve, mark complete" }));
 
     expect(await screen.findByRole("button", { name: /Task 05 Growth Prepare SEO launch and indexing assets Queued/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", {
+        name: /Task 07 Growth Amplify launch pipeline Waiting on upstream Waiting on task 05: Prepare SEO launch and indexing assets/i,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("removes the CEO pending shortcut after the review request is handled", async () => {
