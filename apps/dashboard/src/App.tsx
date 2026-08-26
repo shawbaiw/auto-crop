@@ -12,6 +12,7 @@ import {
   type ServerEvent,
   type TaskProgressEventSummary,
   type TaskSummary,
+  type TaskUpdateBatchSummary,
 } from "./api/client";
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
 import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
@@ -440,7 +441,7 @@ export default function App({ apiClient }: AppProps) {
     const response = await client.confirmReplanProposal(proposalId);
     setReplanProposals((current) => upsertReplanProposal(current, response.proposal));
     setBlueprint((current) => updateBlueprintTasksAfterReplan(current, response.sourceTask, response.createdTasks));
-    applyDependencyCascadeResponse(response.dependencyCascade);
+    applyTaskUpdateBatchResponse(response.dependencyCascade, "Dependency cascade warning");
   }
 
   async function handleRefreshTask(taskId: string) {
@@ -453,6 +454,7 @@ export default function App({ apiClient }: AppProps) {
     if (response.proof) {
       setProof((current) => upsertProofs(current, response.proof ?? []));
     }
+    applyTaskUpdateBatchResponse(response.parentAggregation, "Parent aggregation warning");
     return response;
   }
 
@@ -466,6 +468,7 @@ export default function App({ apiClient }: AppProps) {
     if (response.proof) {
       setProof((current) => upsertProofs(current, response.proof ?? []));
     }
+    applyTaskUpdateBatchResponse(response.parentAggregation, "Parent aggregation warning");
     return response;
   }
 
@@ -487,34 +490,29 @@ export default function App({ apiClient }: AppProps) {
     if (response.progressEvent) {
       setTaskProgressEvents((current) => [...current, response.progressEvent!]);
     }
-    applyDependencyCascadeResponse(response.dependencyCascade);
+    applyTaskUpdateBatchResponse(response.dependencyCascade, "Dependency cascade warning");
     return response;
   }
 
-  function applyDependencyCascadeResponse(dependencyCascade?: {
-    updatedTasks: TaskSummary[];
-    events: ServerEvent[];
-    progressEvents: TaskProgressEventSummary[];
-    errors?: Array<{ taskId: string; message: string }>;
-  }) {
-    if (!dependencyCascade) {
+  function applyTaskUpdateBatchResponse(batch: TaskUpdateBatchSummary | undefined, warningLabel: string) {
+    if (!batch) {
       return;
     }
 
-    setBlueprint((current) => updateBlueprintTasks(current, dependencyCascade.updatedTasks));
-    if (dependencyCascade.events.length > 0) {
-      setEvents((current) => [...current.slice(-49), ...dependencyCascade.events]);
+    setBlueprint((current) => updateBlueprintTasks(current, batch.updatedTasks));
+    if (batch.events.length > 0) {
+      setEvents((current) => [...current.slice(-49), ...batch.events]);
     }
-    if (dependencyCascade.progressEvents.length > 0) {
-      setTaskProgressEvents((current) => [...current, ...dependencyCascade.progressEvents]);
+    if (batch.progressEvents.length > 0) {
+      setTaskProgressEvents((current) => [...current, ...batch.progressEvents]);
     }
-    if (dependencyCascade.errors?.length) {
+    if (batch.errors?.length) {
       setEvents((current) => [
         ...current.slice(-49),
-        ...dependencyCascade.errors!.map((error) => ({
+        ...batch.errors!.map((error) => ({
           type: "task_warning",
           taskId: error.taskId,
-          message: `Dependency cascade warning: ${error.message}`,
+          message: `${warningLabel}: ${error.message}`,
         })),
       ]);
     }

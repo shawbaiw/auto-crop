@@ -954,6 +954,83 @@ describe("Dashboard App", () => {
     await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting"));
   });
 
+  it("applies parent aggregation updates returned by task refresh", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    const parentTask = {
+      ...created.tasks[0],
+      id: "task_parent",
+      title: "Build the playable prototype",
+      status: "waiting_dependency" as const,
+      dependencyNote: "Waiting for department subtasks.",
+    };
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          status: "blocked",
+          failureReason: "dependency_failed",
+          dependencyNote: "Blocked by failed dependency: Write brief.",
+        },
+        parentTask,
+      ],
+    }));
+    api.refreshTask = vi.fn(async () => ({
+      task: {
+        ...created.tasks[0],
+        status: "queued",
+      },
+      event: {
+        type: "dependency_ready",
+        taskId: "task_1",
+        status: "queued",
+        message: "Task refreshed: Create landing page is queued because dependencies are ready.",
+      },
+      parentAggregation: {
+        updatedTasks: [
+          {
+            ...parentTask,
+            status: "queued" as const,
+            dependencyNote: undefined,
+          },
+        ],
+        events: [
+          {
+            type: "dependency_ready",
+            taskId: parentTask.id,
+            status: "queued",
+            message: "Parent task queued for proof summarization: Build the playable prototype.",
+          },
+        ],
+        progressEvents: [
+          {
+            id: "task_progress_parent",
+            companyId: "company_1",
+            departmentId: parentTask.departmentId,
+            parentTaskId: parentTask.id,
+            subjectTaskId: parentTask.id,
+            step: "summarizing_proof" as const,
+            status: "current" as const,
+            label: "Ready to summarize department subtask proof.",
+            detail: null,
+            createdAt: "2026-08-17T00:03:00.000Z",
+          },
+        ],
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    await user.click(screen.getByRole("button", { name: "Refresh Create landing page" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Build the playable prototype) waiting"));
+    expect(leaderReport).toHaveTextContent("Summarizing proof");
+  });
+
   it("does not show proof recovery refresh for tasks that are waiting on upstream proof", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();
@@ -1166,6 +1243,40 @@ describe("Dashboard App", () => {
     expect(await screen.findByText("Waiting · Create landing page — Waiting for dependency deliverable: Research brief (running).")).toBeInTheDocument();
     expect(screen.getByText("Retrying · Create landing page — Retrying with a larger execution budget.")).toBeInTheDocument();
     expect(screen.getByText("Needs replan · Create landing page — Task is too large for the current execution budget and needs to be split.")).toBeInTheDocument();
+  });
+
+  it("keeps department subtasks out of the operations review queue", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          title: "Parent proof summary",
+          status: "review" as const,
+        },
+        {
+          ...created.tasks[0],
+          id: "department_subtask_1",
+          title: "Internal prototype slice",
+          status: "review" as const,
+          parentTaskId: "task_1",
+          taskKind: "department_subtask" as const,
+          source: "department" as const,
+        },
+      ],
+    }));
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+
+    expect(screen.getByText("Review Queue")).toBeInTheDocument();
+    expect(screen.getByText("Parent proof summary")).toBeInTheDocument();
+    expect(screen.queryByText("Internal prototype slice")).not.toBeInTheDocument();
   });
 
   it("shows and confirms replan proposals on the Company Operations page", async () => {

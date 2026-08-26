@@ -26,7 +26,7 @@ A parent task was split into department subtasks and is waiting on them. When th
 - When all required department subtasks are ready, move the parent task to `queued` for scheduler-driven parent proof summarization.
 - Do not move the parent directly to `review`; aggregation must not generate parent Proof or bypass the scheduler.
 - If a subtask is failed, blocked, missing Proof, or `needs_replan`, aggregate that condition onto the parent as a dependency-derived block.
-- Trigger aggregation immediately when a department subtask reaches `review` with recorded Proof, including when Proof Recovery produces that state.
+- Trigger aggregation immediately when a department subtask reaches `review` with recorded Proof, or when it enters a dependency-blocking state such as `failed`, `blocked`, or `needs_replan`; include Proof Recovery when it produces `review` with recorded Proof.
 - When the parent runs after aggregation queues it, pass all ready department subtask Proof as handoff input for Parent Proof Summarization.
 - When aggregation blocks a parent, update the department parent flow with the blocking subtask name and reason, but do not expose subtask Proof by default.
 - If a parent has both department subtask dependencies and ordinary Task Dependencies, aggregation must evaluate all dependencies before queuing the parent.
@@ -42,6 +42,7 @@ A parent task was split into department subtasks and is waiting on them. When th
 
 - Handle parent tasks whose dependencies are department subtasks.
 - Trigger after a department subtask reaches `review` with recorded Proof, including through Proof Recovery.
+- Trigger after a department subtask enters a dependency-blocking state during scheduler execution.
 - Keep aggregation bounded to one parent and its direct subtasks.
 - Update parent task status, dependency note, task event, and parent progress flow when the aggregate state meaningfully changes.
 - Return updates through a `parentAggregation` API response field and publish events over SSE for other open dashboard views.
@@ -120,4 +121,5 @@ Department subtasks that reach `review` are not CEO Pending items. CEO Pending s
 - Runtime unit: repeated aggregation is idempotent when parent state and dependency details do not change.
 - Runtime unit: aggregation does not rewrite ineligible parent statuses such as `queued`, `running`, `review`, `complete`, `failed`, `cancelled`, or `needs_replan`.
 - API integration: the final subtask reaching `review` with recorded Proof returns or publishes the parent update.
+- Scheduler integration: a department subtask reaching `review` with Proof queues the parent for proof summarization, and a dependency-blocking subtask state blocks the parent.
 - Dashboard test: the department parent flow updates after subtask aggregation without manual Refresh.

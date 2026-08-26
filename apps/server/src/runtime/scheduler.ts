@@ -5,6 +5,7 @@ import type { createRepositories } from "../db/repositories";
 import type { AgentFailureReason, Proof, Task, TaskEvent, TaskProgressEvent, TaskStatus } from "@auto-crop/core";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
+import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
@@ -309,6 +310,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 status: "failed",
               });
               result.blocked.push(...blockDirectDependencyConsumers(input, task));
+              emitParentTaskAggregationEvents(input, task);
               result.failed.push(task.id);
               return;
             }
@@ -351,6 +353,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
                 effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
               });
+              emitParentTaskAggregationEvents(input, task);
               result.blocked.push(task.id);
               return;
             }
@@ -388,6 +391,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             if (!followUpTask) {
               result.blocked.push(...blockDirectDependencyConsumers(input, task));
             }
+            emitParentTaskAggregationEvents(input, task);
             result.failed.push(task.id);
             return;
           }
@@ -407,6 +411,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             message: "Task is ready for review.",
             status: "review",
           });
+          emitParentTaskAggregationEvents(input, task);
           result.completed.push(task.id);
         } finally {
           try {
@@ -798,6 +803,28 @@ function appendAndEmitTaskEvent(
     artifactWorkspacePath: event.artifactWorkspacePath ?? null,
   };
   input.repositories.appendTaskEvent(record);
+  emitTaskEvent(input, record);
+}
+
+function emitParentTaskAggregationEvents(input: RunSchedulerOnceInput, task: Task): void {
+  if ((task.taskKind ?? "parent") !== "department_subtask") {
+    return;
+  }
+
+  const aggregation = propagateParentTaskAggregation({
+    repositories: input.repositories,
+    sourceSubtaskId: task.id,
+    now: input.now,
+    createId: input.createId,
+  });
+  for (const update of aggregation.updatedTasks) {
+    if (update.event) {
+      emitTaskEvent(input, update.event);
+    }
+  }
+}
+
+function emitTaskEvent(input: RunSchedulerOnceInput, record: TaskEvent): void {
   input.emit({
     type: record.type,
     taskId: record.taskId,

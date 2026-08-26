@@ -117,6 +117,7 @@ export type TaskRefreshResponse = {
   progressEvent?: TaskProgressEventSummary;
   proof?: ProofSummary[];
   recovery?: TaskRefreshRecoverySummary;
+  parentAggregation?: TaskUpdateBatchSummary;
 };
 
 export type TaskRecoverySummary = {
@@ -131,6 +132,7 @@ export type TaskRecoveryResponse = {
   progressEvent?: TaskProgressEventSummary;
   proof?: ProofSummary[];
   recovery: TaskRecoverySummary;
+  parentAggregation?: TaskUpdateBatchSummary;
 };
 
 export type ReviewSummary = {
@@ -187,15 +189,17 @@ export type CeoReviewDecisionResponse = {
   task: TaskSummary;
   event?: ServerEvent;
   progressEvent?: TaskProgressEventSummary;
-  dependencyCascade?: {
-    updatedTasks: TaskSummary[];
-    events: ServerEvent[];
-    progressEvents: TaskProgressEventSummary[];
-    errors?: Array<{
-      taskId: string;
-      message: string;
-    }>;
-  };
+  dependencyCascade?: TaskUpdateBatchSummary;
+};
+
+export type TaskUpdateBatchSummary = {
+  updatedTasks: TaskSummary[];
+  events: ServerEvent[];
+  progressEvents: TaskProgressEventSummary[];
+  errors?: Array<{
+    taskId: string;
+    message: string;
+  }>;
 };
 
 export type CreateCompanyResponse = {
@@ -264,15 +268,7 @@ export type ApiClient = {
     proposal: ReplanProposalSummary;
     sourceTask: TaskSummary;
     createdTasks: TaskSummary[];
-    dependencyCascade?: {
-      updatedTasks: TaskSummary[];
-      events: ServerEvent[];
-      progressEvents: TaskProgressEventSummary[];
-      errors?: Array<{
-        taskId: string;
-        message: string;
-      }>;
-    };
+    dependencyCascade?: TaskUpdateBatchSummary;
   }>;
   triggerKillSwitch(companyId: string): Promise<{ paused: boolean; company: CompanySummary }>;
   subscribeEvents(handler: (event: ServerEvent) => void): () => void;

@@ -205,6 +205,148 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("queues a parent for proof summarization when the final department subtask reaches review", async () => {
+    const parent = {
+      ...createTaskRecord("task_1", "waiting_dependency", "low"),
+      title: "Build the playable web prototype",
+      dependencyNote: "Waiting for department subtasks.",
+      taskKind: "parent" as const,
+    };
+    const readySubtask = {
+      ...createTaskRecord("department_subtask_1", "review", "low"),
+      title: "Define executable slice for Build the playable web prototype",
+      parentTaskId: parent.id,
+      taskKind: "department_subtask" as const,
+      source: "department" as const,
+    };
+    const finalSubtask = {
+      ...createTaskRecord("department_subtask_2", "queued", "low"),
+      title: "Validate proof for Build the playable web prototype",
+      parentTaskId: parent.id,
+      taskKind: "department_subtask" as const,
+      source: "department" as const,
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([parent, readySubtask, finalSubtask]);
+    const events: SchedulerEventRecord[] = [];
+    repositories.createTaskDependency({ taskId: parent.id, dependsOnTaskId: readySubtask.id });
+    repositories.createTaskDependency({ taskId: parent.id, dependsOnTaskId: finalSubtask.id });
+    repositories.appendProof({
+      id: "proof_ready",
+      taskId: readySubtask.id,
+      type: "command_output",
+      uri: "ready.log",
+      summary: "ready proof",
+      verifiedAt: null,
+    });
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "proof: final subtask",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "command_output",
+          uri: "agent.log",
+          summary: "final proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.completed).toEqual([finalSubtask.id]);
+    expect(repositories.getTask(parent.id)).toMatchObject({
+      status: "queued",
+      latestFailureReason: null,
+      latestFailureMessage: null,
+      dependencyNote: null,
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "dependency_ready",
+      taskId: parent.id,
+      status: "queued",
+      message: "Parent task queued for proof summarization: Build the playable web prototype.",
+    }));
+    expect(repositories.listTaskProgressEventsForParentTask(parent.id)).toContainEqual(
+      expect.objectContaining({
+        step: "summarizing_proof",
+        status: "current",
+        subjectTaskId: parent.id,
+        label: "Ready to summarize department subtask proof.",
+      }),
+    );
+
+    client.close();
+  });
+
+  it("blocks a parent when a department subtask fails during scheduler execution", async () => {
+    const parent = {
+      ...createTaskRecord("task_1", "waiting_dependency", "low"),
+      title: "Build the playable web prototype",
+      dependencyNote: "Waiting for department subtasks.",
+      taskKind: "parent" as const,
+    };
+    const subtask = {
+      ...createTaskRecord("department_subtask_1", "queued", "low"),
+      title: "Execute prototype slice",
+      parentTaskId: parent.id,
+      taskKind: "department_subtask" as const,
+      source: "department" as const,
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([parent, subtask]);
+    const events: SchedulerEventRecord[] = [];
+    repositories.createTaskDependency({ taskId: parent.id, dependsOnTaskId: subtask.id });
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "finished without proof",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.failed).toEqual([subtask.id]);
+    expect(repositories.getTask(parent.id)).toMatchObject({
+      status: "blocked",
+      latestFailureReason: "dependency_failed",
+      dependencyNote: "Blocked by department subtask: Execute prototype slice (failed).",
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "task_blocked",
+      taskId: parent.id,
+      status: "blocked",
+      failureReason: "dependency_failed",
+    }));
+
+    client.close();
+  });
+
   it("cleans generated dependency directories after task execution while preserving artifacts", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low", "landing-page-file"),

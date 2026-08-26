@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -415,6 +415,77 @@ describe("API routes", () => {
       `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
     );
     expect(state.activity).toContainEqual(expect.objectContaining({ type: "dependency_ready", taskId: consumerTask.id }));
+
+    await fixture.close();
+  });
+
+  it("returns parent aggregation when a department subtask proof recovery reaches review", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const parentTask = {
+      ...createIsolatedTask(templateTask, "parent_task", "Build the playable prototype", "waiting_dependency", 100),
+      dependencyNote: "Waiting for department subtasks.",
+      taskKind: "parent" as const,
+    };
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-subtask-proof-"));
+    createdDirs.push(workspacePath);
+    writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
+    const subtask = {
+      ...createIsolatedTask(templateTask, "department_subtask_1", "Execute prototype slice", "failed", 101),
+      latestFailureReason: "no_proof" as const,
+      latestFailureMessage: "Task failed: Execute prototype slice / no_proof.",
+      parentTaskId: parentTask.id,
+      taskKind: "department_subtask" as const,
+      source: "department" as const,
+      proofSchemaId: "repo-diff",
+      workspacePath,
+    };
+    fixture.repositories.createTask(parentTask);
+    fixture.repositories.createTask(subtask);
+    fixture.repositories.createTaskDependency({ taskId: parentTask.id, dependsOnTaskId: subtask.id });
+
+    const refreshed = await postJson<{
+      task: { id: string; status: string };
+      parentAggregation?: {
+        updatedTasks: Array<{ id: string; status: string; dependencyNote?: string }>;
+        events: Array<{ type: string; taskId?: string; status?: string }>;
+        progressEvents: Array<{ parentTaskId: string; step: string; status: string; label: string }>;
+      };
+    }>(`${fixture.baseUrl}/api/tasks/${subtask.id}/refresh`, {});
+
+    expect(refreshed.task).toMatchObject({
+      id: subtask.id,
+      status: "review",
+    });
+    expect(refreshed.parentAggregation?.updatedTasks).toEqual([
+      expect.objectContaining({
+        id: parentTask.id,
+        status: "queued",
+      }),
+    ]);
+    expect(refreshed.parentAggregation?.events).toEqual([
+      expect.objectContaining({
+        type: "dependency_ready",
+        taskId: parentTask.id,
+        status: "queued",
+      }),
+    ]);
+    expect(refreshed.parentAggregation?.progressEvents).toEqual([
+      expect.objectContaining({
+        parentTaskId: parentTask.id,
+        step: "summarizing_proof",
+        status: "current",
+        label: "Ready to summarize department subtask proof.",
+      }),
+    ]);
+    expect(fixture.repositories.getTask(parentTask.id)?.status).toBe("queued");
 
     await fixture.close();
   });

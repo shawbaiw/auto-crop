@@ -24,6 +24,7 @@ import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/r
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
 import { propagateDependencyCascade, refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
+import { propagateParentTaskAggregation, type ParentTaskAggregationResult } from "../runtime/parentTaskAggregation";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
 
@@ -316,7 +317,14 @@ async function routeRequest(
     });
     const dependencies = options.repositories.listTaskDependencies(result.task.id);
     const event = summarizeTaskEvent(result.event);
+    const parentAggregation = propagateParentAggregationIfReady({
+      repositories: options.repositories,
+      task: result.task,
+      now: options.now,
+      createId: options.createId,
+    });
     events.publish(event);
+    publishParentAggregationEvents(parentAggregation, events);
     sendJson(response, 200, {
       task: summarizeTask(
         result.task,
@@ -326,6 +334,7 @@ async function routeRequest(
       progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
       proof: result.proof?.map(summarizeProof),
       recovery: result.recovery,
+      parentAggregation: parentAggregation ? summarizeParentAggregation(parentAggregation, options.repositories) : undefined,
     });
     return;
   }
@@ -340,7 +349,14 @@ async function routeRequest(
       createId: options.createId,
     });
     const event = summarizeTaskEvent(result.event);
+    const parentAggregation = propagateParentAggregationIfReady({
+      repositories: options.repositories,
+      task: result.task,
+      now: options.now,
+      createId: options.createId,
+    });
     events.publish(event);
+    publishParentAggregationEvents(parentAggregation, events);
     sendJson(response, 200, {
       task: summarizeTask(
         result.task,
@@ -356,6 +372,7 @@ async function routeRequest(
       progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
       proof: result.proof?.map(summarizeProof),
       recovery: result.recovery,
+      parentAggregation: parentAggregation ? summarizeParentAggregation(parentAggregation, options.repositories) : undefined,
     });
     return;
   }
@@ -654,6 +671,59 @@ function summarizeDependencyCascade(
       .map(summarizeTaskProgressEvent),
     errors: cascade.errors.length > 0 ? cascade.errors : undefined,
   };
+}
+
+function summarizeParentAggregation(
+  aggregation: ParentTaskAggregationResult,
+  repositories: ReturnType<typeof createRepositories>,
+) {
+  return {
+    updatedTasks: aggregation.updatedTasks.map((update) =>
+      summarizeTask(
+        update.task,
+        repositories.listTaskDependencies(update.task.id).map((dependency) => dependency.dependsOnTaskId),
+      ),
+    ),
+    events: aggregation.updatedTasks
+      .map((update) => update.event)
+      .filter((event): event is TaskEvent => Boolean(event))
+      .map(summarizeTaskEvent),
+    progressEvents: aggregation.updatedTasks
+      .map((update) => update.progressEvent)
+      .filter((event): event is TaskProgressEvent => Boolean(event))
+      .map(summarizeTaskProgressEvent),
+    errors: aggregation.errors.length > 0 ? aggregation.errors : undefined,
+  };
+}
+
+function propagateParentAggregationIfReady(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  task: Task;
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+}): ParentTaskAggregationResult | undefined {
+  if ((input.task.taskKind ?? "parent") !== "department_subtask" || input.task.status !== "review") {
+    return undefined;
+  }
+
+  if (input.repositories.listProofsForTask(input.task.id).length === 0) {
+    return undefined;
+  }
+
+  return propagateParentTaskAggregation({
+    repositories: input.repositories,
+    sourceSubtaskId: input.task.id,
+    now: input.now,
+    createId: input.createId,
+  });
+}
+
+function publishParentAggregationEvents(aggregation: ParentTaskAggregationResult | undefined, events: EventStream): void {
+  for (const update of aggregation?.updatedTasks ?? []) {
+    if (update.event) {
+      events.publish(summarizeTaskEvent(update.event));
+    }
+  }
 }
 
 function summarizeDepartment(department: Department) {

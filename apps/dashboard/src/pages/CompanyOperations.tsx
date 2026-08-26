@@ -189,7 +189,9 @@ export function CompanyOperations({
         <RetroPanel icon={<FileCheck2 size={18} aria-hidden="true" />} title={t("operations.reviewQueue")}>
           <VideotexLog
             emptyMessage={t("operations.noReviewTasks")}
-            rows={tasks.filter((task) => task.status === "review").map((task) => task.title)}
+            rows={tasks
+              .filter((task) => task.taskKind !== "department_subtask" && task.status === "review")
+              .map((task) => task.title)}
           />
         </RetroPanel>
         <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title={t("operations.departments")}>
