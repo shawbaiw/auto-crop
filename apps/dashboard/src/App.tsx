@@ -486,6 +486,25 @@ export default function App({ apiClient }: AppProps) {
     if (response.progressEvent) {
       setTaskProgressEvents((current) => [...current, response.progressEvent!]);
     }
+    if (response.dependencyCascade) {
+      setBlueprint((current) => updateBlueprintTasks(current, response.dependencyCascade?.updatedTasks ?? []));
+      if (response.dependencyCascade.events.length > 0) {
+        setEvents((current) => [...current.slice(-49), ...response.dependencyCascade!.events]);
+      }
+      if (response.dependencyCascade.progressEvents.length > 0) {
+        setTaskProgressEvents((current) => [...current, ...response.dependencyCascade!.progressEvents]);
+      }
+      if (response.dependencyCascade.errors?.length) {
+        setEvents((current) => [
+          ...current.slice(-49),
+          ...response.dependencyCascade!.errors!.map((error) => ({
+            type: "task_warning",
+            taskId: error.taskId,
+            message: `Dependency cascade warning: ${error.message}`,
+          })),
+        ]);
+      }
+    }
     return response;
   }
 
@@ -767,6 +786,13 @@ function updateBlueprintTask(
         : task,
     ),
   };
+}
+
+function updateBlueprintTasks(
+  blueprint: CreateCompanyResponse | null,
+  nextTasks: TaskSummary[],
+): CreateCompanyResponse | null {
+  return nextTasks.reduce((current, task) => updateBlueprintTask(current, task), blueprint);
 }
 
 function updateBlueprintTasksAfterRecovery(

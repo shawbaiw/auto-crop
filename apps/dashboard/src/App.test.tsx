@@ -487,6 +487,92 @@ describe("Dashboard App", () => {
     expect(screen.queryByText("Validate the prototype")).not.toBeInTheDocument();
   });
 
+  it("applies dependency cascade updates returned by CEO approval", async () => {
+    const api = createMockApiClient();
+    const created = createDependencyGraphCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: created.tasks.map((task) =>
+        task.id === "task_4"
+          ? { ...task, status: "review" as const }
+          : task.id === "task_5"
+            ? {
+                ...task,
+                status: "blocked" as const,
+                failureReason: "missing_deliverable",
+                dependencyNote: "Missing consumable proof from dependency: Validate prototype locally.",
+              }
+            : task,
+      ),
+      proof: [
+        {
+          id: "proof_1",
+          taskId: "task_4",
+          type: "file",
+          uri: "proof.md",
+          summary: "Prototype validates locally.",
+        },
+      ],
+    }));
+    api.createCeoReviewDecision = vi.fn(async () => ({
+      decision: {
+        id: "ceo_review_decision_1",
+        taskId: "task_4",
+        decision: "approve" as const,
+        proofId: "proof_1",
+        createdAt: "2026-08-17T00:03:00.000Z",
+      },
+      task: {
+        ...created.tasks.find((task) => task.id === "task_4")!,
+        status: "complete" as const,
+      },
+      dependencyCascade: {
+        updatedTasks: [
+          {
+            ...created.tasks.find((task) => task.id === "task_5")!,
+            status: "queued" as const,
+            failureReason: undefined,
+            dependencyNote: undefined,
+          },
+        ],
+        events: [
+          {
+            type: "dependency_ready",
+            taskId: "task_5",
+            status: "queued",
+            message: "Task queued after upstream approval: Prepare SEO launch and indexing assets.",
+          },
+        ],
+        progressEvents: [
+          {
+            id: "task_progress_4",
+            companyId: "company_1",
+            departmentId: "department_growth",
+            parentTaskId: "task_5",
+            subjectTaskId: "task_5",
+            step: "executing" as const,
+            status: "current" as const,
+            label: "Dependency ready after upstream approval; queued for scheduler.",
+            detail: null,
+            createdAt: "2026-08-17T00:03:00.000Z",
+          },
+        ],
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    expect(screen.getByRole("button", { name: /Task 05 Growth Prepare SEO launch and indexing assets Blocked/i })).toBeInTheDocument();
+    const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
+    await user.click(within(ceoPending).getByRole("button", { name: "View Task Validate prototype locally" }));
+    const taskReview = screen.getByRole("region", { name: "Task Review" });
+    await user.click(within(taskReview).getByRole("button", { name: "Approve, mark complete" }));
+
+    expect(await screen.findByRole("button", { name: /Task 05 Growth Prepare SEO launch and indexing assets Queued/i })).toBeInTheDocument();
+  });
+
   it("removes the CEO pending shortcut after the review request is handled", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => ({

@@ -466,6 +466,233 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("cascades dependency readiness after CEO approves an upstream task with proof", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const [producerTask, consumerTask] = fixture.repositories.fetchQueuedTasks(2);
+    expect(producerTask).toBeDefined();
+    expect(consumerTask).toBeDefined();
+    fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: producerTask!.id });
+    fixture.repositories.updateTaskStatus(producerTask!.id, "review");
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: producerTask!.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Prototype validation proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.updateTaskStatus(consumerTask!.id, "blocked");
+    fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
+      latestFailureReason: "missing_deliverable",
+      latestFailureMessage: "Task blocked by missing upstream proof.",
+      dependencyNote: `Missing consumable proof from dependency: ${producerTask!.title}.`,
+    });
+
+    const approved = await postJson<{
+      task: { id: string; status: string };
+      dependencyCascade: {
+        updatedTasks: Array<{ id: string; status: string; failureReason?: string; dependencyNote?: string }>;
+        events: Array<{ type: string; taskId?: string; status?: string }>;
+      };
+    }>(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      taskId: producerTask!.id,
+      decision: "approve",
+    });
+
+    expect(approved.task).toMatchObject({ id: producerTask!.id, status: "complete" });
+    expect(approved.dependencyCascade.updatedTasks).toEqual([
+      expect.objectContaining({
+        id: consumerTask!.id,
+        status: "queued",
+      }),
+    ]);
+    expect(approved.dependencyCascade.updatedTasks[0]?.failureReason).toBeUndefined();
+    expect(approved.dependencyCascade.updatedTasks[0]?.dependencyNote).toBeUndefined();
+    expect(approved.dependencyCascade.events).toContainEqual(
+      expect.objectContaining({
+        type: "dependency_ready",
+        taskId: consumerTask!.id,
+        status: "queued",
+      }),
+    );
+    expect(fixture.repositories.getTask(consumerTask!.id)?.status).toBe("queued");
+
+    const state = await getJson<{ tasks: Array<{ id: string; status: string }>; activity: Array<{ type: string; taskId?: string }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: consumerTask!.id, status: "queued" }));
+    expect(state.activity).toContainEqual(expect.objectContaining({ type: "dependency_ready", taskId: consumerTask!.id }));
+
+    await fixture.close();
+  });
+
+  it("keeps a direct consumer blocked when another dependency is still missing proof", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const [approvedDependency, missingDependency, consumerTask] = fixture.repositories.fetchQueuedTasks(3);
+    expect(approvedDependency).toBeDefined();
+    expect(missingDependency).toBeDefined();
+    expect(consumerTask).toBeDefined();
+    fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: approvedDependency!.id });
+    fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: missingDependency!.id });
+    fixture.repositories.updateTaskStatus(approvedDependency!.id, "review");
+    fixture.repositories.updateTaskStatus(missingDependency!.id, "complete");
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: approvedDependency!.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Approved dependency proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.updateTaskStatus(consumerTask!.id, "blocked");
+    fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
+      latestFailureReason: "missing_deliverable",
+      latestFailureMessage: "Task blocked by missing upstream proof.",
+      dependencyNote: `Missing consumable proof from dependency: ${approvedDependency!.title}.`,
+    });
+
+    const approved = await postJson<{
+      dependencyCascade: {
+        updatedTasks: Array<{ id: string; status: string; failureReason?: string; dependencyNote?: string }>;
+        events: Array<{ type: string; taskId?: string; status?: string }>;
+      };
+    }>(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      taskId: approvedDependency!.id,
+      decision: "approve",
+    });
+
+    expect(approved.dependencyCascade.updatedTasks).toEqual([
+      expect.objectContaining({
+        id: consumerTask!.id,
+        status: "blocked",
+        failureReason: "missing_deliverable",
+        dependencyNote: `Missing consumable proof from dependency: ${missingDependency!.title}.`,
+      }),
+    ]);
+    expect(approved.dependencyCascade.events).toContainEqual(
+      expect.objectContaining({
+        type: "deliverable_missing",
+        taskId: consumerTask!.id,
+        status: "blocked",
+      }),
+    );
+    expect(fixture.repositories.getTask(consumerTask!.id)?.status).toBe("blocked");
+
+    await fixture.close();
+  });
+
+  it("does not cascade non-dependency failed consumers", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const [producerTask, consumerTask] = fixture.repositories.fetchQueuedTasks(2);
+    expect(producerTask).toBeDefined();
+    expect(consumerTask).toBeDefined();
+    fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: producerTask!.id });
+    fixture.repositories.updateTaskStatus(producerTask!.id, "review");
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: producerTask!.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Producer proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.updateTaskStatus(consumerTask!.id, "failed");
+    fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
+      latestFailureReason: "no_proof",
+      latestFailureMessage: "Task failed: downstream work / no_proof.",
+      dependencyNote: null,
+    });
+
+    const approved = await postJson<{
+      dependencyCascade: {
+        updatedTasks: Array<{ id: string; status: string }>;
+        events: Array<{ type: string; taskId?: string }>;
+      };
+    }>(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      taskId: producerTask!.id,
+      decision: "approve",
+    });
+
+    expect(approved.dependencyCascade.updatedTasks).toEqual([]);
+    expect(approved.dependencyCascade.events).toEqual([]);
+    expect(fixture.repositories.getTask(consumerTask!.id)?.status).toBe("failed");
+
+    await fixture.close();
+  });
+
+  it("does not duplicate cascade events when a consumer state does not change", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const [producerTask, consumerTask] = fixture.repositories.fetchQueuedTasks(2);
+    expect(producerTask).toBeDefined();
+    expect(consumerTask).toBeDefined();
+    fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: producerTask!.id });
+    fixture.repositories.updateTaskStatus(producerTask!.id, "review");
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: producerTask!.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Producer proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.updateTaskStatus(consumerTask!.id, "waiting_dependency");
+    fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
+      latestFailureReason: null,
+      latestFailureMessage: null,
+      dependencyNote: `Waiting for dependency deliverable: ${producerTask!.title} (review).`,
+    });
+
+    const first = await postJson<{
+      dependencyCascade: {
+        updatedTasks: Array<{ id: string; status: string }>;
+        events: Array<{ type: string; taskId?: string }>;
+      };
+    }>(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      taskId: producerTask!.id,
+      decision: "approve",
+    });
+    const second = await fetch(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: producerTask!.id, decision: "approve" }),
+    });
+
+    expect(first.dependencyCascade.updatedTasks).toHaveLength(1);
+    expect(first.dependencyCascade.events).toHaveLength(1);
+    expect(second.status).toBe(409);
+    expect(fixture.repositories.listTaskEventsForCompany(producerTask!.companyId).filter((event) => event.type === "dependency_ready")).toHaveLength(1);
+
+    await fixture.close();
+  });
+
   it("rejects CEO approval when a review task has no proof", async () => {
     const fixture = await startFixtureServer();
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {

@@ -187,6 +187,15 @@ export type CeoReviewDecisionResponse = {
   task: TaskSummary;
   event?: ServerEvent;
   progressEvent?: TaskProgressEventSummary;
+  dependencyCascade?: {
+    updatedTasks: TaskSummary[];
+    events: ServerEvent[];
+    progressEvents: TaskProgressEventSummary[];
+    errors?: Array<{
+      taskId: string;
+      message: string;
+    }>;
+  };
 };
 
 export type EditableBlueprint = {

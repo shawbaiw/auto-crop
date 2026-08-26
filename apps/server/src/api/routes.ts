@@ -23,6 +23,7 @@ import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
+import { propagateDependencyCascade, type DependencyCascadeResult } from "../runtime/dependencyCascade";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
 
@@ -290,11 +291,26 @@ async function routeRequest(
       return;
     }
 
+    const dependencyCascade =
+      result.decision.decision === "approve"
+        ? propagateDependencyCascade({
+          repositories: options.repositories,
+          sourceTaskId: result.task.id,
+          maxDepth: 1,
+          now: options.now,
+          createId: options.createId,
+        })
+        : undefined;
+    for (const cascadeEvent of dependencyCascade?.updatedTasks ?? []) {
+      events.publish(summarizeTaskEvent(cascadeEvent.event));
+    }
+
     sendJson(response, 201, {
       decision: summarizeCeoReviewDecision(result.decision),
       task: summarizeTask(result.task, options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId)),
       event: summarizeTaskEvent(result.event),
       progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
+      dependencyCascade: dependencyCascade ? summarizeDependencyCascade(dependencyCascade, options.repositories) : undefined,
     });
     return;
   }
@@ -621,6 +637,26 @@ function summarizeCeoIntake(intake: CeoIntake) {
 
 function summarizeCeoReviewDecision(decision: CeoReviewDecision) {
   return decision;
+}
+
+function summarizeDependencyCascade(
+  cascade: DependencyCascadeResult,
+  repositories: ReturnType<typeof createRepositories>,
+) {
+  return {
+    updatedTasks: cascade.updatedTasks.map((update) =>
+      summarizeTask(
+        update.task,
+        repositories.listTaskDependencies(update.task.id).map((dependency) => dependency.dependsOnTaskId),
+      ),
+    ),
+    events: cascade.updatedTasks.map((update) => summarizeTaskEvent(update.event)),
+    progressEvents: cascade.updatedTasks
+      .map((update) => update.progressEvent)
+      .filter((event): event is TaskProgressEvent => Boolean(event))
+      .map(summarizeTaskProgressEvent),
+    errors: cascade.errors.length > 0 ? cascade.errors : undefined,
+  };
 }
 
 function summarizeDepartment(department: Department) {

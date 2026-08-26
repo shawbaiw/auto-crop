@@ -106,6 +106,8 @@ The task graph should reflect the new status. Long-lived node labels should not 
 
 ## Next-Version Direction
 
+The next scoped plan is [Dependency Cascade Trigger Expansion](dependency-cascade-trigger-expansion-plan.md). It focuses on replan confirmation as the next trigger and shared readiness writing, not recursive cascade or parent aggregation.
+
 After the direct-consumer path is stable, extend the same concept in these directions:
 
 - **Bounded recursive cascade:** allow propagation through longer dependency chains using `maxDepth` and visited-task protection.
