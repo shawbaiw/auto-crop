@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented as the direct-consumer foundation for Dependency Cascade. Later continuity work added replan-confirm refreshes and bounded recursive propagation; the currently selected next scope is [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
+Implemented as the direct-consumer foundation for Dependency Cascade. Later continuity work added replan-confirm refreshes, bounded recursive propagation, and [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
 
 ## Goal
 
@@ -102,20 +102,19 @@ The task graph should reflect the new status. Long-lived node labels should not 
 ## Non-Goals For The First Version
 
 - No recursive cascade beyond direct consumers.
-- No parent task or department subtask aggregation.
+- No parent task or department subtask aggregation in the direct-consumer first version; this was implemented later as [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
 - No trigger from task refresh, task recovery, Proof Recovery, replan confirmation, or follow-up task approval.
 - No direct scheduler wakeup or scheduler invocation.
 - No restoration of non-dependency failed tasks.
 - No automatic execution outside the scheduler.
 
-## Next-Version Direction
+## Follow-On Work
 
-The direct-consumer path has now been extended by [Dependency Cascade Trigger Expansion](dependency-cascade-trigger-expansion-plan.md) and [Bounded Recursive Dependency Cascade](dependency-cascade-recursive-plan.md). The next selected scope is parent task aggregation, tracked in [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
+The direct-consumer path has now been extended by [Dependency Cascade Trigger Expansion](dependency-cascade-trigger-expansion-plan.md), [Bounded Recursive Dependency Cascade](dependency-cascade-recursive-plan.md), and [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
 
 Remaining directions after the implemented cascade work:
 
-- **Parent aggregation:** define a separate rule for parent tasks that wait on department subtasks, including whether and when a parent can move to `queued` or `review`.
-- **More trigger points:** invoke Dependency Cascade after task recovery, Proof Recovery approval, and follow-up task approval.
+- **More trigger points:** decide whether ordinary Dependency Cascade should run after task recovery, Proof Recovery approval, and follow-up task approval. Parent Task Aggregation already handles the department-subtask recovery path separately.
 - **Scheduler wakeup:** optionally wake the scheduler after a successful cascade if waiting for the normal scheduler interval feels too slow, while keeping cascade separate from task execution.
 
 ## Test Plan

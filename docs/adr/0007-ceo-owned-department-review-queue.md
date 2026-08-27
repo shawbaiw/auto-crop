@@ -21,11 +21,13 @@ The domain has two distinct department-to-CEO request types:
 - **CEO Review Request:** a department asks CEO Office to approve or return work after execution. A checkpoint request returns the task to execution when approved; a completion request completes the task when approved.
 - **CEO Reassignment Request:** a department asks CEO Office to clarify, split, replan, or reassign a task before or during execution. This is not a review request because no deliverable is being approved.
 
-For the first implementation, dashboard UI should derive CEO pending review items from existing tasks in `review` state and existing department progress events such as `awaiting_review`. Department pages should stop implying that review happens inside the department. They should say the task has been submitted to CEO Office and provide a route to the CEO pending item. The CEO Workspace should show a single CEO pending queue with review items and reassignment items differentiated by type.
+For the first implementation, dashboard UI should derive CEO pending review items from existing parent tasks in `review` state and existing department progress events such as `awaiting_review`. Department pages should stop implying that review happens inside the department. They should say the parent task has been submitted to CEO Office and provide a route to the CEO pending item. The CEO Workspace should show a single CEO pending queue with review items and reassignment items differentiated by type.
 
 The first implementation will not add approve/return buttons. It should show a `View Task` action for each pending item.
 
-The next implementation will add durable `CEO Review Decision` records and `POST /api/ceo-review-decisions`. It will not add durable `CEO Review Request` records yet. Pending review items will continue to be derived from `task.status === "review"`, and every derived pending item will be treated as a completion review request in this phase.
+The next implementation will add durable `CEO Review Decision` records and `POST /api/ceo-review-decisions`. It will not add durable `CEO Review Request` records yet. Pending review items will continue to be derived from parent tasks with `task.status === "review"`, and every derived pending item will be treated as a completion review request in this phase.
+
+Later Parent Task Aggregation work added an explicit exception for `department_subtask` records: they may reach `review` with Proof as internal aggregation inputs, but they must not appear in CEO Pending. CEO Office reviews the parent-level Proof after parent summarization.
 
 Approval will mark the task complete, write a CEO Review Decision, write a task event, and reuse the existing proof/key-result update behavior when a key result is linked. Return will write a CEO Review Decision, write a task event, move the task back to `queued`, and add a department progress event telling the department that CEO Office returned the task and it is waiting for rework.
 

@@ -31,7 +31,9 @@ For `repo-diff` tasks, the runtime may record recovered diff Proof from:
 
 Recovery must ignore empty files and must not recursively scan the entire workspace. When multiple diff or patch files are found, the runtime should merge them into one canonical `.auto-crop-proof/<taskId>.diff` Proof and include source filenames in the summary.
 
-The recovery trigger for checking existing output remains the task refresh path where it already exists. Task Recovery Requests use a separate `POST /api/tasks/:id/recover` endpoint, and should try controlled Proof Recovery before rerunning or creating follow-up work. If Proof Recovery succeeds, the task moves to `review`, recovered Proof is persisted, and the department flow records that checkable Proof was found and submitted to CEO Office.
+The recovery trigger for checking existing output remains the task refresh path where it already exists. Task Recovery Requests use a separate `POST /api/tasks/:id/recover` endpoint, and should try controlled Proof Recovery before rerunning or creating follow-up work. If Proof Recovery succeeds for an ordinary parent task, the task moves to `review`, recovered Proof is persisted, and the department flow records that checkable Proof was found and submitted to CEO Office.
+
+Later Parent Task Aggregation work added a separate path for `department_subtask` recovery: a recovered department subtask moves to `review` with Proof, triggers parent aggregation, and remains out of CEO Pending. The parent task later produces the reviewable parent-level Proof.
 
 Recovery is allowed only for proof-missing states such as `failed/no_proof` or dependency states caused by missing deliverables. It must not convert unrelated failures into review-ready tasks.
 
@@ -41,6 +43,6 @@ CEO Office will not own Proof Recovery. Departments own turning their output int
 
 Users can recover from a common `NO_PROOF` failure by clicking the existing department-side refresh action. When the workspace contains a valid diff or patch, the task becomes reviewable without forcing the agent to rerun.
 
-The Proof gate stays intact. Recovery records normal Proof entries and routes work through CEO review instead of auto-completing tasks.
+The Proof gate stays intact. Recovery records normal Proof entries and routes work through the appropriate review path instead of auto-completing tasks.
 
 The implementation remains conservative. It does not scan arbitrary files, does not mutate old failed tasks on startup, and does not add a new recovery state machine. Future proof schemas may add similarly controlled recovery rules, but each rule should stay schema-specific and auditable.

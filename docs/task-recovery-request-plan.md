@@ -12,12 +12,12 @@ Make failed, timed-out, or stale running tasks restartable without weakening the
 - `POST /api/tasks/:id/recover` should handle Task Recovery Requests. Do not overload task refresh with task restart semantics.
 - Scheduler tick and company-state reads should both reconcile stale running tasks.
 - Reconciliation should mark the stale `agent_run` as `failed`, set `finished_at`, clear the task lock, append a `task_failed` event, and append a department progress event.
-- Recover Task should first attempt controlled Proof Recovery. If Proof is found, the task goes to CEO review and does not rerun.
+- Recover Task should first attempt controlled Proof Recovery. If Proof is found for an ordinary parent task, the task goes to CEO review and does not rerun. If Proof is found for a department subtask, the subtask goes to `review`, triggers Parent Task Aggregation, and does not appear in CEO Pending.
 - If no Partial Output exists, Recover Task should reset the original task to `queued`.
 - If Partial Output exists, Recover Task should create a follow-up task displayed as `<original task title> (recovery)` in the UI, keep the original failed task visible, and move downstream dependencies to the follow-up.
 - Ordinary timeout recovery does not require CEO approval. Scope-too-large, unclear task definition, wrong direction, and exhausted recovery paths should go to CEO handling/replanning.
 - Long-profile timeout recovery is bounded: use existing profile escalation where possible; after long timeout, allow one Partial Output recovery path, then require replanning.
-- Recovery task Proof must still go to CEO review before completion.
+- Recovery task Proof must still go through the appropriate review path before completion: ordinary parent task Proof goes to CEO review, while department subtask Proof contributes to parent-task proof summarization.
 - Recovery tasks must appear in the CEO Task Dependency Graph in their owning department lane.
 
 ## Implementation Steps
@@ -37,7 +37,7 @@ Make failed, timed-out, or stale running tasks restartable without weakening the
 3. Add `POST /api/tasks/:id/recover`:
    - Accept `failed`, `blocked`, `needs_replan`, and stale `running` tasks after reconciliation.
    - First call controlled Proof Recovery.
-   - If Proof Recovery succeeds, return the existing review-ready result shape.
+   - If Proof Recovery succeeds, return the existing review-ready result shape plus `parentAggregation` when the recovered task is a department subtask.
    - If no Partial Output exists, requeue the original task.
    - If Partial Output exists, create or reuse one follow-up task and replace downstream dependencies.
    - Return the updated task, any created task, activity event, progress event, proof if recovered, and recovery summary.
@@ -59,7 +59,7 @@ Make failed, timed-out, or stale running tasks restartable without weakening the
 
 ## Non-Goals
 
-- Do not auto-complete recovered tasks without CEO review.
+- Do not auto-complete recovered tasks without the appropriate review path.
 - Do not add an unbounded retry loop.
 - Do not treat arbitrary workspace files as Proof.
 - Do not hide the original failed task when a recovery follow-up exists.

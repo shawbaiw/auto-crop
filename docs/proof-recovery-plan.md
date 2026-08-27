@@ -23,6 +23,7 @@ The immediate failure mode is a `repo-diff` task such as `Record implementation 
 - Reuse `POST /api/tasks/:id/refresh` as the user-facing recovery trigger.
 - On refresh, try Proof Recovery before the existing dependency refresh behavior.
 - If Proof Recovery succeeds, move the task to `review` so CEO Office can approve or return it.
+- If Proof Recovery succeeds for a `department_subtask`, move the subtask to `review` with Proof, trigger Parent Task Aggregation, and keep the subtask out of CEO Pending.
 - If Proof Recovery fails, keep the current task state and return a clear explanation.
 - Only allow refresh-triggered Proof Recovery for proof-missing states such as `failed/no_proof` or dependency states caused by missing deliverables.
 - Show the recovery entry point beside the failed task in the department page, not in CEO Pending.
@@ -48,7 +49,9 @@ If recovery finds a valid diff or patch:
 已找到可审查证明，提交 CEO 审查
 ```
 
-The task moves to `review`, and the CEO Workspace shows it in `CEO 待处理`.
+For ordinary parent tasks, the task moves to `review`, and the CEO Workspace shows it in `CEO 待处理`.
+
+For department subtasks, the subtask moves to `review` with recorded Proof, then Parent Task Aggregation updates the parent task. The subtask itself does not appear in `CEO 待处理`; CEO Office reviews the parent-level Proof after the parent summarization task runs.
 
 If recovery cannot find a valid proof:
 
@@ -98,7 +101,8 @@ Order:
    - clear `latestFailureReason` and `latestFailureMessage`
    - write a task event
    - write a task progress event
-   - return the updated task, event, progress event, and recovered Proof
+   - for department subtasks, trigger Parent Task Aggregation when recorded Proof is present
+   - return the updated task, event, progress event, recovered Proof, and any `parentAggregation` update
 4. If recovery does not apply or fails to find Proof, continue the existing dependency refresh behavior.
 
 Eligibility:
@@ -125,10 +129,19 @@ The existing refresh response may be extended with optional recovery fields:
     status: "recovered" | "not_found" | "not_applicable";
     message: string;
   };
+  parentAggregation?: {
+    updatedTasks: TaskSummary[];
+    events: ServerEvent[];
+    progressEvents: TaskProgressEventSummary[];
+    errors?: Array<{
+      taskId: string;
+      message: string;
+    }>;
+  };
 }
 ```
 
-The dashboard can use `recovery.message` for immediate feedback, while the persisted progress event keeps the department flow visible after reload.
+The dashboard can use `recovery.message` for immediate feedback, while the persisted progress event keeps the department flow visible after reload. When `parentAggregation` is present, the dashboard should upsert parent task updates and append parent aggregation events/progress.
 
 ## Dashboard Scope
 
@@ -164,10 +177,11 @@ Server tests:
 
 Dashboard tests:
 
-- A failed `NO_PROOF` department task can be refreshed into a CEO-reviewable task.
+- A failed `NO_PROOF` parent task can be refreshed into a CEO-reviewable task.
+- A failed `NO_PROOF` department subtask can be refreshed into `review` with Proof and can aggregate its parent without appearing in CEO Pending.
 - Recovery success displays `已找到可审查证明，提交 CEO 审查`.
 - Recovery failure displays `没有找到可登记的 diff/patch proof`.
-- CEO Pending receives the task only after recovery moves it to `review`.
+- CEO Pending receives ordinary parent tasks after recovery moves them to `review`; department subtasks remain excluded.
 
 Regression:
 

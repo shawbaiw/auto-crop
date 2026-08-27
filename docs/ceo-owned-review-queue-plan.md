@@ -15,9 +15,9 @@ This plan is split into two phases. The first phase is a UI and state-projection
 - If a department determines that a task needs clarification, splitting, replanning, or reassignment, that is a CEO Reassignment Request rather than a CEO Review Request.
 - CEO Workspace should show one "CEO Pending" queue. Items can be review requests or reassignment requests.
 - Department pages should show status plus navigation to the CEO pending item, not approval controls.
-- First implementation derives CEO pending review items from existing `task.status === "review"` tasks and existing progress events.
+- First implementation derives CEO pending review items from existing parent tasks with `task.status === "review"` and existing progress events.
 - First implementation uses `View Task` as the CEO pending item action. It does not show fake or disabled approve/return buttons.
-- Next implementation treats derived `task.status === "review"` pending items as completion review requests.
+- Next implementation treats derived parent `task.status === "review"` pending items as completion review requests.
 - Next implementation adds durable CEO Review Decision records, not durable CEO Review Request records.
 - CEO Office can approve completion review requests only when the department has submitted checkable proof.
 - CEO Office can return review requests to the department with a structured reason and optional note.
@@ -61,7 +61,7 @@ For this first phase, the queue can contain only derived review items if reassig
 ### Dashboard
 
 - Add a CEO Pending section inside the CEO Workspace conversation/report area.
-- Derive pending review items from tasks whose status is `review`.
+- Derive pending review items from parent tasks whose status is `review`.
 - Include department name, task title, and request type.
 - Add a `View Task` action for each pending item.
 - Update department progress labels for `awaiting_review` and review-status execution labels to say the task was submitted to CEO Office for review.
@@ -104,8 +104,9 @@ This phase uses simpler user-facing language. The UI should explain what the use
 
 - Add a durable `ceo_review_decisions` table.
 - Do not add a `ceo_review_requests` table in this phase.
-- Continue deriving CEO pending review items from `task.status === "review"`.
+- Continue deriving CEO pending review items from parent tasks with `task.status === "review"`.
 - Treat every derived pending item as a completion review request in this phase.
+- Exclude `department_subtask` records from CEO Pending. Department subtasks can reach `review` with Proof as internal parent-aggregation inputs; CEO Office reviews the parent-level Proof after parent summarization.
 - Store:
   - task id
   - department id or role
@@ -160,7 +161,7 @@ The UI should show the reason and ask for an optional note. When returning a tas
 
 ### Missing Proof
 
-If a department task is in review but has no checkable proof, the task can appear in CEO Pending but cannot be approved.
+If a parent department task is in review but has no checkable proof, the task can appear in CEO Pending but cannot be approved. Department subtasks remain excluded from CEO Pending even when they are in `review`.
 
 Show this copy in the task detail:
 

@@ -2,17 +2,19 @@
 
 ## Status
 
-Selected as the next Dependency Cascade-adjacent scope after direct-consumer cascade, replan-confirm refreshes, and bounded recursive cascade.
+Implemented.
+
+Parent Task Aggregation now has a dedicated runtime writer, scheduler integration, refresh/recover API integration, dashboard consumption of the `parentAggregation` response shape, and coverage for ready, blocking, idempotent, API, scheduler, and dashboard paths.
 
 ## Goal
 
 Make parent task state coherent after department subtasks change state.
 
-The current scheduler can split a large parent task into department subtasks and mark the parent as `waiting_dependency`. Once those subtasks finish, the parent should not remain stale until a user manually refreshes or a later scheduler pass happens to repair it. The system needs a focused aggregation rule that decides when the parent task is still waiting, blocked by a subtask, ready to summarize proof, or ready for CEO review.
+The scheduler can split a large parent task into department subtasks and mark the parent as `waiting_dependency`. Once those subtasks finish, the parent should not remain stale until a user manually refreshes or a later scheduler pass happens to repair it. The system has a focused aggregation rule that decides when the parent task is still waiting, blocked by a subtask, or ready to summarize proof.
 
-## Why This Is Next
+## Why This Was Next
 
-Parent aggregation is the next highest-leverage scope because it closes a visible continuity gap inside the existing department task flow. It also preserves the execution boundary: Dependency Cascade keeps task dependency state coherent, while the scheduler remains responsible for running work.
+Parent aggregation was the next highest-leverage scope because it closed a visible continuity gap inside the existing department task flow. It also preserved the execution boundary: Dependency Cascade keeps task dependency state coherent, while the scheduler remains responsible for running work.
 
 Scheduler wakeup can wait until after aggregation rules are durable. Additional trigger points can also wait, because parent/subtask coherence affects the core task model rather than just another event source.
 
@@ -22,7 +24,7 @@ A parent task was split into department subtasks and is waiting on them. When th
 
 ## Decisions
 
-- A department subtask is ready to contribute to its parent when it is in `review` and has recorded Proof. Subtask readiness does not require CEO Office approval.
+- A department subtask is ready to contribute to its parent once it is in `review` and has recorded Proof. Subtask readiness does not require CEO Office approval.
 - When all required department subtasks are ready, move the parent task to `queued` for scheduler-driven parent proof summarization.
 - Do not move the parent directly to `review`; aggregation must not generate parent Proof or bypass the scheduler.
 - If a subtask is failed, blocked, missing Proof, or `needs_replan`, aggregate that condition onto the parent as a dependency-derived block.
@@ -40,16 +42,16 @@ A parent task was split into department subtasks and is waiting on them. When th
 
 ## Initial Scope
 
-- Handle parent tasks whose dependencies are department subtasks.
-- Trigger after a department subtask reaches `review` with recorded Proof, including through Proof Recovery.
-- Trigger after a department subtask enters a dependency-blocking state during scheduler execution.
-- Keep aggregation bounded to one parent and its direct subtasks.
-- Update parent task status, dependency note, task event, and parent progress flow when the aggregate state meaningfully changes.
-- Return updates through a `parentAggregation` API response field and publish events over SSE for other open dashboard views.
+- [x] Handle parent tasks whose dependencies are department subtasks.
+- [x] Trigger after a department subtask reaches `review` with recorded Proof, including through Proof Recovery.
+- [x] Trigger after a department subtask enters a dependency-blocking state during scheduler execution.
+- [x] Keep aggregation bounded to one parent and its direct subtasks.
+- [x] Update parent task status, dependency note, task event, and parent progress flow when the aggregate state meaningfully changes.
+- [x] Return updates through a `parentAggregation` API response field and publish events over SSE for other open dashboard views.
 
 ## Runtime Scope
 
-Add a dedicated runtime module, likely `apps/server/src/runtime/parentTaskAggregation.ts`.
+The dedicated runtime module is `apps/server/src/runtime/parentTaskAggregation.ts`.
 
 The module should expose a service with a shape similar to:
 
@@ -67,7 +69,7 @@ For each direct dependency consumer of the ready subtask:
 1. Skip the consumer unless it is a parent task.
 2. Skip the parent unless its status is `blocked` or `waiting_dependency`.
 3. Evaluate all dependencies of the parent.
-4. Treat department subtask dependencies as ready when they are in `review` with recorded Proof.
+4. Treat department subtask dependencies as ready when they are in `review` with recorded Proof. A later `complete` state with Proof is also treated as ready so already-accepted subtask state cannot strand the parent.
 5. Treat ordinary Task Dependencies through existing Dependency Readiness rules.
 6. If every dependency is ready, update the parent to `queued`, clear dependency failure fields, write `dependency_ready`, and write `summarizing_proof`.
 7. If a dependency is waiting, blocked, missing Proof, or `needs_replan`, update the parent to the corresponding dependency-derived state and write the appropriate task/progress events when state meaningfully changes.
@@ -113,13 +115,14 @@ Department subtasks that reach `review` are not CEO Pending items. CEO Pending s
 - No default dashboard exposure of subtask proof.
 - No new generalized workflow engine.
 
-## Test Plan
+## Verification
 
-- Runtime unit: all required subtasks in `review` with recorded Proof moves the parent to `queued`.
-- Runtime unit: a waiting subtask keeps the parent in `waiting_dependency` with a useful dependency note.
-- Runtime unit: a blocked or `needs_replan` subtask blocks the parent with the right failure reason.
-- Runtime unit: repeated aggregation is idempotent when parent state and dependency details do not change.
-- Runtime unit: aggregation does not rewrite ineligible parent statuses such as `queued`, `running`, `review`, `complete`, `failed`, `cancelled`, or `needs_replan`.
-- API integration: the final subtask reaching `review` with recorded Proof returns or publishes the parent update.
-- Scheduler integration: a department subtask reaching `review` with Proof queues the parent for proof summarization, and a dependency-blocking subtask state blocks the parent.
-- Dashboard test: the department parent flow updates after subtask aggregation without manual Refresh.
+- [x] Runtime unit: all required subtasks in `review` with recorded Proof moves the parent to `queued`.
+- [x] Runtime unit: a mixed ordinary dependency with missing Proof blocks the parent with `missing_deliverable`.
+- [x] Runtime unit: a blocked department subtask blocks the parent with the right failure reason.
+- [x] Runtime unit: repeated aggregation is idempotent when parent state and dependency details do not change.
+- [x] Runtime unit: aggregation does not rewrite ineligible parent statuses such as `queued`, `running`, `review`, `complete`, `failed`, `cancelled`, or `needs_replan`.
+- [x] API integration: Proof Recovery on a department subtask returns `parentAggregation` and queues the parent.
+- [x] Scheduler integration: a department subtask reaching `review` with Proof queues the parent for proof summarization, and a dependency-blocking subtask state blocks the parent.
+- [x] Dashboard test: refresh/recovery responses apply `parentAggregation` updates without manual Refresh.
+- [x] Dashboard test: department subtasks in `review` stay out of Operations Review Queue / CEO Pending surfaces.

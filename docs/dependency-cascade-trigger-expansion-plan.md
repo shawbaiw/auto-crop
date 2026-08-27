@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented for replan confirmation and shared readiness writing. The follow-on bounded recursive propagation work is tracked in [Bounded Recursive Dependency Cascade Plan](dependency-cascade-recursive-plan.md).
+Implemented for replan confirmation and shared readiness writing. Follow-on continuity work also added [Bounded Recursive Dependency Cascade](dependency-cascade-recursive-plan.md) and [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
 
 ## Goal
 
@@ -21,7 +21,7 @@ After confirming a replan proposal, a downstream consumer that used to be blocke
 - Do not implement parent task or department subtask aggregation.
 - Do not wake or call the scheduler from cascade logic.
 - Do not bypass CEO approval or treat recovered Proof as accepted Proof.
-- Keep Proof Recovery and Task Recovery from unlocking downstream consumers directly.
+- Keep Proof Recovery and Task Recovery from unlocking ordinary downstream consumers directly in this version. Parent Task Aggregation later added a separate department-subtask-to-parent recovery path.
 - Treat replan confirmation as dependency rewiring, not as accepted deliverable completion.
 - Record affected consumers before dependency replacement occurs.
 - After replacement, refresh affected consumers themselves.
@@ -124,9 +124,9 @@ The CEO Task Dependency Graph should immediately show affected consumers pointin
 ## Non-Goals
 
 - No recursive cascade.
-- No parent task or department subtask aggregation.
+- No parent task or department subtask aggregation in this trigger-expansion version; this was implemented later as [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
 - No scheduler wakeup.
-- No automatic downstream unlock from Proof Recovery.
+- No automatic ordinary downstream unlock from Proof Recovery.
 - No automatic downstream unlock from Task Recovery.
 - No automatic approval of recovered Proof.
 - No direct execution outside the scheduler.

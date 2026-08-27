@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented for CEO approve decisions with `maxDepth: 2`, breadth-first traversal, visited-task protection, partial-failure reporting, and dashboard consumption through the existing `dependencyCascade` response shape. The current selected next scope is [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
+Implemented for CEO approve decisions with `maxDepth: 2`, breadth-first traversal, visited-task protection, partial-failure reporting, and dashboard consumption through the existing `dependencyCascade` response shape. The follow-on [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md) scope has also been implemented as a separate runtime writer.
 
 ## Goal
 
@@ -121,9 +121,9 @@ Long-lived node labels should not mention recursive cascade mechanics.
 
 - No recursive propagation from replan confirmation in this version.
 - No new trigger points beyond CEO approve.
-- No parent task or department subtask aggregation.
+- No parent task or department subtask aggregation in this recursive-cascade version; this was implemented later as [Parent Task Aggregation After Department Subtasks](dependency-cascade-parent-aggregation-plan.md).
 - No scheduler wakeup.
-- No automatic downstream unlock from Proof Recovery or Task Recovery.
+- No automatic ordinary downstream unlock from Proof Recovery or Task Recovery.
 - No automatic approval of recovered Proof.
 - No direct execution outside the scheduler.
 - No dashboard panel, badge, or label for recursive cascade mechanics.
