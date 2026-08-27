@@ -2,8 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { aiSaasPlaybook, createMockAgentAdapter } from "@auto-crop/server";
-import { startAutoCrop } from "./start";
+import type { Company, Department, KeyResult, Objective, Task } from "@auto-crop/core";
+import { aiSaasPlaybook, createDatabaseClient, createMockAgentAdapter, createRepositories, migrate } from "@auto-crop/server";
+import { startAutoCrop, startSchedulerLoop } from "./start";
 
 const createdDirs: string[] = [];
 
@@ -104,6 +105,47 @@ describe("startAutoCrop", () => {
       await started.close();
     }
   });
+
+  it("runs wake-requested queued tasks without waiting for the scheduler interval", async () => {
+    const projectRoot = createTempProjectRoot();
+    const logs: string[] = [];
+    const events: Array<{ type: string; taskId: string }> = [];
+    const client = createDatabaseClient(":memory:");
+    migrate(client);
+    const repositories = createRepositories(client);
+    repositories.createCompany(createCompanyRecord());
+    repositories.createDepartment(createDepartmentRecord());
+    repositories.createObjective(createObjectiveRecord());
+    repositories.createKeyResult(createKeyResultRecord());
+
+    const scheduler = startSchedulerLoop({
+      agents: [
+        createMockAgentAdapter({
+          id: "codex",
+          name: "Codex",
+          capabilities: ["test"],
+          output: "proof: wake-requested scheduler tick",
+        }),
+      ],
+      intervalMs: 60_000,
+      log: (line) => logs.push(line),
+      projectRoot,
+      repositories,
+      publish: (event) => events.push(event),
+    });
+
+    try {
+      repositories.createTask(createTaskRecord());
+      scheduler.requestWake("dependency_cascade_queued");
+
+      await waitFor(() => events.some((event) => event.type === "task_started" && event.taskId === "task_1"));
+      expect(logs).toContain("Scheduler wake requested: dependency_cascade_queued");
+      expect(repositories.getTask("task_1")?.status).toBe("review");
+    } finally {
+      scheduler.stop();
+      client.close();
+    }
+  });
 });
 
 function createTempProjectRoot(): string {
@@ -121,4 +163,77 @@ async function waitFor(check: () => boolean): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
+}
+
+function createCompanyRecord(): Company {
+  return {
+    id: "company_1",
+    name: "Pricing Page Studio",
+    founderVision: "Build an AI SaaS that creates pricing pages.",
+    selectedCeoAgentId: "codex",
+    playbookId: "ai-saas",
+    status: "active",
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+  };
+}
+
+function createDepartmentRecord(): Department {
+  return {
+    id: "department_1",
+    companyId: "company_1",
+    name: "Engineering",
+    responsibility: "Run local checks.",
+    leadAgentId: "codex",
+    memoryPath: ".auto-crop/companies/company_1/departments/engineering/memory.md",
+  };
+}
+
+function createObjectiveRecord(): Objective {
+  return {
+    id: "objective_1",
+    companyId: "company_1",
+    title: "Validate scheduler wake",
+    status: "active",
+    priority: 1,
+  };
+}
+
+function createKeyResultRecord(): KeyResult {
+  return {
+    id: "key_result_1",
+    objectiveId: "objective_1",
+    title: "Wake-requested task produced proof",
+    metricName: "proof_status",
+    targetValue: "proof_received",
+    currentValue: "not_started",
+    status: "active",
+  };
+}
+
+function createTaskRecord(): Task {
+  return {
+    id: "task_1",
+    companyId: "company_1",
+    departmentId: "department_1",
+    keyResultId: "key_result_1",
+    title: "Run wake-requested scheduler task",
+    description: "Produce command output proof after a scheduler wake request.",
+    assigneeAgentId: "codex",
+    requiredCapabilities: ["test"],
+    proofSchemaId: "test-output",
+    workspacePath: null,
+    status: "queued",
+    riskLevel: "low",
+    position: 0,
+    latestFailureReason: null,
+    latestFailureMessage: null,
+    latestExecutionProfileName: null,
+    latestRequestedTimeoutMs: null,
+    latestEffectiveTimeoutMs: null,
+    dependencyNote: null,
+    parentTaskId: null,
+    taskKind: "parent",
+    source: "ceo",
+  };
 }

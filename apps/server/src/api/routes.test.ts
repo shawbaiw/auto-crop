@@ -9,7 +9,7 @@ import { createDatabaseClient } from "../db/client";
 import { createRepositories, type ReviewRecord } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
-import { createApiServer } from "./routes";
+import { createApiServer, type SchedulerWakeReason } from "./routes";
 
 const createdDirs: string[] = [];
 
@@ -420,7 +420,8 @@ describe("API routes", () => {
   });
 
   it("returns parent aggregation when a department subtask proof recovery reaches review", async () => {
-    const fixture = await startFixtureServer();
+    const schedulerWakeRequests: SchedulerWakeReason[] = [];
+    const fixture = await startFixtureServer({ schedulerWakeRequests });
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
@@ -486,6 +487,7 @@ describe("API routes", () => {
       }),
     ]);
     expect(fixture.repositories.getTask(parentTask.id)?.status).toBe("queued");
+    expect(schedulerWakeRequests).toEqual(["parent_aggregation_queued"]);
 
     await fixture.close();
   });
@@ -682,7 +684,8 @@ describe("API routes", () => {
   });
 
   it("cascades dependency readiness after CEO approves an upstream task with proof", async () => {
-    const fixture = await startFixtureServer();
+    const schedulerWakeRequests: SchedulerWakeReason[] = [];
+    const fixture = await startFixtureServer({ schedulerWakeRequests });
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
@@ -738,6 +741,7 @@ describe("API routes", () => {
       }),
     );
     expect(fixture.repositories.getTask(consumerTask!.id)?.status).toBe("queued");
+    expect(schedulerWakeRequests).toEqual(["dependency_cascade_queued"]);
 
     const state = await getJson<{ tasks: Array<{ id: string; status: string }>; activity: Array<{ type: string; taskId?: string }> }>(
       `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
@@ -822,7 +826,8 @@ describe("API routes", () => {
   });
 
   it("keeps a direct consumer blocked when another dependency is still missing proof", async () => {
-    const fixture = await startFixtureServer();
+    const schedulerWakeRequests: SchedulerWakeReason[] = [];
+    const fixture = await startFixtureServer({ schedulerWakeRequests });
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
@@ -879,6 +884,7 @@ describe("API routes", () => {
       }),
     );
     expect(fixture.repositories.getTask(consumerTask!.id)?.status).toBe("blocked");
+    expect(schedulerWakeRequests).toEqual([]);
 
     await fixture.close();
   });
@@ -1072,7 +1078,7 @@ describe("API routes", () => {
   });
 });
 
-async function startFixtureServer(options: { plannerOutput?: string } = {}) {
+async function startFixtureServer(options: { plannerOutput?: string; schedulerWakeRequests?: SchedulerWakeReason[] } = {}) {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-api-"));
   createdDirs.push(projectRoot);
   const client = createDatabaseClient(":memory:");
@@ -1103,6 +1109,7 @@ async function startFixtureServer(options: { plannerOutput?: string } = {}) {
     agents: [codex],
     now: () => new Date("2026-08-17T00:00:00.000Z"),
     createId: createSequentialIdFactory(),
+    requestSchedulerWake: (reason) => options.schedulerWakeRequests?.push(reason),
   });
 
   await new Promise<void>((resolve) => server.httpServer.listen(0, resolve));

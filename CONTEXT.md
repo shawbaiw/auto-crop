@@ -35,6 +35,7 @@
 - **Dependency Readiness**: The scheduler decision that all upstream Task Dependencies have Consumable Proof and the downstream task may start. _Avoid_: dependency status check.
 - **Dependency Cascade**: Runtime propagation that re-evaluates direct downstream tasks after an upstream task's Proof is accepted by CEO Office, moving dependency-blocked tasks back to `queued` when all dependencies are ready. _Avoid_: manual refresh, automatic execution.
 - **Bounded Recursive Cascade**: A Dependency Cascade that may continue through longer downstream dependency chains up to a fixed depth while preventing repeated visits to the same task. _Avoid_: unlimited cascade, scheduler wakeup.
+- **Scheduler Wake Request**: A runtime hint asking the scheduler loop to tick sooner because dependency-derived work has become `queued`. It does not execute tasks, change Dependency Readiness, or bypass scheduler locking. _Avoid_: cascade execution, direct task run.
 - **Bounded Recovery**: Automatic task recovery that changes execution conditions and has a hard stop, such as escalating an Effective Timeout before requiring replanning. _Avoid_: infinite retry.
 - **Replan Required**: A task outcome where the current task is too broad or expensive for the available execution profile and should be split or rewritten before downstream work continues. _Avoid_: timeout failure.
 - **Agent Activity**: Durable, user-facing timeline entries that explain task execution progress and outcomes. _Avoid_: debug log, raw stdout.

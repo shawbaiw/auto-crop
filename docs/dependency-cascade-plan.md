@@ -115,7 +115,7 @@ The direct-consumer path has now been extended by [Dependency Cascade Trigger Ex
 Remaining directions after the implemented cascade work:
 
 - **More trigger points:** decide whether ordinary Dependency Cascade should run after task recovery, Proof Recovery approval, and follow-up task approval. Parent Task Aggregation already handles the department-subtask recovery path separately.
-- **Scheduler wakeup:** optionally wake the scheduler after a successful cascade if waiting for the normal scheduler interval feels too slow, while keeping cascade separate from task execution.
+- **Scheduler wakeup:** implemented as [Scheduler Wake Request](scheduler-wake-request-plan.md).
 
 ## Test Plan
 

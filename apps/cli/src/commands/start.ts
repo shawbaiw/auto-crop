@@ -13,6 +13,7 @@ import {
   migrate,
   runSchedulerOnce,
   type AgentAdapter,
+  type SchedulerWakeReason,
 } from "@auto-crop/server";
 
 export type StartAutoCropOptions = {
@@ -47,13 +48,15 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
     log(`Agent ${agent.name}: ${detected ? "available" : "unavailable"}`);
   }
 
+  let scheduler: ReturnType<typeof startSchedulerLoop> | undefined;
   const apiServer = createApiServer({
     projectRoot: options.projectRoot,
     repositories,
     agents,
     log,
+    requestSchedulerWake: (reason) => scheduler?.requestWake(reason),
   });
-  const scheduler = startSchedulerLoop({
+  scheduler = startSchedulerLoop({
     agents,
     intervalMs: schedulerIntervalMs,
     log,
@@ -87,7 +90,7 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
   };
 }
 
-function startSchedulerLoop(input: {
+export function startSchedulerLoop(input: {
   agents: AgentAdapter[];
   intervalMs: number;
   log: (line: string) => void;
@@ -98,13 +101,17 @@ function startSchedulerLoop(input: {
   const workerId = `cli-worker-${process.pid}`;
   const proofCollector = createProofCollector({ proofSchemas: aiSaasPlaybook.proofSchemas });
   let running = false;
+  let stopped = false;
+  let wakePending = false;
+  let wakeTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function tick() {
-    if (running) {
+    if (running || stopped) {
       return;
     }
 
     running = true;
+    wakePending = false;
     try {
       const result = await runSchedulerOnce({
         projectRoot: input.projectRoot,
@@ -129,7 +136,21 @@ function startSchedulerLoop(input: {
       input.log(`Scheduler failed: ${(error as Error).message}`);
     } finally {
       running = false;
+      if (wakePending && !stopped) {
+        scheduleWakeTick();
+      }
     }
+  }
+
+  function scheduleWakeTick() {
+    if (stopped || wakeTimer) {
+      return;
+    }
+
+    wakeTimer = setTimeout(() => {
+      wakeTimer = null;
+      void tick();
+    }, 0);
   }
 
   const interval = setInterval(() => void tick(), input.intervalMs);
@@ -137,8 +158,24 @@ function startSchedulerLoop(input: {
   input.log(`Scheduler: running every ${input.intervalMs}ms`);
 
   return {
+    requestWake(reason: SchedulerWakeReason) {
+      if (stopped) {
+        return;
+      }
+
+      input.log(`Scheduler wake requested: ${reason}`);
+      wakePending = true;
+      if (!running) {
+        scheduleWakeTick();
+      }
+    },
     stop() {
+      stopped = true;
       clearInterval(interval);
+      if (wakeTimer) {
+        clearTimeout(wakeTimer);
+        wakeTimer = null;
+      }
     },
   };
 }

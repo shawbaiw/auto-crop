@@ -35,7 +35,10 @@ export type ApiServerOptions = {
   log?: (line: string) => void;
   now?: () => Date;
   createId?: (prefix: string) => string;
+  requestSchedulerWake?: (reason: SchedulerWakeReason) => void;
 };
+
+export type SchedulerWakeReason = "dependency_cascade_queued" | "parent_aggregation_queued";
 
 export type ApiServer = {
   httpServer: Server;
@@ -287,6 +290,7 @@ async function routeRequest(
         events.publish(summarizeTaskEvent(cascadeUpdate.event));
       }
     }
+    requestSchedulerWakeForQueuedUpdates(options, dependencyCascade, "dependency_cascade_queued");
 
     sendJson(response, 201, {
       decision: summarizeCeoReviewDecision(result.decision),
@@ -325,6 +329,7 @@ async function routeRequest(
     });
     events.publish(event);
     publishParentAggregationEvents(parentAggregation, events);
+    requestSchedulerWakeForQueuedUpdates(options, parentAggregation, "parent_aggregation_queued");
     sendJson(response, 200, {
       task: summarizeTask(
         result.task,
@@ -357,6 +362,7 @@ async function routeRequest(
     });
     events.publish(event);
     publishParentAggregationEvents(parentAggregation, events);
+    requestSchedulerWakeForQueuedUpdates(options, parentAggregation, "parent_aggregation_queued");
     sendJson(response, 200, {
       task: summarizeTask(
         result.task,
@@ -723,6 +729,16 @@ function publishParentAggregationEvents(aggregation: ParentTaskAggregationResult
     if (update.event) {
       events.publish(summarizeTaskEvent(update.event));
     }
+  }
+}
+
+function requestSchedulerWakeForQueuedUpdates(
+  options: ApiServerOptions,
+  batch: DependencyCascadeResult | ParentTaskAggregationResult | undefined,
+  reason: SchedulerWakeReason,
+): void {
+  if (batch?.updatedTasks.some((update) => update.task.status === "queued")) {
+    options.requestSchedulerWake?.(reason);
   }
 }
 
