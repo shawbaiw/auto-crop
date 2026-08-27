@@ -28,6 +28,25 @@ export type AgentRunStatus = "queued" | "running" | "complete" | "failed" | "can
 export type ApprovalStatus = "pending" | "approved" | "denied";
 export type ReplanProposalStatus = "proposed" | "confirmed" | "dismissed";
 export type ReplanProposalSource = "planner_agent" | "deterministic_template";
+export type BusinessArtifactType =
+  | "research_findings"
+  | "product_mvp_brief"
+  | "implementation_summary"
+  | "validation_result"
+  | "preview_result"
+  | "launch_plan"
+  | "deployment_result"
+  | "final_founder_report"
+  | "blocker_report"
+  | "direction_change_request";
+export type BusinessArtifactValidationStatus =
+  | "pending"
+  | "valid"
+  | "invalid_schema"
+  | "invalid_blocker"
+  | "invalid_drift"
+  | "stale";
+export type BusinessArtifactReviewStatus = "unreviewed" | "accepted" | "returned" | "not_reviewable";
 export type CeoIntakeStatus =
   | "received"
   | "assessing"
@@ -188,6 +207,24 @@ export type Proof = {
   uri: string;
   summary: string;
   verifiedAt: string | null;
+};
+
+export type BusinessArtifact = {
+  id: string;
+  companyId: string;
+  taskId: string;
+  sourceProofId: string | null;
+  artifactType: BusinessArtifactType;
+  taskType: string;
+  payload: unknown;
+  lineage: unknown;
+  validationStatus: BusinessArtifactValidationStatus;
+  validationErrors: unknown[];
+  reviewStatus: BusinessArtifactReviewStatus;
+  isCurrent: boolean;
+  supersedesArtifactId: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type AgentRun = {

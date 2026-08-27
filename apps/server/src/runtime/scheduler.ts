@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { AgentFailureReason, Proof, Task, TaskEvent, TaskProgressEvent, TaskStatus } from "@auto-crop/core";
+import { captureBusinessArtifact } from "./businessArtifact";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
@@ -318,6 +319,17 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           for (const item of proof) {
             input.repositories.appendProof(item);
+          }
+          if (proof.length > 0) {
+            input.repositories.createBusinessArtifact(
+              captureBusinessArtifact({
+                task: { ...task, workspacePath: taskWorkspace.root },
+                proofs: proof,
+                workspacePath: taskWorkspace.root,
+                now,
+                createId,
+              }),
+            );
           }
           createHandoffPackage({
             task: { ...task, workspacePath: taskWorkspace.root },
@@ -750,7 +762,7 @@ function blockTaskForMissingDeliverable(
   dependencyNote: string,
 ): void {
   const failureReason = "missing_deliverable";
-  const failureMessage = `Task blocked: ${task.title} / missing_deliverable / ${dependency.title} has no consumable proof.`;
+  const failureMessage = `Task blocked: ${task.title} / missing_deliverable / ${dependency.title} has no accepted business artifact.`;
   input.repositories.updateTaskStatus(task.id, "blocked");
   input.repositories.updateTaskExecutionSummary(task.id, {
     latestFailureReason: failureReason,
@@ -866,20 +878,44 @@ function createLogPath(projectRoot: string, task: Task): string {
 }
 
 function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string {
+  const artifactInstructions = [
+    "## Business Artifact",
+    "",
+    "Write a structured business artifact to `.auto-crop/business-artifact.json` before finishing.",
+    "Use this JSON shape:",
+    JSON.stringify(
+      {
+        artifactType: "implementation_summary",
+        taskType: "task-specific-type",
+        payload: {},
+        lineage: {},
+      },
+      null,
+      2,
+    ),
+    "Choose the artifactType that best matches the task. Use payload for the task-specific structured result and lineage for the upstream objective chain you used.",
+  ];
+
   if (handoffs.length === 0) {
-    return description;
+    return [description, "", ...artifactInstructions].join("\n");
   }
 
   return [
     description,
     "",
+    ...artifactInstructions,
+    "",
     "## Upstream Handoffs",
     "",
     ...handoffs.flatMap((handoff, index) => [
       `${index + 1}. Task: ${handoff.upstreamTaskTitle}`,
-      `   Proof: ${handoff.proofType} / ${handoff.proofId}`,
-      `   URI: ${handoff.uri}`,
-      `   Summary: ${handoff.summary}`,
+      `   Business Artifact: ${handoff.artifactType} / ${handoff.businessArtifactId}`,
+      `   Task Type: ${handoff.taskType}`,
+      `   Payload: ${JSON.stringify(handoff.payload)}`,
+      `   Lineage: ${JSON.stringify(handoff.lineage)}`,
+      ...(handoff.proofId ? [`   Source Proof: ${handoff.proofType} / ${handoff.proofId}`] : []),
+      ...(handoff.uri ? [`   Source URI: ${handoff.uri}`] : []),
+      ...(handoff.summary ? [`   Summary: ${handoff.summary}`] : []),
       ...(handoff.handoffContract ? [`   Handoff Contract: ${handoff.handoffContract}`] : []),
       ...(handoff.handoffPackagePath ? [`   Handoff Package: ${handoff.handoffPackagePath}`] : []),
       ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),

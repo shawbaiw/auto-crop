@@ -15,6 +15,7 @@ import {
 import { useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
+  BusinessArtifactSummary,
   CeoReviewDecisionResponse,
   CeoReviewReturnReason,
   CeoIntakeSummary,
@@ -45,6 +46,7 @@ export type DepartmentWorkspaceProps = {
   taskProgressEvents?: TaskProgressEventSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   proof?: ProofSummary[];
+  businessArtifacts?: BusinessArtifactSummary[];
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
   onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
@@ -72,6 +74,7 @@ export function DepartmentWorkspace({
   tasks,
   ceoIntakes = [],
   proof = [],
+  businessArtifacts = [],
   taskProgressEvents = [],
 }: DepartmentWorkspaceProps) {
   const { t } = useLanguage();
@@ -166,6 +169,7 @@ export function DepartmentWorkspace({
                   onSubmit={onCreateCeoIntake}
                   pendingItems={ceoPendingItems}
                   proof={proof}
+                  businessArtifacts={businessArtifacts}
                   tasks={tasks}
                 />
                 <p className="muted">{t("department.schedulerNote")}</p>
@@ -225,6 +229,7 @@ function CeoIntakeWorkspace({
   onSubmit,
   pendingItems,
   proof,
+  businessArtifacts,
   tasks,
 }: {
   departments: DepartmentSummary[];
@@ -238,6 +243,7 @@ function CeoIntakeWorkspace({
   onSubmit?: (body: string) => Promise<void> | void;
   pendingItems: CeoPendingItem[];
   proof: ProofSummary[];
+  businessArtifacts: BusinessArtifactSummary[];
   tasks: TaskSummary[];
 }) {
   const { t } = useLanguage();
@@ -245,6 +251,7 @@ function CeoIntakeWorkspace({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const selectedPendingItem = pendingItems.find((item) => item.task.id === selectedTaskId) ?? null;
   const proofsByTask = useMemo(() => groupProofByTask(proof), [proof]);
+  const artifactsByTask = useMemo(() => groupBusinessArtifactsByTask(businessArtifacts), [businessArtifacts]);
 
   const handleDecision = async (input: Parameters<NonNullable<DepartmentWorkspaceProps["onCreateCeoReviewDecision"]>>[0]) => {
     const response = await onCreateCeoReviewDecision?.(input);
@@ -273,6 +280,7 @@ function CeoIntakeWorkspace({
           onDecision={handleDecision}
           onRefreshTask={onRefreshTask}
           proofs={proofsByTask.get(selectedPendingItem.task.id) ?? []}
+          businessArtifacts={artifactsByTask.get(selectedPendingItem.task.id) ?? []}
         />
       ) : null}
       <CeoBlueprintSummary
@@ -296,6 +304,14 @@ function groupProofByTask(proof: ProofSummary[]): Map<string, ProofSummary[]> {
   const grouped = new Map<string, ProofSummary[]>();
   for (const item of proof) {
     grouped.set(item.taskId, [...(grouped.get(item.taskId) ?? []), item]);
+  }
+  return grouped;
+}
+
+function groupBusinessArtifactsByTask(artifacts: BusinessArtifactSummary[]): Map<string, BusinessArtifactSummary[]> {
+  const grouped = new Map<string, BusinessArtifactSummary[]>();
+  for (const artifact of artifacts) {
+    grouped.set(artifact.taskId, [...(grouped.get(artifact.taskId) ?? []), artifact]);
   }
   return grouped;
 }
@@ -336,6 +352,7 @@ function CeoTaskReviewDetail({
   onDecision,
   onRefreshTask,
   proofs,
+  businessArtifacts,
 }: {
   item: CeoPendingItem;
   onDecision: (input: {
@@ -346,6 +363,7 @@ function CeoTaskReviewDetail({
   }) => Promise<void>;
   onRefreshTask?: (taskId: string) => void;
   proofs: ProofSummary[];
+  businessArtifacts: BusinessArtifactSummary[];
 }) {
   const { t } = useLanguage();
   const [returnReason, setReturnReason] = useState<CeoReviewReturnReason | "">("");
@@ -355,9 +373,16 @@ function CeoTaskReviewDetail({
   const noteInputId = useId();
   const reasonInputId = useId();
   const hasProof = proofs.length > 0;
+  const currentArtifact = businessArtifacts.find((artifact) => artifact.isCurrent) ?? businessArtifacts[0] ?? null;
+  const hasValidArtifact =
+    currentArtifact !== null &&
+    currentArtifact.validationStatus === "valid" &&
+    currentArtifact.artifactType !== "blocker_report" &&
+    currentArtifact.artifactType !== "direction_change_request";
+  const canApprove = hasProof && hasValidArtifact;
 
   const handleApprove = async () => {
-    if (!hasProof || submitting) {
+    if (!canApprove || submitting) {
       return;
     }
 
@@ -400,8 +425,8 @@ function CeoTaskReviewDetail({
   return (
     <section className="ceo-task-review-detail" aria-label={t("department.ceoTaskReview")}>
       <h3>{t("department.ceoTaskReview")}</h3>
-      <p className={hasProof ? "system-message" : "warning-message"}>
-        {hasProof ? t("department.ceoReviewCanPass") : t("department.ceoReviewMissingProof")}
+      <p className={canApprove ? "system-message" : "warning-message"}>
+        {canApprove ? t("department.ceoReviewCanPass") : t("department.ceoReviewMissingProof")}
       </p>
       <div className="ceo-task-review-detail__grid">
         <section>
@@ -418,6 +443,14 @@ function CeoTaskReviewDetail({
               <p className="muted">{`${proof.type} / ${proof.uri}`}</p>
             </article>
           ))}
+          {currentArtifact ? (
+            <article className="ceo-task-review-proof">
+              <p>{`${currentArtifact.artifactType} / ${currentArtifact.taskType}`}</p>
+              <p className="muted">{`${currentArtifact.validationStatus} / ${currentArtifact.reviewStatus}`}</p>
+            </article>
+          ) : (
+            <p className="muted">{t("dashboard.noBusinessArtifacts")}</p>
+          )}
         </section>
         <section>
           <h4>{t("department.ceoReviewRunStatus")}</h4>
@@ -463,7 +496,7 @@ function CeoTaskReviewDetail({
           {error ? <p role="alert" className="warning-message">{error}</p> : null}
           <div className="ceo-task-review-detail__actions">
             <RetroButton onClick={() => onRefreshTask?.(item.task.id)}>{t("department.viewTask")}</RetroButton>
-            {hasProof ? (
+            {canApprove ? (
               <RetroButton disabled={submitting} onClick={handleApprove}>
                 {t("department.ceoReviewApprove")}
               </RetroButton>

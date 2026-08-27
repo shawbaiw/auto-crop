@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Proof, Task, TaskEvent } from "@auto-crop/core";
+import type { BusinessArtifact, Proof, Task, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter, AgentRunRequest } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
@@ -402,19 +402,19 @@ describe("API routes", () => {
 
     expect(refreshed.task).toMatchObject({
       id: consumerTask.id,
-      status: "queued",
+      status: "waiting_dependency",
+      dependencyNote: `Waiting for dependency acceptance: ${producerTask.title} (review).`,
     });
     expect(refreshed.task.failureReason).toBeUndefined();
-    expect(refreshed.task.dependencyNote).toBeUndefined();
     expect(refreshed.event).toMatchObject({
-      type: "dependency_ready",
-      status: "queued",
+      type: "dependency_waiting",
+      status: "waiting_dependency",
     });
 
     const state = await getJson<{ activity: Array<{ type: string; taskId?: string }> }>(
       `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
     );
-    expect(state.activity).toContainEqual(expect.objectContaining({ type: "dependency_ready", taskId: consumerTask.id }));
+    expect(state.activity).toContainEqual(expect.objectContaining({ type: "dependency_waiting", taskId: consumerTask.id }));
 
     await fixture.close();
   });
@@ -618,6 +618,7 @@ describe("API routes", () => {
       summary: "Playable prototype exists.",
       verifiedAt: null,
     } satisfies Proof);
+    fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", approvedTask!.id, "proof_1"));
 
     const approved = await postJson<{
       decision: { id: string; taskId: string; decision: string; proofId?: string };
@@ -670,12 +671,19 @@ describe("API routes", () => {
       ceoReviewDecisions: Array<{ id: string; taskId: string; decision: string; returnReason?: string }>;
       keyResults: Array<{ currentValue: string; status: string }>;
       taskProgressEvents: Array<{ label: string; detail?: string }>;
+      businessArtifacts: Array<{ id: string; taskId: string; reviewStatus: string }>;
+      founderReport: { actualOutputs: Array<{ taskId: string }>; nextSteps: string[] };
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
     expect(state.ceoReviewDecisions).toEqual([
       expect.objectContaining({ id: "ceo_review_decision_1", taskId: approvedTask!.id, decision: "approve" }),
       expect.objectContaining({ id: "ceo_review_decision_2", taskId: returnedTask!.id, decision: "return", returnReason: "needs_changes" }),
     ]);
-    expect(state.keyResults).toContainEqual(expect.objectContaining({ currentValue: "proof_received", status: "met" }));
+    expect(state.keyResults).toContainEqual(expect.objectContaining({ currentValue: "accepted_business_artifact", status: "met" }));
+    expect(state.businessArtifacts).toContainEqual(
+      expect.objectContaining({ id: "business_artifact_1", taskId: approvedTask!.id, reviewStatus: "accepted" }),
+    );
+    expect(state.founderReport.actualOutputs).toContainEqual(expect.objectContaining({ taskId: approvedTask!.id }));
+    expect(Array.isArray(state.founderReport.nextSteps)).toBe(true);
     expect(state.taskProgressEvents).toContainEqual(
       expect.objectContaining({ label: "CEO Office returned this, waiting for the department to rework it." }),
     );
@@ -706,6 +714,7 @@ describe("API routes", () => {
       summary: "Prototype validation proof exists.",
       verifiedAt: null,
     } satisfies Proof);
+    fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", producerTask!.id, "proof_1"));
     fixture.repositories.updateTaskStatus(consumerTask!.id, "blocked");
     fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
       latestFailureReason: "missing_deliverable",
@@ -778,6 +787,7 @@ describe("API routes", () => {
       summary: "Source proof exists.",
       verifiedAt: null,
     } satisfies Proof);
+    fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", sourceTask.id, "proof_1"));
     fixture.repositories.updateTaskExecutionSummary(firstConsumer.id, {
       latestFailureReason: "missing_deliverable",
       latestFailureMessage: "Task blocked by missing upstream proof.",
@@ -851,6 +861,7 @@ describe("API routes", () => {
       summary: "Approved dependency proof exists.",
       verifiedAt: null,
     } satisfies Proof);
+    fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", approvedDependency!.id, "proof_1"));
     fixture.repositories.updateTaskStatus(consumerTask!.id, "blocked");
     fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
       latestFailureReason: "missing_deliverable",
@@ -873,7 +884,7 @@ describe("API routes", () => {
         id: consumerTask!.id,
         status: "blocked",
         failureReason: "missing_deliverable",
-        dependencyNote: `Missing consumable proof from dependency: ${missingDependency!.title}.`,
+        dependencyNote: `Missing accepted business artifact from dependency: ${missingDependency!.title}.`,
       }),
     ]);
     expect(approved.dependencyCascade.events).toContainEqual(
@@ -911,6 +922,7 @@ describe("API routes", () => {
       summary: "Producer proof exists.",
       verifiedAt: null,
     } satisfies Proof);
+    fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", producerTask!.id, "proof_1"));
     fixture.repositories.updateTaskStatus(consumerTask!.id, "failed");
     fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
       latestFailureReason: "no_proof",
@@ -957,6 +969,7 @@ describe("API routes", () => {
       summary: "Producer proof exists.",
       verifiedAt: null,
     } satisfies Proof);
+    fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", producerTask!.id, "proof_1"));
     fixture.repositories.updateTaskStatus(consumerTask!.id, "waiting_dependency");
     fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
       latestFailureReason: null,
@@ -1008,6 +1021,40 @@ describe("API routes", () => {
 
     expect(response.status).toBe(409);
     expect(body.error).toMatch(/no checkable proof/i);
+    expect(fixture.repositories.getTask(task.id)?.status).toBe("review");
+
+    await fixture.close();
+  });
+
+  it("rejects CEO approval when a review task has proof but no valid business artifact", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    fixture.repositories.updateTaskStatus(task.id, "review");
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: task.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+
+    const response = await fetch(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: task.id, decision: "approve" }),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/business artifact/i);
     expect(fixture.repositories.getTask(task.id)?.status).toBe("review");
 
     await fixture.close();
@@ -1187,6 +1234,29 @@ function createIsolatedTask(
     latestEffectiveTimeoutMs: null,
     dependencyNote: null,
     artifactWorkspacePath: null,
+  };
+}
+
+function createBusinessArtifactRecord(id: string, taskId: string, sourceProofId: string): BusinessArtifact {
+  return {
+    id,
+    companyId: "company_1",
+    taskId,
+    sourceProofId,
+    artifactType: "implementation_summary",
+    taskType: "test_task",
+    payload: { result: `Accepted artifact for ${taskId}.` },
+    lineage: {
+      founder_vision: "Build an AI SaaS that creates pricing pages.",
+      objective: "Validate the first wedge",
+    },
+    validationStatus: "valid",
+    validationErrors: [],
+    reviewStatus: "unreviewed",
+    isCurrent: true,
+    supersedesArtifactId: null,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
   };
 }
 

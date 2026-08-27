@@ -1,10 +1,15 @@
-import type { Proof, Task } from "@auto-crop/core";
+import type { BusinessArtifact, Proof, Task } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { getHandoffPackageManifestPath } from "./proof";
 
 export type TaskHandoff = {
   upstreamTaskId: string;
   upstreamTaskTitle: string;
+  businessArtifactId: string;
+  artifactType: BusinessArtifact["artifactType"];
+  taskType: string;
+  payload: unknown;
+  lineage: unknown;
   proofId: string;
   proofType: Proof["type"];
   uri: string;
@@ -37,7 +42,7 @@ export function resolveDependencyReadiness(
     if (isWaitingStatus(upstream.status)) {
       return {
         kind: "waiting",
-        note: `Waiting for dependency deliverable: ${upstream.title} (${upstream.status}).`,
+        note: formatDependencyWaitingNote(upstream),
       };
     }
 
@@ -59,38 +64,74 @@ export function resolveDependencyReadiness(
       };
     }
 
-    const proofs = repositories.listProofsForTask(upstream.id);
+    if (upstream.status !== "complete") {
+      return {
+        kind: "waiting",
+        note: formatDependencyWaitingNote(upstream),
+      };
+    }
 
-    if (proofs.length === 0) {
+    const artifact = repositories.getCurrentBusinessArtifactForTask(upstream.id);
+    if (!isAcceptedBusinessArtifact(artifact)) {
       return {
         kind: "missing_deliverable",
-        note: `Missing consumable proof from dependency: ${upstream.title}.`,
+        note: `Missing accepted business artifact from dependency: ${upstream.title}.`,
         dependency: upstream,
       };
     }
 
-    handoffs.push(...proofs.map((proof) => createTaskHandoff(upstream, proof, dependency.handoffContract ?? null)));
+    const sourceProof = artifact.sourceProofId ? repositories.listProofsForTask(upstream.id).find((proof) => proof.id === artifact.sourceProofId) : null;
+    handoffs.push(createTaskHandoff(upstream, artifact, sourceProof ?? null, dependency.handoffContract ?? null));
   }
 
   return { kind: "ready", handoffs };
 }
 
 function isWaitingStatus(status: Task["status"]): boolean {
-  return status === "queued" || status === "waiting_dependency" || status === "running" || status === "retrying";
+  return status === "queued" || status === "waiting_dependency" || status === "running" || status === "retrying" || status === "review";
 }
 
 function isFailedDependencyStatus(status: Task["status"]): boolean {
   return status === "failed" || status === "blocked" || status === "cancelled";
 }
 
-function createTaskHandoff(task: Task, proof: Proof, handoffContract: string | null): TaskHandoff {
+function isAcceptedBusinessArtifact(artifact: BusinessArtifact | null): artifact is BusinessArtifact {
+  return (
+    artifact !== null &&
+    artifact.isCurrent &&
+    artifact.validationStatus === "valid" &&
+    artifact.reviewStatus === "accepted" &&
+    artifact.artifactType !== "blocker_report" &&
+    artifact.artifactType !== "direction_change_request"
+  );
+}
+
+function formatDependencyWaitingNote(task: Task): string {
+  if (task.status === "review") {
+    return `Waiting for dependency acceptance: ${task.title} (review).`;
+  }
+
+  return `Waiting for dependency deliverable: ${task.title} (${task.status}).`;
+}
+
+function createTaskHandoff(
+  task: Task,
+  artifact: BusinessArtifact,
+  proof: Proof | null,
+  handoffContract: string | null,
+): TaskHandoff {
   return {
     upstreamTaskId: task.id,
     upstreamTaskTitle: task.title,
-    proofId: proof.id,
-    proofType: proof.type,
-    uri: proof.uri,
-    summary: proof.summary,
+    businessArtifactId: artifact.id,
+    artifactType: artifact.artifactType,
+    taskType: artifact.taskType,
+    payload: artifact.payload,
+    lineage: artifact.lineage,
+    proofId: proof?.id ?? "",
+    proofType: proof?.type ?? "file",
+    uri: proof?.uri ?? "",
+    summary: proof?.summary ?? `Accepted business artifact: ${artifact.artifactType}.`,
     artifactWorkspacePath: task.artifactWorkspacePath ?? null,
     handoffContract,
     handoffPackagePath: getHandoffPackageManifestPath(task),

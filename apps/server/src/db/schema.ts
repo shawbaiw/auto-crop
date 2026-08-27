@@ -114,6 +114,24 @@ export function migrate(database: DatabaseClient): void {
       verified_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS business_artifacts (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      source_proof_id TEXT REFERENCES proofs(id) ON DELETE SET NULL,
+      artifact_type TEXT NOT NULL,
+      task_type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      lineage TEXT NOT NULL,
+      validation_status TEXT NOT NULL,
+      validation_errors TEXT NOT NULL,
+      review_status TEXT NOT NULL,
+      is_current INTEGER NOT NULL,
+      supersedes_artifact_id TEXT REFERENCES business_artifacts(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS agent_runs (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -216,6 +234,8 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS ceo_intakes_company_created_idx ON ceo_intakes(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS ceo_review_decisions_company_created_idx ON ceo_review_decisions(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS ceo_review_decisions_task_created_idx ON ceo_review_decisions(task_id, created_at, id)");
+  database.exec("CREATE INDEX IF NOT EXISTS business_artifacts_task_current_idx ON business_artifacts(task_id, is_current)");
+  database.exec("CREATE INDEX IF NOT EXISTS business_artifacts_company_created_idx ON business_artifacts(company_id, created_at, id)");
 }
 
 function migrateCompanyPermissionMode(database: DatabaseClient): void {

@@ -272,7 +272,7 @@ function dependencyUpdateForTask(
 
   if (readiness.kind === "missing_deliverable") {
     const failureReason = "missing_deliverable";
-    const failureMessage = `Task blocked: ${task.title} / missing_deliverable / ${readiness.dependency.title} has no consumable proof.`;
+    const failureMessage = `Task blocked: ${task.title} / missing_deliverable / ${readiness.dependency.title} has no accepted business artifact.`;
     return {
       type: "deliverable_missing",
       status: "blocked",

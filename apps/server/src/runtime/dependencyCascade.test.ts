@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Company, Department, KeyResult, Objective, Proof, Task } from "@auto-crop/core";
+import type { BusinessArtifact, Company, Department, KeyResult, Objective, Proof, Task } from "@auto-crop/core";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
@@ -85,7 +85,7 @@ describe("refreshDependencyTasks", () => {
     client.close();
   });
 
-  it("writes missing-deliverable dependency state", () => {
+  it("writes waiting state while an upstream dependency awaits CEO acceptance", () => {
     const { repositories, client } = createFixture([
       createTaskRecord("task_1", "review"),
       createTaskRecord("task_2", "waiting_dependency"),
@@ -102,14 +102,13 @@ describe("refreshDependencyTasks", () => {
     expect(result.updatedTasks).toHaveLength(1);
     expect(result.updatedTasks[0]?.task).toMatchObject({
       id: "task_2",
-      status: "blocked",
-      latestFailureReason: "missing_deliverable",
-      dependencyNote: "Missing consumable proof from dependency: Task task_1.",
+      status: "waiting_dependency",
+      latestFailureReason: null,
+      dependencyNote: "Waiting for dependency acceptance: Task task_1 (review).",
     });
     expect(result.updatedTasks[0]?.event).toMatchObject({
-      type: "deliverable_missing",
-      status: "blocked",
-      failureReason: "missing_deliverable",
+      type: "dependency_waiting",
+      status: "waiting_dependency",
     });
     client.close();
   });
@@ -432,6 +431,30 @@ function appendProof(repositories: ReturnType<typeof createRepositories>, id: st
     summary: `Proof for ${taskId}.`,
     verifiedAt: null,
   } satisfies Proof);
+  repositories.createBusinessArtifact(createBusinessArtifactRecord(`artifact_${id}`, taskId, id));
+}
+
+function createBusinessArtifactRecord(id: string, taskId: string, sourceProofId: string): BusinessArtifact {
+  return {
+    id,
+    companyId: "company_1",
+    taskId,
+    sourceProofId,
+    artifactType: "implementation_summary",
+    taskType: "test_task",
+    payload: { result: `Accepted artifact for ${taskId}.` },
+    lineage: {
+      founder_vision: "Build an AI SaaS that creates pricing pages.",
+      objective: "Validate the first wedge",
+    },
+    validationStatus: "valid",
+    validationErrors: [],
+    reviewStatus: "accepted",
+    isCurrent: true,
+    supersedesArtifactId: null,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+  };
 }
 
 function fixedNow(): Date {

@@ -10,6 +10,7 @@ export type CompanySummary = {
   name: string;
   status: string;
   playbookId: string;
+  founderVision?: string;
   selectedCeoAgentId?: string;
 };
 
@@ -104,6 +105,39 @@ export type ProofSummary = {
   type: string;
   uri: string;
   summary: string;
+};
+
+export type BusinessArtifactSummary = {
+  id: string;
+  companyId: string;
+  taskId: string;
+  sourceProofId?: string | null;
+  artifactType: string;
+  taskType: string;
+  payload: unknown;
+  lineage: unknown;
+  validationStatus: string;
+  validationErrors: unknown[];
+  reviewStatus: string;
+  isCurrent: boolean;
+  supersedesArtifactId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FounderReportSummary = {
+  founderVision: string;
+  actualOutputs: Array<{
+    taskId: string;
+    artifactType: string;
+    taskType: string;
+    payload: unknown;
+  }>;
+  completedTaskCount: number;
+  reviewTaskCount: number;
+  blockedTaskCount: number;
+  directionDriftDetected: boolean;
+  nextSteps: string[];
 };
 
 export type TaskRefreshRecoverySummary = {
@@ -208,6 +242,8 @@ export type CreateCompanyResponse = {
   objectives: ObjectiveSummary[];
   tasks: TaskSummary[];
   proof?: ProofSummary[];
+  businessArtifacts?: BusinessArtifactSummary[];
+  founderReport?: FounderReportSummary;
   reviews?: ReviewSummary[];
   activity?: ServerEvent[];
   replanProposals?: ReplanProposalSummary[];
@@ -232,6 +268,8 @@ export type ServerEvent = {
 
 export type CompanyStateResponse = CreateCompanyResponse & {
   proof: ProofSummary[];
+  businessArtifacts?: BusinessArtifactSummary[];
+  founderReport?: FounderReportSummary;
   reviews: ReviewSummary[];
   activity: ServerEvent[];
   replanProposals: ReplanProposalSummary[];

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Company, Department, KeyResult, Objective, Proof, Task } from "@auto-crop/core";
+import type { BusinessArtifact, Company, Department, KeyResult, Objective, Proof, Task } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
@@ -747,7 +747,7 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
-  it("blocks dependent tasks when upstream review work has no consumable proof", async () => {
+  it("waits dependent tasks when upstream review work is not CEO accepted", async () => {
     const producer = createTaskRecord("task_1", "review", "low", "product-brief");
     const consumer = createTaskRecord("task_2", "queued", "low", "test-output");
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
@@ -777,16 +777,16 @@ describe("runSchedulerOnce", () => {
       emit: (event) => events.push(event),
     });
 
-    expect(result.blocked).toEqual(["task_2"]);
+    expect(result.blocked).toEqual([]);
     expect(repositories.getTask("task_2")).toMatchObject({
-      status: "blocked",
-      latestFailureReason: "missing_deliverable",
-      dependencyNote: "Missing consumable proof from dependency: Task task_1.",
+      status: "waiting_dependency",
+      latestFailureReason: null,
+      dependencyNote: "Waiting for dependency acceptance: Task task_1 (review).",
     });
     expect(events).toContainEqual(expect.objectContaining({
-      type: "deliverable_missing",
+      type: "dependency_waiting",
       taskId: "task_2",
-      failureReason: "missing_deliverable",
+      dependencyNote: "Waiting for dependency acceptance: Task task_1 (review).",
     }));
 
     client.close();
@@ -798,7 +798,7 @@ describe("runSchedulerOnce", () => {
     const proofPath = join(producerWorkspace, "product-brief.md");
     writeFileSync(proofPath, "# Product Brief\n", "utf8");
     const producer = {
-      ...createTaskRecord("task_1", "review", "low", "product-brief"),
+      ...createTaskRecord("task_1", "complete", "low", "product-brief"),
       workspacePath: producerWorkspace,
       artifactWorkspacePath: producerWorkspace,
     };
@@ -818,6 +818,7 @@ describe("runSchedulerOnce", () => {
       verifiedAt: null,
     };
     repositories.appendProof(proof);
+    repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_upstream", producer.id, proof.id));
     createHandoffPackage({
       task: producer,
       proofs: [proof],
@@ -867,8 +868,11 @@ describe("runSchedulerOnce", () => {
     expect(result.completed).toEqual(["task_2"]);
     expect(prompt).toContain("## Upstream Handoffs");
     expect(prompt).toContain("Task: Task task_1");
-    expect(prompt).toContain("Proof: file / proof_1");
-    expect(prompt).toContain(`URI: ${proofPath}`);
+    expect(prompt).toContain("Business Artifact: product_mvp_brief / business_artifact_upstream");
+    expect(prompt).toContain("Task Type: product_planning");
+    expect(prompt).toContain('"selected_keyword":"pricing page generator"');
+    expect(prompt).toContain("Source Proof: file / proof_1");
+    expect(prompt).toContain(`Source URI: ${proofPath}`);
     expect(prompt).toContain("Handoff Contract: Consume the product brief before validating the prototype.");
     expect(prompt).toContain(`Handoff Package: ${join(producerWorkspace, ".auto-crop-handoff", "package.json")}`);
     expect(prompt).toContain(`Artifact Workspace: ${producerWorkspace}`);
@@ -1314,6 +1318,33 @@ function createTaskRecord(
     status,
     riskLevel,
     position: Number.isFinite(numericSuffix) ? numericSuffix - 1 : 0,
+  };
+}
+
+function createBusinessArtifactRecord(id: string, taskId: string, sourceProofId: string): BusinessArtifact {
+  return {
+    id,
+    companyId: "company_1",
+    taskId,
+    sourceProofId,
+    artifactType: "product_mvp_brief",
+    taskType: "product_planning",
+    payload: {
+      selected_keyword: "pricing page generator",
+      target_user: "solo SaaS founders",
+      mvp_scope: "one-page pricing copy generator",
+    },
+    lineage: {
+      founder_vision: "Build an AI SaaS that creates pricing pages.",
+      objective: "Validate the first wedge",
+    },
+    validationStatus: "valid",
+    validationErrors: [],
+    reviewStatus: "accepted",
+    isCurrent: true,
+    supersedesArtifactId: null,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
   };
 }
 

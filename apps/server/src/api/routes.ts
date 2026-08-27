@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type {
+  BusinessArtifact,
   CeoIntake,
   CeoReviewDecision,
   CeoReviewDecisionKind,
@@ -275,6 +276,11 @@ async function routeRequest(
       return;
     }
 
+    if (result.kind === "invalid_business_artifact") {
+      sendJson(response, 409, { error: "Task has no accepted business artifact candidate and cannot be approved." });
+      return;
+    }
+
     const dependencyCascade =
       result.decision.decision === "approve"
         ? propagateDependencyCascade({
@@ -474,6 +480,7 @@ function buildCompanyState(
     createId: options?.createId,
   });
   const tasks = repositories.listTasksForCompany(company.id);
+  const businessArtifacts = repositories.listBusinessArtifactsForCompany(company.id).map(summarizeBusinessArtifact);
 
   return {
     company: summarizeCompany(company),
@@ -482,6 +489,8 @@ function buildCompanyState(
     keyResults: repositories.listKeyResults(company.id),
     tasks: summarizeTasks(tasks, repositories.listTaskDependenciesForCompany(company.id)),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
+    businessArtifacts,
+    founderReport: summarizeFounderReport(company, tasks, businessArtifacts),
     reviews: repositories.listReviews(company.id).map(summarizeReview),
     ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(company.id).map(summarizeCeoReviewDecision),
     replanProposals: repositories.listReplanProposalsForCompany(company.id).map(summarizeReplanProposal),
@@ -495,7 +504,8 @@ type CeoReviewDecisionResult =
   | { kind: "created"; decision: CeoReviewDecision; task: Task; event: TaskEvent; progressEvent?: TaskProgressEvent }
   | { kind: "not_found" }
   | { kind: "not_in_review" }
-  | { kind: "missing_proof" };
+  | { kind: "missing_proof" }
+  | { kind: "invalid_business_artifact" };
 
 function createCeoReviewDecision(input: {
   repositories: ReturnType<typeof createRepositories>;
@@ -524,6 +534,11 @@ function createCeoReviewDecision(input: {
   }
 
   const timestamp = (input.now ?? (() => new Date()))().toISOString();
+  const artifact = input.repositories.getCurrentBusinessArtifactForTask(task.id);
+  if (input.decision === "approve" && !isApprovableBusinessArtifact(artifact)) {
+    return { kind: "invalid_business_artifact" };
+  }
+
   const decision: CeoReviewDecision = {
     id: input.createId?.("ceo_review_decision") ?? `ceo_review_decision_${Date.now()}`,
     companyId: task.companyId,
@@ -539,11 +554,18 @@ function createCeoReviewDecision(input: {
     createdAt: timestamp,
   };
   input.repositories.createCeoReviewDecision(decision);
+  if (artifact) {
+    input.repositories.updateBusinessArtifactReviewStatus(
+      artifact.id,
+      input.decision === "approve" ? "accepted" : "returned",
+      timestamp,
+    );
+  }
 
   const nextStatus = input.decision === "approve" ? "complete" : "queued";
   input.repositories.updateTaskStatus(task.id, nextStatus);
   if (input.decision === "approve" && task.keyResultId) {
-    input.repositories.updateKeyResultProgress(task.keyResultId, "proof_received", "met");
+    input.repositories.updateKeyResultProgress(task.keyResultId, "accepted_business_artifact", "met");
   }
 
   const event: TaskEvent = {
@@ -596,6 +618,16 @@ function createCeoReviewDecision(input: {
   };
 }
 
+function isApprovableBusinessArtifact(artifact: BusinessArtifact | null): boolean {
+  return (
+    artifact !== null &&
+    artifact.isCurrent &&
+    artifact.validationStatus === "valid" &&
+    artifact.artifactType !== "blocker_report" &&
+    artifact.artifactType !== "direction_change_request"
+  );
+}
+
 function isCeoReviewReturnReason(reason: unknown): reason is CeoReviewReturnReason {
   return (
     reason === "needs_changes" ||
@@ -634,6 +666,7 @@ function summarizeCompany(company: Company) {
     name: company.name,
     status: company.status,
     playbookId: company.playbookId,
+    founderVision: company.founderVision,
     selectedCeoAgentId: company.selectedCeoAgentId,
     permissionMode: company.permissionMode ?? null,
   };
@@ -802,6 +835,55 @@ function summarizeProof(proof: Proof) {
     type: proof.type,
     uri: proof.uri,
     summary: proof.summary,
+  };
+}
+
+function summarizeBusinessArtifact(artifact: BusinessArtifact) {
+  return {
+    id: artifact.id,
+    companyId: artifact.companyId,
+    taskId: artifact.taskId,
+    sourceProofId: artifact.sourceProofId,
+    artifactType: artifact.artifactType,
+    taskType: artifact.taskType,
+    payload: artifact.payload,
+    lineage: artifact.lineage,
+    validationStatus: artifact.validationStatus,
+    validationErrors: artifact.validationErrors,
+    reviewStatus: artifact.reviewStatus,
+    isCurrent: artifact.isCurrent,
+    supersedesArtifactId: artifact.supersedesArtifactId,
+    createdAt: artifact.createdAt,
+    updatedAt: artifact.updatedAt,
+  };
+}
+
+function summarizeFounderReport(
+  company: Company,
+  tasks: Task[],
+  artifacts: ReturnType<typeof summarizeBusinessArtifact>[],
+) {
+  const acceptedArtifacts = artifacts.filter((artifact) => artifact.reviewStatus === "accepted" && artifact.isCurrent);
+  const blockedTasks = tasks.filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed");
+  const reviewTasks = tasks.filter((task) => task.status === "review");
+  const driftArtifacts = artifacts.filter((artifact) => artifact.validationStatus === "invalid_drift");
+
+  return {
+    founderVision: company.founderVision,
+    actualOutputs: acceptedArtifacts.map((artifact) => ({
+      taskId: artifact.taskId,
+      artifactType: artifact.artifactType,
+      taskType: artifact.taskType,
+      payload: artifact.payload,
+    })),
+    completedTaskCount: tasks.filter((task) => task.status === "complete").length,
+    reviewTaskCount: reviewTasks.length,
+    blockedTaskCount: blockedTasks.length,
+    directionDriftDetected: driftArtifacts.length > 0,
+    nextSteps: [
+      ...reviewTasks.map((task) => `Review ${task.title}.`),
+      ...blockedTasks.map((task) => task.dependencyNote ?? task.latestFailureMessage ?? `Resolve ${task.title}.`),
+    ],
   };
 }
 

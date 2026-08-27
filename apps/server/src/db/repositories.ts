@@ -2,6 +2,7 @@ import type {
   AgentRun,
   AgentFailureReason,
   Approval,
+  BusinessArtifact,
   CeoIntake,
   CeoIntakeStatus,
   CeoReviewDecision,
@@ -527,6 +528,78 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapProof(row as ProofRow));
     },
 
+    createBusinessArtifact(artifact: BusinessArtifact): void {
+      if (artifact.isCurrent) {
+        database
+          .prepare("UPDATE business_artifacts SET is_current = 0 WHERE task_id = ?")
+          .run(artifact.taskId);
+      }
+
+      database
+        .prepare(
+          `INSERT INTO business_artifacts (
+            id, company_id, task_id, source_proof_id, artifact_type, task_type,
+            payload, lineage, validation_status, validation_errors, review_status,
+            is_current, supersedes_artifact_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          artifact.id,
+          artifact.companyId,
+          artifact.taskId,
+          artifact.sourceProofId,
+          artifact.artifactType,
+          artifact.taskType,
+          JSON.stringify(artifact.payload),
+          JSON.stringify(artifact.lineage),
+          artifact.validationStatus,
+          JSON.stringify(artifact.validationErrors),
+          artifact.reviewStatus,
+          artifact.isCurrent ? 1 : 0,
+          artifact.supersedesArtifactId,
+          artifact.createdAt,
+          artifact.updatedAt,
+        );
+    },
+
+    listBusinessArtifactsForTask(taskId: string): BusinessArtifact[] {
+      const rows = database
+        .prepare("SELECT * FROM business_artifacts WHERE task_id = ? ORDER BY created_at ASC, id ASC")
+        .all(taskId);
+      return rows.map((row) => mapBusinessArtifact(row as BusinessArtifactRow));
+    },
+
+    listBusinessArtifactsForCompany(companyId: string): BusinessArtifact[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM business_artifacts
+           WHERE company_id = ?
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapBusinessArtifact(row as BusinessArtifactRow));
+    },
+
+    getCurrentBusinessArtifactForTask(taskId: string): BusinessArtifact | null {
+      const row = database
+        .prepare(
+          `SELECT *
+           FROM business_artifacts
+           WHERE task_id = ? AND is_current = 1
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+        )
+        .get(taskId);
+      return row ? mapBusinessArtifact(row as BusinessArtifactRow) : null;
+    },
+
+    updateBusinessArtifactReviewStatus(id: string, reviewStatus: BusinessArtifact["reviewStatus"], updatedAt: string): void {
+      database
+        .prepare("UPDATE business_artifacts SET review_status = ?, updated_at = ? WHERE id = ?")
+        .run(reviewStatus, updatedAt, id);
+    },
+
     createApproval(approval: Approval): void {
       database
         .prepare(
@@ -809,6 +882,24 @@ type ProofRow = {
   verified_at: string | null;
 };
 
+type BusinessArtifactRow = {
+  id: string;
+  company_id: string;
+  task_id: string;
+  source_proof_id: string | null;
+  artifact_type: BusinessArtifact["artifactType"];
+  task_type: string;
+  payload: string;
+  lineage: string;
+  validation_status: BusinessArtifact["validationStatus"];
+  validation_errors: string;
+  review_status: BusinessArtifact["reviewStatus"];
+  is_current: number;
+  supersedes_artifact_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type TaskLockRow = {
   task_id: string;
   owner_id: string;
@@ -1001,6 +1092,26 @@ function mapProof(row: ProofRow): Proof {
     uri: row.uri,
     summary: row.summary,
     verifiedAt: row.verified_at,
+  };
+}
+
+function mapBusinessArtifact(row: BusinessArtifactRow): BusinessArtifact {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    taskId: row.task_id,
+    sourceProofId: row.source_proof_id,
+    artifactType: row.artifact_type,
+    taskType: row.task_type,
+    payload: JSON.parse(row.payload) as unknown,
+    lineage: JSON.parse(row.lineage) as unknown,
+    validationStatus: row.validation_status,
+    validationErrors: JSON.parse(row.validation_errors) as unknown[],
+    reviewStatus: row.review_status,
+    isCurrent: row.is_current === 1,
+    supersedesArtifactId: row.supersedes_artifact_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

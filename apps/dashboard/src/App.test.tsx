@@ -4,7 +4,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { ApiClient, ReplanProposalSummary, ServerEvent } from "./api/client";
+import type { ApiClient, BusinessArtifactSummary, ReplanProposalSummary, ServerEvent } from "./api/client";
 
 describe("Dashboard App", () => {
   it("starts on the company-name step only", async () => {
@@ -393,7 +393,7 @@ describe("Dashboard App", () => {
 
     const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
     expect(leaderReport).toHaveTextContent("No split needed");
-    expect(leaderReport).toHaveTextContent("Task (Prepare SEO launch and indexing assets) waiting for upstream proof");
+    expect(leaderReport).toHaveTextContent("Task (Prepare SEO launch and indexing assets) waiting for upstream acceptance");
   });
 
   it("derives a running step when department progress stops before execution", async () => {
@@ -525,6 +525,7 @@ describe("Dashboard App", () => {
           summary: "Prototype validates locally.",
         },
       ],
+      businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_4", "proof_1")],
     }));
     api.createCeoReviewDecision = vi.fn(async () => ({
       decision: {
@@ -888,7 +889,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting for upstream proof"));
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting for upstream acceptance"));
 
     act(() => {
       api.lastEventHandler?.({
@@ -1051,7 +1052,7 @@ describe("Dashboard App", () => {
     await user.click(screen.getByRole("button", { name: "Engineering" }));
 
     const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting for upstream proof");
+    expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting for upstream acceptance");
     expect(within(leaderReport).queryByRole("button", { name: "Refresh Create landing page" })).not.toBeInTheDocument();
   });
 
@@ -1767,6 +1768,7 @@ function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>
       name: "Pricing Page Studio",
       status: "draft",
       playbookId: "ai-saas",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
     },
     departments: [
       {
@@ -1789,6 +1791,16 @@ function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>
         riskLevel: "medium",
       },
     ],
+    businessArtifacts: [],
+    founderReport: {
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      actualOutputs: [],
+      completedTaskCount: 0,
+      reviewTaskCount: 0,
+      blockedTaskCount: 0,
+      directionDriftDetected: false,
+      nextSteps: [],
+    },
     replanProposals: [],
     ceoIntakes: [],
     taskProgressEvents: [
@@ -1832,6 +1844,30 @@ function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>
   };
 }
 
+function createBusinessArtifactSummary(
+  id: string,
+  taskId: string,
+  sourceProofId: string,
+): BusinessArtifactSummary {
+  return {
+    id,
+    companyId: "company_1",
+    taskId,
+    sourceProofId,
+    artifactType: "implementation_summary",
+    taskType: "test_task",
+    payload: { result: "Prototype validates locally." },
+    lineage: { founder_vision: "Build an AI SaaS that creates pricing pages." },
+    validationStatus: "valid",
+    validationErrors: [],
+    reviewStatus: "unreviewed",
+    isCurrent: true,
+    supersedesArtifactId: null,
+    createdAt: "2026-08-17T00:02:00.000Z",
+    updatedAt: "2026-08-17T00:02:00.000Z",
+  };
+}
+
 function createReviewReadyCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
   const created = createCompanyResponse();
   return {
@@ -1862,6 +1898,12 @@ function createReviewReadyCompanyResponse(): Awaited<ReturnType<ApiClient["creat
         createdAt: "2026-08-17T00:02:00.000Z",
       },
     ],
+    businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
+    founderReport: {
+      ...created.founderReport!,
+      reviewTaskCount: 1,
+      nextSteps: ["Review Validate the prototype."],
+    },
   };
 }
 

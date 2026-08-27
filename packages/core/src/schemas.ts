@@ -95,6 +95,35 @@ export const proofTypeSchema = z.enum([
   "deployment",
 ]);
 
+export const businessArtifactTypeSchema = z.enum([
+  "research_findings",
+  "product_mvp_brief",
+  "implementation_summary",
+  "validation_result",
+  "preview_result",
+  "launch_plan",
+  "deployment_result",
+  "final_founder_report",
+  "blocker_report",
+  "direction_change_request",
+]);
+
+export const businessArtifactValidationStatusSchema = z.enum([
+  "pending",
+  "valid",
+  "invalid_schema",
+  "invalid_blocker",
+  "invalid_drift",
+  "stale",
+]);
+
+export const businessArtifactReviewStatusSchema = z.enum([
+  "unreviewed",
+  "accepted",
+  "returned",
+  "not_reviewable",
+]);
+
 export const proofSchemaSchema = z.object({
   id: nonEmptyString,
   description: nonEmptyString,

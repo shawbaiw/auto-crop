@@ -1,7 +1,9 @@
-import { Activity, Building2, ClipboardCheck, FileCheck2, Flag, ListChecks, ShieldAlert, TimerReset } from "lucide-react";
+import { Activity, Boxes, Building2, ClipboardCheck, FileCheck2, Flag, ListChecks, ShieldAlert, TimerReset } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import type {
   CompanySummary,
+  BusinessArtifactSummary,
+  FounderReportSummary,
   DepartmentSummary,
   ObjectiveSummary,
   ProofSummary,
@@ -30,7 +32,9 @@ export type CompanyDashboardProps = {
   events: ServerEvent[];
   focusTarget: DashboardFocusTarget | null;
   proof: ProofSummary[];
+  businessArtifacts: BusinessArtifactSummary[];
   reviews: ReviewSummary[];
+  founderReport?: FounderReportSummary;
   isPaused: boolean;
   menuBar?: ReactNode;
   onLoadProof(): void;
@@ -83,6 +87,25 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
         <RetroPanel icon={<Flag size={18} aria-hidden="true" />} title={t("dashboard.okrSystem")}>
           <VideotexLog emptyMessage={t("dashboard.noObjectives")} rows={props.objectives.map((objective) => objective.title)} />
         </RetroPanel>
+        <RetroPanel icon={<ClipboardCheck size={18} aria-hidden="true" />} title={t("dashboard.founderReport")}>
+          {props.founderReport ? (
+            <VideotexKeyValue
+              items={[
+                { label: t("dashboard.vision"), value: props.founderReport.founderVision },
+                { label: t("dashboard.acceptedOutputs"), value: String(props.founderReport.actualOutputs.length) },
+                { label: t("dashboard.awaitingReview"), value: String(props.founderReport.reviewTaskCount) },
+                { label: t("dashboard.blocked"), value: String(props.founderReport.blockedTaskCount) },
+                { label: t("dashboard.directionDrift"), value: props.founderReport.directionDriftDetected ? "yes" : "no" },
+                {
+                  label: t("dashboard.nextStep"),
+                  value: props.founderReport.nextSteps[0] ?? t("dashboard.noNextStep"),
+                },
+              ]}
+            />
+          ) : (
+            <p className="muted">{t("dashboard.noFounderReport")}</p>
+          )}
+        </RetroPanel>
         <RetroPanel
           icon={<ListChecks size={18} aria-hidden="true" />}
           id="active-tasks"
@@ -134,6 +157,15 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
             </p>
           ))}
         </RetroPanel>
+        <RetroPanel icon={<Boxes size={18} aria-hidden="true" />} title={t("dashboard.businessArtifacts")}>
+          {props.businessArtifacts.length === 0 ? <p className="muted">{t("dashboard.noBusinessArtifacts")}</p> : null}
+          <VideotexLog
+            emptyMessage={t("dashboard.noBusinessArtifacts")}
+            rows={props.businessArtifacts.map((artifact) =>
+              `${taskTitleForArtifact(artifact, props.tasks)} / ${artifact.artifactType} / ${artifact.validationStatus} / ${artifact.reviewStatus}${artifact.isCurrent ? " / current" : ""}`,
+            )}
+          />
+        </RetroPanel>
         <RetroPanel icon={<ShieldAlert size={18} aria-hidden="true" />} title={t("dashboard.approvals")}>
           <p className="muted">{t("dashboard.permissionRequests")}</p>
           <RetroButton onClick={props.onKillSwitch} variant="danger">
@@ -156,4 +188,8 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
       </RetroPanel>
     </AppShell>
   );
+}
+
+function taskTitleForArtifact(artifact: BusinessArtifactSummary, tasks: TaskSummary[]): string {
+  return tasks.find((task) => task.id === artifact.taskId)?.title ?? artifact.taskId;
 }

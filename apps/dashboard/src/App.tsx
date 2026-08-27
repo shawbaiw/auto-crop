@@ -3,6 +3,7 @@ import {
   createApiClient,
   type AgentSummary,
   type ApiClient,
+  type BusinessArtifactSummary,
   type CeoIntakeSummary,
   type CompanyListItem,
   type CreateCompanyResponse,
@@ -56,6 +57,7 @@ export default function App({ apiClient }: AppProps) {
   const [taskProgressEvents, setTaskProgressEvents] = useState<TaskProgressEventSummary[]>([]);
   const [ceoIntakes, setCeoIntakes] = useState<CeoIntakeSummary[]>([]);
   const [proof, setProof] = useState<ProofSummary[]>([]);
+  const [businessArtifacts, setBusinessArtifacts] = useState<BusinessArtifactSummary[]>([]);
   const [replanProposals, setReplanProposals] = useState<ReplanProposalSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
@@ -130,6 +132,7 @@ export default function App({ apiClient }: AppProps) {
   function applyCompanyState(response: CreateCompanyResponse, nextView: AppView) {
     setBlueprint(response);
     setProof(response.proof ?? []);
+    setBusinessArtifacts(response.businessArtifacts ?? []);
     setReviews(response.reviews ?? []);
     setEvents(response.activity ?? []);
     setTaskProgressEvents(response.taskProgressEvents ?? []);
@@ -267,6 +270,7 @@ export default function App({ apiClient }: AppProps) {
     setCreateError(null);
     setBlueprint(null);
     setProof([]);
+    setBusinessArtifacts([]);
     setReplanProposals([]);
     setReviews([]);
     setEvents([]);
@@ -283,6 +287,7 @@ export default function App({ apiClient }: AppProps) {
       });
       setBlueprint(response);
       setProof(response.proof ?? []);
+      setBusinessArtifacts(response.businessArtifacts ?? []);
       setReplanProposals(response.replanProposals ?? []);
       setReviews(response.reviews ?? []);
       setEvents(response.activity ?? []);
@@ -522,6 +527,7 @@ export default function App({ apiClient }: AppProps) {
     clearCurrentCompanyId();
     setBlueprint(null);
     setProof([]);
+    setBusinessArtifacts([]);
     setReviews([]);
     setEvents([]);
     setTaskProgressEvents([]);
@@ -674,6 +680,7 @@ export default function App({ apiClient }: AppProps) {
         onCreateCeoIntake={handleCreateCeoIntake}
         onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
         proof={proof}
+        businessArtifacts={businessArtifacts}
         selectedCeoAgentId={selectedAgentId}
         tasks={blueprint.tasks}
         taskProgressEvents={taskProgressEvents}
@@ -705,6 +712,7 @@ export default function App({ apiClient }: AppProps) {
         departments={blueprint.departments}
         events={events}
         focusTarget={dashboardFocusTarget}
+        founderReport={blueprint.founderReport}
         isPaused={isPaused}
         menuBar={menuBar}
         onKillSwitch={handleKillSwitch}
@@ -712,6 +720,7 @@ export default function App({ apiClient }: AppProps) {
         onLoadReviews={handleLoadReviews}
         objectives={blueprint.objectives}
         proof={proof}
+        businessArtifacts={businessArtifacts}
         reviews={reviews}
         tasks={blueprint.tasks}
       />,

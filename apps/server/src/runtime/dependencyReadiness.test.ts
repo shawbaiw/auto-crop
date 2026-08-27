@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Company, Department, KeyResult, Objective, Proof, Task } from "@auto-crop/core";
+import type { BusinessArtifact, Company, Department, KeyResult, Objective, Proof, Task } from "@auto-crop/core";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
@@ -78,7 +78,7 @@ describe("resolveDependencyReadiness", () => {
     client.close();
   });
 
-  it("blocks when an upstream dependency is review-ready but has no consumable proof", () => {
+  it("waits when an upstream dependency is review-ready but not CEO accepted", () => {
     const { repositories, client } = createFixture([
       createTaskRecord("task_1", "review"),
       createTaskRecord("task_2", "queued"),
@@ -92,15 +92,15 @@ describe("resolveDependencyReadiness", () => {
     const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
 
     expect(readiness).toMatchObject({
-      kind: "missing_deliverable",
-      note: "Missing consumable proof from dependency: Task task_1.",
+      kind: "waiting",
+      note: "Waiting for dependency acceptance: Task task_1 (review).",
     });
     client.close();
   });
 
-  it("returns handoffs when every upstream dependency has consumable proof", () => {
+  it("blocks when an upstream dependency is complete but has no accepted business artifact", () => {
     const { repositories, client } = createFixture([
-      { ...createTaskRecord("task_1", "review"), artifactWorkspacePath: "/tmp/artifact-workspace" },
+      createTaskRecord("task_1", "complete"),
       createTaskRecord("task_2", "queued"),
     ]);
     repositories.createTaskDependency({
@@ -119,12 +119,64 @@ describe("resolveDependencyReadiness", () => {
 
     const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
 
+    expect(readiness).toMatchObject({
+      kind: "missing_deliverable",
+      note: "Missing accepted business artifact from dependency: Task task_1.",
+    });
+    client.close();
+  });
+
+  it("returns handoffs when every upstream dependency has an accepted current valid business artifact", () => {
+    const { repositories, client } = createFixture([
+      { ...createTaskRecord("task_1", "complete"), artifactWorkspacePath: "/tmp/artifact-workspace" },
+      createTaskRecord("task_2", "queued"),
+    ]);
+    repositories.createTaskDependency({
+      taskId: "task_2",
+      dependsOnTaskId: "task_1",
+      handoffContract: "Consume the product brief before drafting launch copy.",
+    });
+    repositories.appendProof({
+      id: "proof_1",
+      taskId: "task_1",
+      type: "file",
+      uri: "/tmp/artifact-workspace/product-brief.md",
+      summary: "File proof: product-brief.md",
+      verifiedAt: null,
+    } satisfies Proof);
+    repositories.createBusinessArtifact(
+      createBusinessArtifactRecord({
+        id: "artifact_1",
+        taskId: "task_1",
+        sourceProofId: "proof_1",
+        payload: {
+          selected_keyword: "pricing page generator",
+          target_user: "solo SaaS founders",
+          mvp_scope: "one-page pricing copy generator",
+        },
+      }),
+    );
+
+    const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
+
     expect(readiness).toEqual({
       kind: "ready",
       handoffs: [
         {
           upstreamTaskId: "task_1",
           upstreamTaskTitle: "Task task_1",
+          businessArtifactId: "artifact_1",
+          artifactType: "product_mvp_brief",
+          taskType: "product_planning",
+          payload: {
+            selected_keyword: "pricing page generator",
+            target_user: "solo SaaS founders",
+            mvp_scope: "one-page pricing copy generator",
+          },
+          lineage: {
+            founder_vision: "Build an AI SaaS that creates pricing pages.",
+            objective: "Validate the first wedge",
+          },
           proofId: "proof_1",
           proofType: "file",
           uri: "/tmp/artifact-workspace/product-brief.md",
@@ -167,6 +219,32 @@ function createCompanyRecord(): Company {
     status: "active",
     createdAt: "2026-08-17T00:00:00.000Z",
     updatedAt: "2026-08-17T00:00:00.000Z",
+  };
+}
+
+function createBusinessArtifactRecord(
+  overrides: Partial<BusinessArtifact> & Pick<BusinessArtifact, "id" | "taskId" | "sourceProofId" | "payload">,
+): BusinessArtifact {
+  return {
+    id: overrides.id,
+    companyId: overrides.companyId ?? "company_1",
+    taskId: overrides.taskId,
+    sourceProofId: overrides.sourceProofId,
+    artifactType: overrides.artifactType ?? "product_mvp_brief",
+    taskType: overrides.taskType ?? "product_planning",
+    payload: overrides.payload,
+    lineage:
+      overrides.lineage ?? {
+        founder_vision: "Build an AI SaaS that creates pricing pages.",
+        objective: "Validate the first wedge",
+      },
+    validationStatus: overrides.validationStatus ?? "valid",
+    validationErrors: overrides.validationErrors ?? [],
+    reviewStatus: overrides.reviewStatus ?? "accepted",
+    isCurrent: overrides.isCurrent ?? true,
+    supersedesArtifactId: overrides.supersedesArtifactId ?? null,
+    createdAt: overrides.createdAt ?? "2026-08-17T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-08-17T00:00:00.000Z",
   };
 }
 
