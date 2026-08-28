@@ -181,8 +181,15 @@ export default function App({ apiClient }: AppProps) {
     return client.subscribeEvents((event) => {
       setEvents((current) => [...current.slice(-49), event]);
       setBlueprint((current) => updateBlueprintTaskStatus(current, event));
+
+      if (blueprint?.company.id && shouldReloadCompanyStateAfterEvent(event)) {
+        void client
+          .getCompanyState(blueprint.company.id)
+          .then((response) => applyCompanyState(response, view))
+          .catch(() => undefined);
+      }
     });
-  }, [client]);
+  }, [blueprint?.company.id, client, view]);
 
   useEffect(() => {
     function handleFullscreenChange() {
@@ -984,6 +991,10 @@ function taskStatusFromEvent(eventType: string) {
     default:
       return null;
   }
+}
+
+function shouldReloadCompanyStateAfterEvent(event: ServerEvent) {
+  return event.type === "task_review";
 }
 
 function defaultCompanyView(companyStatus: string): AppView {

@@ -357,6 +357,76 @@ describe("Dashboard App", () => {
     expect(within(ceoPending).queryByRole("button", { name: /return/i })).not.toBeInTheDocument();
   });
 
+  it("loads review artifacts after a task_review event so CEO Pending becomes actionable", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    const reviewReady = {
+      ...created,
+      proof: created.proof ?? [],
+      reviews: created.reviews ?? [],
+      activity: created.activity ?? [],
+      replanProposals: created.replanProposals ?? [],
+      tasks: [
+        {
+          ...created.tasks[0],
+          title: "Find the first overseas keyword opportunity",
+          status: "review" as const,
+        },
+      ],
+      taskProgressEvents: [
+        ...(created.taskProgressEvents ?? []).slice(0, 2),
+        {
+          id: "task_progress_3",
+          companyId: "company_1",
+          departmentId: "department_1",
+          parentTaskId: "task_1",
+          subjectTaskId: "task_1",
+          step: "awaiting_review" as const,
+          status: "current" as const,
+          label: "Awaiting review",
+          detail: null,
+          createdAt: "2026-08-17T00:02:00.000Z",
+        },
+      ],
+      businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
+    };
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          title: "Find the first overseas keyword opportunity",
+          status: "running" as const,
+        },
+      ],
+      businessArtifacts: [],
+    }));
+    api.getCompanyState = vi.fn(async () => reviewReady);
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    act(() => {
+      api.lastEventHandler?.({
+        type: "task_review",
+        taskId: "task_1",
+        status: "review",
+        message: "Task ready for CEO review.",
+      });
+    });
+
+    await waitFor(() => expect(api.getCompanyState).toHaveBeenCalledWith("company_1"));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(await within(leaderReport).findByRole("button", { name: "View CEO Pending Item" })).toBeInTheDocument();
+
+    await user.click(within(leaderReport).getByRole("button", { name: "View CEO Pending Item" }));
+    const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
+    expect(ceoPending).toHaveTextContent("Find the first overseas keyword opportunity");
+  });
+
   it("does not duplicate blocked task status in a separate CEO blocked queue", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => {
@@ -1489,6 +1559,21 @@ describe("Dashboard App", () => {
 
   it("updates task status in the operating dashboard from SSE", async () => {
     const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.getCompanyState = vi.fn(async () => ({
+      ...created,
+      proof: created.proof ?? [],
+      reviews: created.reviews ?? [],
+      activity: created.activity ?? [],
+      replanProposals: created.replanProposals ?? [],
+      tasks: [
+        {
+          ...created.tasks[0],
+          status: "review" as const,
+        },
+      ],
+      businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
+    }));
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
