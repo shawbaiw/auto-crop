@@ -317,10 +317,20 @@ function withPrototypeGuidance(description: string, proofSchemaId: string): stri
     return description;
   }
 
+  const guidance = [
+    "Prototype guidance: prefer a fast, inspectable browser artifact such as static index.html, src/main.tsx, src/App.tsx, or app/page.tsx. Prefer built-in browser APIs and small local code over installing large scaffolds. Do not initialize Sites, Vinext, or Next unless deployment is explicitly required or an existing .openai/hosting.json requires it. Leave a clear entry file for proof collection.",
+  ];
+
+  if (proofSchemaId === "repo-diff") {
+    guidance.push(
+      "Repo diff proof guidance: leave registerable diff proof at `.auto-crop-proof/<task-id>.diff` or as a top-level workspace `.diff`/`.patch` file. Files under `.auto-crop/` are not diff proof.",
+    );
+  }
+
   return [
     description,
     "",
-    "Prototype guidance: prefer a fast, inspectable browser artifact such as static index.html, src/main.tsx, src/App.tsx, or app/page.tsx. Prefer built-in browser APIs and small local code over installing large scaffolds. Do not initialize Sites, Vinext, or Next unless deployment is explicitly required or an existing .openai/hosting.json requires it. Leave a clear entry file for proof collection.",
+    ...guidance,
   ].join("\n");
 }
 

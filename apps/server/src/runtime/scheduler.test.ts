@@ -915,6 +915,54 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("includes registerable repo-diff proof locations in agent prompts", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "repo-diff"),
+    ]);
+    let prompt = "";
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        {
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          detect: async () => true,
+          run: async (request) => {
+            prompt = request.prompt;
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "done",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [createProofForTask(task)];
+      },
+      emit: () => undefined,
+    });
+
+    expect(result.completed).toEqual(["task_1"]);
+    expect(prompt).toContain("## Proof Contract");
+    expect(prompt).toContain("Original Proof Schema: repo-diff");
+    expect(prompt).toContain(".auto-crop-proof/task_1.diff");
+    expect(prompt).toContain("top-level workspace `.diff` or `.patch` file");
+    expect(prompt).toContain("Files under `.auto-crop/` are not proof for repo-diff tasks.");
+
+    client.close();
+  });
+
   it("retries timed-out medium tasks once with a long execution budget", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low", "repo-diff"),
@@ -1143,6 +1191,45 @@ describe("runSchedulerOnce", () => {
       message:
         "Follow-up task created: Continue from Partial Output: Task task_1 will continue from Partial Output at .auto-crop/workspaces/task_1.",
     }));
+
+    client.close();
+  });
+
+  it("includes repo-diff proof locations in scheduler-created Partial Output follow-ups", async () => {
+    const producer = {
+      ...createTaskRecord("task_1", "queued", "low", "repo-diff"),
+      artifactWorkspacePath: ".auto-crop/workspaces/task_1",
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer]);
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          status: "failed",
+          failureReason: "agent_failed",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: () => undefined,
+    });
+
+    const followUpTask = repositories
+      .listTasksForCompany("company_1")
+      .find((task) => task.title === "Continue from Partial Output: Task task_1");
+    expect(followUpTask?.description).toContain("## Proof Contract");
+    expect(followUpTask?.description).toContain("Original Proof Schema: repo-diff");
+    expect(followUpTask?.description).toContain(".auto-crop-proof/task_1.diff");
+    expect(followUpTask?.description).toContain("Files under `.auto-crop/` are not proof for repo-diff tasks.");
 
     client.close();
   });

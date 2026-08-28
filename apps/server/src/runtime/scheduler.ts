@@ -225,7 +225,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
             agentResult = await adapter.run({
               taskId: task.id,
-              prompt: buildAgentPrompt(task.description, handoffs),
+              prompt: buildAgentPrompt(task, handoffs),
               promptPath: "",
               workspacePath: runWorkspacePath,
               metadata: {
@@ -771,6 +771,7 @@ function buildPartialOutputFollowUpDescription(
     `Agent Log: ${logPath}`,
     "",
     "Partial Output is not Proof. Inspect and improve the existing files, keep useful work, and finish the missing deliverable.",
+    ...buildProofContractInstructions(failedTask),
     "Do not mark the task complete unless you leave proof that satisfies the original proof schema.",
   ].join("\n");
 }
@@ -922,7 +923,7 @@ function createLogPath(projectRoot: string, task: Task): string {
   return join(logsDir, `${task.id}.log`);
 }
 
-function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string {
+function buildAgentPrompt(task: Task, handoffs: TaskHandoff[]): string {
   const artifactInstructions = [
     "## Business Artifact",
     "",
@@ -945,15 +946,18 @@ function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string 
     "Put use-case-specific names such as keyword_research, mvp_brief, or seo_launch_plan in artifact_subtype, not in artifact_kind or artifact_role.",
     "Use payload for the task-specific structured result and lineage for the upstream objective chain you used.",
   ];
+  const proofInstructions = buildProofContractInstructions(task);
 
   if (handoffs.length === 0) {
-    return [description, "", ...artifactInstructions].join("\n");
+    return [task.description, "", ...artifactInstructions, "", ...proofInstructions].join("\n");
   }
 
   return [
-    description,
+    task.description,
     "",
     ...artifactInstructions,
+    "",
+    ...proofInstructions,
     "",
     "## Upstream Handoffs",
     "",
@@ -971,6 +975,45 @@ function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string 
       ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
     ]),
   ].join("\n");
+}
+
+function buildProofContractInstructions(task: Task): string[] {
+  const instructions = ["## Proof Contract", "", `Original Proof Schema: ${task.proofSchemaId}`];
+
+  if (task.proofSchemaId === "repo-diff") {
+    return [
+      ...instructions,
+      "Before finishing, leave registerable diff proof in one of these runtime-collected locations:",
+      `- .auto-crop-proof/${task.id}.diff`,
+      "- a top-level workspace `.diff` or `.patch` file",
+      "Files under `.auto-crop/` are not proof for repo-diff tasks.",
+      "Do not rely on `.auto-crop/business-artifact.json` alone; it is a business artifact, not diff proof.",
+    ];
+  }
+
+  if (task.proofSchemaId === "landing-page-file") {
+    return [
+      ...instructions,
+      "Before finishing, leave runnable prototype files directly in the task workspace, such as index.html, src/main.tsx, src/App.tsx, app/page.tsx, or package.json.",
+    ];
+  }
+
+  if (task.proofSchemaId === "product-brief") {
+    return [...instructions, "Before finishing, leave a product-brief.md file in the task workspace."];
+  }
+
+  if (task.proofSchemaId === "research-report") {
+    return [...instructions, "Before finishing, leave a research-report.md file in the task workspace."];
+  }
+
+  if (task.proofSchemaId === "test-output") {
+    return [
+      ...instructions,
+      "Before finishing, run the relevant validation command and make sure the command output appears in stdout.",
+    ];
+  }
+
+  return [...instructions, "Before finishing, leave proof that matches the original proof schema."];
 }
 
 function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolean {

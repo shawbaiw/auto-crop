@@ -119,6 +119,10 @@ describe("task recovery", () => {
       workspacePath: ".auto-crop/workspaces/task_1",
       artifactWorkspacePath: ".auto-crop/workspaces/task_1",
     });
+    expect(recoveryTask?.description).toContain("## Proof Contract");
+    expect(recoveryTask?.description).toContain("Original Proof Schema: repo-diff");
+    expect(recoveryTask?.description).toContain(".auto-crop-proof/task_1.diff");
+    expect(recoveryTask?.description).toContain("Files under `.auto-crop/` are not proof for repo-diff tasks.");
     expect(fixture.repositories.getTask("task_1")).toMatchObject({
       status: "failed",
       latestFailureReason: "timeout",

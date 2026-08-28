@@ -324,8 +324,26 @@ function buildRecoveryFollowUpDescription(failedTask: Task): string {
     `Partial Output Workspace: ${failedTask.artifactWorkspacePath}`,
     "",
     "Partial Output is not Proof. Inspect and improve the existing files, keep useful work, and finish the missing deliverable.",
+    ...buildProofContractInstructions(failedTask),
     "Do not mark the task complete unless you leave proof that satisfies the original proof schema.",
   ].join("\n");
+}
+
+function buildProofContractInstructions(task: Task): string[] {
+  const instructions = ["## Proof Contract", "", `Original Proof Schema: ${task.proofSchemaId}`];
+
+  if (task.proofSchemaId === "repo-diff") {
+    return [
+      ...instructions,
+      "Before finishing, leave registerable diff proof in one of these runtime-collected locations:",
+      `- .auto-crop-proof/${task.id}.diff`,
+      "- a top-level workspace `.diff` or `.patch` file",
+      "Files under `.auto-crop/` are not proof for repo-diff tasks.",
+      "Do not rely on `.auto-crop/business-artifact.json` alone; it is a business artifact, not diff proof.",
+    ];
+  }
+
+  return [...instructions, "Before finishing, leave proof that matches the original proof schema."];
 }
 
 function isPartialOutputFollowUpTask(task: Task): boolean {
