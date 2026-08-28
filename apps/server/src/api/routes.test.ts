@@ -624,6 +624,7 @@ describe("API routes", () => {
     const approved = await postJson<{
       decision: { id: string; taskId: string; decision: string; proofId?: string };
       task: { id: string; status: string };
+      businessArtifacts: Array<{ id: string; taskId: string; reviewStatus: string }>;
     }>(`${fixture.baseUrl}/api/ceo-review-decisions`, {
       taskId: approvedTask!.id,
       decision: "approve",
@@ -637,6 +638,9 @@ describe("API routes", () => {
       proofId: "proof_1",
     });
     expect(approved.task.status).toBe("complete");
+    expect(approved.businessArtifacts).toContainEqual(
+      expect.objectContaining({ id: "business_artifact_1", taskId: approvedTask!.id, reviewStatus: "accepted" }),
+    );
     expect(fixture.repositories.getTask(approvedTask!.id)?.status).toBe("complete");
 
     const returned = await postJson<{

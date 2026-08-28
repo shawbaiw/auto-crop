@@ -508,6 +508,9 @@ export default function App({ apiClient }: AppProps) {
     if (response.progressEvent) {
       setTaskProgressEvents((current) => [...current, response.progressEvent!]);
     }
+    if (response.businessArtifacts) {
+      setBusinessArtifacts((current) => upsertBusinessArtifacts(current, response.businessArtifacts ?? []));
+    }
     applyTaskUpdateBatchResponse(response.dependencyCascade, "Dependency cascade warning");
     return response;
   }

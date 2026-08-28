@@ -1074,6 +1074,12 @@ h3 {
   cursor: progress;
 }
 
+.ceo-task-review-detail__action--submitting:disabled {
+  background: var(--signal);
+  box-shadow: var(--hard-shadow-offset) var(--hard-shadow-offset) 0 var(--titlebar);
+  cursor: progress;
+}
+
 .retro-field {
   display: grid;
   gap: 8px;

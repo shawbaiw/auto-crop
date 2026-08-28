@@ -389,7 +389,7 @@ function CeoTaskReviewDetail({
   const [returnReason, setReturnReason] = useState<CeoReviewReturnReason | "">("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [submittingAction, setSubmittingAction] = useState<"approve" | "return" | null>(null);
   const noteInputId = useId();
   const reasonInputId = useId();
   const hasProof = proofs.length > 0;
@@ -402,22 +402,23 @@ function CeoTaskReviewDetail({
   const canApprove = hasProof && hasValidArtifact;
 
   const handleApprove = async () => {
-    if (!canApprove || submitting) {
+    if (!canApprove || submittingAction) {
       return;
     }
 
-    setSubmitting(true);
+    setError(null);
+    setSubmittingAction("approve");
     try {
       await onDecision({ taskId: item.task.id, decision: "approve" });
     } catch (decisionError) {
       setError((decisionError as Error).message);
     } finally {
-      setSubmitting(false);
+      setSubmittingAction(null);
     }
   };
 
   const handleReturn = async () => {
-    if (submitting) {
+    if (submittingAction) {
       return;
     }
 
@@ -427,7 +428,7 @@ function CeoTaskReviewDetail({
     }
 
     setError(null);
-    setSubmitting(true);
+    setSubmittingAction("return");
     try {
       await onDecision({
         taskId: item.task.id,
@@ -438,7 +439,7 @@ function CeoTaskReviewDetail({
     } catch (decisionError) {
       setError((decisionError as Error).message);
     } finally {
-      setSubmitting(false);
+      setSubmittingAction(null);
     }
   };
 
@@ -517,11 +518,21 @@ function CeoTaskReviewDetail({
           <div className="ceo-task-review-detail__actions">
             <RetroButton onClick={() => onRefreshTask?.(item.task.id)}>{t("department.viewTask")}</RetroButton>
             {canApprove ? (
-              <RetroButton disabled={submitting} onClick={handleApprove}>
+              <RetroButton
+                aria-busy={submittingAction === "approve"}
+                className={submittingAction === "approve" ? "ceo-task-review-detail__action--submitting" : undefined}
+                disabled={submittingAction !== null}
+                onClick={handleApprove}
+              >
                 {t("department.ceoReviewApprove")}
               </RetroButton>
             ) : null}
-            <RetroButton disabled={submitting} onClick={handleReturn}>
+            <RetroButton
+              aria-busy={submittingAction === "return"}
+              className={submittingAction === "return" ? "ceo-task-review-detail__action--submitting" : undefined}
+              disabled={submittingAction !== null}
+              onClick={handleReturn}
+            >
               {t("department.ceoReviewReturn")}
             </RetroButton>
           </div>

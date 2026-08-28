@@ -229,6 +229,7 @@ export type CeoReviewDecisionSummary = {
 export type CeoReviewDecisionResponse = {
   decision: CeoReviewDecisionSummary;
   task: TaskSummary;
+  businessArtifacts?: BusinessArtifactSummary[];
   event?: ServerEvent;
   progressEvent?: TaskProgressEventSummary;
   dependencyCascade?: TaskUpdateBatchSummary;

@@ -605,6 +605,7 @@ describe("Dashboard App", () => {
 
   it("opens CEO task review details and approves proof-backed completion review items", async () => {
     const api = createMockApiClient();
+    const decision = createDeferred<Awaited<ReturnType<ApiClient["createCeoReviewDecision"]>>>();
     api.createCompany = vi.fn(async () => ({
       ...createReviewReadyCompanyResponse(),
       proof: [
@@ -617,7 +618,12 @@ describe("Dashboard App", () => {
         },
       ],
     }));
-    api.createCeoReviewDecision = vi.fn(async () => ({
+    api.createCeoReviewDecision = vi.fn(() => decision.promise);
+    const acceptedArtifact = {
+      ...createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1"),
+      reviewStatus: "accepted",
+    };
+    const decisionResponse = {
       decision: {
         id: "ceo_review_decision_1",
         taskId: "task_1",
@@ -630,7 +636,8 @@ describe("Dashboard App", () => {
         ...createCompanyResponse().tasks[0],
         status: "complete" as const,
       },
-    }));
+      businessArtifacts: [acceptedArtifact],
+    };
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
@@ -645,12 +652,23 @@ describe("Dashboard App", () => {
     expect(within(taskReview).getByText("Prototype is playable locally.")).toBeInTheDocument();
     expect(within(taskReview).getByText("file / proof.md")).toBeInTheDocument();
 
-    await user.click(within(taskReview).getByRole("button", { name: "Approve, mark complete" }));
+    const approveButton = within(taskReview).getByRole("button", { name: "Approve, mark complete" });
+    const returnButton = within(taskReview).getByRole("button", { name: "Return to department" });
+    await user.click(approveButton);
 
     expect(api.createCeoReviewDecision).toHaveBeenCalledWith({
       taskId: "task_1",
       decision: "approve",
     });
+    expect(approveButton).toHaveAttribute("aria-busy", "true");
+    expect(returnButton).toHaveAttribute("aria-busy", "false");
+    expect(returnButton).toBeDisabled();
+
+    await act(async () => {
+      decision.resolve(decisionResponse);
+      await decision.promise;
+    });
+
     expect(await screen.findByText("CEO Office approved the task.")).toBeInTheDocument();
     expect(screen.queryByText("Validate the prototype")).not.toBeInTheDocument();
   });

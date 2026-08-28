@@ -301,6 +301,7 @@ async function routeRequest(
     sendJson(response, 201, {
       decision: summarizeCeoReviewDecision(result.decision),
       task: summarizeTask(result.task, options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId)),
+      businessArtifacts: options.repositories.listBusinessArtifactsForTask(result.task.id).map(summarizeBusinessArtifact),
       event: summarizeTaskEvent(result.event),
       progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
       dependencyCascade: dependencyCascade ? summarizeDependencyCascade(dependencyCascade, options.repositories) : undefined,
