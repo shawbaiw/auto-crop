@@ -11,6 +11,12 @@ coverage/
 playwright-report/
 test-results/
 
+# Local agent and skill metadata
+.agents/
+.claude/
+AGENTS.md
+skills-lock.json
+
 # Logs
 *.log
 npm-debug.log*
