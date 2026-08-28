@@ -459,6 +459,9 @@ export default function App({ apiClient }: AppProps) {
     if (response.proof) {
       setProof((current) => upsertProofs(current, response.proof ?? []));
     }
+    if (response.businessArtifacts) {
+      setBusinessArtifacts((current) => upsertBusinessArtifacts(current, response.businessArtifacts ?? []));
+    }
     applyTaskUpdateBatchResponse(response.parentAggregation, "Parent aggregation warning");
     return response;
   }
@@ -472,6 +475,9 @@ export default function App({ apiClient }: AppProps) {
     }
     if (response.proof) {
       setProof((current) => upsertProofs(current, response.proof ?? []));
+    }
+    if (response.businessArtifacts) {
+      setBusinessArtifacts((current) => upsertBusinessArtifacts(current, response.businessArtifacts ?? []));
     }
     applyTaskUpdateBatchResponse(response.parentAggregation, "Parent aggregation warning");
     return response;
@@ -770,6 +776,20 @@ function upsertProofs(proofs: ProofSummary[], nextProofs: ProofSummary[]): Proof
     result = exists
       ? result.map((current) => (current.id === proof.id ? proof : current))
       : [...result, proof];
+  }
+  return result;
+}
+
+function upsertBusinessArtifacts(
+  artifacts: BusinessArtifactSummary[],
+  nextArtifacts: BusinessArtifactSummary[],
+): BusinessArtifactSummary[] {
+  let result = artifacts;
+  for (const artifact of nextArtifacts) {
+    const exists = result.some((current) => current.id === artifact.id);
+    result = exists
+      ? result.map((current) => (current.id === artifact.id ? artifact : current))
+      : [...result, artifact];
   }
   return result;
 }

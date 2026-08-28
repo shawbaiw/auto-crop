@@ -344,6 +344,7 @@ async function routeRequest(
       event,
       progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
       proof: result.proof?.map(summarizeProof),
+      businessArtifacts: result.businessArtifacts?.map(summarizeBusinessArtifact),
       recovery: result.recovery,
       parentAggregation: parentAggregation ? summarizeParentAggregation(parentAggregation, options.repositories) : undefined,
     });
@@ -383,6 +384,7 @@ async function routeRequest(
       event,
       progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
       proof: result.proof?.map(summarizeProof),
+      businessArtifacts: options.repositories.listBusinessArtifactsForTask(result.task.id).map(summarizeBusinessArtifact),
       recovery: result.recovery,
       parentAggregation: parentAggregation ? summarizeParentAggregation(parentAggregation, options.repositories) : undefined,
     });

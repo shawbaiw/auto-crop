@@ -143,6 +143,7 @@ export function DepartmentWorkspace({
                   onViewCeoPending={() => setSelectedRoleId(ceoRoleId)}
                   onRefreshTask={onRefreshTask}
                   onRecoverTask={onRecoverTask}
+                  pendingItems={ceoPendingItems}
                   progressEvents={taskProgressEvents}
                   responsibility={selectedDepartment.responsibility}
                   tasks={tasksByDepartment.get(selectedDepartment.id) ?? []}
@@ -926,6 +927,7 @@ function DepartmentLeaderReport({
   onRecoverTask,
   onRefreshTask,
   onViewCeoPending,
+  pendingItems,
   progressEvents,
   responsibility,
   tasks,
@@ -937,6 +939,7 @@ function DepartmentLeaderReport({
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
   onViewCeoPending: () => void;
+  pendingItems: CeoPendingItem[];
   progressEvents: TaskProgressEventSummary[];
   responsibility: string;
   tasks: TaskSummary[];
@@ -953,6 +956,7 @@ function DepartmentLeaderReport({
         onRefreshTask={onRefreshTask}
         onRecoverTask={onRecoverTask}
         onViewCeoPending={onViewCeoPending}
+        pendingItems={pendingItems}
         progressEvents={progressEvents}
         tasks={tasks}
       />
@@ -967,6 +971,7 @@ function DepartmentProgressFlows({
   onRefreshTask,
   onRecoverTask,
   onViewCeoPending,
+  pendingItems,
   progressEvents,
   tasks,
 }: {
@@ -974,12 +979,17 @@ function DepartmentProgressFlows({
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
   onViewCeoPending: () => void;
+  pendingItems: CeoPendingItem[];
   progressEvents: TaskProgressEventSummary[];
   tasks: TaskSummary[];
 }) {
   const { t } = useLanguage();
   const parentTasks = tasks.filter((task) => task.taskKind !== "department_subtask");
   const progressEventsByParent = groupProgressEvents(progressEvents.filter((event) => event.departmentId === departmentId));
+  const pendingTaskIds = useMemo(
+    () => new Set(pendingItems.map((item) => item.task.id)),
+    [pendingItems],
+  );
   const flows = parentTasks.map((task) => ({
     task,
     events: resolveTaskProgressEvents(task, progressEventsByParent.get(task.id)),
@@ -998,8 +1008,8 @@ function DepartmentProgressFlows({
               <li className={`department-progress-flow__step department-progress-flow__step--${event.status}`} key={event.id}>
                 <span aria-hidden="true">{progressMarker(event.status)}</span>
                 <div className="department-progress-flow__content">
-                  <p>{formatProgressLabel(event, flow.task, t)}</p>
-                  {isActiveCeoReviewProgressEvent(event, flow.task) ? (
+                  <p>{formatProgressLabel(event, flow.task, t, pendingTaskIds.has(flow.task.id))}</p>
+                  {pendingTaskIds.has(flow.task.id) && isActiveCeoReviewProgressEvent(event, flow.task) ? (
                     <RetroButton className="department-progress-flow__action" onClick={onViewCeoPending}>
                       {t("department.viewCeoPendingItem")}
                     </RetroButton>
@@ -1161,7 +1171,12 @@ function progressMarker(status: TaskProgressEventSummary["status"]): string {
   return "○";
 }
 
-function formatProgressLabel(event: TaskProgressEventSummary, task: TaskSummary, t: ReturnType<typeof useLanguage>["t"]): string {
+function formatProgressLabel(
+  event: TaskProgressEventSummary,
+  task: TaskSummary,
+  t: ReturnType<typeof useLanguage>["t"],
+  hasCeoPendingItem: boolean,
+): string {
   switch (event.step) {
     case "received":
       return t("department.flowReceived");
@@ -1178,7 +1193,7 @@ function formatProgressLabel(event: TaskProgressEventSummary, task: TaskSummary,
     case "summarizing_proof":
       return t("department.flowSummarizingProof");
     case "awaiting_review":
-      return formatReviewProgressLabel(task, t);
+      return formatReviewProgressLabel(task, t, hasCeoPendingItem);
     case "complete":
       return t("department.flowComplete");
     case "blocked":
@@ -1189,11 +1204,16 @@ function formatProgressLabel(event: TaskProgressEventSummary, task: TaskSummary,
     case "needs_ceo_reassignment":
       return t("department.flowNeedsCeoReassignment");
     case "executing":
-      return formatExecutingProgressLabel(event.label, task, t);
+      return formatExecutingProgressLabel(event.label, task, t, hasCeoPendingItem);
   }
 }
 
-function formatExecutingProgressLabel(label: string, task: TaskSummary, t: ReturnType<typeof useLanguage>["t"]): string {
+function formatExecutingProgressLabel(
+  label: string,
+  task: TaskSummary,
+  t: ReturnType<typeof useLanguage>["t"],
+  hasCeoPendingItem: boolean,
+): string {
   const match = label.match(/^Task(?: \d+)? \((.+)\) ([a-z_]+)$/i);
   if (!match) {
     return label;
@@ -1201,14 +1221,18 @@ function formatExecutingProgressLabel(label: string, task: TaskSummary, t: Retur
 
   const [, taskTitle, status] = match;
   if (status === "review") {
-    return formatReviewProgressLabel(task, t);
+    return formatReviewProgressLabel(task, t, hasCeoPendingItem);
   }
 
   return `${t("department.flowTask")} (${task.title}) ${formatFlowTaskStatus(task.status, t)}`;
 }
 
-function formatReviewProgressLabel(task: TaskSummary, t: ReturnType<typeof useLanguage>["t"]): string {
-  if (task.status === "review") {
+function formatReviewProgressLabel(
+  task: TaskSummary,
+  t: ReturnType<typeof useLanguage>["t"],
+  hasCeoPendingItem: boolean,
+): string {
+  if (task.status === "review" && hasCeoPendingItem) {
     return formatCeoReviewSubmittedLabel(task.title, t);
   }
 

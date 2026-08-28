@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -438,6 +438,7 @@ describe("API routes", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-subtask-proof-"));
     createdDirs.push(workspacePath);
     writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
+    writeValidBusinessArtifactFile(workspacePath, "department_subtask_1");
     const subtask = {
       ...createIsolatedTask(templateTask, "department_subtask_1", "Execute prototype slice", "failed", 101),
       latestFailureReason: "no_proof" as const,
@@ -1261,6 +1262,25 @@ function createBusinessArtifactRecord(id: string, taskId: string, sourceProofId:
     createdAt: "2026-08-17T00:00:00.000Z",
     updatedAt: "2026-08-17T00:00:00.000Z",
   };
+}
+
+function writeValidBusinessArtifactFile(workspacePath: string, taskId: string): void {
+  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+  writeFileSync(
+    join(workspacePath, ".auto-crop", "business-artifact.json"),
+    JSON.stringify({
+      artifactKind: "deliverable",
+      artifactRole: "implementation",
+      artifactSubtype: "prototype_implementation",
+      taskType: "engineering.prototype_implementation",
+      payload: { result: `Recovered artifact for ${taskId}.` },
+      lineage: {
+        founderVision: "Build an AI SaaS that creates pricing pages.",
+        taskId,
+      },
+    }),
+    "utf8",
+  );
 }
 
 async function getJson<T>(url: string): Promise<T> {

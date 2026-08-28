@@ -21,6 +21,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);
     writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
+    writeValidBusinessArtifact(workspacePath);
     const fixture = createFixture([
       {
         ...createTaskRecord(),
@@ -61,6 +62,64 @@ describe("refreshTaskDependencyState proof recovery", () => {
       step: "awaiting_review",
       status: "current",
       label: "Found checkable proof and submitted it to CEO Office for review.",
+    });
+    expect(result.businessArtifacts).toHaveLength(1);
+    expect(fixture.repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
+      artifactKind: "deliverable",
+      artifactRole: "implementation",
+      reviewStatus: "unreviewed",
+      validationStatus: "valid",
+    });
+  });
+
+  it("blocks recovered proof before CEO review when the business artifact is missing", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
+    createdDirs.push(workspacePath);
+    writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        workspacePath,
+        status: "failed",
+        proofSchemaId: "repo-diff",
+      },
+    ]);
+    fixture.repositories.updateTaskExecutionSummary("task_1", {
+      latestFailureReason: "no_proof",
+      latestFailureMessage: "Task failed: Record implementation changes / no_proof.",
+    });
+
+    const result = refreshTaskDependencyState({
+      repositories: fixture.repositories,
+      taskId: "task_1",
+      proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.task.status).toBe("blocked");
+    expect(result.task.latestFailureReason).toBe("missing_business_artifact");
+    expect(result.recovery).toEqual({
+      status: "recovered",
+      message: "Found checkable proof, but blocked before CEO review because the business artifact is not reviewable.",
+    });
+    expect(result.proof).toHaveLength(1);
+    expect(result.businessArtifacts).toHaveLength(1);
+    expect(result.businessArtifacts?.[0]).toMatchObject({
+      artifactKind: "blocker",
+      artifactRole: "none",
+      artifactSubtype: "missing_business_artifact_file",
+      validationStatus: "invalid_schema",
+      reviewStatus: "not_reviewable",
+    });
+    expect(result.event).toMatchObject({
+      type: "task_blocked",
+      status: "blocked",
+      failureReason: "missing_business_artifact",
+    });
+    expect(result.progressEvent).toMatchObject({
+      step: "blocked",
+      status: "blocked",
     });
   });
 
@@ -186,4 +245,23 @@ function createSequentialIdFactory(): (prefix: string) => string {
     counts.set(prefix, next);
     return `${prefix}_${next}`;
   };
+}
+
+function writeValidBusinessArtifact(workspacePath: string): void {
+  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+  writeFileSync(
+    join(workspacePath, ".auto-crop", "business-artifact.json"),
+    JSON.stringify({
+      artifactKind: "deliverable",
+      artifactRole: "implementation",
+      artifactSubtype: "prototype_implementation",
+      taskType: "engineering.prototype_implementation",
+      payload: {
+        summary: "Implementation completed.",
+        nextSteps: ["CEO review"],
+      },
+      lineage: { taskId: "task_1" },
+    }),
+    "utf8",
+  );
 }

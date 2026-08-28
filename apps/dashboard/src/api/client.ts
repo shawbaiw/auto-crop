@@ -156,6 +156,7 @@ export type TaskRefreshResponse = {
   event: ServerEvent;
   progressEvent?: TaskProgressEventSummary;
   proof?: ProofSummary[];
+  businessArtifacts?: BusinessArtifactSummary[];
   recovery?: TaskRefreshRecoverySummary;
   parentAggregation?: TaskUpdateBatchSummary;
 };
@@ -171,6 +172,7 @@ export type TaskRecoveryResponse = {
   event: ServerEvent;
   progressEvent?: TaskProgressEventSummary;
   proof?: ProofSummary[];
+  businessArtifacts?: BusinessArtifactSummary[];
   recovery: TaskRecoverySummary;
   parentAggregation?: TaskUpdateBatchSummary;
 };

@@ -397,6 +397,63 @@ describe("Dashboard App", () => {
     );
   });
 
+  it("does not show department CEO pending shortcut when review task is not reviewable", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => {
+      const created = createCompanyResponse();
+      return {
+        ...created,
+        tasks: [
+          {
+            ...created.tasks[0],
+            title: "Find the first SEO keyword opportunity",
+            status: "review" as const,
+          },
+        ],
+        taskProgressEvents: [
+          ...(created.taskProgressEvents ?? []).slice(0, 2),
+          {
+            id: "task_progress_3",
+            companyId: "company_1",
+            departmentId: "department_1",
+            parentTaskId: "task_1",
+            subjectTaskId: "task_1",
+            step: "awaiting_review" as const,
+            status: "current" as const,
+            label: "Awaiting review",
+            detail: null,
+            createdAt: "2026-08-17T00:02:00.000Z",
+          },
+        ],
+        businessArtifacts: [
+          {
+            ...createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1"),
+            artifactKind: "blocker",
+            artifactRole: "none",
+            artifactSubtype: "invalid_business_artifact_schema",
+            artifactType: "blocker_report",
+            validationStatus: "invalid_schema",
+            reviewStatus: "not_reviewable",
+          },
+        ],
+      };
+    });
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(leaderReport).not.toHaveTextContent("submitted to CEO Office for review");
+    expect(within(leaderReport).queryByRole("button", { name: "View CEO Pending Item" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "CEO" }));
+    const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
+    expect(ceoPending).toHaveTextContent("No CEO pending items.");
+  });
+
   it("derives a waiting-upstream step when department progress stops before the current task state", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();
@@ -1143,6 +1200,7 @@ describe("Dashboard App", () => {
           summary: "Diff proof recovered from prototype-audit-trail.patch.",
         },
       ],
+      businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
       recovery: {
         status: "recovered" as const,
         message: "Found checkable proof and submitted it to CEO Office for review.",
