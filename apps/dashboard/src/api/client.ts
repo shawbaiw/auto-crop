@@ -318,55 +318,57 @@ export type ApiClient = {
     dependencyCascade?: TaskUpdateBatchSummary;
   }>;
   triggerKillSwitch(companyId: string): Promise<{ paused: boolean; company: CompanySummary }>;
-  subscribeEvents(handler: (event: ServerEvent) => void): () => void;
+  subscribeEvents(companyId: string, handler: (event: ServerEvent) => void): () => void;
 };
 
-export function createApiClient(baseUrl = ""): ApiClient {
+export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: number } = {}): ApiClient {
+  const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
+
   return {
     async listAgents() {
-      return getJson(`${baseUrl}/api/agents`);
+      return getJson(`${baseUrl}/api/agents`, requestTimeoutMs);
     },
     async listCompanies() {
-      return getJson(`${baseUrl}/api/companies`);
+      return getJson(`${baseUrl}/api/companies`, requestTimeoutMs);
     },
     async createCompany(input) {
-      return postJson(`${baseUrl}/api/companies`, input);
+      return postJson(`${baseUrl}/api/companies`, input, requestTimeoutMs);
     },
     async getCompanyState(companyId) {
-      return getJson(`${baseUrl}/api/companies/${companyId}/state`);
+      return getJson(`${baseUrl}/api/companies/${companyId}/state`, requestTimeoutMs);
     },
     async createCeoIntake(companyId, input) {
-      return postJson(`${baseUrl}/api/companies/${companyId}/ceo-intakes`, input);
+      return postJson(`${baseUrl}/api/companies/${companyId}/ceo-intakes`, input, requestTimeoutMs);
     },
     async createCeoReviewDecision(input) {
-      return postJson(`${baseUrl}/api/ceo-review-decisions`, input);
+      return postJson(`${baseUrl}/api/ceo-review-decisions`, input, requestTimeoutMs);
     },
     async activateCompany(companyId) {
-      return postJson(`${baseUrl}/api/companies/${companyId}/activate`, {});
+      return postJson(`${baseUrl}/api/companies/${companyId}/activate`, {}, requestTimeoutMs);
     },
     async getTaskProof(taskId) {
-      return getJson(`${baseUrl}/api/tasks/${taskId}/proof`);
+      return getJson(`${baseUrl}/api/tasks/${taskId}/proof`, requestTimeoutMs);
     },
     async getCompanyReviews(companyId) {
-      return getJson(`${baseUrl}/api/companies/${companyId}/reviews`);
+      return getJson(`${baseUrl}/api/companies/${companyId}/reviews`, requestTimeoutMs);
     },
     async refreshTask(taskId) {
-      return postJson(`${baseUrl}/api/tasks/${taskId}/refresh`, {});
+      return postJson(`${baseUrl}/api/tasks/${taskId}/refresh`, {}, requestTimeoutMs);
     },
     async recoverTask(taskId) {
-      return postJson(`${baseUrl}/api/tasks/${taskId}/recover`, {});
+      return postJson(`${baseUrl}/api/tasks/${taskId}/recover`, {}, requestTimeoutMs);
     },
     async createReplanProposal(taskId) {
-      return postJson(`${baseUrl}/api/tasks/${taskId}/replan-proposals`, {});
+      return postJson(`${baseUrl}/api/tasks/${taskId}/replan-proposals`, {}, requestTimeoutMs);
     },
     async confirmReplanProposal(proposalId) {
-      return postJson(`${baseUrl}/api/replan-proposals/${proposalId}/confirm`, {});
+      return postJson(`${baseUrl}/api/replan-proposals/${proposalId}/confirm`, {}, requestTimeoutMs);
     },
     async triggerKillSwitch(companyId) {
-      return postJson(`${baseUrl}/api/kill-switch`, { companyId });
+      return postJson(`${baseUrl}/api/kill-switch`, { companyId }, requestTimeoutMs);
     },
-    subscribeEvents(handler) {
-      const events = new EventSource(`${baseUrl}/api/events`);
+    subscribeEvents(companyId, handler) {
+      const events = new EventSource(`${baseUrl}/api/events?companyId=${encodeURIComponent(companyId)}`);
       const listener = (event: MessageEvent) => {
         handler(JSON.parse(event.data) as ServerEvent);
       };
@@ -388,28 +390,60 @@ export function createApiClient(baseUrl = ""): ApiClient {
   };
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+async function getJson<T>(url: string, timeoutMs: number): Promise<T> {
+  const response = await fetchWithTimeout(url, undefined, timeoutMs);
 
   if (!response.ok) {
     throw new Error(await formatRequestError(response));
   }
 
-  return (await response.json()) as T;
+  return parseJsonResponse<T>(response, url);
 }
 
-async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
+async function postJson<T>(url: string, body: unknown, timeoutMs: number): Promise<T> {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-  });
+  }, timeoutMs);
 
   if (!response.ok) {
     throw new Error(await formatRequestError(response));
   }
 
-  return (await response.json()) as T;
+  return parseJsonResponse<T>(response, url);
+}
+
+async function parseJsonResponse<T>(response: Response, url: string): Promise<T> {
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    const contentType = response.headers.get("content-type") ?? "unknown";
+    throw new Error(`Expected JSON from ${url} but received ${contentType}: ${formatUnknownError(error)}`);
+  }
+}
+
+function formatUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit | undefined, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if ((error as Error).name === "AbortError") {
+      throw new Error(`Request timed out after ${timeoutMs}ms: ${url}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function formatRequestError(response: Response): Promise<string> {

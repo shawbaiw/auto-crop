@@ -62,6 +62,7 @@ export default function App({ apiClient }: AppProps) {
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [companyListLoadState, setCompanyListLoadState] = useState<CompanyListLoadState>("loading");
+  const [companyListLoadError, setCompanyListLoadError] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [view, setView] = useState<AppView>("company-picker");
@@ -99,19 +100,21 @@ export default function App({ apiClient }: AppProps) {
 
   async function loadCompanies(options?: { isCancelled(): boolean }) {
     setCompanyListLoadState("loading");
+    setCompanyListLoadError(null);
     try {
       const response = await client.listCompanies();
-      if (options?.isCancelled()) {
+      if (options?.isCancelled?.()) {
         return;
       }
       setCompanies(response.companies);
       setCompanyListLoadState("ready");
       setView(response.companies.length > 0 ? "company-picker" : "onboarding");
-    } catch {
-      if (options?.isCancelled()) {
+    } catch (error) {
+      if (options?.isCancelled?.()) {
         return;
       }
       setCompanies([]);
+      setCompanyListLoadError(formatErrorMessage(error));
       setCompanyListLoadState("failed");
       setView("company-picker");
     }
@@ -119,11 +122,13 @@ export default function App({ apiClient }: AppProps) {
 
   async function openCompany(companyId: string) {
     setCompanyListLoadState("loading");
+    setCompanyListLoadError(null);
     try {
       const response = await client.getCompanyState(companyId);
       writeCurrentCompanyId(companyId);
       applyCompanyState(response, defaultCompanyView(response.company.status));
-    } catch {
+    } catch (error) {
+      setCompanyListLoadError(formatErrorMessage(error));
       setCompanyListLoadState("failed");
       setView("company-picker");
     }
@@ -178,11 +183,15 @@ export default function App({ apiClient }: AppProps) {
   }
 
   useEffect(() => {
-    return client.subscribeEvents((event) => {
+    if (!blueprint?.company.id) {
+      return;
+    }
+
+    return client.subscribeEvents(blueprint.company.id, (event) => {
       setEvents((current) => [...current.slice(-49), event]);
       setBlueprint((current) => updateBlueprintTaskStatus(current, event));
 
-      if (blueprint?.company.id && shouldReloadCompanyStateAfterEvent(event)) {
+      if (shouldReloadCompanyStateAfterEvent(event)) {
         void client
           .getCompanyState(blueprint.company.id)
           .then((response) => applyCompanyState(response, view))
@@ -661,6 +670,7 @@ export default function App({ apiClient }: AppProps) {
     return renderAppFrame(
       <CompanyPicker
         companies={companies}
+        loadError={companyListLoadError}
         loadState={companyListLoadState}
         menuBar={menuBar}
         onCreateNew={handleCreateNewCompany}
@@ -975,6 +985,10 @@ function hasTaskSummaryUpdate(event: ServerEvent) {
       event.dependencyNote ||
       event.artifactWorkspacePath,
   );
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function taskStatusFromEvent(eventType: string) {

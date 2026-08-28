@@ -21,6 +21,49 @@ describe("Dashboard App", () => {
     expect(screen.queryByLabelText("Founder vision")).not.toBeInTheDocument();
     expect(api.listCompanies).toHaveBeenCalledTimes(1);
     expect(api.listAgents).not.toHaveBeenCalled();
+    expect(api.subscribeEvents).not.toHaveBeenCalled();
+  });
+
+  it("shows the company list load failure detail", async () => {
+    const api = createMockApiClient();
+    api.listCompanies = vi.fn(async () => {
+      throw new Error("Expected JSON from /api/companies but received text/html.");
+    });
+
+    render(<App apiClient={api} />);
+
+    expect(await screen.findByText("Could not load companies from the local API.")).toBeInTheDocument();
+    expect(screen.getByText("Expected JSON from /api/companies but received text/html.")).toBeInTheDocument();
+  });
+
+  it("retries company loading without passing the click event as load options", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    api.listCompanies = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Request timed out after 10000ms: http://127.0.0.1:8787/api/companies"))
+      .mockResolvedValueOnce({
+        companies: [
+          {
+            id: "company_2",
+            name: "Ops Lab",
+            status: "active",
+            playbookId: "ai-saas",
+            selectedCeoAgentId: "codex",
+            createdAt: "2026-08-17T00:00:00.000Z",
+            updatedAt: "2026-08-18T00:00:00.000Z",
+            taskCount: 2,
+          },
+        ],
+      });
+
+    render(<App apiClient={api} />);
+
+    expect(await screen.findByText("Request timed out after 10000ms: http://127.0.0.1:8787/api/companies")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+
+    expect(await screen.findByText("Ops Lab")).toBeInTheDocument();
+    expect(api.listCompanies).toHaveBeenCalledTimes(2);
   });
 
   it("opens a recent company when browser storage has no current company", async () => {
@@ -2368,10 +2411,14 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         },
       };
     },
-    subscribeEvents(handler) {
+    subscribeEvents: vi.fn(function (
+      this: ApiClient & { lastEventHandler?: (event: ServerEvent) => void },
+      _companyId,
+      handler,
+    ) {
       this.lastEventHandler = handler;
       return () => undefined;
-    },
+    }),
   };
 }
 

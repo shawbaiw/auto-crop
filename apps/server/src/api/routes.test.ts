@@ -160,7 +160,7 @@ describe("API routes", () => {
 
   it("streams server-sent events", async () => {
     const fixture = await startFixtureServer();
-    const response = await fetch(`${fixture.baseUrl}/api/events`);
+    const response = await fetch(`${fixture.baseUrl}/api/events?companyId=company_1`);
     const firstChunk = response.body?.getReader();
     expect(response.headers.get("content-type")).toContain("text/event-stream");
 
@@ -171,6 +171,17 @@ describe("API routes", () => {
     expect(text).toContain("hello");
 
     await firstChunk?.cancel();
+    await fixture.close();
+  });
+
+  it("rejects event streams without a company id", async () => {
+    const fixture = await startFixtureServer();
+    const response = await fetch(`${fixture.baseUrl}/api/events`);
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/companyId is required/i);
+
     await fixture.close();
   });
 

@@ -7,6 +7,7 @@ import { RetroButton, RetroListRow, RetroPanel, RetroStatus } from "../ui/retro"
 
 export type CompanyPickerProps = {
   companies: CompanyListItem[];
+  loadError?: string | null;
   loadState: "loading" | "ready" | "failed";
   menuBar?: ReactNode;
   onCreateNew(): void;
@@ -16,6 +17,7 @@ export type CompanyPickerProps = {
 
 export function CompanyPicker({
   companies,
+  loadError,
   loadState,
   menuBar,
   onCreateNew,
@@ -44,7 +46,8 @@ export function CompanyPicker({
           ) : null}
           {loadState === "failed" ? (
             <div className="system-message system-message--danger" role="status">
-              {t("companyPicker.failed")}
+              <div>{t("companyPicker.failed")}</div>
+              {loadError ? <div className="system-message__detail">{loadError}</div> : null}
             </div>
           ) : null}
           {loadState === "ready" && companies.length === 0 ? (
@@ -66,7 +69,7 @@ export function CompanyPicker({
           ) : null}
           <div className="company-picker__actions">
             {loadState === "failed" ? (
-              <RetroButton icon={<RefreshCw size={16} aria-hidden="true" />} onClick={onRetry}>
+              <RetroButton icon={<RefreshCw size={16} aria-hidden="true" />} onClick={() => onRetry()}>
                 {t("onboarding.retry")}
               </RetroButton>
             ) : null}

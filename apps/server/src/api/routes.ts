@@ -79,6 +79,11 @@ async function routeRequest(
   const method = request.method ?? "GET";
 
   if (method === "GET" && url.pathname === "/api/events") {
+    const companyId = url.searchParams.get("companyId");
+    if (!companyId) {
+      sendJson(response, 400, { error: "companyId is required for event streams." });
+      return;
+    }
     events.connect(response);
     return;
   }
