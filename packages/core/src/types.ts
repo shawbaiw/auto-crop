@@ -28,6 +28,21 @@ export type AgentRunStatus = "queued" | "running" | "complete" | "failed" | "can
 export type ApprovalStatus = "pending" | "approved" | "denied";
 export type ReplanProposalStatus = "proposed" | "confirmed" | "dismissed";
 export type ReplanProposalSource = "planner_agent" | "deterministic_template";
+export type BusinessArtifactKind =
+  | "deliverable"
+  | "blocker"
+  | "decision_request"
+  | "direction_change_request"
+  | "final_report";
+export type BusinessArtifactRole =
+  | "findings"
+  | "plan"
+  | "spec"
+  | "implementation"
+  | "validation"
+  | "launch"
+  | "report"
+  | "none";
 export type BusinessArtifactType =
   | "research_findings"
   | "product_mvp_brief"
@@ -65,6 +80,12 @@ export type AgentFailureReason =
   | "proof_capture_failed"
   | "dependency_failed"
   | "missing_deliverable"
+  | "missing_business_artifact"
+  | "invalid_business_artifact"
+  | "non_reviewable_artifact"
+  | "direction_drift"
+  | "stale_business_artifact"
+  | "upstream_artifact_not_accepted"
   | "retry_exhausted"
   | "needs_replan"
   | "rate_limited";
@@ -214,6 +235,9 @@ export type BusinessArtifact = {
   companyId: string;
   taskId: string;
   sourceProofId: string | null;
+  artifactKind: BusinessArtifactKind;
+  artifactRole: BusinessArtifactRole;
+  artifactSubtype: string;
   artifactType: BusinessArtifactType;
   taskType: string;
   payload: unknown;

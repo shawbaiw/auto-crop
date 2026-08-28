@@ -623,8 +623,8 @@ function isApprovableBusinessArtifact(artifact: BusinessArtifact | null): boolea
     artifact !== null &&
     artifact.isCurrent &&
     artifact.validationStatus === "valid" &&
-    artifact.artifactType !== "blocker_report" &&
-    artifact.artifactType !== "direction_change_request"
+    artifact.reviewStatus === "unreviewed" &&
+    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
   );
 }
 
@@ -844,6 +844,9 @@ function summarizeBusinessArtifact(artifact: BusinessArtifact) {
     companyId: artifact.companyId,
     taskId: artifact.taskId,
     sourceProofId: artifact.sourceProofId,
+    artifactKind: artifact.artifactKind,
+    artifactRole: artifact.artifactRole,
+    artifactSubtype: artifact.artifactSubtype,
     artifactType: artifact.artifactType,
     taskType: artifact.taskType,
     payload: artifact.payload,
@@ -872,6 +875,9 @@ function summarizeFounderReport(
     founderVision: company.founderVision,
     actualOutputs: acceptedArtifacts.map((artifact) => ({
       taskId: artifact.taskId,
+      artifactKind: artifact.artifactKind,
+      artifactRole: artifact.artifactRole,
+      artifactSubtype: artifact.artifactSubtype,
       artifactType: artifact.artifactType,
       taskType: artifact.taskType,
       payload: artifact.payload,

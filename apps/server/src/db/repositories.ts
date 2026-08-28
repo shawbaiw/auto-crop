@@ -538,16 +538,20 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO business_artifacts (
-            id, company_id, task_id, source_proof_id, artifact_type, task_type,
+            id, company_id, task_id, source_proof_id, artifact_kind, artifact_role,
+            artifact_subtype, artifact_type, task_type,
             payload, lineage, validation_status, validation_errors, review_status,
             is_current, supersedes_artifact_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           artifact.id,
           artifact.companyId,
           artifact.taskId,
           artifact.sourceProofId,
+          artifact.artifactKind,
+          artifact.artifactRole,
+          artifact.artifactSubtype,
           artifact.artifactType,
           artifact.taskType,
           JSON.stringify(artifact.payload),
@@ -887,6 +891,9 @@ type BusinessArtifactRow = {
   company_id: string;
   task_id: string;
   source_proof_id: string | null;
+  artifact_kind?: BusinessArtifact["artifactKind"];
+  artifact_role?: BusinessArtifact["artifactRole"];
+  artifact_subtype?: string;
   artifact_type: BusinessArtifact["artifactType"];
   task_type: string;
   payload: string;
@@ -1101,6 +1108,9 @@ function mapBusinessArtifact(row: BusinessArtifactRow): BusinessArtifact {
     companyId: row.company_id,
     taskId: row.task_id,
     sourceProofId: row.source_proof_id,
+    artifactKind: row.artifact_kind ?? "deliverable",
+    artifactRole: row.artifact_role ?? "none",
+    artifactSubtype: row.artifact_subtype ?? "legacy",
     artifactType: row.artifact_type,
     taskType: row.task_type,
     payload: JSON.parse(row.payload) as unknown,

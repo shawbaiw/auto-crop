@@ -119,6 +119,9 @@ export function migrate(database: DatabaseClient): void {
       company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       source_proof_id TEXT REFERENCES proofs(id) ON DELETE SET NULL,
+      artifact_kind TEXT NOT NULL DEFAULT 'deliverable',
+      artifact_role TEXT NOT NULL DEFAULT 'none',
+      artifact_subtype TEXT NOT NULL DEFAULT 'legacy',
       artifact_type TEXT NOT NULL,
       task_type TEXT NOT NULL,
       payload TEXT NOT NULL,
@@ -224,6 +227,7 @@ export function migrate(database: DatabaseClient): void {
   migrateTaskHierarchyFields(database);
   migrateAgentRunsExecutionFields(database);
   migrateTaskDependencyContracts(database);
+  migrateBusinessArtifactClassificationFields(database);
   migrateReplanProposalDiagnostics(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
@@ -310,6 +314,13 @@ function migrateAgentRunsExecutionFields(database: DatabaseClient): void {
 function migrateTaskDependencyContracts(database: DatabaseClient): void {
   const columns = getColumnNames(database, "task_dependencies");
   addColumnIfMissing(database, columns, "task_dependencies", "handoff_contract TEXT");
+}
+
+function migrateBusinessArtifactClassificationFields(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "business_artifacts");
+  addColumnIfMissing(database, columns, "business_artifacts", "artifact_kind TEXT NOT NULL DEFAULT 'deliverable'");
+  addColumnIfMissing(database, columns, "business_artifacts", "artifact_role TEXT NOT NULL DEFAULT 'none'");
+  addColumnIfMissing(database, columns, "business_artifacts", "artifact_subtype TEXT NOT NULL DEFAULT 'legacy'");
 }
 
 function addColumnIfMissing(

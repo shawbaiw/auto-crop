@@ -21,7 +21,9 @@ describe("captureBusinessArtifact", () => {
     writeFileSync(
       join(workspacePath, ".auto-crop", "business-artifact.json"),
       JSON.stringify({
-        artifact_type: "product_mvp_brief",
+        artifact_kind: "deliverable",
+        artifact_role: "spec",
+        artifact_subtype: "mvp_brief",
         task_type: "product_planning",
         source_proof_id: "proof_1",
         payload: { selected_keyword: "pricing page generator" },
@@ -31,7 +33,12 @@ describe("captureBusinessArtifact", () => {
     );
 
     const artifact = captureBusinessArtifact({
-      task: createTaskRecord(),
+      task: {
+        ...createTaskRecord(),
+        title: "Do the work",
+        description: "Complete the assigned task.",
+        proofSchemaId: "generic-proof",
+      },
       proofs: [createProofRecord()],
       workspacePath,
       now: () => new Date("2026-08-17T00:00:00.000Z"),
@@ -41,6 +48,9 @@ describe("captureBusinessArtifact", () => {
     expect(artifact).toMatchObject({
       id: "business_artifact_1",
       sourceProofId: "proof_1",
+      artifactKind: "deliverable",
+      artifactRole: "spec",
+      artifactSubtype: "mvp_brief",
       artifactType: "product_mvp_brief",
       taskType: "product_planning",
       payload: { selected_keyword: "pricing page generator" },
@@ -54,7 +64,12 @@ describe("captureBusinessArtifact", () => {
     createdDirs.push(workspacePath);
 
     const artifact = captureBusinessArtifact({
-      task: createTaskRecord(),
+      task: {
+        ...createTaskRecord(),
+        title: "Do the work",
+        description: "Complete the assigned task.",
+        proofSchemaId: "generic-proof",
+      },
       proofs: [createProofRecord()],
       workspacePath,
       now: () => new Date("2026-08-17T00:00:00.000Z"),
@@ -62,11 +77,105 @@ describe("captureBusinessArtifact", () => {
     });
 
     expect(artifact).toMatchObject({
+      artifactKind: "blocker",
+      artifactRole: "none",
+      artifactSubtype: "missing_business_artifact_file",
       artifactType: "blocker_report",
       validationStatus: "invalid_schema",
       reviewStatus: "not_reviewable",
       isCurrent: true,
     });
+  });
+
+  it("infers kind and role for an unknown legacy artifactType", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifactType: "keyword_research",
+        taskType: "keyword_opportunity_research",
+        payload: {
+          summary: "Resume bullet point generator is the best first opportunity.",
+          recommendation: "Build a focused resume bullet point generator.",
+          evidence: ["High intent", "Weak direct competition"],
+          risks: ["Validate live volume before building"],
+          next_steps: ["Create MVP brief"],
+        },
+        lineage: { founder_vision: "Find an SEO opportunity and build a lightweight web product." },
+      }),
+      "utf8",
+    );
+
+    const artifact = captureBusinessArtifact({
+      task: {
+        ...createTaskRecord(),
+        title: "Find the first SEO keyword opportunity",
+        description: "Research English-language keyword opportunities.",
+        proofSchemaId: "research-report",
+      },
+      proofs: [createProofRecord()],
+      workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact).toMatchObject({
+      artifactKind: "deliverable",
+      artifactRole: "findings",
+      artifactSubtype: "keyword_research",
+      artifactType: "research_findings",
+      taskType: "keyword_opportunity_research",
+      validationStatus: "valid",
+      validationErrors: [],
+      reviewStatus: "unreviewed",
+    });
+  });
+
+  it("rejects unknown legacy artifactType when no role can be inferred", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifactType: "keyword_research",
+        taskType: "unknown_work",
+        payload: {
+          summary: "Something useful happened.",
+          recommendation: "Continue.",
+          evidence: [],
+          risks: [],
+          next_steps: [],
+        },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    const artifact = captureBusinessArtifact({
+      task: {
+        ...createTaskRecord(),
+        title: "Do the work",
+        description: "Complete the assigned task.",
+        proofSchemaId: "generic-proof",
+      },
+      proofs: [createProofRecord()],
+      workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact).toMatchObject({
+      artifactKind: "blocker",
+      artifactRole: "none",
+      artifactSubtype: "invalid_business_artifact_schema",
+      artifactType: "blocker_report",
+      validationStatus: "invalid_schema",
+      reviewStatus: "not_reviewable",
+    });
+    expect(artifact.validationErrors).toContain("artifactType: Unknown legacy artifact type and artifact role could not be inferred.");
   });
 });
 

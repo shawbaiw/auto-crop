@@ -2,7 +2,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
-import type { AgentFailureReason, Proof, Task, TaskEvent, TaskProgressEvent, TaskStatus } from "@auto-crop/core";
+import type {
+  AgentFailureReason,
+  BusinessArtifact,
+  Proof,
+  Task,
+  TaskEvent,
+  TaskProgressEvent,
+  TaskStatus,
+} from "@auto-crop/core";
 import { captureBusinessArtifact } from "./businessArtifact";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
@@ -320,16 +328,16 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           for (const item of proof) {
             input.repositories.appendProof(item);
           }
+          let businessArtifact = null;
           if (proof.length > 0) {
-            input.repositories.createBusinessArtifact(
-              captureBusinessArtifact({
-                task: { ...task, workspacePath: taskWorkspace.root },
-                proofs: proof,
-                workspacePath: taskWorkspace.root,
-                now,
-                createId,
-              }),
-            );
+            businessArtifact = captureBusinessArtifact({
+              task: { ...task, workspacePath: taskWorkspace.root },
+              proofs: proof,
+              workspacePath: taskWorkspace.root,
+              now,
+              createId,
+            });
+            input.repositories.createBusinessArtifact(businessArtifact);
           }
           createHandoffPackage({
             task: { ...task, workspacePath: taskWorkspace.root },
@@ -403,6 +411,43 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             if (!followUpTask) {
               result.blocked.push(...blockDirectDependencyConsumers(input, task));
             }
+            emitParentTaskAggregationEvents(input, task);
+            result.failed.push(task.id);
+            return;
+          }
+
+          if (!businessArtifact || !isReviewableBusinessArtifact(businessArtifact)) {
+            const failureReason = businessArtifactFailureReason(businessArtifact);
+            const failure = businessArtifactFailureMessage(task, businessArtifact);
+            input.repositories.updateTaskStatus(task.id, "blocked");
+            input.repositories.updateTaskExecutionSummary(task.id, {
+              latestFailureReason: failureReason,
+              latestFailureMessage: failure,
+            });
+            input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
+              failureReason,
+              failureMessage: failure,
+            });
+            appendAndEmitTaskEvent(input, {
+              task,
+              type: "task_blocked",
+              failureReason,
+              failureMessage: failure,
+              message: failure,
+              status: "blocked",
+              executionProfileName: timeoutResolution.executionProfile.name,
+              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+            });
+            appendTaskProgressEvent(input, {
+              task,
+              step: "blocked",
+              status: "blocked",
+              label: "Business artifact is not reviewable",
+              detail: failure,
+              subjectTaskId: task.id,
+            });
+            result.blocked.push(...blockDirectDependencyConsumers(input, task));
             emitParentTaskAggregationEvents(input, task);
             result.failed.push(task.id);
             return;
@@ -885,15 +930,20 @@ function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string 
     "Use this JSON shape:",
     JSON.stringify(
       {
-        artifactType: "implementation_summary",
-        taskType: "task-specific-type",
+        artifact_kind: "deliverable",
+        artifact_role: "implementation",
+        artifact_subtype: "prototype_implementation",
+        task_type: "task-specific-type",
         payload: {},
         lineage: {},
       },
       null,
       2,
     ),
-    "Choose the artifactType that best matches the task. Use payload for the task-specific structured result and lineage for the upstream objective chain you used.",
+    "Choose artifact_kind from: deliverable, blocker, decision_request, direction_change_request, final_report.",
+    "Choose artifact_role from: findings, plan, spec, implementation, validation, launch, report, none.",
+    "Put use-case-specific names such as keyword_research, mvp_brief, or seo_launch_plan in artifact_subtype, not in artifact_kind or artifact_role.",
+    "Use payload for the task-specific structured result and lineage for the upstream objective chain you used.",
   ];
 
   if (handoffs.length === 0) {
@@ -909,7 +959,7 @@ function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string 
     "",
     ...handoffs.flatMap((handoff, index) => [
       `${index + 1}. Task: ${handoff.upstreamTaskTitle}`,
-      `   Business Artifact: ${handoff.artifactType} / ${handoff.businessArtifactId}`,
+      `   Business Artifact: ${handoff.artifactKind} / ${handoff.artifactRole} / ${handoff.artifactSubtype} / ${handoff.businessArtifactId}`,
       `   Task Type: ${handoff.taskType}`,
       `   Payload: ${JSON.stringify(handoff.payload)}`,
       `   Lineage: ${JSON.stringify(handoff.lineage)}`,
@@ -921,6 +971,51 @@ function buildAgentPrompt(description: string, handoffs: TaskHandoff[]): string 
       ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
     ]),
   ].join("\n");
+}
+
+function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolean {
+  return (
+    artifact.isCurrent &&
+    artifact.validationStatus === "valid" &&
+    artifact.reviewStatus === "unreviewed" &&
+    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
+  );
+}
+
+function businessArtifactFailureReason(artifact: BusinessArtifact | null): SchedulerFailureReason {
+  if (!artifact) {
+    return "missing_business_artifact";
+  }
+  if (artifact.validationStatus === "invalid_drift") {
+    return "direction_drift";
+  }
+  if (artifact.validationStatus === "stale" || !artifact.isCurrent) {
+    return "stale_business_artifact";
+  }
+  if (artifact.validationStatus !== "valid") {
+    return hasArtifactReason(artifact, "missing_business_artifact_file")
+      ? "missing_business_artifact"
+      : "invalid_business_artifact";
+  }
+  return "non_reviewable_artifact";
+}
+
+function businessArtifactFailureMessage(task: Task, artifact: BusinessArtifact | null): string {
+  if (!artifact) {
+    return `Task blocked: ${task.title} / missing_business_artifact.`;
+  }
+  const errors = artifact.validationErrors.length > 0 ? ` / ${JSON.stringify(artifact.validationErrors)}` : "";
+  return `Task blocked: ${task.title} / ${businessArtifactFailureReason(artifact)} / ${artifact.artifactKind}/${artifact.artifactRole}/${artifact.artifactSubtype}${errors}.`;
+}
+
+function hasArtifactReason(artifact: BusinessArtifact, reason: string): boolean {
+  return (
+    typeof artifact.payload === "object" &&
+    artifact.payload !== null &&
+    !Array.isArray(artifact.payload) &&
+    "reason" in artifact.payload &&
+    artifact.payload.reason === reason
+  );
 }
 
 function replanMessage(task: Task, timeoutMs: number): string {

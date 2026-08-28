@@ -331,6 +331,7 @@ describe("Dashboard App", () => {
             createdAt: "2026-08-17T00:02:00.000Z",
           },
         ],
+        businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
       };
     });
     const user = userEvent.setup();
@@ -354,6 +355,46 @@ describe("Dashboard App", () => {
     expect(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" })).toBeInTheDocument();
     expect(within(ceoPending).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
     expect(within(ceoPending).queryByRole("button", { name: /return/i })).not.toBeInTheDocument();
+  });
+
+  it("does not duplicate blocked task status in a separate CEO blocked queue", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => {
+      const created = createCompanyResponse();
+      return {
+        ...created,
+        tasks: [
+          {
+            ...created.tasks[0],
+            title: "Find the first SEO keyword opportunity",
+            status: "blocked" as const,
+            failureReason: "invalid_business_artifact",
+            failureMessage: "Task blocked: invalid business artifact.",
+          },
+        ],
+        businessArtifacts: [
+          {
+            ...createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1"),
+            artifactKind: "blocker",
+            artifactRole: "none",
+            artifactSubtype: "invalid_business_artifact_schema",
+            artifactType: "blocker_report",
+            validationStatus: "invalid_schema",
+            reviewStatus: "not_reviewable",
+          },
+        ],
+      };
+    });
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    expect(screen.queryByRole("region", { name: "Blocked / Not Reviewable" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "CEO Task Dependency Graph" })).toHaveTextContent(
+      "Find the first SEO keyword opportunity",
+    );
   });
 
   it("derives a waiting-upstream step when department progress stops before the current task state", async () => {
@@ -1854,6 +1895,9 @@ function createBusinessArtifactSummary(
     companyId: "company_1",
     taskId,
     sourceProofId,
+    artifactKind: "deliverable",
+    artifactRole: "implementation",
+    artifactSubtype: "prototype_implementation",
     artifactType: "implementation_summary",
     taskType: "test_task",
     payload: { result: "Prototype validates locally." },

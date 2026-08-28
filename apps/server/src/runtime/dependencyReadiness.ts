@@ -6,6 +6,9 @@ export type TaskHandoff = {
   upstreamTaskId: string;
   upstreamTaskTitle: string;
   businessArtifactId: string;
+  artifactKind: BusinessArtifact["artifactKind"];
+  artifactRole: BusinessArtifact["artifactRole"];
+  artifactSubtype: string;
   artifactType: BusinessArtifact["artifactType"];
   taskType: string;
   payload: unknown;
@@ -101,8 +104,7 @@ function isAcceptedBusinessArtifact(artifact: BusinessArtifact | null): artifact
     artifact.isCurrent &&
     artifact.validationStatus === "valid" &&
     artifact.reviewStatus === "accepted" &&
-    artifact.artifactType !== "blocker_report" &&
-    artifact.artifactType !== "direction_change_request"
+    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
   );
 }
 
@@ -124,6 +126,9 @@ function createTaskHandoff(
     upstreamTaskId: task.id,
     upstreamTaskTitle: task.title,
     businessArtifactId: artifact.id,
+    artifactKind: artifact.artifactKind,
+    artifactRole: artifact.artifactRole,
+    artifactSubtype: artifact.artifactSubtype,
     artifactType: artifact.artifactType,
     taskType: artifact.taskType,
     payload: artifact.payload,

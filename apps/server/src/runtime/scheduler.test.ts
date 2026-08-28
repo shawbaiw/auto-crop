@@ -111,16 +111,10 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "command_output",
-          uri: "agent.log",
-          summary: "mock proof",
-          verifiedAt: null,
-        },
-      ],
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [createProofForTask(task)];
+      },
       emit: (event) => events.push(event),
     });
 
@@ -147,6 +141,56 @@ describe("runSchedulerOnce", () => {
       effectiveTimeoutMs: 600_000,
     }));
     expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_review:task_1");
+
+    client.close();
+  });
+
+  it("blocks completed tasks that have proof but no reviewable business artifact", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "proof: created markdown only",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [
+        {
+          id: `proof_${task.id}`,
+          taskId: task.id,
+          type: "command_output",
+          uri: "agent.log",
+          summary: "mock proof",
+          verifiedAt: null,
+        },
+      ],
+      emit: () => undefined,
+    });
+
+    expect(result.completed).toEqual([]);
+    expect(result.failed).toEqual(["task_1"]);
+    expect(repositories.getTask("task_1")).toMatchObject({
+      status: "blocked",
+      latestFailureReason: "missing_business_artifact",
+    });
+    expect(repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
+      artifactKind: "blocker",
+      artifactRole: "none",
+      validationStatus: "invalid_schema",
+      reviewStatus: "not_reviewable",
+    });
 
     client.close();
   });
@@ -255,16 +299,10 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "command_output",
-          uri: "agent.log",
-          summary: "final proof",
-          verifiedAt: null,
-        },
-      ],
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [{ ...createProofForTask(task), summary: "final proof" }];
+      },
       emit: (event) => events.push(event),
     });
 
@@ -381,16 +419,17 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "file",
-          uri: join(workspacePath, "index.html"),
-          summary: "file proof",
-          verifiedAt: null,
-        },
-      ],
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [
+          {
+            ...createProofForTask(task),
+            type: "file",
+            uri: join(workspacePath, "index.html"),
+            summary: "file proof",
+          },
+        ];
+      },
       emit: () => undefined,
     });
 
@@ -561,16 +600,17 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "file",
-          uri: "product-brief.md",
-          summary: "file proof",
-          verifiedAt: null,
-        },
-      ],
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [
+          {
+            ...createProofForTask(task),
+            type: "file",
+            uri: "product-brief.md",
+            summary: "file proof",
+          },
+        ];
+      },
       emit: (event) => events.push(event),
     });
 
@@ -626,16 +666,17 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "file",
-          uri: "app/page.tsx",
-          summary: "file proof",
-          verifiedAt: null,
-        },
-      ],
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [
+          {
+            ...createProofForTask(task),
+            type: "file",
+            uri: "app/page.tsx",
+            summary: "file proof",
+          },
+        ];
+      },
       emit: () => undefined,
     });
 
@@ -852,23 +893,17 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "command_output",
-          uri: "agent.log",
-          summary: "mock proof",
-          verifiedAt: null,
-        },
-      ],
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [createProofForTask(task)];
+      },
       emit: () => undefined,
     });
 
     expect(result.completed).toEqual(["task_2"]);
     expect(prompt).toContain("## Upstream Handoffs");
     expect(prompt).toContain("Task: Task task_1");
-    expect(prompt).toContain("Business Artifact: product_mvp_brief / business_artifact_upstream");
+    expect(prompt).toContain("Business Artifact: deliverable / spec / mvp_brief / business_artifact_upstream");
     expect(prompt).toContain("Task Type: product_planning");
     expect(prompt).toContain('"selected_keyword":"pricing page generator"');
     expect(prompt).toContain("Source Proof: file / proof_1");
@@ -922,16 +957,17 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "diff",
-          uri: "task.diff",
-          summary: "diff proof",
-          verifiedAt: null,
-        },
-      ],
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [
+          {
+            ...createProofForTask(task),
+            type: "diff",
+            uri: "task.diff",
+            summary: "diff proof",
+          },
+        ];
+      },
       emit: () => undefined,
     });
 
@@ -1151,16 +1187,17 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => [
-        {
-          id: `proof_${task.id}`,
-          taskId: task.id,
-          type: "file",
-          uri: "index.html",
-          summary: "file proof",
-          verifiedAt: null,
-        },
-      ],
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [
+          {
+            ...createProofForTask(task),
+            type: "file",
+            uri: "index.html",
+            summary: "file proof",
+          },
+        ];
+      },
       emit: () => undefined,
     });
 
@@ -1198,16 +1235,8 @@ describe("runSchedulerOnce", () => {
           throw new Error("schema missing");
         }
 
-        return [
-          {
-            id: `proof_${task.id}`,
-            taskId: task.id,
-            type: "command_output",
-            uri: "agent.log",
-            summary: "mock proof",
-            verifiedAt: null,
-          },
-        ];
+        writeValidBusinessArtifact(task);
+        return [createProofForTask(task)];
       },
       emit: (event) => events.push(event),
     });
@@ -1321,12 +1350,52 @@ function createTaskRecord(
   };
 }
 
+function createProofForTask(task: Task): Proof {
+  return {
+    id: `proof_${task.id}`,
+    taskId: task.id,
+    type: "command_output",
+    uri: "agent.log",
+    summary: "mock proof",
+    verifiedAt: null,
+  };
+}
+
+function writeValidBusinessArtifact(task: Task): void {
+  if (!task.workspacePath) {
+    throw new Error(`Task ${task.id} has no workspace path`);
+  }
+
+  mkdirSync(join(task.workspacePath, ".auto-crop"), { recursive: true });
+  writeFileSync(
+    join(task.workspacePath, ".auto-crop", "business-artifact.json"),
+    JSON.stringify({
+      artifact_kind: "deliverable",
+      artifact_role: "implementation",
+      artifact_subtype: "prototype_implementation",
+      task_type: "engineering.prototype_implementation",
+      payload: {
+        summary: "Mock implementation completed.",
+        recommendation: "Review the completed mock proof.",
+        evidence: ["mock proof"],
+        risks: [],
+        next_steps: ["CEO review"],
+      },
+      lineage: { task_id: task.id },
+    }),
+    "utf8",
+  );
+}
+
 function createBusinessArtifactRecord(id: string, taskId: string, sourceProofId: string): BusinessArtifact {
   return {
     id,
     companyId: "company_1",
     taskId,
     sourceProofId,
+    artifactKind: "deliverable",
+    artifactRole: "spec",
+    artifactSubtype: "mvp_brief",
     artifactType: "product_mvp_brief",
     taskType: "product_planning",
     payload: {

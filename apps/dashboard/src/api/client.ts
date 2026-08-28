@@ -112,6 +112,9 @@ export type BusinessArtifactSummary = {
   companyId: string;
   taskId: string;
   sourceProofId?: string | null;
+  artifactKind: string;
+  artifactRole: string;
+  artifactSubtype: string;
   artifactType: string;
   taskType: string;
   payload: unknown;
@@ -129,6 +132,9 @@ export type FounderReportSummary = {
   founderVision: string;
   actualOutputs: Array<{
     taskId: string;
+    artifactKind: string;
+    artifactRole: string;
+    artifactSubtype: string;
     artifactType: string;
     taskType: string;
     payload: unknown;

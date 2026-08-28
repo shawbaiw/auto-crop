@@ -88,8 +88,8 @@ export function DepartmentWorkspace({
     [departments],
   );
   const ceoPendingItems = useMemo(
-    () => getCeoPendingItems(tasks, departmentNamesById),
-    [departmentNamesById, tasks],
+    () => getCeoPendingItems(tasks, businessArtifacts, departmentNamesById),
+    [businessArtifacts, departmentNamesById, tasks],
   );
   const tasksByDepartment = useMemo(() => {
     const grouped = new Map(departments.map((department) => [department.id, [] as TaskSummary[]]));
@@ -188,14 +188,33 @@ type CeoPendingItem = {
   type: "review";
 };
 
-function getCeoPendingItems(tasks: TaskSummary[], departmentNamesById: Map<string, string>): CeoPendingItem[] {
+function getCeoPendingItems(
+  tasks: TaskSummary[],
+  businessArtifacts: BusinessArtifactSummary[],
+  departmentNamesById: Map<string, string>,
+): CeoPendingItem[] {
   return tasks
     .filter((task) => task.taskKind !== "department_subtask" && task.status === "review")
+    .filter((task) => isReviewableArtifact(currentArtifactForTask(task.id, businessArtifacts)))
     .map((task) => ({
       departmentName: departmentNamesById.get(task.departmentId) ?? task.departmentId,
       task,
       type: "review" as const,
     }));
+}
+
+function currentArtifactForTask(taskId: string, businessArtifacts: BusinessArtifactSummary[]): BusinessArtifactSummary | null {
+  return businessArtifacts.find((artifact) => artifact.taskId === taskId && artifact.isCurrent) ?? null;
+}
+
+function isReviewableArtifact(artifact: BusinessArtifactSummary | null): boolean {
+  return (
+    artifact !== null &&
+    artifact.isCurrent &&
+    artifact.validationStatus === "valid" &&
+    artifact.reviewStatus === "unreviewed" &&
+    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
+  );
 }
 
 function departmentIcon(departmentName: string): ReactNode {
@@ -377,8 +396,8 @@ function CeoTaskReviewDetail({
   const hasValidArtifact =
     currentArtifact !== null &&
     currentArtifact.validationStatus === "valid" &&
-    currentArtifact.artifactType !== "blocker_report" &&
-    currentArtifact.artifactType !== "direction_change_request";
+    currentArtifact.reviewStatus === "unreviewed" &&
+    (currentArtifact.artifactKind === "deliverable" || currentArtifact.artifactKind === "final_report");
   const canApprove = hasProof && hasValidArtifact;
 
   const handleApprove = async () => {
@@ -445,7 +464,7 @@ function CeoTaskReviewDetail({
           ))}
           {currentArtifact ? (
             <article className="ceo-task-review-proof">
-              <p>{`${currentArtifact.artifactType} / ${currentArtifact.taskType}`}</p>
+              <p>{`${currentArtifact.artifactKind} / ${currentArtifact.artifactRole} / ${currentArtifact.artifactSubtype}`}</p>
               <p className="muted">{`${currentArtifact.validationStatus} / ${currentArtifact.reviewStatus}`}</p>
             </article>
           ) : (

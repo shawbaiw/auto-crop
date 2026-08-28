@@ -162,7 +162,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
           <VideotexLog
             emptyMessage={t("dashboard.noBusinessArtifacts")}
             rows={props.businessArtifacts.map((artifact) =>
-              `${taskTitleForArtifact(artifact, props.tasks)} / ${artifact.artifactType} / ${artifact.validationStatus} / ${artifact.reviewStatus}${artifact.isCurrent ? " / current" : ""}`,
+              `${taskTitleForArtifact(artifact, props.tasks)} / ${artifact.artifactKind} / ${artifact.artifactRole} / ${artifact.artifactSubtype} / ${artifact.validationStatus} / ${artifact.reviewStatus}${artifact.isCurrent ? " / current" : ""}`,
             )}
           />
         </RetroPanel>

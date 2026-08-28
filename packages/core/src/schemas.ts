@@ -108,6 +108,25 @@ export const businessArtifactTypeSchema = z.enum([
   "direction_change_request",
 ]);
 
+export const businessArtifactKindSchema = z.enum([
+  "deliverable",
+  "blocker",
+  "decision_request",
+  "direction_change_request",
+  "final_report",
+]);
+
+export const businessArtifactRoleSchema = z.enum([
+  "findings",
+  "plan",
+  "spec",
+  "implementation",
+  "validation",
+  "launch",
+  "report",
+  "none",
+]);
+
 export const businessArtifactValidationStatusSchema = z.enum([
   "pending",
   "valid",

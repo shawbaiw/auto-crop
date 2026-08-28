@@ -1,9 +1,16 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Company, Department, KeyResult, Objective, Task } from "@auto-crop/core";
-import { aiSaasPlaybook, createDatabaseClient, createMockAgentAdapter, createRepositories, migrate } from "@auto-crop/server";
+import {
+  aiSaasPlaybook,
+  createDatabaseClient,
+  createMockAgentAdapter,
+  createRepositories,
+  migrate,
+  type AgentAdapter,
+} from "@auto-crop/server";
 import { startAutoCrop, startSchedulerLoop } from "./start";
 
 const createdDirs: string[] = [];
@@ -120,12 +127,39 @@ describe("startAutoCrop", () => {
 
     const scheduler = startSchedulerLoop({
       agents: [
-        createMockAgentAdapter({
+        {
           id: "codex",
           name: "Codex",
           capabilities: ["test"],
-          output: "proof: wake-requested scheduler tick",
-        }),
+          detect: async () => true,
+          run: async (request) => {
+            mkdirSync(join(request.workspacePath, ".auto-crop"), { recursive: true });
+            writeFileSync(
+              join(request.workspacePath, ".auto-crop", "business-artifact.json"),
+              JSON.stringify({
+                artifact_kind: "deliverable",
+                artifact_role: "validation",
+                artifact_subtype: "scheduler_wake_validation",
+                task_type: "test.scheduler_wake",
+                payload: {
+                  summary: "Scheduler wake task completed.",
+                  recommendation: "Review the wake-requested task.",
+                  evidence: ["proof: wake-requested scheduler tick"],
+                  risks: [],
+                  next_steps: ["CEO review"],
+                },
+                lineage: { task_id: "task_1" },
+              }),
+              "utf8",
+            );
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "proof: wake-requested scheduler tick",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
       ],
       intervalMs: 60_000,
       log: (line) => logs.push(line),

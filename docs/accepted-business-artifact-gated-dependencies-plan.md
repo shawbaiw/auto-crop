@@ -30,8 +30,9 @@ The first acceptance target is a fresh end-to-end run where:
 - Proof and Business Artifact are separate concepts.
 - Proof Schema describes evidence carrier shape; Task Type and playbook rules describe business semantics.
 - Business Artifacts are stored in the database, not only in task workspaces.
-- Every downstream-consumable task has an `expected_artifact_type`.
-- Artifact payload schema is selected by `task_type` with playbook defaults.
+- Every downstream-consumable task has expected Artifact Kind, Artifact Role, and payload contract metadata.
+- Artifact classification is split into `artifact_kind`, `artifact_role`, and `artifact_subtype`.
+- Artifact payload schema is selected by `task_type + artifact_role + artifact_subtype`, with role-level minimum schemas as fallback.
 - Scheduler readiness requires accepted, current, valid Business Artifacts and valid lineage.
 - Review-stage Proof is never consumable by downstream tasks.
 - Blocker Reports are diagnostic and not ordinary handoffs.
@@ -51,6 +52,9 @@ CREATE TABLE business_artifacts (
   company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   source_proof_id TEXT REFERENCES proofs(id) ON DELETE SET NULL,
+  artifact_kind TEXT NOT NULL,
+  artifact_role TEXT NOT NULL,
+  artifact_subtype TEXT NOT NULL,
   artifact_type TEXT NOT NULL,
   task_type TEXT NOT NULL,
   payload_json TEXT NOT NULL,
@@ -72,8 +76,10 @@ CREATE INDEX business_artifacts_task_current_idx
   ON business_artifacts(task_id, is_current, validation_status, review_status);
 
 CREATE INDEX business_artifacts_company_type_idx
-  ON business_artifacts(company_id, artifact_type, is_current);
+  ON business_artifacts(company_id, artifact_kind, artifact_role, artifact_subtype, is_current);
 ```
+
+`artifact_type` is retained only for legacy compatibility during the migration. It should stop being written after the migration that adds persisted `artifact_kind`, `artifact_role`, and `artifact_subtype`, and should be removed in the next cleanup migration.
 
 First-phase `validation_status` values:
 
@@ -96,27 +102,38 @@ First-phase `review_status` values:
 Add shared core types for:
 
 - `BusinessArtifact`
-- `BusinessArtifactType`
+- `BusinessArtifactKind`
+- `BusinessArtifactRole`
 - `BusinessArtifactValidationStatus`
 - `BusinessArtifactReviewStatus`
 - `ArtifactLineage`
 - `ArtifactValidationError`
 - `DirectionChangeRequestPayload`
 
-Generic Artifact Types:
+Artifact Kinds:
 
 ```txt
-research_findings
-product_mvp_brief
-implementation_summary
-validation_result
-preview_result
-launch_plan
-deployment_result
-final_founder_report
-blocker_report
+deliverable
+blocker
+decision_request
 direction_change_request
+final_report
 ```
+
+Artifact Roles:
+
+```txt
+findings
+plan
+spec
+implementation
+validation
+launch
+report
+none
+```
+
+Artifact Subtype is an open, non-empty string. Unknown subtypes produce warnings, not structural validation failures.
 
 Task Type examples:
 
@@ -139,45 +156,57 @@ The registry should map:
 
 ```ts
 taskType -> {
-  expectedArtifactType,
-  payloadSchema,
+  expectedArtifactKind,
+  expectedArtifactRole,
+  subtypeSchemas,
+  roleMinimumPayloadSchema,
   requiredDecisionFields,
   inheritedDecisionFields,
   downstreamContracts
 }
 ```
 
-The registry must not assume every Research artifact is SEO-related. A `research_findings` artifact can carry different payload schemas based on `task_type` and `payload.research_kind`.
+The registry must not assume every Research artifact is SEO-related. A `deliverable / findings` artifact can carry different payload schemas based on `task_type` and `artifact_subtype`. If a subtype schema is absent, use the role-level minimum schema instead of failing by subtype name alone.
 
 Document in the ADR that the registry should move into playbook configuration later.
 
 ## Artifact Creation
 
-Update task prompts to require agents to write `.auto-crop-artifact.json` in the task workspace for deliverable tasks.
+Update task prompts to require agents to write `.auto-crop/business-artifact.json` in the task workspace for deliverable tasks.
 
 Prompt requirements:
 
-- identify `artifact_type`
+- identify `artifact_kind`
+- identify `artifact_role`
+- identify `artifact_subtype`
 - identify `task_type`
 - include `lineage`
 - include payload fields required by the task type
 - list consumed upstream Business Artifact IDs
 - declare blocker state explicitly if the deliverable cannot be produced
+- put use-case-specific names such as `keyword_research` in `artifact_subtype`, not in `artifact_kind` or `artifact_role`
 
-Support markdown fenced JSON only as a compatibility fallback. Prefer `.auto-crop-artifact.json`.
+Support the old `artifactType` field and markdown fenced JSON only as compatibility fallbacks. Prefer `.auto-crop/business-artifact.json` with the new fields.
 
 ## Proof Capture Integration
 
 After Proof capture:
 
-1. Look for `.auto-crop-artifact.json` in the task workspace.
+1. Look for `.auto-crop/business-artifact.json` in the task workspace.
 2. If absent, look for a fenced JSON Business Artifact block in the declared Proof file.
 3. If neither exists for a task that needs a Business Artifact, create an invalid artifact record with `invalid_schema`.
 4. Run deterministic validation.
 5. Store the Business Artifact with validation errors.
 6. Mark older current artifacts for the same task as not current when a replacement artifact is created.
-7. Move tasks with normal valid artifacts to `review`.
-8. Move tasks with `blocker_report` or invalid artifacts to a non-consumable review/return path according to the review rules below.
+7. Move tasks with valid reviewable artifacts to `review`.
+8. Move tasks with missing, invalid, blocker, stale, or drifted artifacts to `blocked` with a specific failure reason such as `invalid_business_artifact`.
+
+Legacy `artifactType` inference:
+
+- If `artifactType` is one of the old supported values, map it to the equivalent kind, role, and subtype.
+- If `artifactType` is an unknown non-empty value but the artifact has valid JSON, non-empty `taskType`, `payload`, and `lineage`, treat the old value as `artifact_subtype`.
+- Infer `artifact_kind` and `artifact_role` from task type, proof schema, and task title/description. Do not depend on department name.
+- If role cannot be inferred, mark the artifact invalid and route it to the CEO Blocked Queue.
 
 Blocker text scanning should detect phrases such as:
 
@@ -245,12 +274,21 @@ Update review application logic so normal task approval requires:
 
 - Proof exists
 - current Business Artifact exists
+- Business Artifact kind is `deliverable` or `final_report`
 - Business Artifact validation is `valid`
 - Business Artifact is not stale
 - Business Artifact is not a Blocker Report
 - no unapproved Direction Change Request applies
 
 If these checks fail, the API should reject approve with a specific reason. Return and replan remain available.
+
+CEO Office should distinguish:
+
+- Review Queue: valid, current, unreviewed artifacts with kind `deliverable` or `final_report`
+- Decision Queue: artifacts with kind `decision_request` or `direction_change_request`
+- Blocked Queue: missing, invalid, stale, blocker, drifted, or otherwise non-reviewable artifacts
+
+Do not show approve controls in the Blocked Queue. Invalid schema should not become an ordinary CEO Review Request.
 
 When CEO Office approves a task:
 
@@ -265,6 +303,8 @@ When CEO Office returns a task:
 - mark its current artifact `review_status = returned`
 - mark downstream artifacts that consumed it as `stale` or block their consumption
 - do not start or continue dependent tasks from the returned artifact
+
+Do not automatically re-run schema-invalid artifacts after a CEO return. Missing artifact files may be retried once. Repeated or deterministic schema failures should remain blocked until retry or replan is explicitly requested.
 
 Founder Approval is required for:
 
@@ -344,7 +384,8 @@ Reuse existing dashboard components:
 Minimum UI changes:
 
 - task cards show artifact status: valid, invalid, blocker, drift, stale
-- review queue explains why approve is disabled
+- review queue only contains reviewable deliverables
+- blocked queue explains why an artifact is not reviewable
 - CEO workspace shows a concise lineage chain from vision to current department artifacts
 - final or blocked founder report appears in the CEO workspace or review area
 
@@ -370,7 +411,7 @@ Repository tests:
 
 Proof tests:
 
-- captures `.auto-crop-artifact.json`
+- captures `.auto-crop/business-artifact.json`
 - extracts fenced JSON fallback
 - records `invalid_schema` when artifact is absent
 - records `invalid_blocker` when blocker text is detected
@@ -393,7 +434,8 @@ CEO review API tests:
 
 Dashboard tests:
 
-- review queue disables approve for invalid/blocker/drift/stale artifact
+- review queue contains only valid reviewable artifacts
+- blocked queue shows invalid/blocker/drift/stale artifacts without approve controls
 - task card displays artifact status
 - CEO workspace shows lineage chain
 - final or blocked founder report renders using existing retro primitives
@@ -401,11 +443,11 @@ Dashboard tests:
 End-to-end regression:
 
 - create a company with a keyword-to-site founder vision
-- make Research produce valid `research_findings`
+- make Research produce valid `deliverable / findings / keyword_research`
 - make Product produce a blocker report
 - assert Engineering never starts
 - return Product
-- make Product produce valid `product_mvp_brief`
+- make Product produce valid `deliverable / spec / mvp_brief`
 - approve Product
 - assert Engineering starts with the accepted Product artifact
 - make Engineering attempt a mismatched product direction
@@ -424,7 +466,7 @@ End-to-end regression:
 
 ### Phase 2: Database And Core Types
 
-- Add `business_artifacts` migration.
+- Add `business_artifacts` migration or follow-up migration for `artifact_kind`, `artifact_role`, and `artifact_subtype`.
 - Add core TypeScript types and schemas.
 - Add repository CRUD and current-artifact helpers.
 - Add tests for persistence and migration.
@@ -432,7 +474,7 @@ End-to-end regression:
 ### Phase 3: Artifact Validation
 
 - Add artifact schema registry.
-- Add artifact parser for `.auto-crop-artifact.json` and fenced JSON fallback.
+- Add artifact parser for `.auto-crop/business-artifact.json` and fenced JSON fallback.
 - Add blocker detection.
 - Add lineage and drift validation helpers.
 - Add unit tests for all validation outcomes.
@@ -456,7 +498,8 @@ End-to-end regression:
 
 - Add artifact summaries to company state.
 - Show artifact status on task cards.
-- Explain invalid approval reasons in review queue.
+- Split CEO display into Review, Decision, and Blocked queues using existing retro components.
+- Explain invalid artifact reasons in the Blocked Queue.
 - Add lineage display and final/blocked report panels using existing retro components.
 - Add dashboard tests.
 
@@ -476,4 +519,3 @@ End-to-end regression:
 - Add a richer artifact lineage graph.
 - Add artifact revision browser.
 - Revisit workspace isolation so downstream agents never need sibling workspace file reads.
-
