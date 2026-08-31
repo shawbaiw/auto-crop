@@ -87,6 +87,70 @@ describe("captureBusinessArtifact", () => {
     });
   });
 
+  it("downgrades browser-sandbox screenshot blockers to reviewable landing page deliverables when file proof exists", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(join(workspacePath, "index.html"), "<main>Auto Crop Workspace</main>", "utf8");
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "blocker",
+        artifact_role: "validation",
+        artifact_subtype: "prototype_screenshot_validation",
+        task_type: "local_prototype_exposure",
+        payload: {
+          proof: {
+            status: "blocked_by_browser_sandbox",
+            screenshot_path: null,
+          },
+        },
+        lineage: {
+          proof_schema: "landing-page-file",
+        },
+      }),
+      "utf8",
+    );
+
+    const artifact = captureBusinessArtifact({
+      task: {
+        ...createTaskRecord(),
+        title: "Execute Provide local prototype access",
+        description: "Expose the working prototype through a local development URL and capture a screenshot.",
+        proofSchemaId: "landing-page-file",
+      },
+      proofs: [
+        {
+          ...createProofRecord(),
+          type: "file",
+          uri: join(workspacePath, "index.html"),
+          summary: "File proof: index.html",
+        },
+      ],
+      workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact).toMatchObject({
+      artifactKind: "deliverable",
+      artifactRole: "implementation",
+      artifactSubtype: "prototype_implementation",
+      artifactType: "implementation_summary",
+      taskType: "local_prototype_exposure",
+      validationStatus: "valid",
+      reviewStatus: "unreviewed",
+    });
+    expect(artifact.payload).toMatchObject({
+      proof: {
+        status: "blocked_by_browser_sandbox",
+      },
+      validationLimits: {
+        screenshotCapture: "blocked_by_browser_sandbox",
+      },
+    });
+  });
+
   it("infers kind and role for an unknown legacy artifactType", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);

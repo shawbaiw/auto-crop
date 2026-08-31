@@ -11,6 +11,7 @@ import type {
 import type { createRepositories } from "../db/repositories";
 import { captureBusinessArtifact } from "./businessArtifact";
 import { refreshDependencyTasks } from "./dependencyCascade";
+import { refreshParentTaskAggregationTask } from "./parentTaskAggregation";
 import { captureProofs } from "./proof";
 
 export type RefreshTaskDependencyStateInput = {
@@ -56,6 +57,23 @@ export function refreshTaskDependencyState(
     : recoveryResult.kind === "not_found"
       ? { status: "not_found" as const, message: proofRecoveryNotFoundMessage(task) }
       : undefined;
+
+  const parentAggregationRefresh = refreshParentTaskAggregationTask({
+    repositories: input.repositories,
+    task,
+    forceEvent: true,
+    now: input.now,
+    createId: input.createId,
+  });
+
+  if (parentAggregationRefresh?.event) {
+    return {
+      task: parentAggregationRefresh.task,
+      event: parentAggregationRefresh.event,
+      progressEvent: parentAggregationRefresh.progressEvent,
+      recovery,
+    };
+  }
 
   const dependencyRefresh = refreshDependencyTasks({
     repositories: input.repositories,
@@ -261,7 +279,7 @@ function isProofRecoveryEligible(task: Task): boolean {
     return true;
   }
 
-  return task.latestFailureReason === "missing_deliverable";
+  return task.latestFailureReason === "missing_deliverable" || task.latestFailureReason === "non_reviewable_artifact";
 }
 
 function isRefreshableStatus(status: TaskStatus): boolean {

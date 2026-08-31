@@ -195,7 +195,7 @@ function getCeoPendingItems(
   departmentNamesById: Map<string, string>,
 ): CeoPendingItem[] {
   return tasks
-    .filter((task) => task.taskKind !== "department_subtask" && task.status === "review")
+    .filter((task) => task.status === "review")
     .filter((task) => isReviewableArtifact(currentArtifactForTask(task.id, businessArtifacts)))
     .map((task) => ({
       departmentName: departmentNamesById.get(task.departmentId) ?? task.departmentId,
@@ -996,6 +996,7 @@ function DepartmentProgressFlows({
 }) {
   const { t } = useLanguage();
   const parentTasks = tasks.filter((task) => task.taskKind !== "department_subtask");
+  const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const progressEventsByParent = groupProgressEvents(progressEvents.filter((event) => event.departmentId === departmentId));
   const pendingTaskIds = useMemo(
     () => new Set(pendingItems.map((item) => item.task.id)),
@@ -1015,19 +1016,36 @@ function DepartmentProgressFlows({
         <article className="department-progress-flow" key={flow.task.id}>
           <h4>{formatDepartmentTaskTitle(index, flow.task.title, t)}</h4>
           <ol className="department-progress-flow__steps">
-            {flow.events.map((event) => (
-              <li className={`department-progress-flow__step department-progress-flow__step--${event.status}`} key={event.id}>
-                <span aria-hidden="true">{progressMarker(event.status)}</span>
-                <div className="department-progress-flow__content">
-                  <p>{formatProgressLabel(event, flow.task, t, pendingTaskIds.has(flow.task.id))}</p>
-                  {pendingTaskIds.has(flow.task.id) && isActiveCeoReviewProgressEvent(event, flow.task) ? (
-                    <RetroButton className="department-progress-flow__action" onClick={onViewCeoPending}>
-                      {t("department.viewCeoPendingItem")}
-                    </RetroButton>
-                  ) : null}
-                </div>
-              </li>
-            ))}
+            {flow.events.map((event) => {
+              const subjectTask =
+                event.subjectTaskId && event.subjectTaskId !== flow.task.id
+                  ? tasksById.get(event.subjectTaskId) ?? null
+                  : null;
+              const displayTask = subjectTask ?? flow.task;
+              const hasCeoPendingItem = pendingTaskIds.has(displayTask.id);
+
+              return (
+                <li className={`department-progress-flow__step department-progress-flow__step--${event.status}`} key={event.id}>
+                  <span aria-hidden="true">{progressMarker(event.status)}</span>
+                  <div className="department-progress-flow__content">
+                    <p>{formatProgressLabel(event, displayTask, t, hasCeoPendingItem)}</p>
+                    {hasCeoPendingItem && isActiveCeoReviewProgressEvent(event, displayTask) ? (
+                      <RetroButton className="department-progress-flow__action" onClick={onViewCeoPending}>
+                        {t("department.viewCeoPendingItem")}
+                      </RetroButton>
+                    ) : null}
+                    {subjectTask ? (
+                      <TaskStatusAction
+                        onRefreshTask={onRefreshTask}
+                        onRecoverTask={onRecoverTask}
+                        showStatusBadge={false}
+                        task={subjectTask}
+                      />
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
           </ol>
           <TaskStatusAction
             onRefreshTask={onRefreshTask}
@@ -1054,7 +1072,7 @@ function groupProgressEvents(events: TaskProgressEventSummary[]): Map<string, Ta
 }
 
 function resolveTaskProgressEvents(task: TaskSummary, events: TaskProgressEventSummary[] | undefined): TaskProgressEventSummary[] {
-  const baseEvents = events ?? fallbackProgressEvents(task);
+  const baseEvents = compactProgressEvents(events ?? fallbackProgressEvents(task));
   const derivedEvent = deriveCurrentTaskProgressEvent(task);
 
   if (!derivedEvent || progressEventsAlreadyReflectTaskStatus(baseEvents, task)) {
@@ -1062,6 +1080,18 @@ function resolveTaskProgressEvents(task: TaskSummary, events: TaskProgressEventS
   }
 
   return [...baseEvents, derivedEvent];
+}
+
+function compactProgressEvents(events: TaskProgressEventSummary[]): TaskProgressEventSummary[] {
+  const latestEventIdBySubject = new Map<string, string>();
+
+  for (const event of events) {
+    if (event.subjectTaskId) {
+      latestEventIdBySubject.set(event.subjectTaskId, event.id);
+    }
+  }
+
+  return events.filter((event) => !event.subjectTaskId || latestEventIdBySubject.get(event.subjectTaskId) === event.id);
 }
 
 function deriveCurrentTaskProgressEvent(task: TaskSummary): TaskProgressEventSummary | null {
@@ -1114,12 +1144,16 @@ function progressEventsAlreadyReflectTaskStatus(events: TaskProgressEventSummary
       return event.step === "awaiting_review" || (event.step === "executing" && /\sreview$/i.test(event.label));
     }
 
-    if (event.step !== "executing") {
-      return false;
+    if (task.status === "complete") {
+      return event.step === "complete" || event.status === "complete";
     }
 
-    if (currentProgressStatus && event.status === currentProgressStatus) {
-      return true;
+    if (task.status === "blocked" || task.status === "failed" || task.status === "needs_replan") {
+      return event.step === "blocked" && event.status === "blocked";
+    }
+
+    if (event.step !== "executing") {
+      return false;
     }
 
     const match = event.label.match(/^Task(?: \d+)? \((.+)\) ([a-z_]+)$/i);

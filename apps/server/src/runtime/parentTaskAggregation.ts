@@ -44,6 +44,11 @@ type ParentAggregationUpdate = {
 
 type ParentAggregationContext = Pick<PropagateParentTaskAggregationInput, "repositories" | "now" | "createId">;
 
+export type RefreshParentTaskAggregationInput = ParentAggregationContext & {
+  task: Task;
+  forceEvent?: boolean;
+};
+
 export function propagateParentTaskAggregation(
   input: PropagateParentTaskAggregationInput,
 ): ParentTaskAggregationResult {
@@ -74,9 +79,20 @@ export function propagateParentTaskAggregation(
   return result;
 }
 
+export function refreshParentTaskAggregationTask(
+  input: RefreshParentTaskAggregationInput,
+): ParentTaskAggregationUpdate | null {
+  if (!hasDepartmentSubtaskDependency(input.repositories, input.task)) {
+    return null;
+  }
+
+  return refreshParentTaskAggregation(input, input.task, { forceEvent: input.forceEvent ?? false });
+}
+
 function refreshParentTaskAggregation(
   input: ParentAggregationContext,
   parent: Task,
+  options: { forceEvent?: boolean } = {},
 ): ParentTaskAggregationUpdate | null {
   if ((parent.taskKind ?? "parent") !== "parent" || !isAggregationEligible(parent)) {
     return null;
@@ -86,7 +102,26 @@ function refreshParentTaskAggregation(
   const update = parentAggregationUpdateForTask(parent, readiness);
 
   if (!hasMeaningfulChange(parent, update)) {
-    return null;
+    if (!options.forceEvent) {
+      return null;
+    }
+
+    const event = createTaskEvent(input, parent, update);
+    input.repositories.appendTaskEvent(event);
+
+    const progressEvent = createTaskProgressEvent(input, parent, update);
+    input.repositories.appendTaskProgressEvent(progressEvent);
+
+    const refreshedTask = input.repositories.getTask(parent.id);
+    if (!refreshedTask) {
+      throw new Error(`Parent task disappeared after aggregation refresh: ${parent.id}`);
+    }
+
+    return {
+      task: refreshedTask,
+      event,
+      progressEvent,
+    };
   }
 
   input.repositories.updateTaskStatus(parent.id, update.status);
@@ -292,6 +327,19 @@ function parentAggregationUpdateForTask(parent: Task, readiness: ParentDependenc
 
 function isAggregationEligible(task: Task): boolean {
   return task.status === "blocked" || task.status === "waiting_dependency";
+}
+
+function hasDepartmentSubtaskDependency(
+  repositories: ReturnType<typeof createRepositories>,
+  task: Task,
+): boolean {
+  if ((task.taskKind ?? "parent") !== "parent") {
+    return false;
+  }
+
+  return repositories
+    .listTaskDependencies(task.id)
+    .some((dependency) => (repositories.getTask(dependency.dependsOnTaskId)?.taskKind ?? "parent") === "department_subtask");
 }
 
 function isWaitingStatus(status: Task["status"]): boolean {

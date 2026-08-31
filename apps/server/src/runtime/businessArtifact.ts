@@ -117,19 +117,20 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
       updatedAt: timestamp,
     };
   }
+  const artifactValue = normalizeParsedArtifactForCapturedProof(input.task, input.proofs, parsed.value);
 
   return {
     id,
     companyId: input.task.companyId,
     taskId: input.task.id,
-    sourceProofId: parsed.value.sourceProofId ?? input.proofs[0]?.id ?? null,
-    artifactKind: parsed.value.artifactKind,
-    artifactRole: parsed.value.artifactRole,
-    artifactSubtype: parsed.value.artifactSubtype,
-    artifactType: parsed.value.artifactType,
-    taskType: parsed.value.taskType,
-    payload: parsed.value.payload,
-    lineage: parsed.value.lineage,
+    sourceProofId: artifactValue.sourceProofId ?? input.proofs[0]?.id ?? null,
+    artifactKind: artifactValue.artifactKind,
+    artifactRole: artifactValue.artifactRole,
+    artifactSubtype: artifactValue.artifactSubtype,
+    artifactType: artifactValue.artifactType,
+    taskType: artifactValue.taskType,
+    payload: artifactValue.payload,
+    lineage: artifactValue.lineage,
     validationStatus: "valid",
     validationErrors: [],
     reviewStatus: "unreviewed",
@@ -233,6 +234,63 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
       lineage: json.lineage,
     },
   };
+}
+
+function normalizeParsedArtifactForCapturedProof(
+  task: Task,
+  proofs: Proof[],
+  artifact: DeclaredBusinessArtifact,
+): DeclaredBusinessArtifact {
+  if (!isRecoverableLandingPageScreenshotBlocker(task, proofs, artifact)) {
+    return artifact;
+  }
+
+  return {
+    ...artifact,
+    artifactKind: "deliverable",
+    artifactRole: "implementation",
+    artifactSubtype: "prototype_implementation",
+    artifactType: "implementation_summary",
+    payload: {
+      ...(isRecord(artifact.payload) ? artifact.payload : { originalPayload: artifact.payload }),
+      validationLimits: {
+        screenshotCapture: "blocked_by_browser_sandbox",
+      },
+    },
+  };
+}
+
+function isRecoverableLandingPageScreenshotBlocker(
+  task: Task,
+  proofs: Proof[],
+  artifact: DeclaredBusinessArtifact,
+): boolean {
+  return (
+    task.proofSchemaId === "landing-page-file" &&
+    artifact.artifactKind === "blocker" &&
+    artifact.artifactRole === "validation" &&
+    artifact.artifactSubtype.includes("screenshot") &&
+    hasFileProof(proofs) &&
+    hasBrowserSandboxStatus(artifact.payload)
+  );
+}
+
+function hasFileProof(proofs: Proof[]): boolean {
+  return proofs.some((proof) => proof.type === "file");
+}
+
+function hasBrowserSandboxStatus(payload: unknown): boolean {
+  if (!isRecord(payload)) {
+    return false;
+  }
+
+  const status = payload.status;
+  if (status === "blocked_by_browser_sandbox") {
+    return true;
+  }
+
+  const proof = payload.proof;
+  return isRecord(proof) && proof.status === "blocked_by_browser_sandbox";
 }
 
 function classifyLegacyArtifactType(

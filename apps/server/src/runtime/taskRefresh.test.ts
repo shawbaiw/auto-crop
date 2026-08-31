@@ -17,6 +17,69 @@ afterEach(() => {
 });
 
 describe("refreshTaskDependencyState proof recovery", () => {
+  it("keeps a parent task blocked when manual refresh sees a blocked department subtask before review subtasks", () => {
+    const parent = {
+      ...createTaskRecord(),
+      id: "parent_task",
+      title: "Provide local prototype access",
+      status: "blocked" as const,
+      latestFailureReason: "dependency_failed" as const,
+      latestFailureMessage:
+        "Parent task blocked: Provide local prototype access / dependency_failed / Execute Provide local prototype access is blocked.",
+      dependencyNote: "Blocked by department subtask: Execute Provide local prototype access (blocked).",
+      taskKind: "parent" as const,
+    };
+    const reviewSubtask = {
+      ...createTaskRecord(),
+      id: "a_review_subtask",
+      title: "Validate proof for Provide local prototype access",
+      status: "review" as const,
+      parentTaskId: parent.id,
+      taskKind: "department_subtask" as const,
+      source: "department" as const,
+    };
+    const blockedSubtask = {
+      ...createTaskRecord(),
+      id: "z_blocked_subtask",
+      title: "Execute Provide local prototype access",
+      status: "blocked" as const,
+      latestFailureReason: "non_reviewable_artifact" as const,
+      latestFailureMessage:
+        "Task blocked: Execute Provide local prototype access / non_reviewable_artifact / blocker/validation/prototype_screenshot_validation.",
+      parentTaskId: parent.id,
+      taskKind: "department_subtask" as const,
+      source: "department" as const,
+    };
+    const fixture = createFixture([parent, reviewSubtask, blockedSubtask]);
+    fixture.repositories.createTaskDependency({ taskId: parent.id, dependsOnTaskId: reviewSubtask.id });
+    fixture.repositories.createTaskDependency({ taskId: parent.id, dependsOnTaskId: blockedSubtask.id });
+    fixture.repositories.appendProof({
+      id: "proof_review",
+      taskId: reviewSubtask.id,
+      type: "file",
+      uri: "review.md",
+      summary: "Review proof.",
+      verifiedAt: null,
+    });
+
+    const result = refreshTaskDependencyState({
+      repositories: fixture.repositories,
+      taskId: parent.id,
+      proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.task.status).toBe("blocked");
+    expect(result.task.latestFailureReason).toBe("dependency_failed");
+    expect(result.task.dependencyNote).toBe("Blocked by department subtask: Execute Provide local prototype access (blocked).");
+    expect(result.event).toMatchObject({
+      type: "task_blocked",
+      status: "blocked",
+      failureReason: "dependency_failed",
+    });
+  });
+
   it("recovers controlled repo-diff output from failed no-proof tasks and submits them to review", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);
@@ -120,6 +183,45 @@ describe("refreshTaskDependencyState proof recovery", () => {
     expect(result.progressEvent).toMatchObject({
       step: "blocked",
       status: "blocked",
+    });
+  });
+
+  it("recovers landing-page file proof from blocked non-reviewable screenshot sandbox artifacts", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
+    createdDirs.push(workspacePath);
+    writeFileSync(join(workspacePath, "index.html"), "<main>Auto Crop Workspace</main>", "utf8");
+    writeScreenshotSandboxBlockerArtifact(workspacePath);
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        workspacePath,
+        status: "blocked",
+        proofSchemaId: "landing-page-file",
+        latestFailureReason: "non_reviewable_artifact",
+        latestFailureMessage:
+          "Task blocked: Execute Provide local prototype access / non_reviewable_artifact / blocker/validation/prototype_screenshot_validation.",
+      },
+    ]);
+
+    const result = refreshTaskDependencyState({
+      repositories: fixture.repositories,
+      taskId: "task_1",
+      proofSchemas: [{ id: "landing-page-file", description: "landing page file proof", acceptedTypes: ["file"] }],
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.task.status).toBe("review");
+    expect(result.recovery).toEqual({
+      status: "recovered",
+      message: "Found checkable proof and submitted it to CEO Office for review.",
+    });
+    expect(result.businessArtifacts?.[0]).toMatchObject({
+      artifactKind: "deliverable",
+      artifactRole: "implementation",
+      artifactSubtype: "prototype_implementation",
+      reviewStatus: "unreviewed",
+      validationStatus: "valid",
     });
   });
 
@@ -294,6 +396,29 @@ function writeValidBusinessArtifact(workspacePath: string): void {
         nextSteps: ["CEO review"],
       },
       lineage: { taskId: "task_1" },
+    }),
+    "utf8",
+  );
+}
+
+function writeScreenshotSandboxBlockerArtifact(workspacePath: string): void {
+  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+  writeFileSync(
+    join(workspacePath, ".auto-crop", "business-artifact.json"),
+    JSON.stringify({
+      artifact_kind: "blocker",
+      artifact_role: "validation",
+      artifact_subtype: "prototype_screenshot_validation",
+      task_type: "local_prototype_exposure",
+      payload: {
+        proof: {
+          status: "blocked_by_browser_sandbox",
+          screenshot_path: null,
+        },
+      },
+      lineage: {
+        proof_schema: "landing-page-file",
+      },
     }),
     "utf8",
   );

@@ -400,6 +400,69 @@ describe("Dashboard App", () => {
     expect(within(ceoPending).queryByRole("button", { name: /return/i })).not.toBeInTheDocument();
   });
 
+  it("routes review-ready department subtasks to CEO Pending", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    const parentTask = {
+      ...created.tasks[0],
+      id: "parent_task",
+      title: "Provide local prototype access",
+      status: "waiting_dependency" as const,
+      dependencyNote: "Waiting for dependency acceptance: Execute Provide local prototype access (review).",
+    };
+    const reviewSubtask = {
+      ...created.tasks[0],
+      id: "review_subtask",
+      title: "Execute Provide local prototype access",
+      status: "review" as const,
+      taskKind: "department_subtask" as const,
+      parentTaskId: parentTask.id,
+    };
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [parentTask, reviewSubtask],
+      proof: [
+        {
+          id: "proof_subtask",
+          taskId: reviewSubtask.id,
+          type: "file",
+          uri: "index.html",
+          summary: "File proof: index.html",
+        },
+      ],
+      businessArtifacts: [createBusinessArtifactSummary("business_artifact_subtask", reviewSubtask.id, "proof_subtask")],
+      taskProgressEvents: [
+        ...created.taskProgressEvents!.slice(0, 2).map((event) => ({ ...event, parentTaskId: parentTask.id })),
+        {
+          id: "task_progress_subtask_review",
+          companyId: "company_1",
+          departmentId: "department_1",
+          parentTaskId: parentTask.id,
+          subjectTaskId: reviewSubtask.id,
+          step: "awaiting_review" as const,
+          status: "current" as const,
+          label: "Awaiting review",
+          detail: null,
+          createdAt: "2026-08-17T00:03:00.000Z",
+        },
+      ],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
+    expect(ceoPending).toHaveTextContent("Review request from Engineering");
+    expect(ceoPending).toHaveTextContent("Execute Provide local prototype access");
+
+    await user.click(within(ceoPending).getByRole("button", { name: "View Task Execute Provide local prototype access" }));
+
+    const taskReview = screen.getByRole("region", { name: "Task Review" });
+    expect(within(taskReview).getByText("File proof: index.html")).toBeInTheDocument();
+    expect(within(taskReview).getByRole("button", { name: "Approve, mark complete" })).toBeEnabled();
+  });
+
   it("loads review artifacts after a task_review event so CEO Pending becomes actionable", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();
@@ -1182,6 +1245,91 @@ describe("Dashboard App", () => {
 
     expect(api.refreshTask).toHaveBeenCalledWith("task_1");
     await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting"));
+  });
+
+  it("refreshes a blocked department subtask from its parent task flow", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    const parentTask = {
+      ...created.tasks[0],
+      id: "parent_task",
+      title: "Provide local prototype access",
+      status: "waiting_dependency" as const,
+      dependencyNote: "Waiting for dependency acceptance: Validate proof for Provide local prototype access (review).",
+    };
+    const blockedSubtask = {
+      ...created.tasks[0],
+      id: "blocked_subtask",
+      title: "Execute Provide local prototype access",
+      status: "blocked" as const,
+      taskKind: "department_subtask" as const,
+      parentTaskId: parentTask.id,
+      failureReason: "non_reviewable_artifact",
+    };
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [parentTask, blockedSubtask],
+      taskProgressEvents: [
+        ...created.taskProgressEvents!.slice(0, 2).map((event) => ({ ...event, parentTaskId: parentTask.id })),
+        {
+          id: "task_progress_blocked_subtask",
+          companyId: "company_1",
+          departmentId: "department_1",
+          parentTaskId: parentTask.id,
+          subjectTaskId: blockedSubtask.id,
+          step: "blocked" as const,
+          status: "blocked" as const,
+          label: "Blocked by Execute Provide local prototype access.",
+          detail: "Task blocked: Execute Provide local prototype access / non_reviewable_artifact.",
+          createdAt: "2026-08-17T00:03:00.000Z",
+        },
+      ],
+    }));
+    api.refreshTask = vi.fn(async () => ({
+      task: {
+        ...blockedSubtask,
+        status: "review",
+        failureReason: undefined,
+      },
+      event: {
+        type: "proof_recovered",
+        taskId: blockedSubtask.id,
+        status: "review",
+        message: "Proof recovered.",
+      },
+      progressEvent: {
+        id: "task_progress_recovered_subtask",
+        companyId: "company_1",
+        departmentId: "department_1",
+        parentTaskId: parentTask.id,
+        subjectTaskId: blockedSubtask.id,
+        step: "awaiting_review" as const,
+        status: "current" as const,
+        label: "Found checkable proof and submitted it to CEO Office for review.",
+        detail: "File proof: index.html.",
+        createdAt: "2026-08-17T00:04:00.000Z",
+      },
+      recovery: {
+        status: "recovered" as const,
+        message: "Found checkable proof and submitted it to CEO Office for review.",
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+
+    expect(within(leaderReport).getByText("Blocked")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Refresh Execute Provide local prototype access" }));
+
+    expect(api.refreshTask).toHaveBeenCalledWith(blockedSubtask.id);
+    await waitFor(() =>
+      expect(within(leaderReport).getByText("Task (Execute Provide local prototype access) awaiting review")).toBeInTheDocument(),
+    );
+    expect(within(leaderReport).queryByText("Blocked")).not.toBeInTheDocument();
   });
 
   it("applies parent aggregation updates returned by task refresh", async () => {

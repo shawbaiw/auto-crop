@@ -43,8 +43,9 @@ export function captureProofs(input: CaptureProofsInput): Proof[] {
 
   const createId = input.createId ?? defaultCreateId;
   const proof: Proof[] = [];
+  const declaredFiles = input.declaredFiles ?? collectDeclaredFilesForSchema(input.proofSchema, input.workspacePath);
 
-  for (const declaredFile of input.declaredFiles ?? []) {
+  for (const declaredFile of declaredFiles) {
     if (!accepts(input.proofSchema, "file")) {
       continue;
     }
