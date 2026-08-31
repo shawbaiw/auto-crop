@@ -258,6 +258,7 @@ function slugify(value: string): string {
 type TaskBlueprintLike = {
   title: string;
   description: string;
+  requiredCapabilities: string[];
   proofSchemaId: string;
 };
 
@@ -275,10 +276,75 @@ function applyProofSchemaSanity(task: TaskBlueprintLike): { proofSchemaId: strin
 }
 
 function expectedProofSchema(task: TaskBlueprintLike): string | null {
-  const text = `${task.title} ${task.description}`.toLowerCase();
+  const title = task.title.toLowerCase();
+  const description = task.description.toLowerCase();
+  const text = `${title} ${description}`;
+  const capabilities = new Set(task.requiredCapabilities.map((capability) => capability.toLowerCase()));
 
+  if (hasValidationIntent(title, capabilities)) {
+    return "test-output";
+  }
+
+  if (hasImplementationIntent(title, capabilities)) {
+    return "landing-page-file";
+  }
+
+  if (hasResearchIntent(title, capabilities)) {
+    return "research-report";
+  }
+
+  if (hasBriefIntent(title, description, capabilities)) {
+    return "product-brief";
+  }
+
+  return expectedProofSchemaFromFallbackText(text);
+}
+
+function hasValidationIntent(title: string, capabilities: Set<string>): boolean {
+  return (
+    /\b(validate|validation|test|check|screenshot|local url|local-url)\b/.test(title) &&
+    (capabilities.has("test") || capabilities.has("frontend") || capabilities.has("code"))
+  );
+}
+
+function hasImplementationIntent(title: string, capabilities: Set<string>): boolean {
+  const hasImplementationCapability = capabilities.has("code") || capabilities.has("frontend");
+
+  return hasImplementationCapability && (
+    /\b(build|implement|ship|prototype|playable)\b/.test(title) ||
+    /\blanding[- ]page\b/.test(title) ||
+    /\brunnable\b/.test(title)
+  );
+}
+
+function hasResearchIntent(title: string, capabilities: Set<string>): boolean {
+  if (capabilities.has("research") && /\b(research|find|identify|analyze|analyse|evaluate|scan)\b/.test(title)) {
+    return true;
+  }
+
+  return /\b(research|competitor|customer pain)\b/.test(title) && !/\bwrite|draft|define\b/.test(title);
+}
+
+function hasBriefIntent(title: string, description: string, capabilities: Set<string>): boolean {
+  const hasBriefCapability = capabilities.has("writing") || capabilities.has("growth") || capabilities.has("research");
+
+  if (hasBriefCapability && /\b(write|draft|define|plan|brief|spec|copy|assets|launch)\b/.test(title)) {
+    return true;
+  }
+
+  return (
+    !capabilities.has("code") &&
+    /\b(copy|plan|brief|assets|launch)\b/.test(`${title} ${description}`)
+  );
+}
+
+function expectedProofSchemaFromFallbackText(text: string): string | null {
   if (/\b(validate|test|check|screenshot|local url|local-url)\b/.test(text)) {
     return "test-output";
+  }
+
+  if (/\b(build|implement|ship|prototype|playable|landing-page)\b/.test(text) || /\blanding page\b/.test(text)) {
+    return "landing-page-file";
   }
 
   if (/\b(research|competitor|customer pain)\b/.test(text)) {
@@ -287,10 +353,6 @@ function expectedProofSchema(task: TaskBlueprintLike): string | null {
 
   if (/\b(copy|plan|brief|assets|launch)\b/.test(text)) {
     return "product-brief";
-  }
-
-  if (/\b(build|prototype|playable|landing-page)\b/.test(text) || /\blanding page\b/.test(text)) {
-    return "landing-page-file";
   }
 
   return null;

@@ -118,6 +118,78 @@ describe("createCompany", () => {
     client.close();
   });
 
+  it("does not let upstream input words override an implementation task proof schema", async () => {
+    const projectRoot = createTempProjectRoot();
+    const client = createDatabaseClient(":memory:");
+    migrate(client);
+    const repositories = createRepositories(client);
+    const blueprint = aiSaasPlaybook.createBlueprint({
+      companyName: "CEO Renamed Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      preferredEngineeringAgentId: "codex",
+      preferredStrategyAgentId: "claude-code",
+    });
+    blueprint.tasks = [
+      {
+        key: "build_from_brief",
+        departmentName: "Engineering",
+        title: "Build the runnable MVP prototype",
+        description:
+          "Implement a runnable browser prototype from the accepted upstream MVP brief, including the core workflow and local validation surface.",
+        assigneeAgentId: "codex",
+        requiredCapabilities: ["code", "frontend", "test"],
+        proofSchemaId: "landing-page-file",
+        riskLevel: "medium",
+        dependsOnTaskKeys: [],
+        handoffContract: "Produce runnable prototype files that implement the accepted product direction.",
+      },
+    ];
+    const ceoAgent = createMockAgentAdapter({
+      id: "codex",
+      name: "Codex",
+      capabilities: ["code", "frontend", "test"],
+      output: ["## Human CEO Brief", "Build the implementation slice.", "```json", JSON.stringify({
+        brief: "Build the implementation slice.",
+        blueprint,
+      }), "```"].join("\n"),
+    });
+
+    const result = await createCompany({
+      projectRoot,
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgent: ceoAgent,
+      availableAgents: [
+        ceoAgent,
+        createMockAgentAdapter({
+          id: "claude-code",
+          name: "Claude Code",
+          capabilities: ["writing", "research", "growth"],
+        }),
+      ],
+      permissionMode: "balanced",
+      assets: [],
+      repositories,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0]).toMatchObject({
+      title: "Build the runnable MVP prototype",
+      proofSchemaId: "landing-page-file",
+    });
+    expect(result.tasks[0]?.description).toContain("Prototype guidance");
+    expect(repositories.listTaskEventsForCompany(result.company.id)).not.toContainEqual(
+      expect.objectContaining({
+        type: "task_warning",
+        message: expect.stringContaining("proof schema changed from landing-page-file to product-brief"),
+      }),
+    );
+
+    client.close();
+  });
+
   it("surfaces stdout when a failing CEO agent has no stderr", async () => {
     const projectRoot = createTempProjectRoot();
     const client = createDatabaseClient(":memory:");
