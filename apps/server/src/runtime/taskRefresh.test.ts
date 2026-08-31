@@ -135,6 +135,110 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
   });
 
+  it("recovers controlled repo-diff output from missing-business-artifact refreshes", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
+    createdDirs.push(workspacePath);
+    writeFileSync(join(workspacePath, "implementation-changes.diff"), "diff --git a/index.html b/index.html\n", "utf8");
+    writeValidBusinessArtifact(workspacePath);
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        workspacePath,
+        status: "blocked",
+        proofSchemaId: "repo-diff",
+        latestFailureReason: "missing_business_artifact",
+        latestFailureMessage:
+          "Task blocked: Record implementation changes / missing_business_artifact / blocker/none/missing_business_artifact_file.",
+      },
+    ]);
+
+    const result = refreshTaskDependencyState({
+      repositories: fixture.repositories,
+      taskId: "task_1",
+      proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.task.status).toBe("review");
+    expect(result.recovery).toEqual({
+      status: "recovered",
+      message: "Found checkable proof and submitted it to CEO Office for review.",
+    });
+    expect(fixture.repositories.listProofsForTask("task_1")[0]).toMatchObject({
+      type: "diff",
+      summary: "Diff proof recovered from implementation-changes.diff.",
+    });
+    expect(fixture.repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
+      artifactKind: "deliverable",
+      artifactRole: "implementation",
+      reviewStatus: "unreviewed",
+      validationStatus: "valid",
+    });
+  });
+
+  it("recovers proof from an upstream artifact workspace during refresh", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-empty-"));
+    const upstreamWorkspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-upstream-"));
+    createdDirs.push(workspacePath, upstreamWorkspacePath);
+    writeFileSync(
+      join(upstreamWorkspacePath, "implementation-changes.diff"),
+      "diff --git a/index.html b/index.html\n",
+      "utf8",
+    );
+    writeValidBusinessArtifact(upstreamWorkspacePath);
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        workspacePath,
+        status: "blocked",
+        proofSchemaId: "repo-diff",
+        latestFailureReason: "missing_business_artifact",
+        latestFailureMessage:
+          "Task blocked: Record implementation changes / missing_business_artifact / blocker/none/missing_business_artifact_file.",
+      },
+      {
+        ...createTaskRecord(),
+        id: "upstream_task",
+        title: "Build the SEO-ready MVP prototype",
+        workspacePath: upstreamWorkspacePath,
+        artifactWorkspacePath: upstreamWorkspacePath,
+        status: "complete",
+        proofSchemaId: "landing-page-file",
+      },
+    ]);
+    fixture.repositories.createTaskDependency({
+      taskId: "task_1",
+      dependsOnTaskId: "upstream_task",
+      handoffContract: "Use the prototype workspace.",
+    });
+
+    const result = refreshTaskDependencyState({
+      repositories: fixture.repositories,
+      taskId: "task_1",
+      proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.task.status).toBe("review");
+    expect(fixture.repositories.listProofsForTask("task_1")[0]).toMatchObject({
+      type: "diff",
+      uri: join(upstreamWorkspacePath, ".auto-crop-proof", "task_1.diff"),
+      summary: "Diff proof recovered from implementation-changes.diff.",
+    });
+    expect(result.event).toMatchObject({
+      type: "proof_recovered",
+      status: "review",
+      artifactWorkspacePath: upstreamWorkspacePath,
+    });
+    expect(fixture.repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
+      artifactKind: "deliverable",
+      reviewStatus: "unreviewed",
+      validationStatus: "valid",
+    });
+  });
+
   it("blocks recovered proof before CEO review when the business artifact is missing", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);

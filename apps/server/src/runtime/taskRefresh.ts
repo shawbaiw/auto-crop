@@ -117,20 +117,13 @@ export function recoverProofIfPossible(
     return { kind: "not_found" };
   }
 
-  const proof = captureProofs({
-    task,
-    proofSchema,
-    workspacePath: task.workspacePath,
-    logPath: "",
-    stdout: "",
-    stderr: "",
-    createId: input.createId,
-  });
+  const recovered = recoverProofFromKnownWorkspaces(input, task, proofSchema);
 
-  if (proof.length === 0) {
+  if (!recovered) {
     return { kind: "not_found" };
   }
 
+  const { proof, workspacePath } = recovered;
   for (const item of proof) {
     input.repositories.appendProof(item);
   }
@@ -138,7 +131,7 @@ export function recoverProofIfPossible(
   const businessArtifact = captureBusinessArtifact({
     task,
     proofs: proof,
-    workspacePath: task.workspacePath,
+    workspacePath,
     now: input.now,
     createId: input.createId,
   });
@@ -172,7 +165,7 @@ export function recoverProofIfPossible(
       requestedTimeoutMs: null,
       effectiveTimeoutMs: null,
       dependencyNote: null,
-      artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+      artifactWorkspacePath: task.artifactWorkspacePath ?? workspacePath,
     };
     input.repositories.appendTaskEvent(event);
 
@@ -212,6 +205,9 @@ export function recoverProofIfPossible(
   }
 
   input.repositories.updateTaskStatus(task.id, "review");
+  if (task.artifactWorkspacePath && task.artifactWorkspacePath !== workspacePath) {
+    input.repositories.updateTaskArtifactWorkspacePath(task.id, workspacePath);
+  }
   input.repositories.updateTaskExecutionSummary(task.id, {
     latestFailureReason: null,
     latestFailureMessage: null,
@@ -235,7 +231,7 @@ export function recoverProofIfPossible(
     requestedTimeoutMs: null,
     effectiveTimeoutMs: null,
     dependencyNote: null,
-    artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+    artifactWorkspacePath: task.artifactWorkspacePath ?? workspacePath,
   };
   input.repositories.appendTaskEvent(event);
 
@@ -274,12 +270,54 @@ export function recoverProofIfPossible(
   };
 }
 
+function recoverProofFromKnownWorkspaces(
+  input: RefreshTaskDependencyStateInput,
+  task: Task,
+  proofSchema: ProofSchema,
+): { proof: Proof[]; workspacePath: string } | null {
+  for (const workspacePath of listProofRecoveryWorkspacePaths(input.repositories, task)) {
+    const proof = captureProofs({
+      task,
+      proofSchema,
+      workspacePath,
+      logPath: "",
+      stdout: "",
+      stderr: "",
+      createId: input.createId,
+    });
+
+    if (proof.length > 0) {
+      return { proof, workspacePath };
+    }
+  }
+
+  return null;
+}
+
+function listProofRecoveryWorkspacePaths(
+  repositories: ReturnType<typeof createRepositories>,
+  task: Task,
+): string[] {
+  const candidates = [
+    task.workspacePath,
+    task.artifactWorkspacePath,
+    ...repositories
+      .listTaskDependencies(task.id)
+      .map((dependency) => repositories.getTask(dependency.dependsOnTaskId)?.artifactWorkspacePath ?? null),
+  ];
+  return [...new Set(candidates.filter((path): path is string => Boolean(path)))];
+}
+
 function isProofRecoveryEligible(task: Task): boolean {
   if (task.status === "failed" && task.latestFailureReason === "no_proof") {
     return true;
   }
 
-  return task.latestFailureReason === "missing_deliverable" || task.latestFailureReason === "non_reviewable_artifact";
+  return (
+    task.latestFailureReason === "missing_business_artifact" ||
+    task.latestFailureReason === "missing_deliverable" ||
+    task.latestFailureReason === "non_reviewable_artifact"
+  );
 }
 
 function isRefreshableStatus(status: TaskStatus): boolean {

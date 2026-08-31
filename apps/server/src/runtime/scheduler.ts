@@ -293,7 +293,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           if (agentResult.status === "complete") {
             try {
               proof = input.proofCollector({
-                task: { ...task, workspacePath: taskWorkspace.root },
+                task: { ...task, workspacePath: runWorkspacePath },
                 stdout: agentResult.stdout,
                 stderr: agentResult.stderr,
                 logPath,
@@ -331,18 +331,18 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           let businessArtifact = null;
           if (proof.length > 0) {
             businessArtifact = captureBusinessArtifact({
-              task: { ...task, workspacePath: taskWorkspace.root },
+              task: { ...task, workspacePath: runWorkspacePath },
               proofs: proof,
-              workspacePath: taskWorkspace.root,
+              workspacePath: runWorkspacePath,
               now,
               createId,
             });
             input.repositories.createBusinessArtifact(businessArtifact);
           }
           createHandoffPackage({
-            task: { ...task, workspacePath: taskWorkspace.root },
+            task: { ...task, workspacePath: runWorkspacePath },
             proofs: proof,
-            workspacePath: taskWorkspace.root,
+            workspacePath: runWorkspacePath,
             logPath,
           });
 
@@ -454,6 +454,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           }
 
           input.repositories.updateTaskStatus(task.id, "review");
+          if (task.artifactWorkspacePath && task.artifactWorkspacePath !== runWorkspacePath) {
+            input.repositories.updateTaskArtifactWorkspacePath(task.id, runWorkspacePath);
+          }
           input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
           appendTaskProgressEvent(input, {
             task,

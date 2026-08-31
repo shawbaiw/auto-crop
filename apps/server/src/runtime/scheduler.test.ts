@@ -9,7 +9,7 @@ import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { acquireTaskLock, releaseTaskLock } from "./locks";
-import { createHandoffPackage } from "./proof";
+import { createHandoffPackage, createProofCollector } from "./proof";
 import { runSchedulerOnce, type SchedulerEvent } from "./scheduler";
 
 const createdDirs: string[] = [];
@@ -946,6 +946,114 @@ describe("runSchedulerOnce", () => {
     expect(prompt).toContain("Handoff Contract: Consume the product brief before validating the prototype.");
     expect(prompt).toContain(`Handoff Package: ${join(producerWorkspace, ".auto-crop-handoff", "package.json")}`);
     expect(prompt).toContain(`Artifact Workspace: ${producerWorkspace}`);
+
+    client.close();
+  });
+
+  it("collects proof and business artifacts from the actual run workspace", async () => {
+    const producerWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-upstream-"));
+    createdDirs.push(producerWorkspace);
+    const producer = {
+      ...createTaskRecord("task_1", "complete", "low", "landing-page-file"),
+      workspacePath: producerWorkspace,
+      artifactWorkspacePath: producerWorkspace,
+    };
+    const consumerWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-consumer-"));
+    createdDirs.push(consumerWorkspace);
+    const consumer = {
+      ...createTaskRecord("task_2", "queued", "low", "repo-diff"),
+      workspacePath: consumerWorkspace,
+      artifactWorkspacePath: consumerWorkspace,
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
+    repositories.appendProof({
+      id: "proof_1",
+      taskId: producer.id,
+      type: "file",
+      uri: join(producerWorkspace, "index.html"),
+      summary: "File proof: index.html",
+      verifiedAt: null,
+    });
+    repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_upstream", producer.id, "proof_1"));
+    repositories.createTaskDependency({
+      taskId: consumer.id,
+      dependsOnTaskId: producer.id,
+      handoffContract: "Record the implementation changes from the built prototype workspace.",
+    });
+    let adapterWorkspacePath = "";
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        {
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          detect: async () => true,
+          run: async (request) => {
+            adapterWorkspacePath = request.workspacePath;
+            mkdirSync(join(request.workspacePath, ".auto-crop-proof"), { recursive: true });
+            writeFileSync(
+              join(request.workspacePath, ".auto-crop-proof", `${request.taskId}.diff`),
+              "diff --git a/index.html b/index.html\nnew file mode 100644\n",
+              "utf8",
+            );
+            mkdirSync(join(request.workspacePath, ".auto-crop"), { recursive: true });
+            writeFileSync(
+              join(request.workspacePath, ".auto-crop", "business-artifact.json"),
+              JSON.stringify({
+                artifact_kind: "deliverable",
+                artifact_role: "implementation",
+                artifact_subtype: "prototype_implementation",
+                task_type: "engineering.implementation_changes",
+                payload: { summary: "Recorded implementation diff." },
+                lineage: { upstream_task_id: producer.id },
+              }),
+              "utf8",
+            );
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "recorded implementation changes",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: createProofCollector({
+        proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
+        createId: (prefix) => `${prefix}_collected`,
+      }),
+      emit: () => undefined,
+    });
+
+    const proof = repositories.listProofsForTask(consumer.id);
+    const artifact = repositories.getCurrentBusinessArtifactForTask(consumer.id);
+    expect(result.completed).toEqual([consumer.id]);
+    expect(adapterWorkspacePath).toBe(producerWorkspace);
+    expect(repositories.getTask(consumer.id)).toMatchObject({
+      status: "review",
+      artifactWorkspacePath: producerWorkspace,
+    });
+    expect(proof).toEqual([
+      expect.objectContaining({
+        taskId: consumer.id,
+        type: "diff",
+        uri: join(producerWorkspace, ".auto-crop-proof", `${consumer.id}.diff`),
+      }),
+    ]);
+    expect(artifact).toMatchObject({
+      taskId: consumer.id,
+      artifactKind: "deliverable",
+      reviewStatus: "unreviewed",
+      validationStatus: "valid",
+    });
 
     client.close();
   });
