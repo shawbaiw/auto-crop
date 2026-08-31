@@ -502,6 +502,41 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("explains the required repo-diff proof locations when repo-diff proof is missing", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "repo-diff"),
+    ]);
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: () => undefined,
+    });
+
+    const task = repositories.getTask("task_1");
+    expect(result.failed).toEqual(["task_1"]);
+    expect(task?.status).toBe("failed");
+    expect(task?.latestFailureMessage).toContain("repo-diff proof missing");
+    expect(task?.latestFailureMessage).toContain(".auto-crop-proof/*.diff");
+    expect(task?.latestFailureMessage).toContain("top-level workspace *.diff/*.patch");
+    expect(task?.latestFailureMessage).toContain(".auto-crop/business-artifact.json is not diff proof");
+
+    client.close();
+  });
+
   it("does not collect proof from failed agent output and emits failure reason", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low"),

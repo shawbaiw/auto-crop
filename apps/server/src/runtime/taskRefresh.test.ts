@@ -155,6 +155,39 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
     expect(fixture.repositories.listProofsForTask("task_1")).toEqual([]);
   });
+
+  it("explains expected repo-diff proof locations when refresh cannot recover proof", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
+    createdDirs.push(workspacePath);
+    writeValidBusinessArtifact(workspacePath);
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        workspacePath,
+        status: "failed",
+        proofSchemaId: "repo-diff",
+      },
+    ]);
+    fixture.repositories.updateTaskExecutionSummary("task_1", {
+      latestFailureReason: "no_proof",
+      latestFailureMessage: "Task failed: Record implementation changes / no_proof.",
+    });
+
+    const result = refreshTaskDependencyState({
+      repositories: fixture.repositories,
+      taskId: "task_1",
+      proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.recovery?.status).toBe("not_found");
+    expect(result.recovery?.message).toContain("repo-diff proof missing");
+    expect(result.recovery?.message).toContain(".auto-crop-proof/*.diff");
+    expect(result.recovery?.message).toContain("top-level workspace *.diff/*.patch");
+    expect(result.recovery?.message).toContain(".auto-crop/business-artifact.json is not diff proof");
+    expect(fixture.repositories.listProofsForTask("task_1")).toEqual([]);
+  });
 });
 
 function createFixture(tasks: Task[]) {

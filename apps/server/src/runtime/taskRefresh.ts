@@ -54,7 +54,7 @@ export function refreshTaskDependencyState(
   const recovery = recoveryResult.kind === "not_applicable"
     ? { status: "not_applicable" as const, message: "Proof recovery does not apply to this task." }
     : recoveryResult.kind === "not_found"
-      ? { status: "not_found" as const, message: "No registerable diff/patch proof was found." }
+      ? { status: "not_found" as const, message: proofRecoveryNotFoundMessage(task) }
       : undefined;
 
   const dependencyRefresh = refreshDependencyTasks({
@@ -266,6 +266,13 @@ function isProofRecoveryEligible(task: Task): boolean {
 
 function isRefreshableStatus(status: TaskStatus): boolean {
   return status === "blocked" || status === "failed" || status === "waiting_dependency";
+}
+
+function proofRecoveryNotFoundMessage(task: Task): string {
+  if (task.proofSchemaId === "repo-diff") {
+    return "No registerable repo-diff proof was found / repo-diff proof missing: expected .auto-crop-proof/*.diff or a top-level workspace *.diff/*.patch file; .auto-crop/business-artifact.json is not diff proof.";
+  }
+  return "No registerable proof was found.";
 }
 
 function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolean {

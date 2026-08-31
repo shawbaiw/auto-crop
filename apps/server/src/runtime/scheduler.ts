@@ -1071,6 +1071,9 @@ function failureMessage(task: Task, failureReason: SchedulerFailureReason, timeo
   }
 
   if (failureReason === "no_proof") {
+    if (task.proofSchemaId === "repo-diff") {
+      return `Task failed: ${task.title} / no_proof / repo-diff proof missing: expected .auto-crop-proof/*.diff or a top-level workspace *.diff/*.patch file; .auto-crop/business-artifact.json is not diff proof.`;
+    }
     return `Task failed: ${task.title} / no_proof.`;
   }
 
