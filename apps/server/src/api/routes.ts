@@ -20,11 +20,12 @@ import { EventStream } from "../events/sse";
 import type { PolicyMode } from "../policies/policy";
 import { createCompany } from "../runtime/createCompany";
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
+import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
-import { propagateDependencyCascade, refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
+import { refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
 import { propagateParentTaskAggregation, type ParentTaskAggregationResult } from "../runtime/parentTaskAggregation";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
@@ -264,6 +265,7 @@ async function routeRequest(
       note: body.note?.trim() ? body.note.trim() : null,
       now: options.now,
       createId: options.createId,
+      requestSchedulerWake: () => options.requestSchedulerWake?.("dependency_cascade_queued"),
     });
 
     if (result.kind === "not_found") {
@@ -286,22 +288,12 @@ async function routeRequest(
       return;
     }
 
-    const dependencyCascade =
-      result.decision.decision === "approve"
-        ? propagateDependencyCascade({
-          repositories: options.repositories,
-          sourceTaskId: result.task.id,
-          maxDepth: 2,
-          now: options.now,
-          createId: options.createId,
-        })
-        : undefined;
+    const dependencyCascade = result.dependencyCascade;
     for (const cascadeUpdate of dependencyCascade?.updatedTasks ?? []) {
       if (cascadeUpdate.event) {
         events.publish(summarizeTaskEvent(cascadeUpdate.event));
       }
     }
-    requestSchedulerWakeForQueuedUpdates(options, dependencyCascade, "dependency_cascade_queued");
 
     sendJson(response, 201, {
       decision: summarizeCeoReviewDecision(result.decision),
@@ -509,7 +501,14 @@ function buildCompanyState(
 }
 
 type CeoReviewDecisionResult =
-  | { kind: "created"; decision: CeoReviewDecision; task: Task; event: TaskEvent; progressEvent?: TaskProgressEvent }
+  | {
+      kind: "created";
+      decision: CeoReviewDecision;
+      task: Task;
+      event: TaskEvent;
+      progressEvent?: TaskProgressEvent;
+      dependencyCascade?: DependencyCascadeResult;
+    }
   | { kind: "not_found" }
   | { kind: "not_in_review" }
   | { kind: "missing_proof" }
@@ -523,6 +522,7 @@ function createCeoReviewDecision(input: {
   note: string | null;
   now?: () => Date;
   createId?: (prefix: string) => string;
+  requestSchedulerWake?: () => void;
 }): CeoReviewDecisionResult {
   const task = input.repositories.getTask(input.taskId);
 
@@ -562,31 +562,47 @@ function createCeoReviewDecision(input: {
     createdAt: timestamp,
   };
   input.repositories.createCeoReviewDecision(decision);
+  if (input.decision === "approve") {
+    const accepted = acceptTaskBusinessArtifact({
+      repositories: input.repositories,
+      task,
+      artifact: artifact!,
+      eventType: "ceo_review_decision",
+      eventMessage: `CEO Office approved task: ${task.title}.`,
+      keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
+      dependencyCascade: { maxDepth: 2 },
+      requestSchedulerWake: input.requestSchedulerWake,
+      now: input.now,
+      createId: input.createId,
+    });
+
+    return {
+      kind: "created",
+      decision,
+      task: accepted.task,
+      event: accepted.event,
+      dependencyCascade: accepted.dependencyCascade,
+    };
+  }
+
   if (artifact) {
     input.repositories.updateBusinessArtifactReviewStatus(
       artifact.id,
-      input.decision === "approve" ? "accepted" : "returned",
+      "returned",
       timestamp,
     );
   }
 
-  const nextStatus = input.decision === "approve" ? "complete" : "queued";
-  input.repositories.updateTaskStatus(task.id, nextStatus);
-  if (input.decision === "approve" && task.keyResultId) {
-    input.repositories.updateKeyResultProgress(task.keyResultId, "accepted_business_artifact", "met");
-  }
+  input.repositories.updateTaskStatus(task.id, "queued");
 
   const event: TaskEvent = {
     id: input.createId?.("task_event") ?? `task_event_${Date.now()}`,
     companyId: task.companyId,
     taskId: task.id,
     type: "ceo_review_decision",
-    message:
-      input.decision === "approve"
-        ? `CEO Office approved task: ${task.title}.`
-        : `CEO Office returned task: ${task.title}.`,
+    message: `CEO Office returned task: ${task.title}.`,
     createdAt: timestamp,
-    status: nextStatus,
+    status: "queued",
     failureReason: null,
     failureMessage: null,
     executionProfileName: task.latestExecutionProfileName ?? null,
@@ -598,28 +614,26 @@ function createCeoReviewDecision(input: {
   input.repositories.appendTaskEvent(event);
 
   let progressEvent: TaskProgressEvent | undefined;
-  if (input.decision === "return") {
-    progressEvent = {
-      id: input.createId?.("task_progress") ?? `task_progress_${Date.now()}`,
-      companyId: task.companyId,
-      departmentId: task.departmentId,
-      parentTaskId: task.parentTaskId ?? task.id,
-      subjectTaskId: task.id,
-      step: "blocked",
-      status: "current",
-      label: "CEO Office returned this, waiting for the department to rework it.",
-      detail: formatCeoReturnProgressDetail(input.returnReason, input.note),
-      createdAt: timestamp,
-    };
-    input.repositories.appendTaskProgressEvent(progressEvent);
-  }
+  progressEvent = {
+    id: input.createId?.("task_progress") ?? `task_progress_${Date.now()}`,
+    companyId: task.companyId,
+    departmentId: task.departmentId,
+    parentTaskId: task.parentTaskId ?? task.id,
+    subjectTaskId: task.id,
+    step: "blocked",
+    status: "current",
+    label: "CEO Office returned this, waiting for the department to rework it.",
+    detail: formatCeoReturnProgressDetail(input.returnReason, input.note),
+    createdAt: timestamp,
+  };
+  input.repositories.appendTaskProgressEvent(progressEvent);
 
   return {
     kind: "created",
     decision,
     task: {
       ...task,
-      status: nextStatus,
+      status: "queued",
     },
     event,
     progressEvent,
