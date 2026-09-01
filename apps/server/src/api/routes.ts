@@ -17,6 +17,7 @@ import type {
   TaskDependency,
   TaskEvent,
   TaskProgressEvent,
+  WaitState,
 } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories, ReviewRecord } from "../db/repositories";
@@ -188,6 +189,7 @@ async function routeRequest(
     sendJson(response, 200, buildCompanyState(company, options.repositories, {
       now: options.now,
       createId: options.createId,
+      requestSchedulerWake: options.requestSchedulerWake,
     }));
     return;
   }
@@ -514,7 +516,7 @@ async function routeRequest(
 function buildCompanyState(
   company: Company,
   repositories: ReturnType<typeof createRepositories>,
-  options?: { now?: () => Date; createId?: (prefix: string) => string },
+  options?: { now?: () => Date; createId?: (prefix: string) => string; requestSchedulerWake?: (reason: SchedulerWakeReason) => void },
 ) {
   reconcileStaleRunningTasks({
     repositories,
@@ -535,6 +537,7 @@ function buildCompanyState(
     taskCompletionEvents,
     taskDependencies,
     humanActionConfirmations,
+    now: options?.now,
   });
   const humanActionBlockEvents = applyPendingHumanActionBlocks({
     repositories,
@@ -554,6 +557,30 @@ function buildCompanyState(
       taskCompletionEvents,
       taskDependencies,
       humanActionConfirmations,
+      now: options?.now,
+    });
+  }
+  const waitStateRoutingEvents = applyWaitStateRouting({
+    repositories,
+    tasks,
+    waitStates: ceoAttention.waitStates,
+    now: options?.now,
+    createId: options?.createId,
+  });
+  if (waitStateRoutingEvents.some((event) => event.status === "queued")) {
+    options?.requestSchedulerWake?.("dependency_cascade_queued");
+  }
+  if (waitStateRoutingEvents.length > 0) {
+    tasks = repositories.listTasksForCompany(company.id);
+    taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
+    ceoAttention = projectCeoAttention({
+      company,
+      keyResults,
+      tasks,
+      taskCompletionEvents,
+      taskDependencies,
+      humanActionConfirmations,
+      now: options?.now,
     });
   }
 
@@ -568,8 +595,9 @@ function buildCompanyState(
     taskCompletionEvents: taskCompletionEvents.map(summarizeTaskCompletionEvent),
     visionGaps: ceoAttention.visionGaps,
     humanActions: ceoAttention.humanActions,
+    waitStates: ceoAttention.waitStates,
     ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
-    founderReport: summarizeFounderReport(company, tasks, businessArtifacts),
+    founderReport: summarizeFounderReport(company, tasks, businessArtifacts, ceoAttention.waitStates),
     reviews: repositories.listReviews(company.id).map(summarizeReview),
     ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(company.id).map(summarizeCeoReviewDecision),
     replanProposals: repositories.listReplanProposalsForCompany(company.id).map(summarizeReplanProposal),
@@ -606,6 +634,7 @@ async function confirmHumanAction(input: {
     taskCompletionEvents,
     taskDependencies: input.repositories.listTaskDependenciesForCompany(company.id),
     humanActionConfirmations: input.repositories.listHumanActionConfirmationsForCompany(company.id),
+    now: input.now,
   });
   const humanAction = attention.humanActions.find((action) => action.id === input.humanActionId);
   if (!humanAction) {
@@ -678,6 +707,7 @@ async function confirmHumanAction(input: {
     taskCompletionEvents,
     taskDependencies: input.repositories.listTaskDependenciesForCompany(company.id),
     humanActionConfirmations: input.repositories.listHumanActionConfirmationsForCompany(company.id),
+    now: input.now,
   }).humanActions.find((action) => action.id === input.humanActionId);
 
   return {
@@ -756,6 +786,85 @@ function applyPendingHumanActionBlocks(input: {
   return events;
 }
 
+function applyWaitStateRouting(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  tasks: Task[];
+  waitStates: WaitState[];
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+}): TaskEvent[] {
+  const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
+  const timestamp = (input.now ?? (() => new Date()))().toISOString();
+  const createId = input.createId ?? defaultCreateId;
+  const events: TaskEvent[] = [];
+
+  for (const waitState of input.waitStates) {
+    for (const taskId of waitState.affectedTaskIds) {
+      const task = tasksById.get(taskId);
+      if (!task) {
+        continue;
+      }
+
+      const dependencyNote = waitStateDependencyNote(waitState);
+      if (waitState.status === "waiting" && task.status === "queued") {
+        input.repositories.updateTaskStatus(task.id, "waiting_dependency");
+        input.repositories.updateTaskExecutionSummary(task.id, {
+          latestFailureReason: null,
+          latestFailureMessage: null,
+          dependencyNote,
+        });
+
+        const refreshed = input.repositories.getTask(task.id);
+        if (!refreshed) {
+          continue;
+        }
+
+        const event = waitStateTaskEvent({
+          createId,
+          task: refreshed,
+          type: "dependency_waiting",
+          message: `Wait State active until ${waitState.nextCheckAt}: ${waitState.label}.`,
+          createdAt: timestamp,
+          status: "waiting_dependency",
+          dependencyNote,
+        });
+        input.repositories.appendTaskEvent(event);
+        events.push(event);
+        tasksById.set(refreshed.id, refreshed);
+      }
+
+      if (waitState.status === "ready_for_check_in" && task.status === "waiting_dependency" && task.dependencyNote === dependencyNote) {
+        input.repositories.updateTaskStatus(task.id, "queued");
+        input.repositories.updateTaskExecutionSummary(task.id, {
+          latestFailureReason: null,
+          latestFailureMessage: null,
+          dependencyNote: null,
+        });
+
+        const refreshed = input.repositories.getTask(task.id);
+        if (!refreshed) {
+          continue;
+        }
+
+        const event = waitStateTaskEvent({
+          createId,
+          task: refreshed,
+          type: "dependency_ready",
+          message: `Wait State check-in is due; task queued: ${refreshed.title}.`,
+          createdAt: timestamp,
+          status: "queued",
+          dependencyNote: null,
+        });
+        input.repositories.appendTaskEvent(event);
+        events.push(event);
+        tasksById.set(refreshed.id, refreshed);
+      }
+    }
+  }
+
+  return events;
+}
+
 async function verifyHumanActionEvidence(
   humanAction: HumanAction,
   evidence: unknown,
@@ -825,6 +934,37 @@ function groupTaskDependenciesByTaskId(dependencies: TaskDependency[]): Map<stri
     grouped.set(dependency.taskId, [...(grouped.get(dependency.taskId) ?? []), dependency]);
   }
   return grouped;
+}
+
+function waitStateDependencyNote(waitState: WaitState): string {
+  return `Waiting for Wait State check-in: ${waitState.id} at ${waitState.nextCheckAt}.`;
+}
+
+function waitStateTaskEvent(input: {
+  createId: (prefix: string) => string;
+  task: Task;
+  type: "dependency_waiting" | "dependency_ready";
+  message: string;
+  createdAt: string;
+  status: "waiting_dependency" | "queued";
+  dependencyNote: string | null;
+}): TaskEvent {
+  return {
+    id: input.createId("task_event"),
+    companyId: input.task.companyId,
+    taskId: input.task.id,
+    type: input.type,
+    message: input.message,
+    createdAt: input.createdAt,
+    status: input.status,
+    failureReason: null,
+    failureMessage: null,
+    executionProfileName: null,
+    requestedTimeoutMs: null,
+    effectiveTimeoutMs: null,
+    dependencyNote: input.dependencyNote,
+    artifactWorkspacePath: input.task.artifactWorkspacePath ?? null,
+  };
 }
 
 function isHttpUrl(value: string): boolean {
@@ -1247,6 +1387,7 @@ function summarizeFounderReport(
   company: Company,
   tasks: Task[],
   artifacts: ReturnType<typeof summarizeBusinessArtifact>[],
+  waitStates: WaitState[],
 ) {
   const acceptedArtifacts = artifacts.filter((artifact) => artifact.reviewStatus === "accepted" && artifact.isCurrent);
   const blockedTasks = tasks.filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed");
@@ -1267,12 +1408,26 @@ function summarizeFounderReport(
     completedTaskCount: tasks.filter((task) => task.status === "complete").length,
     reviewTaskCount: reviewTasks.length,
     blockedTaskCount: blockedTasks.length,
+    waitStateCount: waitStates.length,
+    waitStates: waitStates.map((waitState) => ({
+      id: waitState.id,
+      label: waitState.label,
+      status: waitState.status,
+      nextCheckAt: waitState.nextCheckAt,
+      affectedTaskIds: waitState.affectedTaskIds,
+    })),
     directionDriftDetected: driftArtifacts.length > 0,
     nextSteps: [
       ...reviewTasks.map((task) => `Review ${task.title}.`),
       ...blockedTasks.map((task) => task.dependencyNote ?? task.latestFailureMessage ?? `Resolve ${task.title}.`),
+      ...waitStates.map(formatWaitStateNextStep),
     ],
   };
+}
+
+function formatWaitStateNextStep(waitState: WaitState): string {
+  const label = waitState.label.replace(/[.!?]+$/, "");
+  return waitState.status === "ready_for_check_in" ? `Check ${label}.` : `Monitor ${label} until ${waitState.nextCheckAt}.`;
 }
 
 function summarizeReview(review: ReviewRecord) {

@@ -1019,6 +1019,108 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("routes Wait States into timed check-ins without treating them as failures", async () => {
+    const schedulerWakeRequests: SchedulerWakeReason[] = [];
+    let now = new Date("2026-08-17T00:00:00.000Z");
+    const fixture = await startFixtureServer({
+      schedulerWakeRequests,
+      now: () => now,
+    });
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const sourceTask = createIsolatedTask(templateTask, "wait_state_source", "Publish private prototype", "complete", 250);
+    const indexingTask = createIsolatedTask(templateTask, "wait_state_indexing", "Check indexing signals", "queued", 251);
+    const prepTask = createIsolatedTask(templateTask, "wait_state_prep", "Prepare comparison copy", "queued", 252);
+    fixture.repositories.createTask(sourceTask);
+    fixture.repositories.createTask(indexingTask);
+    fixture.repositories.createTask(prepTask);
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_wait_check",
+      companyId: created.company.id,
+      taskId: sourceTask.id,
+      departmentId: sourceTask.departmentId,
+      keyResultId: sourceTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      dependencyImpact: {},
+      nextStepItems: [
+        {
+          type: "wait_state",
+          label: "Wait for search indexing signals.",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: indexingTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: { blocks: [indexingTask.id], nextCheckAt: "2026-08-17T01:00:00.000Z" },
+          severity: "informational",
+          priority: 3,
+          evidenceRequirements: [],
+        },
+      ],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    const before = await getJson<{
+      waitStates: Array<{ id: string; status: string; nextCheckAt: string; affectedTaskIds: string[]; departmentId: string }>;
+      tasks: Array<{ id: string; status: string; failureReason?: string; dependencyNote?: string }>;
+      founderReport: { waitStateCount: number; waitStates: Array<{ id: string }>; nextSteps: string[] };
+      ceoAttentionRollups: Array<{ reasons: string[]; relevantWaitStates: Array<{ label: string; status: string }> }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(before.waitStates).toEqual([
+      expect.objectContaining({
+        id: "task_completion_event_wait_check_wait_state_1",
+        status: "waiting",
+        nextCheckAt: "2026-08-17T01:00:00.000Z",
+        affectedTaskIds: [indexingTask.id],
+        departmentId: sourceTask.departmentId,
+      }),
+    ]);
+    expect(before.tasks).toContainEqual(
+      expect.objectContaining({
+        id: indexingTask.id,
+        status: "waiting_dependency",
+        dependencyNote: "Waiting for Wait State check-in: task_completion_event_wait_check_wait_state_1 at 2026-08-17T01:00:00.000Z.",
+      }),
+    );
+    expect(before.tasks).toContainEqual(expect.objectContaining({ id: prepTask.id, status: "queued" }));
+    expect(before.founderReport.waitStateCount).toBe(1);
+    expect(before.founderReport.waitStates).toEqual([expect.objectContaining({ id: "task_completion_event_wait_check_wait_state_1" })]);
+    expect(before.founderReport.nextSteps).toContain("Monitor Wait for search indexing signals until 2026-08-17T01:00:00.000Z.");
+    expect(before.ceoAttentionRollups).toEqual([
+      expect.objectContaining({
+        reasons: expect.arrayContaining(["wait_state"]),
+        relevantWaitStates: [expect.objectContaining({ label: "Wait for search indexing signals.", status: "waiting" })],
+      }),
+    ]);
+    expect(schedulerWakeRequests).toEqual([]);
+
+    now = new Date("2026-08-17T01:01:00.000Z");
+    const after = await getJson<{
+      waitStates: Array<{ id: string; status: string }>;
+      tasks: Array<{ id: string; status: string; dependencyNote?: string }>;
+      activity: Array<{ type: string; taskId?: string; status?: string }>;
+      founderReport: { nextSteps: string[] };
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(after.waitStates).toEqual([
+      expect.objectContaining({ id: "task_completion_event_wait_check_wait_state_1", status: "ready_for_check_in" }),
+    ]);
+    expect(after.tasks).toContainEqual(expect.objectContaining({ id: indexingTask.id, status: "queued" }));
+    expect(after.tasks).toContainEqual(expect.objectContaining({ id: prepTask.id, status: "queued" }));
+    expect(after.activity).toContainEqual(expect.objectContaining({ type: "dependency_ready", taskId: indexingTask.id, status: "queued" }));
+    expect(after.founderReport.nextSteps).toContain("Check Wait for search indexing signals.");
+    expect(schedulerWakeRequests).toEqual(["dependency_cascade_queued"]);
+
+    await fixture.close();
+  });
+
   it("confirms Human Actions with evidence and unblocks only explicitly blocked downstream tasks", async () => {
     const schedulerWakeRequests: SchedulerWakeReason[] = [];
     const fixture = await startFixtureServer({ schedulerWakeRequests });
@@ -1599,7 +1701,11 @@ describe("API routes", () => {
   });
 });
 
-async function startFixtureServer(options: { plannerOutput?: string; schedulerWakeRequests?: SchedulerWakeReason[] } = {}) {
+async function startFixtureServer(options: {
+  now?: () => Date;
+  plannerOutput?: string;
+  schedulerWakeRequests?: SchedulerWakeReason[];
+} = {}) {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-api-"));
   createdDirs.push(projectRoot);
   const client = createDatabaseClient(":memory:");
@@ -1628,7 +1734,7 @@ async function startFixtureServer(options: { plannerOutput?: string; schedulerWa
     projectRoot,
     repositories,
     agents: [codex],
-    now: () => new Date("2026-08-17T00:00:00.000Z"),
+    now: options.now ?? (() => new Date("2026-08-17T00:00:00.000Z")),
     createId: createSequentialIdFactory(),
     requestSchedulerWake: (reason) => options.schedulerWakeRequests?.push(reason),
   });

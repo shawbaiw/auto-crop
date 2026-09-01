@@ -12,6 +12,7 @@ import type {
   TaskCompletionEvent,
   TaskDependency,
   VisionGap,
+  WaitState,
 } from "@auto-crop/core";
 
 type AttentionCandidate = {
@@ -26,7 +27,7 @@ type AttentionCandidate = {
   severity: NextStepItemSeverity;
   reasons: CeoAttentionRollupReason[];
   relevantHumanActions: HumanAction[];
-  relevantWaitStates: NextStepItem[];
+  relevantWaitStates: WaitState[];
   relevantVisionGaps: VisionGap[];
 };
 
@@ -34,22 +35,26 @@ export function projectCeoAttention(input: {
   company: Company;
   humanActionConfirmations?: HumanActionConfirmation[];
   keyResults: KeyResult[];
+  now?: () => Date;
   tasks: Task[];
   taskCompletionEvents: TaskCompletionEvent[];
   taskDependencies: TaskDependency[];
-}): { visionGaps: VisionGap[]; humanActions: HumanAction[]; ceoAttentionRollups: CeoAttentionRollup[] } {
+}): { visionGaps: VisionGap[]; humanActions: HumanAction[]; waitStates: WaitState[]; ceoAttentionRollups: CeoAttentionRollup[] } {
   const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
   const keyResultsById = new Map(input.keyResults.map((keyResult) => [keyResult.id, keyResult]));
   const downstreamTaskIdsByTaskId = mapDownstreamTaskIds(input.taskDependencies);
+  const now = (input.now ?? (() => new Date()))();
   const visionGaps = input.taskCompletionEvents.flatMap(collectVisionGaps);
   const confirmationsByActionId = new Map((input.humanActionConfirmations ?? []).map((confirmation) => [confirmation.humanActionId, confirmation]));
   const humanActions = input.taskCompletionEvents.flatMap((event) => collectHumanActions(event, confirmationsByActionId));
+  const waitStates = input.taskCompletionEvents.flatMap((event) => collectWaitStates(event, now));
   const candidates = input.taskCompletionEvents.flatMap((event) =>
     createAttentionCandidates({
       company: input.company,
       event,
       eventVisionGaps: visionGaps.filter((gap) => gap.sourceTaskCompletionEventId === event.id),
       eventHumanActions: humanActions.filter((action) => action.sourceTaskCompletionEventId === event.id),
+      eventWaitStates: waitStates.filter((waitState) => waitState.sourceTaskCompletionEventId === event.id),
       task: tasksById.get(event.taskId),
       keyResult: event.keyResultId ? keyResultsById.get(event.keyResultId) : undefined,
       tasksById,
@@ -60,6 +65,7 @@ export function projectCeoAttention(input: {
   return {
     visionGaps,
     humanActions,
+    waitStates,
     ceoAttentionRollups: rollUpAttentionCandidates(input.company, candidates),
   };
 }
@@ -69,6 +75,7 @@ function createAttentionCandidates(input: {
   event: TaskCompletionEvent;
   eventVisionGaps: VisionGap[];
   eventHumanActions: HumanAction[];
+  eventWaitStates: WaitState[];
   task?: Task;
   keyResult?: KeyResult;
   tasksById: Map<string, Task>;
@@ -77,7 +84,7 @@ function createAttentionCandidates(input: {
   const attentionVisionGaps = input.eventVisionGaps.filter((gap) => gap.severity === "blocking" || gap.severity === "strategic");
   const decisionItems = input.event.nextStepItems.filter((item) => item.type === "ceo_decision");
   const humanActions = input.eventHumanActions.filter((action) => action.status === "pending");
-  const waitStates = input.event.nextStepItems.filter((item) => item.type === "wait_state");
+  const waitStates = input.eventWaitStates;
   const itemImpactedTaskIds = input.event.nextStepItems.flatMap((item) => extractImpactedTaskIds(item.dependencyImpact));
   const dependencyTaskIds = unique([
     ...input.downstreamTaskIds,
@@ -134,7 +141,7 @@ function createAttentionCandidates(input: {
       severity: highestSeverity([
         ...attentionVisionGaps.map((gap) => gap.severity),
         ...humanActions.map((action) => (action.status === "confirmed" ? "informational" : "blocking")),
-        ...waitStates.map((item) => item.severity),
+        ...waitStates.map((waitState) => waitState.severity),
         ...decisionItems.map((item) => item.severity),
       ]),
       reasons: unique(reasons),
@@ -220,6 +227,64 @@ function collectHumanActions(
       },
     ];
   });
+}
+
+function collectWaitStates(event: TaskCompletionEvent, now: Date): WaitState[] {
+  return event.nextStepItems.flatMap((item, index) => {
+    if (item.type !== "wait_state") {
+      return [];
+    }
+
+    const nextCheckAt = resolveNextCheckAt(item, event.createdAt);
+    return [
+      {
+        id: `${event.id}_wait_state_${index + 1}`,
+        companyId: event.companyId,
+        sourceTaskCompletionEventId: event.id,
+        taskId: event.taskId,
+        departmentId: item.ownerDepartmentId ?? event.departmentId,
+        keyResultId: event.keyResultId,
+        businessArtifactId: event.businessArtifactId,
+        label: item.label,
+        reason: item.label,
+        relatedTaskId: item.relatedTaskId,
+        relatedBusinessArtifactId: item.relatedBusinessArtifactId,
+        affectedTaskIds: unique([
+          ...extractImpactedTaskIds(item.dependencyImpact),
+          ...(item.relatedTaskId && item.relatedTaskId !== event.taskId ? [item.relatedTaskId] : []),
+        ]),
+        nextCheckAt,
+        status: Date.parse(nextCheckAt) <= now.getTime() ? "ready_for_check_in" : "waiting",
+        severity: item.severity ?? "informational",
+        createdAt: event.createdAt,
+      },
+    ];
+  });
+}
+
+function resolveNextCheckAt(item: NextStepItem, createdAt: string): string {
+  const explicitCheckAt = extractWaitCheckAt(item.dependencyImpact);
+  if (explicitCheckAt) {
+    return explicitCheckAt;
+  }
+
+  const createdAtMs = Date.parse(createdAt);
+  const baseMs = Number.isFinite(createdAtMs) ? createdAtMs : Date.now();
+  return new Date(baseMs + 24 * 60 * 60 * 1_000).toISOString();
+}
+
+function extractWaitCheckAt(dependencyImpact: unknown): string | null {
+  if (!isRecord(dependencyImpact)) {
+    return null;
+  }
+
+  const value = optionalString(dependencyImpact.nextCheckAt ?? dependencyImpact.checkInAt ?? dependencyImpact.waitUntil);
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
 function visionGapFromNextStepItem(event: TaskCompletionEvent, item: NextStepItem, index: number): VisionGap {

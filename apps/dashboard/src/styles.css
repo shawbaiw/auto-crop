@@ -633,12 +633,14 @@ h3 {
   text-transform: uppercase;
 }
 
-.human-action-list {
+.human-action-list,
+.wait-state-list {
   display: grid;
   gap: 10px;
 }
 
-.human-action-card {
+.human-action-card,
+.wait-state-card {
   background: var(--surface);
   border: var(--border-px) solid var(--border);
   display: grid;
@@ -646,17 +648,36 @@ h3 {
   padding: 10px;
 }
 
-.human-action-card h4 {
+.human-action-card h4,
+.wait-state-card h4 {
   font-size: 0.86rem;
   line-height: 1.35;
   text-transform: uppercase;
 }
 
-.human-action-card > div > p:first-child {
+.human-action-card > div > p:first-child,
+.wait-state-card > div > p:first-child {
   color: var(--accent-secondary);
   font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.wait-state-card dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.wait-state-card dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.wait-state-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .ceo-task-review-detail {

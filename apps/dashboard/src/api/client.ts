@@ -1,4 +1,4 @@
-import type { CeoAttentionRollup, HumanAction, NextStepItem, VisionGap } from "@auto-crop/core";
+import type { CeoAttentionRollup, HumanAction, NextStepItem, VisionGap, WaitState } from "@auto-crop/core";
 
 export type AgentSummary = {
   id: string;
@@ -118,6 +118,7 @@ export type TaskCompletionEventSummary = {
 };
 export type VisionGapSummary = VisionGap;
 export type HumanActionSummary = HumanAction;
+export type WaitStateSummary = WaitState;
 export type CeoAttentionRollupSummary = CeoAttentionRollup;
 
 export type ProofSummary = {
@@ -163,6 +164,14 @@ export type FounderReportSummary = {
   completedTaskCount: number;
   reviewTaskCount: number;
   blockedTaskCount: number;
+  waitStateCount?: number;
+  waitStates?: Array<{
+    id: string;
+    label: string;
+    status: string;
+    nextCheckAt: string;
+    affectedTaskIds: string[];
+  }>;
   directionDriftDetected: boolean;
   nextSteps: string[];
 };
@@ -281,6 +290,7 @@ export type CreateCompanyResponse = {
   taskCompletionEvents?: TaskCompletionEventSummary[];
   visionGaps?: VisionGapSummary[];
   humanActions?: HumanActionSummary[];
+  waitStates?: WaitStateSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
@@ -311,6 +321,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   taskCompletionEvents?: TaskCompletionEventSummary[];
   visionGaps?: VisionGapSummary[];
   humanActions?: HumanActionSummary[];
+  waitStates?: WaitStateSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];

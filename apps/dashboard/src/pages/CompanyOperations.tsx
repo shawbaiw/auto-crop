@@ -1,12 +1,13 @@
 import { Activity, Building2, FileCheck2, GitBranchPlus, ListChecks, ShieldAlert } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
-import type { CompanySummary, DepartmentSummary, HumanActionSummary, ReplanProposalSummary, ServerEvent, TaskSummary } from "../api/client";
+import type { CompanySummary, DepartmentSummary, HumanActionSummary, ReplanProposalSummary, ServerEvent, TaskSummary, WaitStateSummary } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { HumanActionPanel } from "../ui/humanActions/HumanActionPanel";
 import { useLanguage, type TranslationKey } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroButton, RetroPanel } from "../ui/retro";
 import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
+import { WaitStatePanel } from "../ui/waitStates/WaitStatePanel";
 
 export type CompanyOperationsProps = {
   company: CompanySummary;
@@ -20,6 +21,7 @@ export type CompanyOperationsProps = {
   onCreateReplanProposal(taskId: string): void;
   replanProposals: ReplanProposalSummary[];
   tasks: TaskSummary[];
+  waitStates: WaitStateSummary[];
 };
 
 export function CompanyOperations({
@@ -34,6 +36,7 @@ export function CompanyOperations({
   onCreateReplanProposal,
   replanProposals,
   tasks,
+  waitStates,
 }: CompanyOperationsProps) {
   const { t } = useLanguage();
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
@@ -86,8 +89,11 @@ export function CompanyOperations({
             onConfirm={onConfirmHumanAction}
             title={t("department.humanActions")}
           />
+          <WaitStatePanel title={t("department.waitStates")} waitStates={waitStates} />
           <VideotexLog
-            emptyMessage={humanActions.some((action) => action.status === "pending") ? "" : t("operations.noAttention")}
+            emptyMessage={
+              humanActions.some((action) => action.status === "pending") || waitStates.length > 0 ? "" : t("operations.noAttention")
+            }
             rows={tasks
               .filter((task) => task.status === "blocked" || task.status === "failed" || task.status === "needs_replan")
               .map((task) => `${task.title} / ${formatTaskStatus(task, t)}`)}

@@ -6,9 +6,9 @@ Blocked by: 03: Accept Structured Next Step Items From Business Artifacts.
 
 Status: ready-for-agent
 
-- [ ] Wait State Next Step Items become Wait States in Company State Snapshot.
-- [ ] Wait States are not treated as task failures.
-- [ ] Wait States include owner department where applicable, reason, related objective or dependency chain, and next check timing.
-- [ ] CEO Office displays Wait States as waiting or monitoring states.
-- [ ] The first timed check-in path can requeue or surface follow-up work when the wait expires.
-- [ ] Final founder-facing report inputs can include long-running Wait States.
+- [x] Wait State Next Step Items become Wait States in Company State Snapshot.
+- [x] Wait States are not treated as task failures.
+- [x] Wait States include owner department where applicable, reason, related objective or dependency chain, and next check timing.
+- [x] CEO Office displays Wait States as waiting or monitoring states.
+- [x] The first timed check-in path can requeue or surface follow-up work when the wait expires.
+- [x] Final founder-facing report inputs can include long-running Wait States.

@@ -183,6 +183,25 @@ export type HumanActionConfirmation = {
   verifiedAt: string;
   verificationErrors: string[];
 };
+export type WaitStateStatus = "waiting" | "ready_for_check_in";
+export type WaitState = {
+  id: string;
+  companyId: string;
+  sourceTaskCompletionEventId: string;
+  taskId: string;
+  departmentId: string;
+  keyResultId: string | null;
+  businessArtifactId: string | null;
+  label: string;
+  reason: string;
+  relatedTaskId: string | null;
+  relatedBusinessArtifactId: string | null;
+  affectedTaskIds: string[];
+  nextCheckAt: string;
+  status: WaitStateStatus;
+  severity: NextStepItemSeverity;
+  createdAt: string;
+};
 export type CeoAttentionRollupGroup =
   | { type: "founder_vision"; companyId: string }
   | { type: "objective"; objectiveId: string }
@@ -201,7 +220,7 @@ export type CeoAttentionRollup = {
   severity: NextStepItemSeverity;
   reasons: CeoAttentionRollupReason[];
   relevantHumanActions: HumanAction[];
-  relevantWaitStates: NextStepItem[];
+  relevantWaitStates: WaitState[];
   relevantVisionGaps: VisionGap[];
   sourceTaskCompletionEventIds: string[];
   createdAt: string;

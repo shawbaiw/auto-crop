@@ -4,7 +4,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { ApiClient, BusinessArtifactSummary, HumanActionSummary, ReplanProposalSummary, ServerEvent } from "./api/client";
+import type { ApiClient, BusinessArtifactSummary, HumanActionSummary, ReplanProposalSummary, ServerEvent, WaitStateSummary } from "./api/client";
 
 describe("Dashboard App", () => {
   it("starts on the company-name step only", async () => {
@@ -435,6 +435,30 @@ describe("Dashboard App", () => {
       },
     );
     expect(await within(leaderReport).findByText("Evidence accepted.")).toBeInTheDocument();
+  });
+
+  it("shows Wait States in CEO Office and the owning department as monitoring work", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      waitStates: [createWaitStateSummary()],
+    }));
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    expect(within(ceoReport).getByRole("heading", { name: "Wait States" })).toBeInTheDocument();
+    expect(within(ceoReport).getAllByText("Wait for search indexing signals.")).toHaveLength(2);
+    expect(within(ceoReport).getByText("Monitoring")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(within(leaderReport).getAllByText("Wait for search indexing signals.")).toHaveLength(2);
+    expect(within(leaderReport).getByText("2026-08-18T00:00:00.000Z")).toBeInTheDocument();
   });
 
   it("routes review-ready department subtasks to CEO Pending", async () => {
@@ -2315,6 +2339,27 @@ function createHumanActionSummary(): HumanActionSummary {
     status: "pending",
     verifiedAt: null,
     verificationErrors: [],
+    createdAt: "2026-08-17T00:02:00.000Z",
+  };
+}
+
+function createWaitStateSummary(): WaitStateSummary {
+  return {
+    id: "task_completion_event_1_wait_state_1",
+    companyId: "company_1",
+    sourceTaskCompletionEventId: "task_completion_event_1",
+    taskId: "task_1",
+    departmentId: "department_1",
+    keyResultId: "key_result_1",
+    businessArtifactId: null,
+    label: "Wait for search indexing signals.",
+    reason: "Wait for search indexing signals.",
+    relatedTaskId: "task_2",
+    relatedBusinessArtifactId: null,
+    affectedTaskIds: ["task_2"],
+    nextCheckAt: "2026-08-18T00:00:00.000Z",
+    status: "waiting",
+    severity: "informational",
     createdAt: "2026-08-17T00:02:00.000Z",
   };
 }

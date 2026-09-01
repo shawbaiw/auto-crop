@@ -15,6 +15,7 @@ import {
   type TaskProgressEventSummary,
   type TaskSummary,
   type TaskUpdateBatchSummary,
+  type WaitStateSummary,
 } from "./api/client";
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
 import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
@@ -61,6 +62,7 @@ export default function App({ apiClient }: AppProps) {
   const [businessArtifacts, setBusinessArtifacts] = useState<BusinessArtifactSummary[]>([]);
   const [replanProposals, setReplanProposals] = useState<ReplanProposalSummary[]>([]);
   const [humanActions, setHumanActions] = useState<HumanActionSummary[]>([]);
+  const [waitStates, setWaitStates] = useState<WaitStateSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [companyListLoadState, setCompanyListLoadState] = useState<CompanyListLoadState>("loading");
@@ -146,6 +148,7 @@ export default function App({ apiClient }: AppProps) {
     setCeoIntakes(response.ceoIntakes ?? []);
     setReplanProposals(response.replanProposals ?? []);
     setHumanActions(response.humanActions ?? []);
+    setWaitStates(response.waitStates ?? []);
     setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
     setView(nextView);
     if (nextView === "onboarding") {
@@ -292,6 +295,7 @@ export default function App({ apiClient }: AppProps) {
     setBusinessArtifacts([]);
     setReplanProposals([]);
     setHumanActions([]);
+    setWaitStates([]);
     setReviews([]);
     setEvents([]);
     setTaskProgressEvents([]);
@@ -310,6 +314,7 @@ export default function App({ apiClient }: AppProps) {
       setBusinessArtifacts(response.businessArtifacts ?? []);
       setReplanProposals(response.replanProposals ?? []);
       setHumanActions(response.humanActions ?? []);
+      setWaitStates(response.waitStates ?? []);
       setReviews(response.reviews ?? []);
       setEvents(response.activity ?? []);
       setTaskProgressEvents(response.taskProgressEvents ?? []);
@@ -577,6 +582,7 @@ export default function App({ apiClient }: AppProps) {
     setCeoIntakes([]);
     setReplanProposals([]);
     setHumanActions([]);
+    setWaitStates([]);
     setDashboardFocusTarget(null);
     setCompanyName("");
     setCompanyNameError(null);
@@ -728,6 +734,7 @@ export default function App({ apiClient }: AppProps) {
         proof={proof}
         businessArtifacts={businessArtifacts}
         humanActions={humanActions}
+        waitStates={waitStates}
         selectedCeoAgentId={selectedAgentId}
         tasks={blueprint.tasks}
         taskProgressEvents={taskProgressEvents}
@@ -745,6 +752,7 @@ export default function App({ apiClient }: AppProps) {
         isPaused={isPaused}
         menuBar={menuBar}
         humanActions={humanActions}
+        waitStates={waitStates}
         onConfirmHumanAction={handleConfirmHumanAction}
         onConfirmReplanProposal={handleConfirmReplanProposal}
         onCreateReplanProposal={handleCreateReplanProposal}

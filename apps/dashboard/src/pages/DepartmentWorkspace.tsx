@@ -29,6 +29,7 @@ import type {
   TaskRefreshResponse,
   TaskProgressEventSummary,
   TaskSummary,
+  WaitStateSummary,
 } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { HumanActionPanel } from "../ui/humanActions/HumanActionPanel";
@@ -36,6 +37,7 @@ import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroListRow, RetroPanel } from "../ui/retro";
 import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
+import { WaitStatePanel } from "../ui/waitStates/WaitStatePanel";
 
 export type DepartmentWorkspaceProps = {
   agents: AgentSummary[];
@@ -50,6 +52,7 @@ export type DepartmentWorkspaceProps = {
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   humanActions?: HumanActionSummary[];
+  waitStates?: WaitStateSummary[];
   onConfirmHumanAction?: (humanActionId: string, evidence: Record<string, string>) => Promise<void> | void;
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
   onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
@@ -81,6 +84,7 @@ export function DepartmentWorkspace({
   proof = [],
   businessArtifacts = [],
   humanActions = [],
+  waitStates = [],
   taskProgressEvents = [],
 }: DepartmentWorkspaceProps) {
   const { t } = useLanguage();
@@ -146,6 +150,7 @@ export function DepartmentWorkspace({
                   departmentName={selectedDepartment.name}
                   draft={departmentDraft}
                   humanActions={humanActions.filter((action) => action.departmentId === selectedDepartment.id)}
+                  waitStates={waitStates.filter((waitState) => waitState.departmentId === selectedDepartment.id)}
                   onConfirmHumanAction={onConfirmHumanAction}
                   onDraftChange={setDepartmentDraft}
                   onViewCeoPending={() => setSelectedRoleId(ceoRoleId)}
@@ -181,6 +186,7 @@ export function DepartmentWorkspace({
                   proof={proof}
                   businessArtifacts={businessArtifacts}
                   humanActions={humanActions}
+                  waitStates={waitStates}
                   tasks={tasks}
                 />
                 <p className="muted">{t("department.schedulerNote")}</p>
@@ -263,6 +269,7 @@ function CeoIntakeWorkspace({
   proof,
   businessArtifacts,
   tasks,
+  waitStates,
 }: {
   departments: DepartmentSummary[];
   draft: string;
@@ -279,6 +286,7 @@ function CeoIntakeWorkspace({
   proof: ProofSummary[];
   businessArtifacts: BusinessArtifactSummary[];
   tasks: TaskSummary[];
+  waitStates: WaitStateSummary[];
 }) {
   const { t } = useLanguage();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -309,6 +317,7 @@ function CeoIntakeWorkspace({
         successMessage={successMessage}
       />
       <HumanActionPanel actions={humanActions} onConfirm={onConfirmHumanAction} title={t("department.humanActions")} />
+      <WaitStatePanel title={t("department.waitStates")} waitStates={waitStates} />
       {selectedPendingItem ? (
         <CeoTaskReviewDetail
           item={selectedPendingItem}
@@ -950,6 +959,7 @@ function DepartmentLeaderReport({
   departmentName,
   draft,
   humanActions,
+  waitStates,
   onConfirmHumanAction,
   onDraftChange,
   onRecoverTask,
@@ -964,6 +974,7 @@ function DepartmentLeaderReport({
   departmentName: string;
   draft: string;
   humanActions: HumanActionSummary[];
+  waitStates: WaitStateSummary[];
   onConfirmHumanAction?: DepartmentWorkspaceProps["onConfirmHumanAction"];
   onDraftChange: (value: string) => void;
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
@@ -982,6 +993,7 @@ function DepartmentLeaderReport({
         <strong>{t("department.currentResponsibility")}:</strong> {responsibility}
       </p>
       <HumanActionPanel actions={humanActions} onConfirm={onConfirmHumanAction} title={t("department.humanActions")} />
+      <WaitStatePanel title={t("department.waitStates")} waitStates={waitStates} />
       <DepartmentProgressFlows
         departmentId={departmentId}
         onRefreshTask={onRefreshTask}
