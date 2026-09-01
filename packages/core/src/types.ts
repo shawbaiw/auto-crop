@@ -119,6 +119,25 @@ export type TaskProgressStep =
   | "needs_ceo_reassignment";
 export type TaskProgressStatus = "complete" | "current" | "waiting" | "blocked";
 export type TaskCompletionOutcome = "accepted" | "blocked" | "failed_to_review" | "needs_replan";
+export type NextStepItemType =
+  | "automatic_downstream_task"
+  | "human_action"
+  | "ceo_decision"
+  | "wait_state"
+  | "downstream_handoff"
+  | "vision_gap";
+export type NextStepItemSeverity = "informational" | "blocking" | "strategic";
+export type NextStepItem = {
+  type: NextStepItemType;
+  label: string;
+  ownerDepartmentId: string | null;
+  relatedTaskId: string | null;
+  relatedBusinessArtifactId: string | null;
+  dependencyImpact: unknown;
+  severity: NextStepItemSeverity | null;
+  priority: number | null;
+  evidenceRequirements: string[];
+};
 
 export type Company = {
   id: string;
@@ -231,7 +250,7 @@ export type TaskCompletionEvent = {
   businessArtifactId: string | null;
   outcome: TaskCompletionOutcome;
   dependencyImpact: unknown;
-  nextStepItems: unknown[];
+  nextStepItems: NextStepItem[];
   visionGaps: unknown[];
   createdAt: string;
 };

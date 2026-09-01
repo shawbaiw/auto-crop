@@ -6,9 +6,9 @@ Blocked by: 02: Record Task Completion Events For Stable Outcomes.
 
 Status: ready-for-agent
 
-- [ ] Business Artifact payloads may include structured Next Step Item proposals.
-- [ ] Valid Next Step Item proposals are copied into the Task Completion Event.
-- [ ] Invalid Next Step Item proposals are reported without crashing task completion.
-- [ ] Freeform text does not create routable Next Step Items.
-- [ ] Next Step Items carry type, owner department where applicable, related task or artifact, dependency impact, severity or priority, evidence requirements when applicable, and display copy.
-- [ ] Company State Snapshot exposes recorded Next Step Items through Task Completion Events.
+- [x] Business Artifact payloads may include structured Next Step Item proposals.
+- [x] Valid Next Step Item proposals are copied into the Task Completion Event.
+- [x] Invalid Next Step Item proposals are reported without crashing task completion.
+- [x] Freeform text does not create routable Next Step Items.
+- [x] Next Step Items carry type, owner department where applicable, related task or artifact, dependency impact, severity or priority, evidence requirements when applicable, and display copy.
+- [x] Company State Snapshot exposes recorded Next Step Items through Task Completion Events.

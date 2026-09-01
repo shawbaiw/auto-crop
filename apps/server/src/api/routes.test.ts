@@ -630,7 +630,35 @@ describe("API routes", () => {
       summary: "Playable prototype exists.",
       verifiedAt: null,
     } satisfies Proof);
-    fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", approvedTask!.id, "proof_1"));
+    fixture.repositories.createBusinessArtifact({
+      ...createBusinessArtifactRecord("business_artifact_1", approvedTask!.id, "proof_1"),
+      payload: {
+        result: "Playable prototype exists.",
+        next_steps: ["Freeform legacy next step should stay inside the payload."],
+        nextStepItems: [
+          {
+            type: "human_action",
+            label: "Deploy the prototype to a public URL.",
+            ownerDepartmentId: approvedTask!.departmentId,
+            relatedTaskId: approvedTask!.id,
+            relatedBusinessArtifactId: "business_artifact_1",
+            dependencyImpact: { blocks: ["launch"] },
+            severity: "blocking",
+            priority: 1,
+            evidenceRequirements: ["url"],
+          },
+          {
+            type: "human_action",
+            label: "",
+            ownerDepartmentId: approvedTask!.departmentId,
+            relatedTaskId: approvedTask!.id,
+            dependencyImpact: {},
+            severity: "blocking",
+            evidenceRequirements: ["url"],
+          },
+        ],
+      },
+    });
 
     const approved = await postJson<{
       decision: { id: string; taskId: string; decision: string; proofId?: string };
@@ -694,6 +722,8 @@ describe("API routes", () => {
         departmentId: string;
         businessArtifactId: string | null;
         outcome: string;
+        dependencyImpact: { nextStepValidationErrors?: string[] };
+        nextStepItems: Array<{ type: string; label: string; ownerDepartmentId: string | null }>;
         createdAt: string;
       }>;
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
@@ -711,14 +741,81 @@ describe("API routes", () => {
         departmentId: approvedTask!.departmentId,
         businessArtifactId: "business_artifact_1",
         outcome: "accepted",
+        nextStepItems: [
+          expect.objectContaining({
+            type: "human_action",
+            label: "Deploy the prototype to a public URL.",
+            ownerDepartmentId: approvedTask!.departmentId,
+          }),
+        ],
         createdAt: "2026-08-17T00:00:00.000Z",
       }),
+    ]);
+    expect(state.taskCompletionEvents[0]?.dependencyImpact.nextStepValidationErrors).toEqual([
+      "nextStepItems[1].label: Expected a non-empty string.",
     ]);
     expect(state.founderReport.actualOutputs).toContainEqual(expect.objectContaining({ taskId: approvedTask!.id }));
     expect(Array.isArray(state.founderReport.nextSteps)).toBe(true);
     expect(state.taskProgressEvents).toContainEqual(
       expect.objectContaining({ label: "CEO Office returned this, waiting for the department to rework it." }),
     );
+
+    await fixture.close();
+  });
+
+  it("reports malformed structured next-step containers without using freeform next-step prose", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = fixture.repositories.fetchQueuedTasks(1)[0];
+    expect(task).toBeDefined();
+    fixture.repositories.updateTaskStatus(task!.id, "review");
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: task!.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.createBusinessArtifact({
+      ...createBusinessArtifactRecord("business_artifact_1", task!.id, "proof_1"),
+      payload: {
+        next_steps: ["Deploy this manually."],
+        nextStepItems: { type: "human_action", label: "Deploy this manually." },
+      },
+    });
+
+    const approved = await postJson<{ task: { id: string; status: string } }>(
+      `${fixture.baseUrl}/api/ceo-review-decisions`,
+      {
+        taskId: task!.id,
+        decision: "approve",
+      },
+    );
+    expect(approved.task.status).toBe("complete");
+
+    const state = await getJson<{
+      taskCompletionEvents: Array<{
+        taskId: string;
+        dependencyImpact: { nextStepValidationErrors?: string[] };
+        nextStepItems: unknown[];
+      }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    expect(state.taskCompletionEvents).toEqual([
+      expect.objectContaining({
+        taskId: task!.id,
+        nextStepItems: [],
+      }),
+    ]);
+    expect(state.taskCompletionEvents[0]?.dependencyImpact.nextStepValidationErrors).toEqual([
+      "nextStepItems: Expected an array.",
+    ]);
 
     await fixture.close();
   });

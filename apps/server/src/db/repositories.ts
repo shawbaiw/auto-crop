@@ -1272,7 +1272,7 @@ function mapTaskCompletionEvent(row: TaskCompletionEventRow): TaskCompletionEven
     businessArtifactId: row.business_artifact_id,
     outcome: row.outcome,
     dependencyImpact: JSON.parse(row.dependency_impact) as unknown,
-    nextStepItems: JSON.parse(row.next_step_items) as unknown[],
+    nextStepItems: JSON.parse(row.next_step_items) as TaskCompletionEvent["nextStepItems"],
     visionGaps: JSON.parse(row.vision_gaps) as unknown[],
     createdAt: row.created_at,
   };

@@ -1,3 +1,5 @@
+import type { NextStepItem } from "@auto-crop/core";
+
 export type AgentSummary = {
   id: string;
   name: string;
@@ -99,6 +101,8 @@ export type TaskProgressEventSummary = {
   createdAt: string;
 };
 
+export type NextStepItemSummary = NextStepItem;
+
 export type TaskCompletionEventSummary = {
   id: string;
   companyId: string;
@@ -108,7 +112,7 @@ export type TaskCompletionEventSummary = {
   businessArtifactId: string | null;
   outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan";
   dependencyImpact: unknown;
-  nextStepItems: unknown[];
+  nextStepItems: NextStepItemSummary[];
   visionGaps: unknown[];
   createdAt: string;
 };
