@@ -118,6 +118,7 @@ export type TaskProgressStep =
   | "blocked"
   | "needs_ceo_reassignment";
 export type TaskProgressStatus = "complete" | "current" | "waiting" | "blocked";
+export type TaskCompletionOutcome = "accepted" | "blocked" | "failed_to_review" | "needs_replan";
 
 export type Company = {
   id: string;
@@ -218,6 +219,20 @@ export type TaskProgressEvent = {
   status: TaskProgressStatus;
   label: string;
   detail: string | null;
+  createdAt: string;
+};
+
+export type TaskCompletionEvent = {
+  id: string;
+  companyId: string;
+  taskId: string;
+  departmentId: string;
+  keyResultId: string | null;
+  businessArtifactId: string | null;
+  outcome: TaskCompletionOutcome;
+  dependencyImpact: unknown;
+  nextStepItems: unknown[];
+  visionGaps: unknown[];
   createdAt: string;
 };
 

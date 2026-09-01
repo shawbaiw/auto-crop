@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDatabaseClient } from "./client";
 import { migrate } from "./schema";
 import { createRepositories } from "./repositories";
-import type { CeoIntake, Company, Department, KeyResult, Objective, Proof, ReplanProposal, Task } from "@auto-crop/core";
+import type { CeoIntake, Company, Department, KeyResult, Objective, Proof, ReplanProposal, Task, TaskCompletionEvent } from "@auto-crop/core";
 
 const createdDirs: string[] = [];
 
@@ -80,6 +80,30 @@ describe("repositories", () => {
     expect(repos.listTaskProgressEventsForCompany(records.company.id).map((event) => event.step)).toEqual([
       "received",
       "assessment_complete",
+    ]);
+
+    close();
+  });
+
+  it("persists task completion events in chronological order", () => {
+    const { repos, close } = openTestRepositories();
+    const records = createRecords();
+
+    repos.createCompany(records.company);
+    repos.createDepartment(records.department);
+    repos.createObjective(records.objective);
+    repos.createKeyResult(records.keyResult);
+    repos.createTask(records.task);
+    repos.appendTaskCompletionEvent({
+      ...createTaskCompletionEvent(records.task),
+      id: "task_completion_event_2",
+      createdAt: "2026-08-17T00:01:00.000Z",
+    });
+    repos.appendTaskCompletionEvent(createTaskCompletionEvent(records.task));
+
+    expect(repos.listTaskCompletionEventsForCompany(records.company.id).map((event) => event.id)).toEqual([
+      "task_completion_event_1",
+      "task_completion_event_2",
     ]);
 
     close();
@@ -396,6 +420,22 @@ function createRecords(): {
       summary: "Landing page prototype file created.",
       verifiedAt: null,
     },
+  };
+}
+
+function createTaskCompletionEvent(task: Task): TaskCompletionEvent {
+  return {
+    id: "task_completion_event_1",
+    companyId: task.companyId,
+    taskId: task.id,
+    departmentId: task.departmentId,
+    keyResultId: task.keyResultId,
+    businessArtifactId: null,
+    outcome: "blocked",
+    dependencyImpact: {},
+    nextStepItems: [],
+    visionGaps: [],
+    createdAt: "2026-08-17T00:00:00.000Z",
   };
 }
 

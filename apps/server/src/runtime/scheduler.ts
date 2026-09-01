@@ -17,6 +17,7 @@ import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } f
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
+import { recordTaskCompletionEvent } from "./taskCompletion";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
 
 export type SchedulerFailureReason = AgentFailureReason;
@@ -373,6 +374,13 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
                 effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
               });
+              recordTaskCompletionEvent({
+                repositories: input.repositories,
+                task,
+                outcome: "needs_replan",
+                now,
+                createId,
+              });
               emitParentTaskAggregationEvents(input, task);
               result.blocked.push(task.id);
               return;
@@ -447,7 +455,17 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               detail: failure,
               subjectTaskId: task.id,
             });
-            result.blocked.push(...blockDirectDependencyConsumers(input, task));
+            const blockedConsumerIds = blockDirectDependencyConsumers(input, task);
+            recordTaskCompletionEvent({
+              repositories: input.repositories,
+              task,
+              businessArtifact,
+              outcome: "failed_to_review",
+              dependencyImpact: { blockedTaskIds: blockedConsumerIds },
+              now,
+              createId,
+            });
+            result.blocked.push(...blockedConsumerIds);
             emitParentTaskAggregationEvents(input, task);
             result.failed.push(task.id);
             return;
@@ -802,6 +820,17 @@ function blockTaskForDependency(
     failureMessage,
     dependencyNote,
   });
+  recordTaskCompletionEvent({
+    repositories: input.repositories,
+    task,
+    outcome: "blocked",
+    dependencyImpact: {
+      blockedByTaskId: dependency.id,
+      reason: failureReason,
+    },
+    now: input.now,
+    createId: input.createId,
+  });
 }
 
 function blockTaskForMissingDeliverable(
@@ -826,6 +855,17 @@ function blockTaskForMissingDeliverable(
     failureReason,
     failureMessage,
     dependencyNote,
+  });
+  recordTaskCompletionEvent({
+    repositories: input.repositories,
+    task,
+    outcome: "blocked",
+    dependencyImpact: {
+      blockedByTaskId: dependency.id,
+      reason: failureReason,
+    },
+    now: input.now,
+    createId: input.createId,
   });
 }
 

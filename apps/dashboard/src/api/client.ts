@@ -99,6 +99,20 @@ export type TaskProgressEventSummary = {
   createdAt: string;
 };
 
+export type TaskCompletionEventSummary = {
+  id: string;
+  companyId: string;
+  taskId: string;
+  departmentId: string;
+  keyResultId: string | null;
+  businessArtifactId: string | null;
+  outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan";
+  dependencyImpact: unknown;
+  nextStepItems: unknown[];
+  visionGaps: unknown[];
+  createdAt: string;
+};
+
 export type ProofSummary = {
   id: string;
   taskId: string;
@@ -257,6 +271,7 @@ export type CreateCompanyResponse = {
   activity?: ServerEvent[];
   replanProposals?: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
+  taskCompletionEvents?: TaskCompletionEventSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
 };
@@ -283,6 +298,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   activity: ServerEvent[];
   replanProposals: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
+  taskCompletionEvents?: TaskCompletionEventSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
 };

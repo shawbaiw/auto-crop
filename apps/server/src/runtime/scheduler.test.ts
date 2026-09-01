@@ -191,6 +191,15 @@ describe("runSchedulerOnce", () => {
       validationStatus: "invalid_schema",
       reviewStatus: "not_reviewable",
     });
+    expect(repositories.listTaskCompletionEventsForCompany("company_1")).toEqual([
+      expect.objectContaining({
+        taskId: "task_1",
+        departmentId: "department_1",
+        businessArtifactId: "business_artifact_1",
+        outcome: "failed_to_review",
+        createdAt: "2026-08-17T00:00:00.000Z",
+      }),
+    ]);
 
     client.close();
   });
@@ -1214,6 +1223,15 @@ describe("runSchedulerOnce", () => {
       failureReason: "needs_replan",
       message: "Task needs replanning: Task task_1 / exceeded long budget 10m.",
     }));
+    expect(repositories.listTaskCompletionEventsForCompany("company_1")).toEqual([
+      expect.objectContaining({
+        taskId: "task_1",
+        departmentId: "department_1",
+        businessArtifactId: null,
+        outcome: "needs_replan",
+        createdAt: "2026-08-17T00:00:00.000Z",
+      }),
+    ]);
 
     client.close();
   });
@@ -1258,6 +1276,18 @@ describe("runSchedulerOnce", () => {
       taskId: "task_2",
       failureReason: "dependency_failed",
     }));
+    expect(repositories.listTaskCompletionEventsForCompany("company_1")).toContainEqual(
+      expect.objectContaining({
+        taskId: "task_2",
+        departmentId: "department_1",
+        businessArtifactId: null,
+        outcome: "blocked",
+        dependencyImpact: {
+          blockedByTaskId: "task_1",
+          reason: "dependency_failed",
+        },
+      }),
+    );
 
     client.close();
   });

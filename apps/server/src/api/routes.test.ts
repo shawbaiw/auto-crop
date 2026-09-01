@@ -689,6 +689,13 @@ describe("API routes", () => {
       taskProgressEvents: Array<{ label: string; detail?: string }>;
       businessArtifacts: Array<{ id: string; taskId: string; reviewStatus: string }>;
       founderReport: { actualOutputs: Array<{ taskId: string }>; nextSteps: string[] };
+      taskCompletionEvents: Array<{
+        taskId: string;
+        departmentId: string;
+        businessArtifactId: string | null;
+        outcome: string;
+        createdAt: string;
+      }>;
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
     expect(state.ceoReviewDecisions).toEqual([
       expect.objectContaining({ id: "ceo_review_decision_1", taskId: approvedTask!.id, decision: "approve" }),
@@ -698,6 +705,15 @@ describe("API routes", () => {
     expect(state.businessArtifacts).toContainEqual(
       expect.objectContaining({ id: "business_artifact_1", taskId: approvedTask!.id, reviewStatus: "accepted" }),
     );
+    expect(state.taskCompletionEvents).toEqual([
+      expect.objectContaining({
+        taskId: approvedTask!.id,
+        departmentId: approvedTask!.departmentId,
+        businessArtifactId: "business_artifact_1",
+        outcome: "accepted",
+        createdAt: "2026-08-17T00:00:00.000Z",
+      }),
+    ]);
     expect(state.founderReport.actualOutputs).toContainEqual(expect.objectContaining({ taskId: approvedTask!.id }));
     expect(Array.isArray(state.founderReport.nextSteps)).toBe(true);
     expect(state.taskProgressEvents).toContainEqual(
@@ -768,11 +784,25 @@ describe("API routes", () => {
     expect(fixture.repositories.getTask(consumerTask!.id)?.status).toBe("queued");
     expect(schedulerWakeRequests).toEqual(["dependency_cascade_queued"]);
 
-    const state = await getJson<{ tasks: Array<{ id: string; status: string }>; activity: Array<{ type: string; taskId?: string }> }>(
+    const state = await getJson<{
+      tasks: Array<{ id: string; status: string }>;
+      activity: Array<{ type: string; taskId?: string }>;
+      taskCompletionEvents: Array<{ taskId: string; outcome: string; dependencyImpact: unknown }>;
+    }>(
       `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
     );
     expect(state.tasks).toContainEqual(expect.objectContaining({ id: consumerTask!.id, status: "queued" }));
     expect(state.activity).toContainEqual(expect.objectContaining({ type: "dependency_ready", taskId: consumerTask!.id }));
+    expect(state.taskCompletionEvents).toContainEqual(
+      expect.objectContaining({
+        taskId: producerTask!.id,
+        outcome: "accepted",
+        dependencyImpact: {
+          updatedTasks: [{ taskId: consumerTask!.id, status: "queued" }],
+          errors: [],
+        },
+      }),
+    );
 
     await fixture.close();
   });

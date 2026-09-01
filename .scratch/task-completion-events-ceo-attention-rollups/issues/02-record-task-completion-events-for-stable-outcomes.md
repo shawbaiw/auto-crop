@@ -6,9 +6,9 @@ Blocked by: 01: Extract Shared Business Acceptance Path.
 
 Status: ready-for-agent
 
-- [ ] Accepted manual CEO approval creates a Task Completion Event.
-- [ ] Blocked review-ineligible Business Artifacts create Task Completion Events.
-- [ ] Needs-replan outcomes create Task Completion Events.
-- [ ] Task Completion Events include company, task, owning department, stable outcome, Business Artifact when available, and timestamp.
-- [ ] Company State Snapshot returns Task Completion Events in stable order.
-- [ ] Raw Proof capture without stable business outcome does not create a Task Completion Event.
+- [x] Accepted manual CEO approval creates a Task Completion Event.
+- [x] Blocked review-ineligible Business Artifacts create Task Completion Events.
+- [x] Needs-replan outcomes create Task Completion Events.
+- [x] Task Completion Events include company, task, owning department, stable outcome, Business Artifact when available, and timestamp.
+- [x] Company State Snapshot returns Task Completion Events in stable order.
+- [x] Raw Proof capture without stable business outcome does not create a Task Completion Event.

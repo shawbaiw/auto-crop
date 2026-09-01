@@ -7,6 +7,7 @@ import type {
 } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { propagateDependencyCascade, type DependencyCascadeResult } from "./dependencyCascade";
+import { recordTaskCompletionEvent } from "./taskCompletion";
 
 export type BusinessAcceptanceResult = {
   dependencyCascade?: DependencyCascadeResult;
@@ -72,6 +73,21 @@ export function acceptTaskBusinessArtifact(input: {
   if (dependencyCascade?.updatedTasks.some((update) => update.task.status === "queued")) {
     input.requestSchedulerWake?.();
   }
+  recordTaskCompletionEvent({
+    repositories: input.repositories,
+    task: input.task,
+    businessArtifact: input.artifact,
+    outcome: "accepted",
+    dependencyImpact: {
+      updatedTasks: dependencyCascade?.updatedTasks.map((update) => ({
+        taskId: update.task.id,
+        status: update.task.status,
+      })) ?? [],
+      errors: dependencyCascade?.errors ?? [],
+    },
+    now: input.now,
+    createId: input.createId,
+  });
 
   return {
     dependencyCascade,

@@ -11,6 +11,7 @@ import type {
   Proof,
   ReplanProposal,
   Task,
+  TaskCompletionEvent,
   TaskEvent,
   TaskProgressEvent,
 } from "@auto-crop/core";
@@ -490,6 +491,7 @@ function buildCompanyState(
     tasks: summarizeTasks(tasks, repositories.listTaskDependenciesForCompany(company.id)),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
     businessArtifacts,
+    taskCompletionEvents: repositories.listTaskCompletionEventsForCompany(company.id).map(summarizeTaskCompletionEvent),
     founderReport: summarizeFounderReport(company, tasks, businessArtifacts),
     reviews: repositories.listReviews(company.id).map(summarizeReview),
     ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(company.id).map(summarizeCeoReviewDecision),
@@ -954,6 +956,10 @@ function summarizeTaskEvent(event: TaskEvent) {
 }
 
 function summarizeTaskProgressEvent(event: TaskProgressEvent) {
+  return event;
+}
+
+function summarizeTaskCompletionEvent(event: TaskCompletionEvent) {
   return event;
 }
 
