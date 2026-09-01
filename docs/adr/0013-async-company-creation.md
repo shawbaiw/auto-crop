@@ -1,0 +1,3 @@
+# Async Company Creation
+
+Company creation will be a durable asynchronous Company Creation flow instead of a synchronous request that waits for the CEO Agent to finish. The runtime will first persist a `creating` company with a Creation Idempotency Key, run the CEO Agent in a Creation Attempt, publish durable Company Events over the existing SSE stream, and then move the company to `draft` or `creation_failed`. This is more state than simply increasing the dashboard timeout, but it handles slow agents, refreshes, duplicate clicks, network interruptions, and explicit retry without creating duplicate companies or hiding creation history.
