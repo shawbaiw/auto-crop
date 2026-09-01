@@ -1,6 +1,6 @@
 # Static UI And Enum Display
 
-Status: ready-for-agent
+Status: resolved
 Blocked by:
 
 ## Goal
@@ -30,3 +30,8 @@ Remove raw English UI strings and raw internal enum/code displays from ordinary 
 
 This ticket should not introduce a third-party i18n library. It should make the current `LanguageProvider` path stricter and more complete.
 
+## Comments
+
+- Implemented dashboard display formatters for task status, failure reasons, company status, proof types, artifact kind/role/status values, replan proposal status, and capability tags.
+- Replaced raw display of CEO review metadata, dashboard artifact metadata, company status, proposal status, and capability tags with locale-aware formatting.
+- Verified with `pnpm --filter @auto-crop/dashboard test` and `pnpm --filter @auto-crop/dashboard typecheck`.

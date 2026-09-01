@@ -4,6 +4,7 @@ import type { CompanyListItem } from "../api/client";
 import { ModalFrame, PageHeader, Workspace } from "../ui/layout";
 import { useLanguage } from "../ui/language";
 import { RetroButton, RetroListRow, RetroPanel, RetroStatus } from "../ui/retro";
+import { formatCompanyStatus } from "../ui/tasks/formatDisplayValue";
 
 export type CompanyPickerProps = {
   companies: CompanyListItem[];
@@ -60,7 +61,7 @@ export function CompanyPicker({
               {companies.map((company) => (
                 <RetroListRow
                   key={company.id}
-                  meta={`${company.status.toUpperCase()} / ${company.taskCount} ${t("companyPicker.tasks")}`}
+                  meta={`${formatCompanyStatus(company.status, t)} / ${company.taskCount} ${t("companyPicker.tasks")}`}
                   onClick={() => onOpenCompany(company.id)}
                   title={company.name}
                 />

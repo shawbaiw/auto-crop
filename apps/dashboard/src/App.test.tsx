@@ -319,7 +319,7 @@ describe("Dashboard App", () => {
 
     expect(screen.getByRole("heading", { name: "Engineering Workspace" })).toBeInTheDocument();
     expect(screen.getByText("Current Agent")).toBeInTheDocument();
-    expect(screen.getByText("Capabilities: code / frontend / test")).toBeInTheDocument();
+    expect(screen.getByText("Capabilities: Code / Frontend / Test")).toBeInTheDocument();
     const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
     expect(leaderReport).toHaveTextContent("Current department mission: Build prototype.");
     expect(leaderReport).toHaveTextContent("CEO Task Progress");
@@ -756,7 +756,9 @@ describe("Dashboard App", () => {
     expect(within(taskReview).getByRole("heading", { name: "Task Review" })).toBeInTheDocument();
     expect(within(taskReview).getByText("This task can pass now because the department submitted checkable proof.")).toBeInTheDocument();
     expect(within(taskReview).getByText("Prototype is playable locally.")).toBeInTheDocument();
-    expect(within(taskReview).getByText("file / proof.md")).toBeInTheDocument();
+    expect(within(taskReview).getByText("File / proof.md")).toBeInTheDocument();
+    expect(within(taskReview).getByText("Deliverable / Implementation / Prototype Implementation")).toBeInTheDocument();
+    expect(within(taskReview).getByText("Valid / Unreviewed")).toBeInTheDocument();
 
     const approveButton = within(taskReview).getByRole("button", { name: "Approve, mark complete" });
     const returnButton = within(taskReview).getByRole("button", { name: "Return to department" });
@@ -1797,7 +1799,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    expect(await screen.findByText("Create landing page / REVIEW")).toBeInTheDocument();
+    expect(await screen.findByText("Create landing page / AWAITING REVIEW")).toBeInTheDocument();
   });
 
   it("shows task budgets and failed reasons in the operating dashboard from SSE", async () => {
@@ -1822,7 +1824,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    expect(await screen.findByText("Create landing page / FAILED · TIMEOUT")).toBeInTheDocument();
+    expect(await screen.findByText("Create landing page / FAILED · TIMED OUT")).toBeInTheDocument();
     expect(screen.getByText("Task started: Create landing page (codex, long budget 10m).")).toBeInTheDocument();
   });
 
@@ -2071,7 +2073,7 @@ describe("Dashboard App", () => {
 
       expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
       expect(api.getCompanyState).toHaveBeenCalledWith("company_1");
-      expect(screen.getByText("Create landing page / FAILED · TIMEOUT · 10M · PARTIAL OUTPUT: .AUTO-CROP/WORKSPACES/TASK_1")).toBeInTheDocument();
+      expect(screen.getByText("Create landing page / FAILED · TIMED OUT · 10M · PARTIAL OUTPUT: .AUTO-CROP/WORKSPACES/TASK_1")).toBeInTheDocument();
       expect(screen.getByText(".auto-crop/workspaces/task_1/index.html")).toBeInTheDocument();
       expect(screen.getByText("Task failed: Create landing page / timeout after 10m.")).toBeInTheDocument();
     } finally {

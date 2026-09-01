@@ -5,7 +5,8 @@ import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage, type TranslationKey } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroButton, RetroPanel } from "../ui/retro";
-import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
+import { formatCodeLabel, formatCompanyStatus, formatReplanProposalStatus } from "../ui/tasks/formatDisplayValue";
+import { formatTaskFailureReason, formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 
 export type CompanyOperationsProps = {
   company: CompanySummary;
@@ -46,7 +47,7 @@ export function CompanyOperations({
     <AppShell className="app-shell--workbench" menuBar={menuBar}>
       <PageHeader
         eyebrow={company.name}
-        status={company.status}
+        status={formatCompanyStatus(company.status, t)}
         statusIcon={<Activity size={16} aria-hidden="true" />}
         title={t("operations.title")}
       />
@@ -56,7 +57,7 @@ export function CompanyOperations({
         <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title={t("operations.companyState")} variant="inverted">
           <VideotexKeyValue
             items={[
-              { label: t("operations.state"), value: company.status },
+              { label: t("operations.state"), value: formatCompanyStatus(company.status, t) },
               { label: t("operations.playbook"), value: company.playbookId },
               { label: t("operations.departments"), value: String(departments.length).padStart(2, "0") },
             ]}
@@ -113,7 +114,7 @@ export function CompanyOperations({
                     <p>
                       {sourceTask?.title ?? t("operations.unknownTask")} — {proposal.rationale}
                     </p>
-                    <span>{proposal.status}</span>
+                    <span>{formatReplanProposalStatus(proposal.status, t)}</span>
                   </div>
                   <VideotexKeyValue
                     items={[
@@ -130,7 +131,7 @@ export function CompanyOperations({
                         ? [
                             {
                               label: t("operations.fallbackReason"),
-                              value: `${proposal.plannerFailureReason}: ${proposal.plannerFailureMessage ?? t("operations.notAvailable")}`,
+                              value: `${formatTaskFailureReason(proposal.plannerFailureReason, t)}: ${proposal.plannerFailureMessage ?? t("operations.notAvailable")}`,
                             },
                           ]
                         : []),
@@ -248,7 +249,7 @@ function formatAgentActivityState(event: ServerEvent, t: (key: TranslationKey) =
     case "partial_output":
       return t("operations.partialOutput");
     default:
-      return event.status ? titleCase(event.status) : t("operations.activity");
+      return event.status ? formatCodeLabel(event.status) : t("operations.activity");
   }
 }
 
@@ -335,8 +336,4 @@ function cleanActivityMessage(message: string): string | null {
     .trim();
 
   return cleaned.length > 0 ? cleaned : null;
-}
-
-function titleCase(value: string): string {
-  return value.slice(0, 1).toUpperCase() + value.slice(1).replaceAll("_", " ");
 }

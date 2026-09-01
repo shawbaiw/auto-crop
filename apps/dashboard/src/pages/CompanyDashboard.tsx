@@ -15,6 +15,15 @@ import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroPanel } from "../ui/retro";
+import {
+  formatArtifactKind,
+  formatArtifactReviewStatus,
+  formatArtifactRole,
+  formatArtifactValidationStatus,
+  formatCodeLabel,
+  formatCompanyStatus,
+  formatCurrentFlag,
+} from "../ui/tasks/formatDisplayValue";
 import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 
 export type DashboardFocusSection = "tasks" | "departments" | "proof" | "review" | "evidence";
@@ -73,7 +82,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
     <AppShell className="app-shell--workbench" menuBar={props.menuBar}>
       <PageHeader
         eyebrow={props.company.name}
-        status={props.company.status}
+        status={formatCompanyStatus(props.company.status, t)}
         statusIcon={<Activity size={16} aria-hidden="true" />}
         title={t("dashboard.title")}
       />
@@ -82,7 +91,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
       <Workspace className="operations-grid">
         <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title={t("dashboard.ceoOffice")} variant="inverted">
           <p>{t("dashboard.ceoOfficeDescription")}</p>
-          <VideotexKeyValue items={[{ label: t("dashboard.state"), value: props.company.status }, { label: t("dashboard.playbook"), value: props.company.playbookId }]} />
+          <VideotexKeyValue items={[{ label: t("dashboard.state"), value: formatCompanyStatus(props.company.status, t) }, { label: t("dashboard.playbook"), value: props.company.playbookId }]} />
         </RetroPanel>
         <RetroPanel icon={<Flag size={18} aria-hidden="true" />} title={t("dashboard.okrSystem")}>
           <VideotexLog emptyMessage={t("dashboard.noObjectives")} rows={props.objectives.map((objective) => objective.title)} />
@@ -162,7 +171,15 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
           <VideotexLog
             emptyMessage={t("dashboard.noBusinessArtifacts")}
             rows={props.businessArtifacts.map((artifact) =>
-              `${taskTitleForArtifact(artifact, props.tasks)} / ${artifact.artifactKind} / ${artifact.artifactRole} / ${artifact.artifactSubtype} / ${artifact.validationStatus} / ${artifact.reviewStatus}${artifact.isCurrent ? " / current" : ""}`,
+              [
+                taskTitleForArtifact(artifact, props.tasks),
+                formatArtifactKind(artifact.artifactKind, t),
+                formatArtifactRole(artifact.artifactRole, t),
+                formatCodeLabel(artifact.artifactSubtype),
+                formatArtifactValidationStatus(artifact.validationStatus, t),
+                formatArtifactReviewStatus(artifact.reviewStatus, t),
+                formatCurrentFlag(artifact.isCurrent, t),
+              ].filter(Boolean).join(" / "),
             )}
           />
         </RetroPanel>

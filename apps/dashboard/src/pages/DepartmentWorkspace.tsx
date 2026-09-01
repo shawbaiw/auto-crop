@@ -33,7 +33,17 @@ import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroListRow, RetroPanel } from "../ui/retro";
-import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
+import {
+  formatArtifactKind,
+  formatArtifactReviewStatus,
+  formatArtifactRole,
+  formatArtifactValidationStatus,
+  formatCapability,
+  formatCodeLabel,
+  formatCompanyStatus,
+  formatProofType,
+} from "../ui/tasks/formatDisplayValue";
+import { formatTaskFailureReason, formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 
 export type DepartmentWorkspaceProps = {
   agents: AgentSummary[];
@@ -103,7 +113,7 @@ export function DepartmentWorkspace({
     <AppShell className="app-shell--workbench app-shell--department-workspace" menuBar={menuBar}>
       <PageHeader
         eyebrow={t("department.eyebrow")}
-        status={company.status}
+        status={formatCompanyStatus(company.status, t)}
         statusIcon={<Building2 size={16} aria-hidden="true" />}
         title={company.name}
       />
@@ -461,13 +471,13 @@ function CeoTaskReviewDetail({
           {proofs.map((proof) => (
             <article className="ceo-task-review-proof" key={proof.id}>
               <p>{proof.summary}</p>
-              <p className="muted">{`${proof.type} / ${proof.uri}`}</p>
+              <p className="muted">{`${formatProofType(proof.type, t)} / ${proof.uri}`}</p>
             </article>
           ))}
           {currentArtifact ? (
             <article className="ceo-task-review-proof">
-              <p>{`${currentArtifact.artifactKind} / ${currentArtifact.artifactRole} / ${currentArtifact.artifactSubtype}`}</p>
-              <p className="muted">{`${currentArtifact.validationStatus} / ${currentArtifact.reviewStatus}`}</p>
+              <p>{`${formatArtifactKind(currentArtifact.artifactKind, t)} / ${formatArtifactRole(currentArtifact.artifactRole, t)} / ${formatCodeLabel(currentArtifact.artifactSubtype)}`}</p>
+              <p className="muted">{`${formatArtifactValidationStatus(currentArtifact.validationStatus, t)} / ${formatArtifactReviewStatus(currentArtifact.reviewStatus, t)}`}</p>
             </article>
           ) : (
             <p className="muted">{t("dashboard.noBusinessArtifacts")}</p>
@@ -479,10 +489,10 @@ function CeoTaskReviewDetail({
             items={[
               { label: t("department.status"), value: formatTaskStatus(item.task, t) },
               { label: t("department.ceoPendingReviewRequestFrom"), value: item.departmentName },
-              ...(item.task.executionProfileName ? [{ label: "Profile", value: item.task.executionProfileName }] : []),
-              ...(item.task.effectiveTimeoutMs ? [{ label: "Budget", value: `${Math.round(item.task.effectiveTimeoutMs / 60_000)}m` }] : []),
-              ...(item.task.failureReason ? [{ label: "Issue", value: item.task.failureReason }] : []),
-              ...(item.task.failureMessage ? [{ label: "Detail", value: item.task.failureMessage }] : []),
+              ...(item.task.executionProfileName ? [{ label: t("department.executionProfile"), value: formatCodeLabel(item.task.executionProfileName) }] : []),
+              ...(item.task.effectiveTimeoutMs ? [{ label: t("department.executionBudget"), value: `${Math.round(item.task.effectiveTimeoutMs / 60_000)}m` }] : []),
+              ...(item.task.failureReason ? [{ label: t("department.executionIssue"), value: formatTaskFailureReason(item.task.failureReason, t) }] : []),
+              ...(item.task.failureMessage ? [{ label: t("department.executionDetail"), value: item.task.failureMessage }] : []),
               ...(item.task.artifactWorkspacePath ? [{ label: t("department.partialOutput"), value: item.task.artifactWorkspacePath }] : []),
             ]}
           />
@@ -925,7 +935,7 @@ function DepartmentAgentSummary({
         <h3>{t("department.currentAgent")}</h3>
         <p>{agentName}</p>
       </div>
-      {agent?.capabilities.length ? <p className="muted">{`${t("department.agentCapabilities")}: ${agent.capabilities.join(" / ")}`}</p> : null}
+      {agent?.capabilities.length ? <p className="muted">{`${t("department.agentCapabilities")}: ${agent.capabilities.map((capability) => formatCapability(capability, t)).join(" / ")}`}</p> : null}
     </section>
   );
 }
