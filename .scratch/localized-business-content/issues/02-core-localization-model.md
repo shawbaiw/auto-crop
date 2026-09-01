@@ -1,6 +1,6 @@
 # Core Localization Model
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01
 
 ## Goal
@@ -31,3 +31,17 @@ Introduce shared domain types and boundary helpers for Localized Business Conten
 
 Prefer a small, boring model. This ticket is about the contract, not converting every producer yet.
 
+## Resolution
+
+- Added core `Locale`, `LocalizedText`, `CompleteLocalizedText`, `localizedTextFromString`, and `resolveLocalizedText`.
+- Added `localeSchema` and `localizedTextSchema` with explicit non-empty validation.
+- Added migration-compatible localized API summary fields for company, CEO intake/review notes, departments, objectives, tasks, progress events, proof summaries, task events, and replan proposals.
+- Kept legacy string fields in API summaries so existing data and callers continue to work during migration.
+
+## Verification
+
+- `pnpm --filter @auto-crop/core test`
+- `pnpm --filter @auto-crop/core typecheck`
+- `pnpm --filter @auto-crop/server test`
+- `pnpm --filter @auto-crop/server typecheck`
+- `pnpm --filter @auto-crop/dashboard typecheck`

@@ -2,6 +2,15 @@ import { z } from "zod";
 
 export const nonEmptyString = z.string().trim().min(1);
 
+export const localeSchema = z.enum(["en", "zh"]);
+
+export const localizedTextSchema = z.object({
+  en: nonEmptyString.optional(),
+  zh: nonEmptyString.optional(),
+}).refine((value) => Boolean(value.en || value.zh), {
+  message: "Localized text must include at least one locale value.",
+});
+
 export const riskLevelSchema = z.enum(["low", "medium", "high"]);
 
 export const taskStatusSchema = z.enum([

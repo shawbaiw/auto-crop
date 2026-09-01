@@ -14,6 +14,7 @@ import type {
   TaskEvent,
   TaskProgressEvent,
 } from "@auto-crop/core";
+import { localizedTextFromString } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories, ReviewRecord } from "../db/repositories";
 import { EventStream } from "../events/sse";
@@ -672,6 +673,7 @@ function summarizeCompany(company: Company) {
   return {
     id: company.id,
     name: company.name,
+    nameText: localizedTextFromString(company.name),
     status: company.status,
     playbookId: company.playbookId,
     founderVision: company.founderVision,
@@ -690,11 +692,17 @@ function summarizeCompanyListItem(company: Company, repositories: ReturnType<typ
 }
 
 function summarizeCeoIntake(intake: CeoIntake) {
-  return intake;
+  return {
+    ...intake,
+    bodyText: localizedTextFromString(intake.body),
+  };
 }
 
 function summarizeCeoReviewDecision(decision: CeoReviewDecision) {
-  return decision;
+  return {
+    ...decision,
+    noteText: decision.note ? localizedTextFromString(decision.note) : undefined,
+  };
 }
 
 function summarizeDependencyCascade(
@@ -787,7 +795,9 @@ function summarizeDepartment(department: Department) {
   return {
     id: department.id,
     name: department.name,
+    nameText: localizedTextFromString(department.name),
     responsibility: department.responsibility,
+    responsibilityText: localizedTextFromString(department.responsibility),
     leadAgentId: department.leadAgentId,
     memoryPath: department.memoryPath,
   };
@@ -797,6 +807,7 @@ function summarizeObjective(objective: Objective) {
   return {
     id: objective.id,
     title: objective.title,
+    titleText: localizedTextFromString(objective.title),
     priority: objective.priority,
   };
 }
@@ -817,10 +828,12 @@ function summarizeTask(task: Task, dependsOnTaskIds: string[]) {
   return {
     id: task.id,
     title: task.title,
+    titleText: localizedTextFromString(task.title),
     status: task.status,
     departmentId: task.departmentId,
     assigneeAgentId: task.assigneeAgentId,
     description: task.description,
+    descriptionText: localizedTextFromString(task.description),
     riskLevel: task.riskLevel,
     failureReason: task.latestFailureReason ?? undefined,
     failureMessage: task.latestFailureMessage ?? undefined,
@@ -843,6 +856,7 @@ function summarizeProof(proof: Proof) {
     type: proof.type,
     uri: proof.uri,
     summary: proof.summary,
+    summaryText: localizedTextFromString(proof.summary),
   };
 }
 
@@ -917,7 +931,12 @@ function summarizeReplanProposal(proposal: ReplanProposal) {
     plannerFailureReason: proposal.plannerFailureReason ?? undefined,
     plannerFailureMessage: proposal.plannerFailureMessage ?? undefined,
     rationale: proposal.rationale,
-    replacementTasks: proposal.replacementTasks,
+    rationaleText: localizedTextFromString(proposal.rationale),
+    replacementTasks: proposal.replacementTasks.map((task) => ({
+      ...task,
+      titleText: localizedTextFromString(task.title),
+      descriptionText: localizedTextFromString(task.description),
+    })),
     createdAt: proposal.createdAt,
     confirmedAt: proposal.confirmedAt ?? undefined,
   };
@@ -928,6 +947,7 @@ function summarizeTaskEvent(event: TaskEvent) {
     type: event.type,
     taskId: event.taskId,
     message: event.message,
+    messageText: localizedTextFromString(event.message),
     status: event.status ?? undefined,
     failureReason: event.failureReason ?? undefined,
     failureMessage: event.failureMessage ?? undefined,
@@ -940,7 +960,11 @@ function summarizeTaskEvent(event: TaskEvent) {
 }
 
 function summarizeTaskProgressEvent(event: TaskProgressEvent) {
-  return event;
+  return {
+    ...event,
+    labelText: localizedTextFromString(event.label),
+    detailText: event.detail ? localizedTextFromString(event.detail) : undefined,
+  };
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {

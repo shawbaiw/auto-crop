@@ -5,9 +5,14 @@ export type AgentSummary = {
   detected: boolean;
 };
 
+export type Locale = "en" | "zh";
+export type LocalizedText = Partial<Record<Locale, string>>;
+export type CompleteLocalizedText = Record<Locale, string>;
+
 export type CompanySummary = {
   id: string;
   name: string;
+  nameText?: CompleteLocalizedText;
   status: string;
   playbookId: string;
   founderVision?: string;
@@ -34,6 +39,7 @@ export type CeoIntakeSummary = {
   id: string;
   companyId: string;
   body: string;
+  bodyText?: CompleteLocalizedText;
   status: CeoIntakeStatus;
   createdAt: string;
   updatedAt: string;
@@ -42,7 +48,9 @@ export type CeoIntakeSummary = {
 export type DepartmentSummary = {
   id: string;
   name: string;
+  nameText?: CompleteLocalizedText;
   responsibility: string;
+  responsibilityText?: CompleteLocalizedText;
   leadAgentId?: string;
   memoryPath?: string;
 };
@@ -50,16 +58,19 @@ export type DepartmentSummary = {
 export type ObjectiveSummary = {
   id: string;
   title: string;
+  titleText?: CompleteLocalizedText;
   priority: number;
 };
 
 export type TaskSummary = {
   id: string;
   title: string;
+  titleText?: CompleteLocalizedText;
   status: string;
   departmentId: string;
   assigneeAgentId?: string;
   description?: string;
+  descriptionText?: CompleteLocalizedText;
   riskLevel?: string;
   failureReason?: string;
   failureMessage?: string;
@@ -95,7 +106,9 @@ export type TaskProgressEventSummary = {
     | "needs_ceo_reassignment";
   status: "complete" | "current" | "waiting" | "blocked";
   label: string;
+  labelText?: CompleteLocalizedText;
   detail: string | null;
+  detailText?: CompleteLocalizedText;
   createdAt: string;
 };
 
@@ -105,6 +118,7 @@ export type ProofSummary = {
   type: string;
   uri: string;
   summary: string;
+  summaryText?: CompleteLocalizedText;
 };
 
 export type BusinessArtifactSummary = {
@@ -187,7 +201,9 @@ export type ReviewSummary = {
 
 export type ReplanReplacementTaskSummary = {
   title: string;
+  titleText?: CompleteLocalizedText;
   description: string;
+  descriptionText?: CompleteLocalizedText;
   requiredCapabilities: string[];
   proofSchemaId: string;
   riskLevel: string;
@@ -204,6 +220,7 @@ export type ReplanProposalSummary = {
   plannerFailureReason?: string;
   plannerFailureMessage?: string;
   rationale: string;
+  rationaleText?: CompleteLocalizedText;
   replacementTasks: ReplanReplacementTaskSummary[];
   createdAt: string;
   confirmedAt?: string;
@@ -219,6 +236,7 @@ export type CeoReviewDecisionSummary = {
   decision: "approve" | "return";
   returnReason?: CeoReviewReturnReason | null;
   note?: string | null;
+  noteText?: CompleteLocalizedText;
   proofId?: string | null;
   proofType?: string | null;
   proofUri?: string | null;

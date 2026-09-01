@@ -3,6 +3,7 @@ import {
   agentFailureReasonSchema,
   ceoResponseSchema,
   companyBlueprintSchema,
+  localizedTextSchema,
   parseCeoResponse,
   taskEventTypeSchema,
   taskSchema,
@@ -91,6 +92,21 @@ const validBlueprint = {
     },
   ],
 };
+
+describe("localizedTextSchema", () => {
+  it("accepts text with one or more locale values", () => {
+    expect(localizedTextSchema.parse({ en: "Engineering", zh: "工程" })).toEqual({
+      en: "Engineering",
+      zh: "工程",
+    });
+    expect(localizedTextSchema.parse({ zh: "工程" })).toEqual({ zh: "工程" });
+  });
+
+  it("rejects empty localized text", () => {
+    expect(() => localizedTextSchema.parse({})).toThrow("Localized text must include at least one locale value.");
+    expect(() => localizedTextSchema.parse({ en: " " })).toThrow("Localized text must include at least one locale value.");
+  });
+});
 
 describe("companyBlueprintSchema", () => {
   it("accepts a valid AI SaaS company blueprint", () => {

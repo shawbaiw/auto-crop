@@ -102,15 +102,51 @@ describe("API routes", () => {
     expect(reviews.reviews).toHaveLength(1);
 
     const state = await getJson<{
-      proof: Proof[];
+      proof: Array<Proof & { summaryText: { en: string; zh: string } }>;
       reviews: ReviewRecord[];
       activity: Array<{ type: string; failureReason?: string }>;
-      tasks: Array<{ dependsOnTaskIds: string[] }>;
+      departments: Array<{
+        name: string;
+        nameText: { en: string; zh: string };
+        responsibility: string;
+        responsibilityText: { en: string; zh: string };
+      }>;
+      objectives: Array<{ title: string; titleText: { en: string; zh: string } }>;
+      tasks: Array<{
+        title: string;
+        titleText: { en: string; zh: string };
+        description: string;
+        descriptionText: { en: string; zh: string };
+        dependsOnTaskIds: string[];
+      }>;
+      taskProgressEvents: Array<{ label: string; labelText: { en: string; zh: string }; detailText?: { en: string; zh: string } }>;
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
     expect(state.proof).toHaveLength(1);
     expect(state.reviews).toHaveLength(1);
     expect(state.activity).toContainEqual(expect.objectContaining({ type: "task_failed", failureReason: "agent_failed" }));
     expect(state.tasks.some((stateTask) => stateTask.dependsOnTaskIds.length > 0)).toBe(true);
+    expect(state.departments[0]?.nameText).toEqual({
+      en: state.departments[0]?.name,
+      zh: state.departments[0]?.name,
+    });
+    expect(state.departments[0]?.responsibilityText).toEqual({
+      en: state.departments[0]?.responsibility,
+      zh: state.departments[0]?.responsibility,
+    });
+    expect(state.objectives[0]?.titleText).toEqual({
+      en: state.objectives[0]?.title,
+      zh: state.objectives[0]?.title,
+    });
+    expect(state.tasks[0]?.titleText).toEqual({ en: state.tasks[0]?.title, zh: state.tasks[0]?.title });
+    expect(state.tasks[0]?.descriptionText).toEqual({
+      en: state.tasks[0]?.description,
+      zh: state.tasks[0]?.description,
+    });
+    expect(state.taskProgressEvents[0]?.labelText).toEqual({
+      en: state.taskProgressEvents[0]?.label,
+      zh: state.taskProgressEvents[0]?.label,
+    });
+    expect(state.proof[0]?.summaryText).toEqual({ en: state.proof[0]?.summary, zh: state.proof[0]?.summary });
 
     const cancelled = await postJson<{ task: { status: string } }>(
       `${fixture.baseUrl}/api/tasks/${task.id}/cancel`,
