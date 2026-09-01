@@ -1,4 +1,4 @@
-import { ceoResponseSchema, type CeoResponseInput } from "@auto-crop/core";
+import { ceoResponseSchema, localizedTextFromString, type CeoResponseInput } from "@auto-crop/core";
 import type { Playbook } from "../playbooks/types";
 
 export function parseCeoOutput(output: string, playbook: Playbook): CeoResponseInput {
@@ -16,10 +16,44 @@ export function parseCeoOutput(output: string, playbook: Playbook): CeoResponseI
     throw new Error(`CEO strict JSON is invalid: ${(error as Error).message}`);
   }
 
-  const response = ceoResponseSchema.parse(parsed);
+  const response = withLocalizedFallbacks(ceoResponseSchema.parse(parsed));
   validateAgainstPlaybook(response, playbook);
 
   return response;
+}
+
+function withLocalizedFallbacks(response: CeoResponseInput): CeoResponseInput {
+  return {
+    ...response,
+    blueprint: {
+      ...response.blueprint,
+      departments: response.blueprint.departments.map((department) => ({
+        ...department,
+        nameText: department.nameText ?? localizedTextFromString(department.name),
+        responsibilityText: department.responsibilityText ?? localizedTextFromString(department.responsibility),
+      })),
+      objectives: response.blueprint.objectives.map((objective) => ({
+        ...objective,
+        titleText: objective.titleText ?? localizedTextFromString(objective.title),
+        keyResults: objective.keyResults.map((keyResult) => ({
+          ...keyResult,
+          titleText: keyResult.titleText ?? localizedTextFromString(keyResult.title),
+          targetValueText: keyResult.targetValueText ?? localizedTextFromString(keyResult.targetValue),
+          currentValueText: keyResult.currentValueText ?? localizedTextFromString(keyResult.currentValue),
+        })),
+      })),
+      proofSchemas: response.blueprint.proofSchemas.map((proofSchema) => ({
+        ...proofSchema,
+        descriptionText: proofSchema.descriptionText ?? localizedTextFromString(proofSchema.description),
+      })),
+      tasks: response.blueprint.tasks.map((task) => ({
+        ...task,
+        titleText: task.titleText ?? localizedTextFromString(task.title),
+        descriptionText: task.descriptionText ?? localizedTextFromString(task.description),
+        handoffContractText: task.handoffContractText ?? localizedTextFromString(task.handoffContract),
+      })),
+    },
+  };
 }
 
 function validateAgainstPlaybook(response: CeoResponseInput, playbook: Playbook): void {

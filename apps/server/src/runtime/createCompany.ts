@@ -6,6 +6,7 @@ import type { PolicyMode } from "../policies/policy";
 import { defaultAgentSessionManager, type AgentSessionManager } from "./agentSessions";
 import { buildCeoPrompt } from "./ceoPrompt";
 import { parseCeoOutput } from "./ceoParser";
+import { receivedCeoTaskText } from "./localizedRuntimeText";
 import { resolveAgentSessionPolicy } from "./sessionPolicy";
 import { createCompanyWorkspace, createDepartmentWorkspace, createTaskWorkspace } from "./workspace";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
@@ -218,6 +219,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       step: "received",
       status: "complete",
       label: "Received CEO task",
+      labelText: receivedCeoTaskText(),
       detail: null,
       createdAt: now,
     });

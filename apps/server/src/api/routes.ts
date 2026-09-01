@@ -23,6 +23,11 @@ import { EventStream } from "../events/sse";
 import type { PolicyMode } from "../policies/policy";
 import { createCompany } from "../runtime/createCompany";
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
+import {
+  ceoReturnProgressDetailText,
+  ceoReturnProgressLabelText,
+  ceoReviewDecisionMessageText,
+} from "../runtime/localizedRuntimeText";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
@@ -558,6 +563,7 @@ function createCeoReviewDecision(input: {
     decision: input.decision,
     returnReason: input.returnReason,
     note: input.note,
+    noteText: input.note ? localizedTextFromString(input.note) : null,
     proofId: proof?.id ?? null,
     proofType: proof?.type ?? null,
     proofUri: proof?.uri ?? null,
@@ -588,6 +594,11 @@ function createCeoReviewDecision(input: {
       input.decision === "approve"
         ? `CEO Office approved task: ${task.title}.`
         : `CEO Office returned task: ${task.title}.`,
+    messageText: ceoReviewDecisionMessageText({
+      decision: input.decision,
+      taskTitle: task.title,
+      taskTitleText: task.titleText,
+    }),
     createdAt: timestamp,
     status: nextStatus,
     failureReason: null,
@@ -611,7 +622,13 @@ function createCeoReviewDecision(input: {
       step: "blocked",
       status: "current",
       label: "CEO Office returned this, waiting for the department to rework it.",
+      labelText: ceoReturnProgressLabelText(),
       detail: formatCeoReturnProgressDetail(input.returnReason, input.note),
+      detailText: ceoReturnProgressDetailText({
+        reason: input.returnReason ? formatCeoReturnReason(input.returnReason) : null,
+        note: input.note,
+        fallback: formatCeoReturnProgressDetail(input.returnReason, input.note),
+      }),
       createdAt: timestamp,
     };
     input.repositories.appendTaskProgressEvent(progressEvent);
@@ -703,7 +720,7 @@ function summarizeCeoIntake(intake: CeoIntake) {
 function summarizeCeoReviewDecision(decision: CeoReviewDecision) {
   return {
     ...decision,
-    noteText: decision.note ? localizedTextFromString(decision.note) : undefined,
+    noteText: decision.note ? localizedSummaryText(decision.noteText, decision.note) : undefined,
   };
 }
 
@@ -882,7 +899,7 @@ function summarizeProof(proof: Proof) {
     type: proof.type,
     uri: proof.uri,
     summary: proof.summary,
-    summaryText: localizedTextFromString(proof.summary),
+    summaryText: localizedSummaryText(proof.summaryText, proof.summary),
   };
 }
 
@@ -973,7 +990,7 @@ function summarizeTaskEvent(event: TaskEvent) {
     type: event.type,
     taskId: event.taskId,
     message: event.message,
-    messageText: localizedTextFromString(event.message),
+    messageText: localizedSummaryText(event.messageText, event.message),
     status: event.status ?? undefined,
     failureReason: event.failureReason ?? undefined,
     failureMessage: event.failureMessage ?? undefined,
@@ -988,8 +1005,8 @@ function summarizeTaskEvent(event: TaskEvent) {
 function summarizeTaskProgressEvent(event: TaskProgressEvent) {
   return {
     ...event,
-    labelText: localizedTextFromString(event.label),
-    detailText: event.detail ? localizedTextFromString(event.detail) : undefined,
+    labelText: localizedSummaryText(event.labelText, event.label),
+    detailText: event.detail ? localizedSummaryText(event.detailText, event.detail) : undefined,
   };
 }
 

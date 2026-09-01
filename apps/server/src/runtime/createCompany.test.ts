@@ -90,6 +90,10 @@ describe("createCompany", () => {
     expect(repositories.listTasksForCompany(result.company.id).find((task) => task.proofSchemaId === "landing-page-file")?.titleText?.zh).toBe(
       "创建第一个落地页原型",
     );
+    expect(repositories.listTaskProgressEventsForCompany(result.company.id)[0]).toMatchObject({
+      label: "Received CEO task",
+      labelText: { en: "Received CEO task", zh: "已接收 CEO 任务" },
+    });
     const buildTask = result.tasks.find((task) => task.proofSchemaId === "landing-page-file");
     const validationTask = result.tasks.find((task) => task.proofSchemaId === "test-output");
     const productTask = result.tasks.find((task) => task.title === "Write the first product brief");

@@ -37,6 +37,7 @@ describe("captureProofs", () => {
         type: "file",
         uri: filePath,
         summary: "File proof: brief.md",
+        summaryText: { en: "File proof: brief.md", zh: "文件证明：brief.md" },
         verifiedAt: null,
       },
     ]);
@@ -80,14 +81,14 @@ describe("captureProofs", () => {
     });
 
     expect(proof).toEqual([
-      {
+      expect.objectContaining({
         id: "proof_1",
         taskId: "task_1",
         type: "diff",
         uri: join(workspacePath, ".auto-crop-proof", "task_1.diff"),
         summary: "Diff proof recovered from prototype-audit-trail.patch.",
         verifiedAt: null,
-      },
+      }),
     ]);
     expect(readProofFile(proof[0]?.uri ?? "")).toContain("diff --git a/app/page.tsx b/app/page.tsx");
   });
@@ -151,14 +152,14 @@ describe("captureProofs", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(proof).toContainEqual({
+    expect(proof).toContainEqual(expect.objectContaining({
       id: "proof_1",
       taskId: "task_1",
       type: "command_output",
       uri: logPath,
       summary: "Command output proof captured.",
       verifiedAt: null,
-    });
+    }));
   });
 
   it("captures local and deployment URL proof", () => {
@@ -290,14 +291,14 @@ describe("createProofCollector", () => {
     });
 
     expect(proof).toEqual([
-      {
+      expect.objectContaining({
         id: "proof_1",
         taskId: "task_1",
         type: "url",
         uri: "http://127.0.0.1:5175/",
         summary: "URL proof: http://127.0.0.1:5175/",
         verifiedAt: null,
-      },
+      }),
     ]);
   });
 
@@ -325,14 +326,14 @@ describe("createProofCollector", () => {
 
     expect(readProofFile(proofPath)).toContain("Ship the narrow wedge.");
     expect(proof).toEqual([
-      {
+      expect.objectContaining({
         id: "proof_1",
         taskId: "task_1",
         type: "file",
         uri: proofPath,
         summary: "File proof: product-brief.md",
         verifiedAt: null,
-      },
+      }),
     ]);
   });
 
@@ -361,14 +362,14 @@ describe("createProofCollector", () => {
 
     expect(existsSync(join(workspacePath, "task-output.md"))).toBe(false);
     expect(proof).toEqual([
-      {
+      expect.objectContaining({
         id: "proof_1",
         taskId: "task_1",
         type: "file",
         uri: entryPath,
         summary: "File proof: app/page.tsx",
         verifiedAt: null,
-      },
+      }),
     ]);
   });
 });

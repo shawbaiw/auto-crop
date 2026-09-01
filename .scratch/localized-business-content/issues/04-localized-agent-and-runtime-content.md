@@ -1,6 +1,6 @@
 # Localized Agent And Runtime Content
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02, 03
 
 ## Goal
@@ -32,3 +32,18 @@ Make CEO agent blueprints and runtime-authored activity/progress content produce
 
 This is the highest-risk ticket because it touches agent contracts. Keep parser compatibility explicit.
 
+## Resolution
+
+- Updated the CEO prompt contract and JSON example to request `*Text` Localized Business Content for departments, objectives, key results, tasks, proof schemas, and handoff contracts.
+- Added parser normalization so legacy single-string CEO outputs remain valid and receive explicit `{ en: value, zh: value }` fallback localized fields.
+- Added persisted localized fields for CEO review notes, task event messages, task progress labels/details, and proof summaries.
+- Added runtime localized text helpers for common Auto-Crop-authored progress/event/proof messages while preserving raw legacy strings.
+- Updated API summaries to prefer persisted localized runtime content and fallback to legacy strings for old records.
+
+## Verification
+
+- `pnpm --filter @auto-crop/core test`
+- `pnpm --filter @auto-crop/core typecheck`
+- `pnpm --filter @auto-crop/server test`
+- `pnpm --filter @auto-crop/server typecheck`
+- `pnpm --filter @auto-crop/dashboard typecheck`

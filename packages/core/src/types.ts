@@ -150,6 +150,7 @@ export type CeoReviewDecision = {
   decision: CeoReviewDecisionKind;
   returnReason: CeoReviewReturnReason | null;
   note: string | null;
+  noteText?: LocalizedText | null;
   proofId: string | null;
   proofType: ProofType | null;
   proofUri: string | null;
@@ -229,7 +230,9 @@ export type TaskProgressEvent = {
   step: TaskProgressStep;
   status: TaskProgressStatus;
   label: string;
+  labelText?: LocalizedText | null;
   detail: string | null;
+  detailText?: LocalizedText | null;
   createdAt: string;
 };
 
@@ -239,6 +242,7 @@ export type Proof = {
   type: ProofType;
   uri: string;
   summary: string;
+  summaryText?: LocalizedText | null;
   verifiedAt: string | null;
 };
 
@@ -315,6 +319,7 @@ export type TaskEvent = {
   taskId: string;
   type: TaskEventType;
   message: string;
+  messageText?: LocalizedText | null;
   createdAt: string;
   status: TaskStatus | null;
   failureReason: AgentFailureReason | null;

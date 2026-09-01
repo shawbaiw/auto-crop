@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { Proof, ProofSchema, ProofType, Task } from "@auto-crop/core";
+import { fileProofSummaryText, runtimeText } from "./localizedRuntimeText";
 
 export type CaptureProofsInput = {
   task: Task;
@@ -59,6 +60,7 @@ export function captureProofs(input: CaptureProofsInput): Proof[] {
         type: "file",
         uri: filePath,
         summary: `File proof: ${declaredFile}`,
+        summaryText: fileProofSummaryText(declaredFile),
         verifiedAt: null,
       });
     }
@@ -78,6 +80,7 @@ export function captureProofs(input: CaptureProofsInput): Proof[] {
         type: "screenshot",
         uri: screenshotPath,
         summary: `Screenshot proof: ${screenshot}`,
+        summaryText: runtimeText(`Screenshot proof: ${screenshot}`, `截图证明：${screenshot}`),
         verifiedAt: null,
       });
     }
@@ -94,6 +97,7 @@ export function captureProofs(input: CaptureProofsInput): Proof[] {
       type: "diff",
       uri: diffPath,
       summary: "Diff proof captured.",
+      summaryText: runtimeText("Diff proof captured.", "已捕获 diff 证明。"),
       verifiedAt: null,
     });
   } else if (accepts(input.proofSchema, "diff")) {
@@ -109,6 +113,10 @@ export function captureProofs(input: CaptureProofsInput): Proof[] {
         type: "diff",
         uri: diffPath,
         summary: `Diff proof recovered from ${recoveredDiff.sourceNames.join(", ")}.`,
+        summaryText: runtimeText(
+          `Diff proof recovered from ${recoveredDiff.sourceNames.join(", ")}.`,
+          `已从 ${recoveredDiff.sourceNames.join(", ")} 恢复 diff 证明。`,
+        ),
         verifiedAt: null,
       });
     }
@@ -121,6 +129,7 @@ export function captureProofs(input: CaptureProofsInput): Proof[] {
       type: "command_output",
       uri: input.logPath,
       summary: "Command output proof captured.",
+      summaryText: runtimeText("Command output proof captured.", "已捕获命令输出证明。"),
       verifiedAt: null,
     });
   }
@@ -136,6 +145,7 @@ export function captureProofs(input: CaptureProofsInput): Proof[] {
       type: "url",
       uri: url,
       summary: `URL proof: ${url}`,
+      summaryText: runtimeText(`URL proof: ${url}`, `URL 证明：${url}`),
       verifiedAt: null,
     });
   }
@@ -151,6 +161,7 @@ export function captureProofs(input: CaptureProofsInput): Proof[] {
       type: "deployment",
       uri: deploymentUrl,
       summary: `Deployment proof: ${deploymentUrl}`,
+      summaryText: runtimeText(`Deployment proof: ${deploymentUrl}`, `部署证明：${deploymentUrl}`),
       verifiedAt: null,
     });
   }

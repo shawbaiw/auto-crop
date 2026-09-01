@@ -37,6 +37,11 @@ describe("buildCeoPrompt", () => {
     expect(prompt).toContain("Strict JSON");
     expect(prompt).toContain("dependsOnTaskKeys");
     expect(prompt).toContain("handoffContract");
+    expect(prompt).toContain("nameText");
+    expect(prompt).toContain("titleText");
+    expect(prompt).toContain("descriptionText");
+    expect(prompt).toContain("handoffContractText");
+    expect(prompt).toContain("Provide Localized Business Content in English and Chinese");
     expect(prompt).toContain("Dependencies must reference earlier task keys");
     expect(prompt).toContain("```json");
   });
@@ -58,6 +63,33 @@ describe("parseCeoOutput", () => {
     );
 
     expect(response.blueprint.company.name).toBe("Pricing Page Studio");
+    expect(response.blueprint.departments[0]?.nameText?.zh).toBe("产品");
+    expect(response.blueprint.tasks[0]?.titleText?.zh).toBe("撰写第一份产品简报");
+  });
+
+  it("keeps legacy single-string blueprint output valid with explicit localized fallback", () => {
+    const legacyBlueprint = {
+      ...validBlueprint,
+      departments: validBlueprint.departments.map(({ key: _key, nameText: _nameText, responsibilityText: _responsibilityText, ...department }) => department),
+      objectives: validBlueprint.objectives.map(({ titleText: _titleText, keyResults, ...objective }) => ({
+        ...objective,
+        keyResults: keyResults.map(({ titleText: _krTitleText, targetValueText: _targetValueText, currentValueText: _currentValueText, ...keyResult }) => keyResult),
+      })),
+      tasks: validBlueprint.tasks.map(
+        ({ departmentKey: _departmentKey, titleText: _titleText, descriptionText: _descriptionText, handoffContractText: _handoffContractText, ...task }) => task,
+      ),
+    };
+
+    const response = parseCeoOutput(
+      ["```json", JSON.stringify({ brief: "Legacy.", blueprint: legacyBlueprint }), "```"].join("\n"),
+      aiSaasPlaybook,
+    );
+
+    expect(response.blueprint.departments[0]?.nameText).toEqual({ en: "Product", zh: "Product" });
+    expect(response.blueprint.tasks[0]?.titleText).toEqual({
+      en: "Write the first product brief",
+      zh: "Write the first product brief",
+    });
   });
 
   it("rejects malformed strict JSON", () => {

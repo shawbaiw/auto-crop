@@ -67,6 +67,8 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
     "A fenced JSON block. The runtime will parse only this block.",
     "Do not include departments or proof schemas outside the selected playbook.",
     `Set blueprint.company.name to the provided company name exactly: ${input.companyName}`,
+    "Provide Localized Business Content in English and Chinese for every user-facing blueprint string.",
+    "For each department/objective/key result/task/proof schema/handoff contract, include the legacy string field plus its corresponding *Text object with en and zh values.",
     "Each task must include a stable lowercase key, a dependsOnTaskKeys array, and a handoffContract.",
     "Use dependsOnTaskKeys only when the downstream task consumes the upstream task's proof or artifact handoff.",
     "Dependencies must reference earlier task keys so the runtime can build an acyclic task graph.",
@@ -84,21 +86,28 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
           },
           departments: [
             {
+              key: "product",
               name: "Product",
+              nameText: { en: "Product", zh: "产品" },
               responsibility: "Department responsibility.",
+              responsibilityText: { en: "Department responsibility.", zh: "部门职责。" },
               leadAgentId: "agent-id",
             },
           ],
           objectives: [
             {
               title: "Objective title",
+              titleText: { en: "Objective title", zh: "目标标题" },
               priority: 1,
               keyResults: [
                 {
                   title: "Key result title",
+                  titleText: { en: "Key result title", zh: "关键结果标题" },
                   metricName: "metric_name",
                   targetValue: "target",
+                  targetValueText: { en: "target", zh: "目标值" },
                   currentValue: "current",
+                  currentValueText: { en: "current", zh: "当前值" },
                 },
               ],
             },
@@ -107,15 +116,22 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
           tasks: [
             {
               key: "task_key",
+              departmentKey: "product",
               departmentName: "Product",
               title: "Task title",
+              titleText: { en: "Task title", zh: "任务标题" },
               description: "Task description",
+              descriptionText: { en: "Task description", zh: "任务描述" },
               assigneeAgentId: "agent-id",
               requiredCapabilities: ["writing"],
               proofSchemaId: input.playbook.proofSchemas[0]?.id ?? "proof-schema-id",
               riskLevel: "low",
               dependsOnTaskKeys: [],
               handoffContract: "Specific consumable deliverable this task must produce for downstream work.",
+              handoffContractText: {
+                en: "Specific consumable deliverable this task must produce for downstream work.",
+                zh: "该任务必须为下游工作产出的具体可消费交付物。",
+              },
             },
           ],
         },

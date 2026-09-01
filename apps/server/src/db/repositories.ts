@@ -101,8 +101,8 @@ export function createRepositories(database: DatabaseClient) {
         .prepare(
           `INSERT INTO ceo_review_decisions (
             id, company_id, task_id, department_id, decision, return_reason, note,
-            proof_id, proof_type, proof_uri, actor, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            note_text, proof_id, proof_type, proof_uri, actor, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           decision.id,
@@ -112,6 +112,7 @@ export function createRepositories(database: DatabaseClient) {
           decision.decision,
           decision.returnReason,
           decision.note,
+          stringifyLocalizedText(decision.noteText),
           decision.proofId,
           decision.proofType,
           decision.proofUri,
@@ -350,8 +351,8 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO task_progress_events (
-            id, company_id, department_id, parent_task_id, subject_task_id, step, status, label, detail, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            id, company_id, department_id, parent_task_id, subject_task_id, step, status, label, label_text, detail, detail_text, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           event.id,
@@ -362,7 +363,9 @@ export function createRepositories(database: DatabaseClient) {
           event.step,
           event.status,
           event.label,
+          stringifyLocalizedText(event.labelText),
           event.detail,
+          stringifyLocalizedText(event.detailText),
           event.createdAt,
         );
     },
@@ -525,10 +528,10 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO proofs (
-            id, task_id, type, uri, summary, verified_at
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
+            id, task_id, type, uri, summary, summary_text, verified_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(proof.id, proof.taskId, proof.type, proof.uri, proof.summary, proof.verifiedAt);
+        .run(proof.id, proof.taskId, proof.type, proof.uri, proof.summary, stringifyLocalizedText(proof.summaryText), proof.verifiedAt);
     },
 
     listProofsForTask(taskId: string): Proof[] {
@@ -774,10 +777,10 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO task_events (
-            id, company_id, task_id, type, message, created_at, status, failure_reason,
+            id, company_id, task_id, type, message, message_text, created_at, status, failure_reason,
             failure_message, execution_profile_name, requested_timeout_ms, effective_timeout_ms,
             dependency_note, artifact_workspace_path
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           event.id,
@@ -785,6 +788,7 @@ export function createRepositories(database: DatabaseClient) {
           event.taskId,
           event.type,
           event.message,
+          stringifyLocalizedText(event.messageText),
           event.createdAt,
           event.status,
           event.failureReason,
@@ -840,6 +844,7 @@ type CeoReviewDecisionRow = {
   decision: CeoReviewDecision["decision"];
   return_reason: CeoReviewDecision["returnReason"];
   note: string | null;
+  note_text: string | null;
   proof_id: string | null;
   proof_type: CeoReviewDecision["proofType"];
   proof_uri: string | null;
@@ -916,6 +921,7 @@ type ProofRow = {
   type: Proof["type"];
   uri: string;
   summary: string;
+  summary_text: string | null;
   verified_at: string | null;
 };
 
@@ -998,6 +1004,7 @@ type TaskEventRow = {
   task_id: string;
   type: TaskEventType;
   message: string;
+  message_text: string | null;
   created_at: string;
   status: TaskStatus | null;
   failure_reason: AgentFailureReason | null;
@@ -1018,7 +1025,9 @@ type TaskProgressEventRow = {
   step: TaskProgressStep;
   status: TaskProgressStatus;
   label: string;
+  label_text: string | null;
   detail: string | null;
+  detail_text: string | null;
   created_at: string;
 };
 
@@ -1056,6 +1065,7 @@ function mapCeoReviewDecision(row: CeoReviewDecisionRow): CeoReviewDecision {
     decision: row.decision,
     returnReason: row.return_reason,
     note: row.note,
+    ...(row.note_text ? { noteText: parseLocalizedText(row.note_text) } : {}),
     proofId: row.proof_id,
     proofType: row.proof_type,
     proofUri: row.proof_uri,
@@ -1142,6 +1152,7 @@ function mapProof(row: ProofRow): Proof {
     type: row.type,
     uri: row.uri,
     summary: row.summary,
+    ...(row.summary_text ? { summaryText: parseLocalizedText(row.summary_text) } : {}),
     verifiedAt: row.verified_at,
   };
 }
@@ -1242,6 +1253,7 @@ function mapTaskEvent(row: TaskEventRow): TaskEvent {
     taskId: row.task_id,
     type: row.type,
     message: row.message,
+    ...(row.message_text ? { messageText: parseLocalizedText(row.message_text) } : {}),
     createdAt: row.created_at,
     status: row.status,
     failureReason: row.failure_reason,
@@ -1264,7 +1276,9 @@ function mapTaskProgressEvent(row: TaskProgressEventRow): TaskProgressEvent {
     step: row.step,
     status: row.status,
     label: row.label,
+    ...(row.label_text ? { labelText: parseLocalizedText(row.label_text) } : {}),
     detail: row.detail,
+    ...(row.detail_text ? { detailText: parseLocalizedText(row.detail_text) } : {}),
     createdAt: row.created_at,
   };
 }

@@ -43,6 +43,7 @@ export function migrate(database: DatabaseClient): void {
       decision TEXT NOT NULL,
       return_reason TEXT,
       note TEXT,
+      note_text TEXT,
       proof_id TEXT REFERENCES proofs(id) ON DELETE SET NULL,
       proof_type TEXT,
       proof_uri TEXT,
@@ -121,6 +122,7 @@ export function migrate(database: DatabaseClient): void {
       type TEXT NOT NULL,
       uri TEXT NOT NULL,
       summary TEXT NOT NULL,
+      summary_text TEXT,
       verified_at TEXT
     );
 
@@ -174,6 +176,7 @@ export function migrate(database: DatabaseClient): void {
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       type TEXT NOT NULL,
       message TEXT NOT NULL,
+      message_text TEXT,
       created_at TEXT NOT NULL,
       status TEXT,
       failure_reason TEXT,
@@ -194,7 +197,9 @@ export function migrate(database: DatabaseClient): void {
       step TEXT NOT NULL,
       status TEXT NOT NULL,
       label TEXT NOT NULL,
+      label_text TEXT,
       detail TEXT,
+      detail_text TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -275,6 +280,19 @@ function migrateLocalizedBusinessContentFields(database: DatabaseClient): void {
 
   const dependencyColumns = getColumnNames(database, "task_dependencies");
   addColumnIfMissing(database, dependencyColumns, "task_dependencies", "handoff_contract_text TEXT");
+
+  const ceoReviewDecisionColumns = getColumnNames(database, "ceo_review_decisions");
+  addColumnIfMissing(database, ceoReviewDecisionColumns, "ceo_review_decisions", "note_text TEXT");
+
+  const proofColumns = getColumnNames(database, "proofs");
+  addColumnIfMissing(database, proofColumns, "proofs", "summary_text TEXT");
+
+  const taskEventColumns = getColumnNames(database, "task_events");
+  addColumnIfMissing(database, taskEventColumns, "task_events", "message_text TEXT");
+
+  const taskProgressEventColumns = getColumnNames(database, "task_progress_events");
+  addColumnIfMissing(database, taskProgressEventColumns, "task_progress_events", "label_text TEXT");
+  addColumnIfMissing(database, taskProgressEventColumns, "task_progress_events", "detail_text TEXT");
 }
 
 function migrateCompanyPermissionMode(database: DatabaseClient): void {

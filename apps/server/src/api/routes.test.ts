@@ -144,7 +144,7 @@ describe("API routes", () => {
     });
     expect(state.taskProgressEvents[0]?.labelText).toEqual({
       en: state.taskProgressEvents[0]?.label,
-      zh: state.taskProgressEvents[0]?.label,
+      zh: "已接收 CEO 任务",
     });
     expect(state.proof[0]?.summaryText).toEqual({ en: state.proof[0]?.summary, zh: state.proof[0]?.summary });
 
@@ -691,9 +691,10 @@ describe("API routes", () => {
     expect(fixture.repositories.getTask(approvedTask!.id)?.status).toBe("complete");
 
     const returned = await postJson<{
-      decision: { id: string; taskId: string; decision: string; returnReason: string; note: string };
+      decision: { id: string; taskId: string; decision: string; returnReason: string; note: string; noteText: { en: string; zh: string } };
       task: { id: string; status: string };
-      progressEvent: { label: string; detail: string };
+      event: { message: string; messageText: { en: string; zh: string } };
+      progressEvent: { label: string; labelText: { en: string; zh: string }; detail: string; detailText: { en: string; zh: string } };
     }>(`${fixture.baseUrl}/api/ceo-review-decisions`, {
       taskId: returnedTask!.id,
       decision: "return",
@@ -710,7 +711,12 @@ describe("API routes", () => {
     });
     expect(returned.task.status).toBe("queued");
     expect(returned.progressEvent.label).toBe("CEO Office returned this, waiting for the department to rework it.");
+    expect(returned.progressEvent.labelText.zh).toBe("CEO 办公室已退回，等待部门返工。");
     expect(returned.progressEvent.detail).toContain("Add proof and explain the next step.");
+    expect(returned.progressEvent.detailText.zh).toContain("原因：需要修改。");
+    expect(returned.progressEvent.detailText.zh).toContain("Add proof and explain the next step.");
+    expect(returned.event.messageText.zh).toContain("CEO 办公室退回任务");
+    expect(returned.decision.noteText.zh).toBe("Add proof and explain the next step.");
 
     const stale = await fetch(`${fixture.baseUrl}/api/ceo-review-decisions`, {
       method: "POST",
@@ -722,7 +728,7 @@ describe("API routes", () => {
     const state = await getJson<{
       ceoReviewDecisions: Array<{ id: string; taskId: string; decision: string; returnReason?: string }>;
       keyResults: Array<{ currentValue: string; status: string }>;
-      taskProgressEvents: Array<{ label: string; detail?: string }>;
+      taskProgressEvents: Array<{ label: string; labelText: { en: string; zh: string }; detail?: string; detailText?: { en: string; zh: string } }>;
       businessArtifacts: Array<{ id: string; taskId: string; reviewStatus: string }>;
       founderReport: { actualOutputs: Array<{ taskId: string }>; nextSteps: string[] };
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
@@ -737,7 +743,10 @@ describe("API routes", () => {
     expect(state.founderReport.actualOutputs).toContainEqual(expect.objectContaining({ taskId: approvedTask!.id }));
     expect(Array.isArray(state.founderReport.nextSteps)).toBe(true);
     expect(state.taskProgressEvents).toContainEqual(
-      expect.objectContaining({ label: "CEO Office returned this, waiting for the department to rework it." }),
+      expect.objectContaining({
+        label: "CEO Office returned this, waiting for the department to rework it.",
+        labelText: { en: "CEO Office returned this, waiting for the department to rework it.", zh: "CEO 办公室已退回，等待部门返工。" },
+      }),
     );
 
     await fixture.close();

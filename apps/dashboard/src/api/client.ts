@@ -299,6 +299,7 @@ export type ServerEvent = {
   type: string;
   taskId?: string;
   message: string;
+  messageText?: CompleteLocalizedText;
   failureReason?: string;
   failureMessage?: string;
   status?: string;
