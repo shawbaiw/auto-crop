@@ -5,6 +5,8 @@
 - **Auto-Crop**: Local-first runtime that coordinates installed AI coding agents as a small operating company.
 - **CEO Agent**: The user-selected local agent, such as Claude Code or Codex, that converts founder input into a company blueprint.
 - **Founder Vision**: The user's natural-language description of what the company should build or pursue.
+- **Interface Locale**: The language setting that controls all user-facing Auto-Crop UI chrome and system-authored labels. Interface Locale is separate from raw source content such as user-provided company names, Founder Vision text, CEO Intake text, URLs, file paths, command output, and agent brand names.
+- **Localized Business Content**: User-facing business content authored by Auto-Crop or its agents, such as department names, department responsibilities, objective titles, task titles, task descriptions, progress labels, system activity messages, and localized summaries of agent output. Localized Business Content must be rendered in the active Interface Locale rather than treated as static English UI text. _Avoid_: frontend-only translation, machine-translated display string.
 - **CEO Intake**: A post-creation natural-language input submitted by the user to CEO Office. A CEO Intake can describe a new vision, task, material, constraint, or direction. It is appended to company context for CEO evaluation and planning; it does not overwrite the original Founder Vision.
 - **Permission Mode**: Runtime policy level for local execution. Current values are `safe`, `balanced`, and `autonomous`.
 - **Company Blueprint**: The structured result returned by the CEO Agent, including company metadata, departments, objectives, key results, proof schemas, and first tasks.
