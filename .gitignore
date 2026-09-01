@@ -17,6 +17,15 @@ test-results/
 AGENTS.md
 skills-lock.json
 
+# Local teaching workspace
+MISSION.md
+NOTES.md
+RESOURCES.md
+assets/
+learning-records/
+lessons/
+reference/
+
 # Logs
 *.log
 npm-debug.log*
