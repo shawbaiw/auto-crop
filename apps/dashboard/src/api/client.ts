@@ -1,4 +1,4 @@
-import type { CeoAttentionRollup, NextStepItem, VisionGap } from "@auto-crop/core";
+import type { CeoAttentionRollup, HumanAction, NextStepItem, VisionGap } from "@auto-crop/core";
 
 export type AgentSummary = {
   id: string;
@@ -117,6 +117,7 @@ export type TaskCompletionEventSummary = {
   createdAt: string;
 };
 export type VisionGapSummary = VisionGap;
+export type HumanActionSummary = HumanAction;
 export type CeoAttentionRollupSummary = CeoAttentionRollup;
 
 export type ProofSummary = {
@@ -279,6 +280,7 @@ export type CreateCompanyResponse = {
   taskProgressEvents?: TaskProgressEventSummary[];
   taskCompletionEvents?: TaskCompletionEventSummary[];
   visionGaps?: VisionGapSummary[];
+  humanActions?: HumanActionSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
@@ -308,6 +310,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   taskProgressEvents?: TaskProgressEventSummary[];
   taskCompletionEvents?: TaskCompletionEventSummary[];
   visionGaps?: VisionGapSummary[];
+  humanActions?: HumanActionSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
@@ -342,6 +345,11 @@ export type ApiClient = {
     sourceTask: TaskSummary;
     createdTasks: TaskSummary[];
     dependencyCascade?: TaskUpdateBatchSummary;
+  }>;
+  confirmHumanAction(companyId: string, humanActionId: string, input: { evidence: Record<string, string> }): Promise<{
+    humanAction: HumanActionSummary;
+    updatedTasks: TaskSummary[];
+    events: ServerEvent[];
   }>;
   triggerKillSwitch(companyId: string): Promise<{ paused: boolean; company: CompanySummary }>;
   subscribeEvents(companyId: string, handler: (event: ServerEvent) => void): () => void;
@@ -389,6 +397,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     },
     async confirmReplanProposal(proposalId) {
       return postJson(`${baseUrl}/api/replan-proposals/${proposalId}/confirm`, {}, requestTimeoutMs);
+    },
+    async confirmHumanAction(companyId, humanActionId, input) {
+      return postJson(`${baseUrl}/api/companies/${companyId}/human-actions/${humanActionId}/confirm`, input, requestTimeoutMs);
     },
     async triggerKillSwitch(companyId) {
       return postJson(`${baseUrl}/api/kill-switch`, { companyId }, requestTimeoutMs);

@@ -201,6 +201,15 @@ export function migrate(database: DatabaseClient): void {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS human_action_confirmations (
+      human_action_id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      evidence TEXT NOT NULL,
+      status TEXT NOT NULL,
+      verified_at TEXT NOT NULL,
+      verification_errors TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS approvals (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -249,6 +258,7 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS task_progress_events_company_created_idx ON task_progress_events(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_progress_events_parent_created_idx ON task_progress_events(parent_task_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_completion_events_company_created_idx ON task_completion_events(company_id, created_at, id)");
+  database.exec("CREATE INDEX IF NOT EXISTS human_action_confirmations_company_idx ON human_action_confirmations(company_id, human_action_id)");
   database.exec("CREATE INDEX IF NOT EXISTS replan_proposals_company_status_idx ON replan_proposals(company_id, status)");
   database.exec("CREATE INDEX IF NOT EXISTS ceo_intakes_company_created_idx ON ceo_intakes(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS ceo_review_decisions_company_created_idx ON ceo_review_decisions(company_id, created_at, id)");

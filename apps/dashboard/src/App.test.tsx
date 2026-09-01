@@ -4,7 +4,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { ApiClient, BusinessArtifactSummary, ReplanProposalSummary, ServerEvent } from "./api/client";
+import type { ApiClient, BusinessArtifactSummary, HumanActionSummary, ReplanProposalSummary, ServerEvent } from "./api/client";
 
 describe("Dashboard App", () => {
   it("starts on the company-name step only", async () => {
@@ -398,6 +398,43 @@ describe("Dashboard App", () => {
     expect(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" })).toBeInTheDocument();
     expect(within(ceoPending).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
     expect(within(ceoPending).queryByRole("button", { name: /return/i })).not.toBeInTheDocument();
+  });
+
+  it("shows Human Actions in CEO Office and the owning department, then submits evidence", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      humanActions: [createHumanActionSummary()],
+    }));
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    expect(within(ceoReport).getByRole("heading", { name: "Human Actions" })).toBeInTheDocument();
+    expect(within(ceoReport).getByText("Publish the prototype URL.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(within(leaderReport).getByText("Publish the prototype URL.")).toBeInTheDocument();
+    await user.type(within(leaderReport).getByLabelText("configuration_value"), "DEPLOYMENT_URL=https://example.test");
+    await user.type(within(leaderReport).getByLabelText("approval_note"), "Deployment confirmed by founder.");
+    await user.click(within(leaderReport).getByRole("button", { name: "Confirm Human Action" }));
+
+    expect(api.confirmHumanAction).toHaveBeenCalledWith(
+      "company_1",
+      "task_completion_event_1_human_action_1",
+      {
+        evidence: {
+          configuration_value: "DEPLOYMENT_URL=https://example.test",
+          approval_note: "Deployment confirmed by founder.",
+        },
+      },
+    );
+    expect(await within(leaderReport).findByText("Evidence accepted.")).toBeInTheDocument();
   });
 
   it("routes review-ready department subtasks to CEO Pending", async () => {
@@ -2264,6 +2301,24 @@ function createBusinessArtifactSummary(
   };
 }
 
+function createHumanActionSummary(): HumanActionSummary {
+  return {
+    id: "task_completion_event_1_human_action_1",
+    companyId: "company_1",
+    sourceTaskCompletionEventId: "task_completion_event_1",
+    taskId: "task_1",
+    departmentId: "department_1",
+    label: "Publish the prototype URL.",
+    blockedTaskIds: ["task_2"],
+    confirmationRequirements: ["configuration_value", "approval_note"],
+    evidence: {},
+    status: "pending",
+    verifiedAt: null,
+    verificationErrors: [],
+    createdAt: "2026-08-17T00:02:00.000Z",
+  };
+}
+
 function createReviewReadyCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
   const created = createCompanyResponse();
   return {
@@ -2548,6 +2603,25 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         createdTasks: [],
       };
     },
+    confirmHumanAction: vi.fn(async (_companyId, humanActionId, input) => ({
+      humanAction: {
+        id: humanActionId,
+        companyId: "company_1",
+        sourceTaskCompletionEventId: "task_completion_event_1",
+        taskId: "task_1",
+        departmentId: "department_1",
+        label: "Publish the prototype URL.",
+        blockedTaskIds: ["task_2"],
+        confirmationRequirements: ["configuration_value", "approval_note"],
+        evidence: input.evidence,
+        status: "confirmed" as const,
+        verifiedAt: "2026-08-17T00:03:00.000Z",
+        verificationErrors: [],
+        createdAt: "2026-08-17T00:02:00.000Z",
+      },
+      updatedTasks: [{ ...createCompanyResponse().tasks[0], id: "task_2", status: "queued" }],
+      events: [{ type: "dependency_ready", taskId: "task_2", message: "Human Action confirmed; task queued." }],
+    })),
     async triggerKillSwitch(companyId) {
       return {
         paused: true,

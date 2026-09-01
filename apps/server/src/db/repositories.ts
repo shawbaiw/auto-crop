@@ -8,6 +8,7 @@ import type {
   CeoReviewDecision,
   Company,
   Department,
+  HumanActionConfirmation,
   KeyResult,
   Objective,
   Proof,
@@ -408,6 +409,40 @@ export function createRepositories(database: DatabaseClient) {
         )
         .all(companyId);
       return rows.map((row) => mapTaskCompletionEvent(row as TaskCompletionEventRow));
+    },
+
+    upsertHumanActionConfirmation(confirmation: HumanActionConfirmation): void {
+      database
+        .prepare(
+          `INSERT INTO human_action_confirmations (
+            human_action_id, company_id, evidence, status, verified_at, verification_errors
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(human_action_id) DO UPDATE SET
+            evidence = excluded.evidence,
+            status = excluded.status,
+            verified_at = excluded.verified_at,
+            verification_errors = excluded.verification_errors`,
+        )
+        .run(
+          confirmation.humanActionId,
+          confirmation.companyId,
+          JSON.stringify(confirmation.evidence),
+          confirmation.status,
+          confirmation.verifiedAt,
+          JSON.stringify(confirmation.verificationErrors),
+        );
+    },
+
+    listHumanActionConfirmationsForCompany(companyId: string): HumanActionConfirmation[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM human_action_confirmations
+           WHERE company_id = ?
+           ORDER BY verified_at ASC, human_action_id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapHumanActionConfirmation(row as HumanActionConfirmationRow));
     },
 
     createTaskDependency(dependency: TaskDependency): void {
@@ -1038,6 +1073,15 @@ type TaskCompletionEventRow = {
   created_at: string;
 };
 
+type HumanActionConfirmationRow = {
+  human_action_id: string;
+  company_id: string;
+  evidence: string;
+  status: HumanActionConfirmation["status"];
+  verified_at: string;
+  verification_errors: string;
+};
+
 function mapCompany(row: CompanyRow): Company {
   return {
     id: row.id,
@@ -1275,5 +1319,16 @@ function mapTaskCompletionEvent(row: TaskCompletionEventRow): TaskCompletionEven
     nextStepItems: JSON.parse(row.next_step_items) as TaskCompletionEvent["nextStepItems"],
     visionGaps: JSON.parse(row.vision_gaps) as unknown[],
     createdAt: row.created_at,
+  };
+}
+
+function mapHumanActionConfirmation(row: HumanActionConfirmationRow): HumanActionConfirmation {
+  return {
+    humanActionId: row.human_action_id,
+    companyId: row.company_id,
+    evidence: JSON.parse(row.evidence) as Record<string, string>,
+    status: row.status,
+    verifiedAt: row.verified_at,
+    verificationErrors: JSON.parse(row.verification_errors) as string[],
   };
 }

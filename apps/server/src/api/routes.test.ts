@@ -1019,6 +1019,138 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("confirms Human Actions with evidence and unblocks only explicitly blocked downstream tasks", async () => {
+    const schedulerWakeRequests: SchedulerWakeReason[] = [];
+    const fixture = await startFixtureServer({ schedulerWakeRequests });
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const sourceTask = createIsolatedTask(templateTask, "human_action_source", "Build private prototype", "complete", 300);
+    const launchTask = createIsolatedTask(templateTask, "human_action_launch", "Launch public prototype", "queued", 301);
+    const prepTask = createIsolatedTask(templateTask, "human_action_prep", "Prepare launch notes", "queued", 302);
+    const unrelatedBlockedTask = createIsolatedTask(templateTask, "human_action_unrelated", "Recover unrelated analytics access", "blocked", 303);
+    const humanActionId = "task_completion_event_human_action_human_action_1";
+    fixture.repositories.createTask(sourceTask);
+    fixture.repositories.createTask(launchTask);
+    fixture.repositories.createTask(prepTask);
+    fixture.repositories.createTask({
+      ...unrelatedBlockedTask,
+      latestFailureReason: "missing_deliverable",
+      latestFailureMessage: "Waiting for account access.",
+      dependencyNote: "Waiting for an unrelated account recovery.",
+    });
+    fixture.repositories.createTaskDependency({
+      taskId: launchTask.id,
+      dependsOnTaskId: sourceTask.id,
+      handoffContract: `human_action:${humanActionId}`,
+    });
+    fixture.repositories.createTaskDependency({
+      taskId: unrelatedBlockedTask.id,
+      dependsOnTaskId: sourceTask.id,
+      handoffContract: "manual account recovery outside this Human Action",
+    });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_human_action",
+      companyId: created.company.id,
+      taskId: sourceTask.id,
+      departmentId: sourceTask.departmentId,
+      keyResultId: sourceTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      dependencyImpact: {},
+      nextStepItems: [
+        {
+          type: "human_action",
+          label: "Add the public deployment URL.",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: launchTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: { blocks: [launchTask.id, unrelatedBlockedTask.id] },
+          severity: "blocking",
+          priority: 1,
+          evidenceRequirements: ["configuration_value"],
+        },
+      ],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    const before = await getJson<{
+      humanActions: Array<{ id: string; status: string; departmentId: string; blockedTaskIds: string[]; confirmationRequirements: string[] }>;
+      tasks: Array<{ id: string; status: string; dependencyNote?: string }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    expect(before.humanActions).toEqual([
+      expect.objectContaining({
+        id: humanActionId,
+        status: "pending",
+        departmentId: sourceTask.departmentId,
+        blockedTaskIds: [launchTask.id, unrelatedBlockedTask.id],
+        confirmationRequirements: ["configuration_value"],
+      }),
+    ]);
+    expect(before.tasks).toContainEqual(
+      expect.objectContaining({
+        id: launchTask.id,
+        status: "blocked",
+        dependencyNote: `Waiting for Human Action confirmation: ${humanActionId}.`,
+      }),
+    );
+    expect(before.tasks).toContainEqual(expect.objectContaining({ id: prepTask.id, status: "queued" }));
+    expect(before.tasks).toContainEqual(expect.objectContaining({ id: unrelatedBlockedTask.id, status: "blocked" }));
+    expect(schedulerWakeRequests).toEqual([]);
+
+    const invalid = await fetch(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/human-actions/${humanActionId}/confirm`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ evidence: {} }),
+      },
+    );
+    expect(invalid.status).toBe(400);
+
+    const confirmed = await postJson<{
+      humanAction: { status: string; evidence: Record<string, string>; verifiedAt: string | null };
+      updatedTasks: Array<{ id: string; status: string }>;
+      events: Array<{ type: string; taskId?: string }>;
+    }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/human-actions/${humanActionId}/confirm`,
+      { evidence: { configuration_value: "DEPLOYMENT_URL=https://example.test" } },
+    );
+
+    expect(confirmed.humanAction).toMatchObject({
+      status: "confirmed",
+      evidence: { configuration_value: "DEPLOYMENT_URL=https://example.test" },
+      verifiedAt: "2026-08-17T00:00:00.000Z",
+    });
+    expect(confirmed.updatedTasks).toEqual([expect.objectContaining({ id: launchTask.id, status: "queued" })]);
+    expect(confirmed.events).toContainEqual(expect.objectContaining({ type: "dependency_ready", taskId: launchTask.id }));
+    expect(fixture.repositories.getTask(launchTask.id)?.status).toBe("queued");
+    expect(fixture.repositories.getTask(prepTask.id)?.status).toBe("queued");
+    expect(fixture.repositories.getTask(unrelatedBlockedTask.id)?.status).toBe("blocked");
+    expect(schedulerWakeRequests).toEqual(["dependency_cascade_queued"]);
+
+    const after = await getJson<{
+      humanActions: Array<{ id: string; status: string; evidence: Record<string, string> }>;
+      ceoAttentionRollups: Array<{ relevantHumanActions: Array<{ status: string }> }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    expect(after.humanActions).toEqual([
+      expect.objectContaining({
+        id: humanActionId,
+        status: "confirmed",
+        evidence: { configuration_value: "DEPLOYMENT_URL=https://example.test" },
+      }),
+    ]);
+    expect(after.ceoAttentionRollups).toEqual([]);
+
+    await fixture.close();
+  });
+
   it("cascades dependency readiness after CEO approves an upstream task with proof", async () => {
     const schedulerWakeRequests: SchedulerWakeReason[] = [];
     const fixture = await startFixtureServer({ schedulerWakeRequests });

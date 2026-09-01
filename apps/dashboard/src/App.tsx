@@ -7,6 +7,7 @@ import {
   type CeoIntakeSummary,
   type CompanyListItem,
   type CreateCompanyResponse,
+  type HumanActionSummary,
   type ProofSummary,
   type ReplanProposalSummary,
   type ReviewSummary,
@@ -59,6 +60,7 @@ export default function App({ apiClient }: AppProps) {
   const [proof, setProof] = useState<ProofSummary[]>([]);
   const [businessArtifacts, setBusinessArtifacts] = useState<BusinessArtifactSummary[]>([]);
   const [replanProposals, setReplanProposals] = useState<ReplanProposalSummary[]>([]);
+  const [humanActions, setHumanActions] = useState<HumanActionSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [companyListLoadState, setCompanyListLoadState] = useState<CompanyListLoadState>("loading");
@@ -143,6 +145,7 @@ export default function App({ apiClient }: AppProps) {
     setTaskProgressEvents(response.taskProgressEvents ?? []);
     setCeoIntakes(response.ceoIntakes ?? []);
     setReplanProposals(response.replanProposals ?? []);
+    setHumanActions(response.humanActions ?? []);
     setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
     setView(nextView);
     if (nextView === "onboarding") {
@@ -288,6 +291,7 @@ export default function App({ apiClient }: AppProps) {
     setProof([]);
     setBusinessArtifacts([]);
     setReplanProposals([]);
+    setHumanActions([]);
     setReviews([]);
     setEvents([]);
     setTaskProgressEvents([]);
@@ -305,6 +309,7 @@ export default function App({ apiClient }: AppProps) {
       setProof(response.proof ?? []);
       setBusinessArtifacts(response.businessArtifacts ?? []);
       setReplanProposals(response.replanProposals ?? []);
+      setHumanActions(response.humanActions ?? []);
       setReviews(response.reviews ?? []);
       setEvents(response.activity ?? []);
       setTaskProgressEvents(response.taskProgressEvents ?? []);
@@ -465,6 +470,19 @@ export default function App({ apiClient }: AppProps) {
     applyTaskUpdateBatchResponse(response.dependencyCascade, "Dependency cascade warning");
   }
 
+  async function handleConfirmHumanAction(humanActionId: string, evidence: Record<string, string>) {
+    if (!blueprint) {
+      return;
+    }
+
+    const response = await client.confirmHumanAction(blueprint.company.id, humanActionId, { evidence });
+    setHumanActions((current) => upsertHumanAction(current, response.humanAction));
+    setBlueprint((current) => updateBlueprintTasks(current, response.updatedTasks));
+    if (response.events.length > 0) {
+      setEvents((current) => [...current.slice(-49), ...response.events]);
+    }
+  }
+
   async function handleRefreshTask(taskId: string) {
     const response = await client.refreshTask(taskId);
     setBlueprint((current) => updateBlueprintTask(current, response.task));
@@ -558,6 +576,7 @@ export default function App({ apiClient }: AppProps) {
     setTaskProgressEvents([]);
     setCeoIntakes([]);
     setReplanProposals([]);
+    setHumanActions([]);
     setDashboardFocusTarget(null);
     setCompanyName("");
     setCompanyNameError(null);
@@ -705,8 +724,10 @@ export default function App({ apiClient }: AppProps) {
         onRecoverTask={handleRecoverTask}
         onCreateCeoIntake={handleCreateCeoIntake}
         onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
+        onConfirmHumanAction={handleConfirmHumanAction}
         proof={proof}
         businessArtifacts={businessArtifacts}
+        humanActions={humanActions}
         selectedCeoAgentId={selectedAgentId}
         tasks={blueprint.tasks}
         taskProgressEvents={taskProgressEvents}
@@ -723,6 +744,8 @@ export default function App({ apiClient }: AppProps) {
         events={events}
         isPaused={isPaused}
         menuBar={menuBar}
+        humanActions={humanActions}
+        onConfirmHumanAction={handleConfirmHumanAction}
         onConfirmReplanProposal={handleConfirmReplanProposal}
         onCreateReplanProposal={handleCreateReplanProposal}
         replanProposals={replanProposals}
@@ -781,12 +804,7 @@ export default function App({ apiClient }: AppProps) {
 }
 
 function upsertCeoIntake(intakes: CeoIntakeSummary[], intake: CeoIntakeSummary): CeoIntakeSummary[] {
-  const exists = intakes.some((current) => current.id === intake.id);
-  if (!exists) {
-    return [...intakes, intake];
-  }
-
-  return intakes.map((current) => (current.id === intake.id ? intake : current));
+  return upsertById(intakes, intake);
 }
 
 function upsertProofs(proofs: ProofSummary[], nextProofs: ProofSummary[]): ProofSummary[] {
@@ -815,12 +833,20 @@ function upsertBusinessArtifacts(
 }
 
 function upsertReplanProposal(proposals: ReplanProposalSummary[], proposal: ReplanProposalSummary): ReplanProposalSummary[] {
-  const exists = proposals.some((current) => current.id === proposal.id);
+  return upsertById(proposals, proposal);
+}
+
+function upsertHumanAction(actions: HumanActionSummary[], action: HumanActionSummary): HumanActionSummary[] {
+  return upsertById(actions, action);
+}
+
+function upsertById<T extends { id: string }>(items: T[], item: T): T[] {
+  const exists = items.some((current) => current.id === item.id);
   if (!exists) {
-    return [...proposals, proposal];
+    return [...items, item];
   }
 
-  return proposals.map((current) => (current.id === proposal.id ? proposal : current));
+  return items.map((current) => (current.id === item.id ? item : current));
 }
 
 function updateBlueprintTask(

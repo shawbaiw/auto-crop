@@ -22,6 +22,7 @@ import type {
   CeoIntakeStatus,
   CompanySummary,
   DepartmentSummary,
+  HumanActionSummary,
   ObjectiveSummary,
   ProofSummary,
   TaskRecoveryResponse,
@@ -30,6 +31,7 @@ import type {
   TaskSummary,
 } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
+import { HumanActionPanel } from "../ui/humanActions/HumanActionPanel";
 import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroListRow, RetroPanel } from "../ui/retro";
@@ -47,6 +49,8 @@ export type DepartmentWorkspaceProps = {
   ceoIntakes?: CeoIntakeSummary[];
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
+  humanActions?: HumanActionSummary[];
+  onConfirmHumanAction?: (humanActionId: string, evidence: Record<string, string>) => Promise<void> | void;
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
   onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
@@ -68,6 +72,7 @@ export function DepartmentWorkspace({
   objectives,
   onCreateCeoIntake,
   onCreateCeoReviewDecision,
+  onConfirmHumanAction,
   onRefreshTask,
   onRecoverTask,
   selectedCeoAgentId,
@@ -75,6 +80,7 @@ export function DepartmentWorkspace({
   ceoIntakes = [],
   proof = [],
   businessArtifacts = [],
+  humanActions = [],
   taskProgressEvents = [],
 }: DepartmentWorkspaceProps) {
   const { t } = useLanguage();
@@ -139,6 +145,8 @@ export function DepartmentWorkspace({
                   departmentId={selectedDepartment.id}
                   departmentName={selectedDepartment.name}
                   draft={departmentDraft}
+                  humanActions={humanActions.filter((action) => action.departmentId === selectedDepartment.id)}
+                  onConfirmHumanAction={onConfirmHumanAction}
                   onDraftChange={setDepartmentDraft}
                   onViewCeoPending={() => setSelectedRoleId(ceoRoleId)}
                   onRefreshTask={onRefreshTask}
@@ -165,12 +173,14 @@ export function DepartmentWorkspace({
                   objectives={objectives}
                   onDraftChange={setCeoIntakeDraft}
                   onCreateCeoReviewDecision={onCreateCeoReviewDecision}
+                  onConfirmHumanAction={onConfirmHumanAction}
                   onRefreshTask={onRefreshTask}
                   onSelectDepartment={setSelectedRoleId}
                   onSubmit={onCreateCeoIntake}
                   pendingItems={ceoPendingItems}
                   proof={proof}
                   businessArtifacts={businessArtifacts}
+                  humanActions={humanActions}
                   tasks={tasks}
                 />
                 <p className="muted">{t("department.schedulerNote")}</p>
@@ -240,9 +250,11 @@ function departmentIcon(departmentName: string): ReactNode {
 function CeoIntakeWorkspace({
   departments,
   draft,
+  humanActions,
   intakes,
   objectives,
   onCreateCeoReviewDecision,
+  onConfirmHumanAction,
   onDraftChange,
   onRefreshTask,
   onSelectDepartment,
@@ -254,9 +266,11 @@ function CeoIntakeWorkspace({
 }: {
   departments: DepartmentSummary[];
   draft: string;
+  humanActions: HumanActionSummary[];
   intakes: CeoIntakeSummary[];
   objectives: ObjectiveSummary[];
   onCreateCeoReviewDecision?: DepartmentWorkspaceProps["onCreateCeoReviewDecision"];
+  onConfirmHumanAction?: DepartmentWorkspaceProps["onConfirmHumanAction"];
   onDraftChange: (value: string) => void;
   onRefreshTask?: (taskId: string) => void;
   onSelectDepartment: (departmentId: string) => void;
@@ -294,6 +308,7 @@ function CeoIntakeWorkspace({
         }}
         successMessage={successMessage}
       />
+      <HumanActionPanel actions={humanActions} onConfirm={onConfirmHumanAction} title={t("department.humanActions")} />
       {selectedPendingItem ? (
         <CeoTaskReviewDetail
           item={selectedPendingItem}
@@ -934,6 +949,8 @@ function DepartmentLeaderReport({
   departmentId,
   departmentName,
   draft,
+  humanActions,
+  onConfirmHumanAction,
   onDraftChange,
   onRecoverTask,
   onRefreshTask,
@@ -946,6 +963,8 @@ function DepartmentLeaderReport({
   departmentId: string;
   departmentName: string;
   draft: string;
+  humanActions: HumanActionSummary[];
+  onConfirmHumanAction?: DepartmentWorkspaceProps["onConfirmHumanAction"];
   onDraftChange: (value: string) => void;
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
@@ -962,6 +981,7 @@ function DepartmentLeaderReport({
       <p className="department-leader-report__mission">
         <strong>{t("department.currentResponsibility")}:</strong> {responsibility}
       </p>
+      <HumanActionPanel actions={humanActions} onConfirm={onConfirmHumanAction} title={t("department.humanActions")} />
       <DepartmentProgressFlows
         departmentId={departmentId}
         onRefreshTask={onRefreshTask}

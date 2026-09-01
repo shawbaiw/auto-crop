@@ -633,6 +633,32 @@ h3 {
   text-transform: uppercase;
 }
 
+.human-action-list {
+  display: grid;
+  gap: 10px;
+}
+
+.human-action-card {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.human-action-card h4 {
+  font-size: 0.86rem;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.human-action-card > div > p:first-child {
+  color: var(--accent-secondary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .ceo-task-review-detail {
   background: var(--surface);
   border: var(--border-px) solid var(--border);

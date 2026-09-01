@@ -3,6 +3,8 @@ import type {
   CeoAttentionRollupGroup,
   CeoAttentionRollupReason,
   Company,
+  HumanAction,
+  HumanActionConfirmation,
   KeyResult,
   NextStepItem,
   NextStepItemSeverity,
@@ -23,27 +25,31 @@ type AttentionCandidate = {
   recommendedNextAction: string;
   severity: NextStepItemSeverity;
   reasons: CeoAttentionRollupReason[];
-  relevantHumanActions: NextStepItem[];
+  relevantHumanActions: HumanAction[];
   relevantWaitStates: NextStepItem[];
   relevantVisionGaps: VisionGap[];
 };
 
 export function projectCeoAttention(input: {
   company: Company;
+  humanActionConfirmations?: HumanActionConfirmation[];
   keyResults: KeyResult[];
   tasks: Task[];
   taskCompletionEvents: TaskCompletionEvent[];
   taskDependencies: TaskDependency[];
-}): { visionGaps: VisionGap[]; ceoAttentionRollups: CeoAttentionRollup[] } {
+}): { visionGaps: VisionGap[]; humanActions: HumanAction[]; ceoAttentionRollups: CeoAttentionRollup[] } {
   const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
   const keyResultsById = new Map(input.keyResults.map((keyResult) => [keyResult.id, keyResult]));
   const downstreamTaskIdsByTaskId = mapDownstreamTaskIds(input.taskDependencies);
   const visionGaps = input.taskCompletionEvents.flatMap(collectVisionGaps);
+  const confirmationsByActionId = new Map((input.humanActionConfirmations ?? []).map((confirmation) => [confirmation.humanActionId, confirmation]));
+  const humanActions = input.taskCompletionEvents.flatMap((event) => collectHumanActions(event, confirmationsByActionId));
   const candidates = input.taskCompletionEvents.flatMap((event) =>
     createAttentionCandidates({
       company: input.company,
       event,
       eventVisionGaps: visionGaps.filter((gap) => gap.sourceTaskCompletionEventId === event.id),
+      eventHumanActions: humanActions.filter((action) => action.sourceTaskCompletionEventId === event.id),
       task: tasksById.get(event.taskId),
       keyResult: event.keyResultId ? keyResultsById.get(event.keyResultId) : undefined,
       tasksById,
@@ -53,6 +59,7 @@ export function projectCeoAttention(input: {
 
   return {
     visionGaps,
+    humanActions,
     ceoAttentionRollups: rollUpAttentionCandidates(input.company, candidates),
   };
 }
@@ -61,6 +68,7 @@ function createAttentionCandidates(input: {
   company: Company;
   event: TaskCompletionEvent;
   eventVisionGaps: VisionGap[];
+  eventHumanActions: HumanAction[];
   task?: Task;
   keyResult?: KeyResult;
   tasksById: Map<string, Task>;
@@ -68,7 +76,7 @@ function createAttentionCandidates(input: {
 }): AttentionCandidate[] {
   const attentionVisionGaps = input.eventVisionGaps.filter((gap) => gap.severity === "blocking" || gap.severity === "strategic");
   const decisionItems = input.event.nextStepItems.filter((item) => item.type === "ceo_decision");
-  const humanActions = input.event.nextStepItems.filter((item) => item.type === "human_action");
+  const humanActions = input.eventHumanActions.filter((action) => action.status === "pending");
   const waitStates = input.event.nextStepItems.filter((item) => item.type === "wait_state");
   const itemImpactedTaskIds = input.event.nextStepItems.flatMap((item) => extractImpactedTaskIds(item.dependencyImpact));
   const dependencyTaskIds = unique([
@@ -125,7 +133,7 @@ function createAttentionCandidates(input: {
       recommendedNextAction: primaryItem?.label ?? recommendedActionForOutcome(input.event, input.task),
       severity: highestSeverity([
         ...attentionVisionGaps.map((gap) => gap.severity),
-        ...humanActions.map((item) => item.severity),
+        ...humanActions.map((action) => (action.status === "confirmed" ? "informational" : "blocking")),
         ...waitStates.map((item) => item.severity),
         ...decisionItems.map((item) => item.severity),
       ]),
@@ -178,6 +186,40 @@ function collectVisionGaps(event: TaskCompletionEvent): VisionGap[] {
     .map((item, index) => visionGapFromNextStepItem(event, item, index));
   const fromEventPayload = event.visionGaps.flatMap((gap, index) => visionGapFromPayload(event, gap, index));
   return [...fromNextSteps, ...fromEventPayload];
+}
+
+function collectHumanActions(
+  event: TaskCompletionEvent,
+  confirmationsByActionId: Map<string, HumanActionConfirmation>,
+): HumanAction[] {
+  return event.nextStepItems.flatMap((item, index) => {
+    if (item.type !== "human_action") {
+      return [];
+    }
+
+    const id = `${event.id}_human_action_${index + 1}`;
+    const confirmation = confirmationsByActionId.get(id);
+    const impactedTaskIds = extractImpactedTaskIds(item.dependencyImpact);
+    const fallbackTaskIds = item.relatedTaskId && item.relatedTaskId !== event.taskId ? [item.relatedTaskId] : [];
+
+    return [
+      {
+        id,
+        companyId: event.companyId,
+        sourceTaskCompletionEventId: event.id,
+        taskId: event.taskId,
+        departmentId: item.ownerDepartmentId ?? event.departmentId,
+        label: item.label,
+        blockedTaskIds: unique([...impactedTaskIds, ...fallbackTaskIds]),
+        confirmationRequirements: item.evidenceRequirements,
+        evidence: confirmation?.evidence ?? {},
+        status: confirmation?.status ?? "pending",
+        verifiedAt: confirmation?.verifiedAt ?? null,
+        verificationErrors: confirmation?.verificationErrors ?? [],
+        createdAt: event.createdAt,
+      },
+    ];
+  });
 }
 
 function visionGapFromNextStepItem(event: TaskCompletionEvent, item: NextStepItem, index: number): VisionGap {

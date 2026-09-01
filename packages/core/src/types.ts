@@ -159,6 +159,30 @@ export type CeoAttentionRollupReason =
   | "wait_state"
   | "cross_department_impact"
   | "exception_outcome";
+export type HumanActionStatus = "pending" | "confirmed";
+export type HumanAction = {
+  id: string;
+  companyId: string;
+  sourceTaskCompletionEventId: string;
+  taskId: string;
+  departmentId: string;
+  label: string;
+  blockedTaskIds: string[];
+  confirmationRequirements: string[];
+  evidence: Record<string, string>;
+  status: HumanActionStatus;
+  verifiedAt: string | null;
+  verificationErrors: string[];
+  createdAt: string;
+};
+export type HumanActionConfirmation = {
+  humanActionId: string;
+  companyId: string;
+  evidence: Record<string, string>;
+  status: "confirmed";
+  verifiedAt: string;
+  verificationErrors: string[];
+};
 export type CeoAttentionRollupGroup =
   | { type: "founder_vision"; companyId: string }
   | { type: "objective"; objectiveId: string }
@@ -176,7 +200,7 @@ export type CeoAttentionRollup = {
   recommendedNextAction: string;
   severity: NextStepItemSeverity;
   reasons: CeoAttentionRollupReason[];
-  relevantHumanActions: NextStepItem[];
+  relevantHumanActions: HumanAction[];
   relevantWaitStates: NextStepItem[];
   relevantVisionGaps: VisionGap[];
   sourceTaskCompletionEventIds: string[];
