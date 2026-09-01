@@ -820,6 +820,205 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("projects vision gaps and CEO attention rollups from task completion events", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const departments = fixture.repositories.listDepartments(created.company.id);
+    const ownerDepartment = departments[0]!;
+    const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id)!;
+    const ordinaryTask = {
+      ...createIsolatedTask(templateTask, "attention_ordinary", "Ordinary accepted work", "complete", 200),
+      departmentId: ownerDepartment.id,
+    };
+    const sourceTask = {
+      ...createIsolatedTask(templateTask, "attention_source", "Build launchable prototype", "complete", 201),
+      departmentId: ownerDepartment.id,
+    };
+    const downstreamTask = {
+      ...createIsolatedTask(templateTask, "attention_downstream", "Prepare launch indexing", "queued", 202),
+      departmentId: downstreamDepartment.id,
+    };
+    fixture.repositories.createTask(ordinaryTask);
+    fixture.repositories.createTask(sourceTask);
+    fixture.repositories.createTask(downstreamTask);
+    fixture.repositories.createTaskDependency({ taskId: downstreamTask.id, dependsOnTaskId: sourceTask.id });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_ordinary",
+      companyId: created.company.id,
+      taskId: ordinaryTask.id,
+      departmentId: ordinaryTask.departmentId,
+      keyResultId: ordinaryTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      dependencyImpact: {},
+      nextStepItems: [],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_info",
+      companyId: created.company.id,
+      taskId: ordinaryTask.id,
+      departmentId: ordinaryTask.departmentId,
+      keyResultId: ordinaryTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      dependencyImpact: {},
+      nextStepItems: [
+        {
+          type: "vision_gap",
+          label: "More customer interviews would improve confidence.",
+          ownerDepartmentId: ordinaryTask.departmentId,
+          relatedTaskId: ordinaryTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: {},
+          severity: "informational",
+          priority: null,
+          evidenceRequirements: [],
+        },
+      ],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:01:00.000Z",
+    });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_attention",
+      companyId: created.company.id,
+      taskId: sourceTask.id,
+      departmentId: sourceTask.departmentId,
+      keyResultId: sourceTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      dependencyImpact: { updatedTasks: [{ taskId: downstreamTask.id, status: "queued" }] },
+      nextStepItems: [
+        {
+          type: "vision_gap",
+          label: "Deployment is still missing before launch.",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: sourceTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: { blocks: [downstreamTask.id] },
+          severity: "blocking",
+          priority: 1,
+          evidenceRequirements: [],
+        },
+        {
+          type: "vision_gap",
+          label: "Launch positioning still needs an executive call.",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: sourceTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: {},
+          severity: "strategic",
+          priority: 2,
+          evidenceRequirements: [],
+        },
+        {
+          type: "ceo_decision",
+          label: "Choose whether to launch publicly or keep this private.",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: sourceTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: { affects: [downstreamTask.id] },
+          severity: "strategic",
+          priority: 1,
+          evidenceRequirements: [],
+        },
+      ],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:02:00.000Z",
+    });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_wait",
+      companyId: created.company.id,
+      taskId: sourceTask.id,
+      departmentId: sourceTask.departmentId,
+      keyResultId: sourceTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      dependencyImpact: {},
+      nextStepItems: [
+        {
+          type: "wait_state",
+          label: "Wait for indexing signals after deployment.",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: downstreamTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: { affects: [downstreamTask.id] },
+          severity: "informational",
+          priority: 3,
+          evidenceRequirements: [],
+        },
+        {
+          type: "human_action",
+          label: "Publish the prototype URL.",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: downstreamTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: { blocks: [downstreamTask.id] },
+          severity: "blocking",
+          priority: 1,
+          evidenceRequirements: ["url"],
+        },
+      ],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:03:00.000Z",
+    });
+
+    const state = await getJson<{
+      taskCompletionEvents: Array<{ id: string }>;
+      visionGaps: Array<{ label: string; severity: string; sourceTaskCompletionEventId: string }>;
+      ceoAttentionRollups: Array<{
+        sourceTaskCompletionEventIds: string[];
+        ownerDepartmentId: string;
+        downstreamDepartmentIds: string[];
+        affectedTaskIds: string[];
+        currentBlocker: string | null;
+        recommendedNextAction: string;
+        severity: string;
+        reasons: string[];
+        group: { type: string; taskId?: string };
+        relevantHumanActions: Array<{ label: string }>;
+        relevantWaitStates: Array<{ label: string }>;
+        relevantVisionGaps: Array<{ label: string }>;
+      }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(state.taskCompletionEvents).toContainEqual(expect.objectContaining({ id: "task_completion_event_ordinary" }));
+    expect(state.visionGaps).toEqual([
+      expect.objectContaining({ label: "More customer interviews would improve confidence.", severity: "informational" }),
+      expect.objectContaining({ label: "Deployment is still missing before launch.", severity: "blocking" }),
+      expect.objectContaining({ label: "Launch positioning still needs an executive call.", severity: "strategic" }),
+    ]);
+    expect(state.ceoAttentionRollups).toEqual([
+      expect.objectContaining({
+        sourceTaskCompletionEventIds: ["task_completion_event_attention", "task_completion_event_wait"],
+        ownerDepartmentId: sourceTask.departmentId,
+        downstreamDepartmentIds: [downstreamTask.departmentId],
+        affectedTaskIds: expect.arrayContaining([sourceTask.id, downstreamTask.id]),
+        currentBlocker: "Deployment is still missing before launch.",
+        recommendedNextAction: "Publish the prototype URL.",
+        severity: "strategic",
+        group: { type: "dependency_chain", taskId: sourceTask.id },
+        reasons: expect.arrayContaining(["vision_gap", "ceo_decision", "human_action", "wait_state", "cross_department_impact"]),
+        relevantHumanActions: [expect.objectContaining({ label: "Publish the prototype URL." })],
+        relevantWaitStates: [expect.objectContaining({ label: "Wait for indexing signals after deployment." })],
+        relevantVisionGaps: [
+          expect.objectContaining({ label: "Deployment is still missing before launch." }),
+          expect.objectContaining({ label: "Launch positioning still needs an executive call." }),
+        ],
+      }),
+    ]);
+
+    await fixture.close();
+  });
+
   it("cascades dependency readiness after CEO approves an upstream task with proof", async () => {
     const schedulerWakeRequests: SchedulerWakeReason[] = [];
     const fixture = await startFixtureServer({ schedulerWakeRequests });

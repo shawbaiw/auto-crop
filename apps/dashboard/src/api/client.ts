@@ -1,4 +1,4 @@
-import type { NextStepItem } from "@auto-crop/core";
+import type { CeoAttentionRollup, NextStepItem, VisionGap } from "@auto-crop/core";
 
 export type AgentSummary = {
   id: string;
@@ -116,6 +116,8 @@ export type TaskCompletionEventSummary = {
   visionGaps: unknown[];
   createdAt: string;
 };
+export type VisionGapSummary = VisionGap;
+export type CeoAttentionRollupSummary = CeoAttentionRollup;
 
 export type ProofSummary = {
   id: string;
@@ -276,6 +278,8 @@ export type CreateCompanyResponse = {
   replanProposals?: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
   taskCompletionEvents?: TaskCompletionEventSummary[];
+  visionGaps?: VisionGapSummary[];
+  ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
 };
@@ -303,6 +307,8 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   replanProposals: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
   taskCompletionEvents?: TaskCompletionEventSummary[];
+  visionGaps?: VisionGapSummary[];
+  ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
 };

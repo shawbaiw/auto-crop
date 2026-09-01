@@ -6,9 +6,9 @@ Blocked by: 03: Accept Structured Next Step Items From Business Artifacts.
 
 Status: ready-for-agent
 
-- [ ] Blocking and strategic Vision Gaps appear in CEO Attention Rollups.
-- [ ] Informational Vision Gaps remain visible without becoming interruptive attention.
-- [ ] Decision points and cross-department impacts appear in CEO Attention Rollups.
-- [ ] Ordinary task completions are recorded without creating CEO Attention Items.
-- [ ] Rollups preserve owning department, downstream departments, affected tasks, current blocker, and recommended next action.
-- [ ] Company State Snapshot exposes Vision Gaps and CEO Attention Rollups.
+- [x] Blocking and strategic Vision Gaps appear in CEO Attention Rollups.
+- [x] Informational Vision Gaps remain visible without becoming interruptive attention.
+- [x] Decision points and cross-department impacts appear in CEO Attention Rollups.
+- [x] Ordinary task completions are recorded without creating CEO Attention Items.
+- [x] Rollups preserve owning department, downstream departments, affected tasks, current blocker, and recommended next action.
+- [x] Company State Snapshot exposes Vision Gaps and CEO Attention Rollups.

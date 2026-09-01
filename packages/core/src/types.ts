@@ -138,6 +138,50 @@ export type NextStepItem = {
   priority: number | null;
   evidenceRequirements: string[];
 };
+export type VisionGap = {
+  id: string;
+  companyId: string;
+  sourceTaskCompletionEventId: string;
+  taskId: string;
+  departmentId: string;
+  keyResultId: string | null;
+  businessArtifactId: string | null;
+  label: string;
+  severity: NextStepItemSeverity;
+  relatedTaskId: string | null;
+  relatedBusinessArtifactId: string | null;
+  createdAt: string;
+};
+export type CeoAttentionRollupReason =
+  | "vision_gap"
+  | "ceo_decision"
+  | "human_action"
+  | "wait_state"
+  | "cross_department_impact"
+  | "exception_outcome";
+export type CeoAttentionRollupGroup =
+  | { type: "founder_vision"; companyId: string }
+  | { type: "objective"; objectiveId: string }
+  | { type: "dependency_chain"; taskId: string };
+export type CeoAttentionRollup = {
+  id: string;
+  companyId: string;
+  group: CeoAttentionRollupGroup;
+  title: string;
+  summary: string;
+  ownerDepartmentId: string;
+  downstreamDepartmentIds: string[];
+  affectedTaskIds: string[];
+  currentBlocker: string | null;
+  recommendedNextAction: string;
+  severity: NextStepItemSeverity;
+  reasons: CeoAttentionRollupReason[];
+  relevantHumanActions: NextStepItem[];
+  relevantWaitStates: NextStepItem[];
+  relevantVisionGaps: VisionGap[];
+  sourceTaskCompletionEventIds: string[];
+  createdAt: string;
+};
 
 export type Company = {
   id: string;

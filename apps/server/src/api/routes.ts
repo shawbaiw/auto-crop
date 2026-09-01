@@ -22,6 +22,7 @@ import type { PolicyMode } from "../policies/policy";
 import { createCompany } from "../runtime/createCompany";
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
+import { projectCeoAttention } from "../runtime/ceoAttention";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
@@ -481,17 +482,29 @@ function buildCompanyState(
     createId: options?.createId,
   });
   const tasks = repositories.listTasksForCompany(company.id);
+  const keyResults = repositories.listKeyResults(company.id);
+  const taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
   const businessArtifacts = repositories.listBusinessArtifactsForCompany(company.id).map(summarizeBusinessArtifact);
+  const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(company.id);
+  const ceoAttention = projectCeoAttention({
+    company,
+    keyResults,
+    tasks,
+    taskCompletionEvents,
+    taskDependencies,
+  });
 
   return {
     company: summarizeCompany(company),
     departments: repositories.listDepartments(company.id).map(summarizeDepartment),
     objectives: repositories.listObjectives(company.id).map(summarizeObjective),
-    keyResults: repositories.listKeyResults(company.id),
-    tasks: summarizeTasks(tasks, repositories.listTaskDependenciesForCompany(company.id)),
+    keyResults,
+    tasks: summarizeTasks(tasks, taskDependencies),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
     businessArtifacts,
-    taskCompletionEvents: repositories.listTaskCompletionEventsForCompany(company.id).map(summarizeTaskCompletionEvent),
+    taskCompletionEvents: taskCompletionEvents.map(summarizeTaskCompletionEvent),
+    visionGaps: ceoAttention.visionGaps,
+    ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
     founderReport: summarizeFounderReport(company, tasks, businessArtifacts),
     reviews: repositories.listReviews(company.id).map(summarizeReview),
     ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(company.id).map(summarizeCeoReviewDecision),
