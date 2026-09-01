@@ -109,13 +109,16 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     const departmentWorkspace = createDepartmentWorkspace(
       input.projectRoot,
       company.id,
-      slugify(departmentBlueprint.name),
+      slugify(departmentBlueprint.key ?? departmentBlueprint.name),
     );
     const department: Department = {
       id: departmentId,
       companyId: company.id,
+      key: departmentBlueprint.key ?? null,
       name: departmentBlueprint.name,
+      nameText: departmentBlueprint.nameText ?? null,
       responsibility: departmentBlueprint.responsibility,
+      responsibilityText: departmentBlueprint.responsibilityText ?? null,
       leadAgentId: departmentBlueprint.leadAgentId,
       memoryPath: departmentWorkspace.memoryPath,
     };
@@ -123,6 +126,9 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     return department;
   });
   const departmentIdsByName = new Map(departments.map((department) => [department.name, department.id]));
+  const departmentIdsByKey = new Map(
+    departments.flatMap((department) => (department.key ? [[department.key, department.id] as const] : [])),
+  );
 
   const objectives: Objective[] = [];
   const keyResults: KeyResult[] = [];
@@ -132,6 +138,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       id: createId("objective"),
       companyId: company.id,
       title: objectiveBlueprint.title,
+      titleText: objectiveBlueprint.titleText ?? null,
       status: "active",
       priority: objectiveBlueprint.priority,
     };
@@ -143,9 +150,12 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
         id: createId("key_result"),
         objectiveId: objective.id,
         title: keyResultBlueprint.title,
+        titleText: keyResultBlueprint.titleText ?? null,
         metricName: keyResultBlueprint.metricName,
         targetValue: keyResultBlueprint.targetValue,
+        targetValueText: keyResultBlueprint.targetValueText ?? null,
         currentValue: keyResultBlueprint.currentValue,
+        currentValueText: keyResultBlueprint.currentValueText ?? null,
         status: "active",
       };
       input.repositories.createKeyResult(keyResult);
@@ -157,11 +167,14 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   const taskWarnings: TaskEvent[] = [];
   const taskIdsByBlueprintKey = new Map<string, string>();
   const handoffContractsByBlueprintKey = new Map<string, string>();
+  const handoffContractTextsByBlueprintKey = new Map<string, BlueprintTask["handoffContractText"]>();
   const tasks = ceoResponse.blueprint.tasks.map((taskBlueprint, position) => {
-    const departmentId = departmentIdsByName.get(taskBlueprint.departmentName);
+    const departmentId = taskBlueprint.departmentKey
+      ? departmentIdsByKey.get(taskBlueprint.departmentKey)
+      : departmentIdsByName.get(taskBlueprint.departmentName);
 
     if (!departmentId) {
-      throw new Error(`Task references unknown department after parse: ${taskBlueprint.departmentName}`);
+      throw new Error(`Task references unknown department after parse: ${taskBlueprint.departmentKey ?? taskBlueprint.departmentName}`);
     }
 
     const taskId = createId("task");
@@ -171,9 +184,12 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       id: taskId,
       companyId: company.id,
       departmentId,
+      departmentKey: taskBlueprint.departmentKey ?? null,
       keyResultId: firstKeyResultId,
       title: taskBlueprint.title,
+      titleText: taskBlueprint.titleText ?? null,
       description: withPrototypeGuidance(taskBlueprint.description, schemaDecision.proofSchemaId),
+      descriptionText: taskBlueprint.descriptionText ?? null,
       assigneeAgentId: taskBlueprint.assigneeAgentId,
       requiredCapabilities: taskBlueprint.requiredCapabilities,
       proofSchemaId: schemaDecision.proofSchemaId,
@@ -207,6 +223,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     });
     taskIdsByBlueprintKey.set(taskBlueprint.key, task.id);
     handoffContractsByBlueprintKey.set(taskBlueprint.key, taskBlueprint.handoffContract);
+    handoffContractTextsByBlueprintKey.set(taskBlueprint.key, taskBlueprint.handoffContractText);
     if (schemaDecision.warning) {
       taskWarnings.push({
         id: createId("task_event"),
@@ -228,9 +245,12 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     return task;
   });
 
-  createBlueprintDependencies(ceoResponse.blueprint.tasks, taskIdsByBlueprintKey, handoffContractsByBlueprintKey).forEach(
-    (dependency) => input.repositories.createTaskDependency(dependency),
-  );
+  createBlueprintDependencies(
+    ceoResponse.blueprint.tasks,
+    taskIdsByBlueprintKey,
+    handoffContractsByBlueprintKey,
+    handoffContractTextsByBlueprintKey,
+  ).forEach((dependency) => input.repositories.createTaskDependency(dependency));
   inferValidationDependencies(tasks).forEach((dependency) => input.repositories.createTaskDependency(dependency));
   taskWarnings.forEach((warning) => input.repositories.appendTaskEvent(warning));
 
@@ -408,6 +428,7 @@ function createBlueprintDependencies(
   taskBlueprints: BlueprintTask[],
   taskIdsByBlueprintKey: Map<string, string>,
   handoffContractsByBlueprintKey: Map<string, string>,
+  handoffContractTextsByBlueprintKey: Map<string, BlueprintTask["handoffContractText"]>,
 ): TaskDependency[] {
   return taskBlueprints.flatMap((taskBlueprint) => {
     const taskId = taskIdsByBlueprintKey.get(taskBlueprint.key);
@@ -427,6 +448,7 @@ function createBlueprintDependencies(
         taskId,
         dependsOnTaskId,
         handoffContract: handoffContractsByBlueprintKey.get(dependencyKey) ?? null,
+        handoffContractText: handoffContractTextsByBlueprintKey.get(dependencyKey) ?? null,
       };
     });
   });

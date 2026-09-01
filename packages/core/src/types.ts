@@ -1,3 +1,5 @@
+import type { LocalizedText } from "./localizedText";
+
 export type CompanyStatus = "draft" | "active" | "paused" | "review";
 export type PermissionMode = "safe" | "balanced" | "autonomous";
 export type ObjectiveStatus = "active" | "complete" | "paused";
@@ -158,8 +160,11 @@ export type CeoReviewDecision = {
 export type Department = {
   id: string;
   companyId: string;
+  key?: string | null;
   name: string;
+  nameText?: LocalizedText | null;
   responsibility: string;
+  responsibilityText?: LocalizedText | null;
   leadAgentId: string;
   memoryPath: string;
 };
@@ -168,6 +173,7 @@ export type Objective = {
   id: string;
   companyId: string;
   title: string;
+  titleText?: LocalizedText | null;
   status: ObjectiveStatus;
   priority: number;
 };
@@ -176,9 +182,12 @@ export type KeyResult = {
   id: string;
   objectiveId: string;
   title: string;
+  titleText?: LocalizedText | null;
   metricName: string;
   targetValue: string;
+  targetValueText?: LocalizedText | null;
   currentValue: string;
+  currentValueText?: LocalizedText | null;
   status: KeyResultStatus;
 };
 
@@ -186,10 +195,13 @@ export type Task = {
   id: string;
   companyId: string;
   departmentId: string;
+  departmentKey?: string | null;
   keyResultId: string | null;
   position: number;
   title: string;
+  titleText?: LocalizedText | null;
   description: string;
+  descriptionText?: LocalizedText | null;
   assigneeAgentId: string;
   requiredCapabilities: string[];
   proofSchemaId: string;
@@ -270,6 +282,7 @@ export type TaskDependency = {
   taskId: string;
   dependsOnTaskId: string;
   handoffContract?: string | null;
+  handoffContractText?: LocalizedText | null;
 };
 
 export type ReplanReplacementTask = {
@@ -326,20 +339,25 @@ export type Approval = {
 export type ProofSchema = {
   id: string;
   description: string;
+  descriptionText?: LocalizedText;
   acceptedTypes: ProofType[];
 };
 
 export type BlueprintTask = {
   key: string;
+  departmentKey?: string;
   departmentName: string;
   title: string;
+  titleText?: LocalizedText;
   description: string;
+  descriptionText?: LocalizedText;
   assigneeAgentId: string;
   requiredCapabilities: string[];
   proofSchemaId: string;
   riskLevel: RiskLevel;
   dependsOnTaskKeys: string[];
   handoffContract: string;
+  handoffContractText?: LocalizedText;
 };
 
 export type CompanyBlueprint = {
@@ -349,18 +367,25 @@ export type CompanyBlueprint = {
     playbookId: string;
   };
   departments: Array<{
+    key?: string;
     name: string;
+    nameText?: LocalizedText;
     responsibility: string;
+    responsibilityText?: LocalizedText;
     leadAgentId: string;
   }>;
   objectives: Array<{
     title: string;
+    titleText?: LocalizedText;
     priority: number;
     keyResults: Array<{
       title: string;
+      titleText?: LocalizedText;
       metricName: string;
       targetValue: string;
+      targetValueText?: LocalizedText;
       currentValue: string;
+      currentValueText?: LocalizedText;
     }>;
   }>;
   proofSchemas: ProofSchema[];

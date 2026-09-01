@@ -7,6 +7,7 @@ import type {
   CeoReviewReturnReason,
   Company,
   Department,
+  KeyResult,
   Objective,
   Proof,
   ReplanProposal,
@@ -14,6 +15,7 @@ import type {
   TaskEvent,
   TaskProgressEvent,
 } from "@auto-crop/core";
+import type { CompleteLocalizedText, LocalizedText } from "@auto-crop/core";
 import { localizedTextFromString } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories, ReviewRecord } from "../db/repositories";
@@ -495,7 +497,7 @@ function buildCompanyState(
     company: summarizeCompany(company),
     departments: repositories.listDepartments(company.id).map(summarizeDepartment),
     objectives: repositories.listObjectives(company.id).map(summarizeObjective),
-    keyResults: repositories.listKeyResults(company.id),
+    keyResults: repositories.listKeyResults(company.id).map(summarizeKeyResult),
     tasks: summarizeTasks(tasks, repositories.listTaskDependenciesForCompany(company.id)),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
     businessArtifacts,
@@ -794,10 +796,11 @@ function requestSchedulerWakeForQueuedUpdates(
 function summarizeDepartment(department: Department) {
   return {
     id: department.id,
+    key: department.key ?? undefined,
     name: department.name,
-    nameText: localizedTextFromString(department.name),
+    nameText: localizedSummaryText(department.nameText, department.name),
     responsibility: department.responsibility,
-    responsibilityText: localizedTextFromString(department.responsibility),
+    responsibilityText: localizedSummaryText(department.responsibilityText, department.responsibility),
     leadAgentId: department.leadAgentId,
     memoryPath: department.memoryPath,
   };
@@ -807,8 +810,23 @@ function summarizeObjective(objective: Objective) {
   return {
     id: objective.id,
     title: objective.title,
-    titleText: localizedTextFromString(objective.title),
+    titleText: localizedSummaryText(objective.titleText, objective.title),
     priority: objective.priority,
+  };
+}
+
+function summarizeKeyResult(keyResult: KeyResult) {
+  return {
+    id: keyResult.id,
+    objectiveId: keyResult.objectiveId,
+    title: keyResult.title,
+    titleText: localizedSummaryText(keyResult.titleText, keyResult.title),
+    metricName: keyResult.metricName,
+    targetValue: keyResult.targetValue,
+    targetValueText: localizedSummaryText(keyResult.targetValueText, keyResult.targetValue),
+    currentValue: keyResult.currentValue,
+    currentValueText: localizedSummaryText(keyResult.currentValueText, keyResult.currentValue),
+    status: keyResult.status,
   };
 }
 
@@ -828,12 +846,13 @@ function summarizeTask(task: Task, dependsOnTaskIds: string[]) {
   return {
     id: task.id,
     title: task.title,
-    titleText: localizedTextFromString(task.title),
+    titleText: localizedSummaryText(task.titleText, task.title),
     status: task.status,
     departmentId: task.departmentId,
+    departmentKey: task.departmentKey ?? undefined,
     assigneeAgentId: task.assigneeAgentId,
     description: task.description,
-    descriptionText: localizedTextFromString(task.description),
+    descriptionText: localizedSummaryText(task.descriptionText, task.description),
     riskLevel: task.riskLevel,
     failureReason: task.latestFailureReason ?? undefined,
     failureMessage: task.latestFailureMessage ?? undefined,
@@ -846,6 +865,13 @@ function summarizeTask(task: Task, dependsOnTaskIds: string[]) {
     parentTaskId: task.parentTaskId ?? undefined,
     taskKind: task.taskKind ?? "parent",
     source: task.source ?? "ceo",
+  };
+}
+
+function localizedSummaryText(text: LocalizedText | null | undefined, fallback: string): CompleteLocalizedText {
+  return {
+    ...localizedTextFromString(fallback),
+    ...text,
   };
 }
 

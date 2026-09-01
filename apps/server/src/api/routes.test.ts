@@ -127,20 +127,20 @@ describe("API routes", () => {
     expect(state.tasks.some((stateTask) => stateTask.dependsOnTaskIds.length > 0)).toBe(true);
     expect(state.departments[0]?.nameText).toEqual({
       en: state.departments[0]?.name,
-      zh: state.departments[0]?.name,
+      zh: "产品",
     });
     expect(state.departments[0]?.responsibilityText).toEqual({
       en: state.departments[0]?.responsibility,
-      zh: state.departments[0]?.responsibility,
+      zh: "定义目标客户、切入点、MVP 范围和第一条收入路径。",
     });
     expect(state.objectives[0]?.titleText).toEqual({
       en: state.objectives[0]?.title,
-      zh: state.objectives[0]?.title,
+      zh: "验证第一个 AI SaaS 切入点",
     });
-    expect(state.tasks[0]?.titleText).toEqual({ en: state.tasks[0]?.title, zh: state.tasks[0]?.title });
+    expect(state.tasks[0]?.titleText).toEqual({ en: state.tasks[0]?.title, zh: "撰写第一份产品简报" });
     expect(state.tasks[0]?.descriptionText).toEqual({
       en: state.tasks[0]?.description,
-      zh: state.tasks[0]?.description,
+      zh: "围绕创始人愿景定义目标客户、切入点、核心用例、MVP 范围和第一条收入路径。",
     });
     expect(state.taskProgressEvents[0]?.labelText).toEqual({
       en: state.taskProgressEvents[0]?.label,

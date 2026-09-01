@@ -73,12 +73,22 @@ describe("createCompany", () => {
       "Growth",
       "Engineering",
     ]);
+    expect(repositories.listDepartments(result.company.id).map((department) => department.nameText?.zh)).toEqual([
+      "产品",
+      "研究",
+      "增长",
+      "工程",
+    ]);
     expect(repositories.listObjectives(result.company.id)).toHaveLength(1);
+    expect(repositories.listObjectives(result.company.id)[0]?.titleText?.zh).toBe("验证第一个 AI SaaS 切入点");
     expect(repositories.listKeyResults(result.company.id)).toHaveLength(2);
     expect(repositories.fetchQueuedTasks(10).length).toBeGreaterThan(0);
     expect(result.tasks.map((task) => task.position)).toEqual(result.tasks.map((_, index) => index));
     expect(repositories.listTasksForCompany(result.company.id).map((task) => task.title)).toEqual(
       result.tasks.map((task) => task.title),
+    );
+    expect(repositories.listTasksForCompany(result.company.id).find((task) => task.proofSchemaId === "landing-page-file")?.titleText?.zh).toBe(
+      "创建第一个落地页原型",
     );
     const buildTask = result.tasks.find((task) => task.proofSchemaId === "landing-page-file");
     const validationTask = result.tasks.find((task) => task.proofSchemaId === "test-output");
@@ -89,24 +99,28 @@ describe("createCompany", () => {
     expect(buildTask?.description).toContain("Prototype guidance");
     expect(validationTask && buildTask && productTask && researchTask && growthTask).toBeTruthy();
     expect(repositories.listTaskDependencies(growthTask?.id ?? "")).toEqual([
-      {
+      expect.objectContaining({
         taskId: growthTask?.id,
         dependsOnTaskId: productTask?.id,
         handoffContract: "Produce a concise product brief with target customer, wedge, MVP scope, and first revenue path.",
-      },
-      {
+        handoffContractText: {
+          en: "Produce a concise product brief with target customer, wedge, MVP scope, and first revenue path.",
+          zh: "产出一份简洁的产品简报，包含目标客户、切入点、MVP 范围和第一条收入路径。",
+        },
+      }),
+      expect.objectContaining({
         taskId: growthTask?.id,
         dependsOnTaskId: researchTask?.id,
         handoffContract: "Produce a research report covering comparable products, positioning, pricing, and customer pain.",
-      },
+      }),
     ]);
     expect(repositories.listTaskDependencies(validationTask?.id ?? "")).toEqual([
-      {
+      expect.objectContaining({
         taskId: validationTask?.id,
         dependsOnTaskId: buildTask?.id,
         handoffContract:
           "Produce runnable prototype files that implement the approved wedge, research-informed positioning, and launch copy.",
-      },
+      }),
     ]);
 
     const engineering = repositories
@@ -114,6 +128,70 @@ describe("createCompany", () => {
       .find((department) => department.name === "Engineering");
     expect(engineering).toBeDefined();
     expect(existsSync(engineering?.memoryPath ?? "")).toBe(true);
+
+    client.close();
+  });
+
+  it("uses stable department keys for task assignment, dependencies, and workspace slugs", async () => {
+    const projectRoot = createTempProjectRoot();
+    const client = createDatabaseClient(":memory:");
+    migrate(client);
+    const repositories = createRepositories(client);
+    const blueprint = aiSaasPlaybook.createBlueprint({
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      preferredEngineeringAgentId: "codex",
+      preferredStrategyAgentId: "claude-code",
+    });
+    blueprint.departments = blueprint.departments.map((department) =>
+      department.key === "engineering"
+        ? { ...department, name: "工程", nameText: { en: "Engineering", zh: "工程" } }
+        : department,
+    );
+    blueprint.tasks = blueprint.tasks.map((task) =>
+      task.departmentKey === "engineering"
+        ? { ...task, departmentName: "Engineering", departmentKey: "engineering" }
+        : task,
+    );
+    const ceoAgent = createMockAgentAdapter({
+      id: "codex",
+      name: "Codex",
+      capabilities: ["code", "frontend", "test"],
+      output: ["```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
+    });
+
+    const result = await createCompany({
+      projectRoot,
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgent: ceoAgent,
+      availableAgents: [
+        ceoAgent,
+        createMockAgentAdapter({
+          id: "claude-code",
+          name: "Claude Code",
+          capabilities: ["writing", "research", "growth"],
+        }),
+      ],
+      permissionMode: "balanced",
+      assets: [],
+      repositories,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    const engineering = repositories
+      .listDepartments(result.company.id)
+      .find((department) => department.nameText?.en === "Engineering");
+    const buildTask = result.tasks.find((task) => task.proofSchemaId === "landing-page-file");
+    const validationTask = result.tasks.find((task) => task.proofSchemaId === "test-output");
+
+    expect(engineering?.name).toBe("工程");
+    expect(engineering?.memoryPath).toContain("/engineering/Memory.md");
+    expect(buildTask?.departmentId).toBe(engineering?.id);
+    expect(repositories.listTaskDependencies(validationTask?.id ?? "")).toEqual([
+      expect.objectContaining({ dependsOnTaskId: buildTask?.id }),
+    ]);
 
     client.close();
   });

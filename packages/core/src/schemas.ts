@@ -155,6 +155,7 @@ export const businessArtifactReviewStatusSchema = z.enum([
 export const proofSchemaSchema = z.object({
   id: nonEmptyString,
   description: nonEmptyString,
+  descriptionText: localizedTextSchema.optional(),
   acceptedTypes: z.array(proofTypeSchema).min(1),
 });
 
@@ -163,35 +164,46 @@ export const taskKeySchema = nonEmptyString.regex(/^[a-z0-9][a-z0-9_-]*$/, {
 });
 
 export const departmentBlueprintSchema = z.object({
+  key: taskKeySchema.optional(),
   name: nonEmptyString,
+  nameText: localizedTextSchema.optional(),
   responsibility: nonEmptyString,
+  responsibilityText: localizedTextSchema.optional(),
   leadAgentId: nonEmptyString,
 });
 
 export const keyResultBlueprintSchema = z.object({
   title: nonEmptyString,
+  titleText: localizedTextSchema.optional(),
   metricName: nonEmptyString,
   targetValue: nonEmptyString,
+  targetValueText: localizedTextSchema.optional(),
   currentValue: nonEmptyString,
+  currentValueText: localizedTextSchema.optional(),
 });
 
 export const objectiveBlueprintSchema = z.object({
   title: nonEmptyString,
+  titleText: localizedTextSchema.optional(),
   priority: z.number().int().positive(),
   keyResults: z.array(keyResultBlueprintSchema).min(1),
 });
 
 export const taskSchema = z.object({
   key: taskKeySchema,
+  departmentKey: taskKeySchema.optional(),
   departmentName: nonEmptyString,
   title: nonEmptyString,
+  titleText: localizedTextSchema.optional(),
   description: nonEmptyString,
+  descriptionText: localizedTextSchema.optional(),
   assigneeAgentId: nonEmptyString,
   requiredCapabilities: z.array(nonEmptyString).min(1),
   proofSchemaId: nonEmptyString,
   riskLevel: riskLevelSchema,
   dependsOnTaskKeys: z.array(taskKeySchema).default([]),
   handoffContract: nonEmptyString,
+  handoffContractText: localizedTextSchema.optional(),
 });
 
 export const companyBlueprintSchema = z
@@ -208,6 +220,7 @@ export const companyBlueprintSchema = z
   })
   .superRefine((blueprint, context) => {
     const departmentNames = new Set(blueprint.departments.map((department) => department.name));
+    const departmentKeys = new Set(blueprint.departments.map((department) => department.key).filter((key): key is string => Boolean(key)));
     const proofSchemaIds = new Set(blueprint.proofSchemas.map((proofSchema) => proofSchema.id));
     const taskIndexesByKey = new Map<string, number>();
 
@@ -225,11 +238,15 @@ export const companyBlueprintSchema = z
     });
 
     blueprint.tasks.forEach((task, index) => {
-      if (!departmentNames.has(task.departmentName)) {
+      const referencesDepartment = task.departmentKey
+        ? departmentKeys.has(task.departmentKey)
+        : departmentNames.has(task.departmentName);
+
+      if (!referencesDepartment) {
         context.addIssue({
           code: "custom",
-          path: ["tasks", index, "departmentName"],
-          message: `Task references missing department: ${task.departmentName}`,
+          path: ["tasks", index, task.departmentKey ? "departmentKey" : "departmentName"],
+          message: `Task references missing department: ${task.departmentKey ?? task.departmentName}`,
         });
       }
 

@@ -24,11 +24,13 @@ export function parseCeoOutput(output: string, playbook: Playbook): CeoResponseI
 
 function validateAgainstPlaybook(response: CeoResponseInput, playbook: Playbook): void {
   const allowedDepartments = new Set(playbook.defaultDepartments.map((department) => department.name));
+  const allowedDepartmentKeys = new Set(playbook.defaultDepartments.map((department) => department.key));
   const allowedProofSchemas = new Set(playbook.proofSchemas.map((proofSchema) => proofSchema.id));
 
   for (const department of response.blueprint.departments) {
-    if (!allowedDepartments.has(department.name)) {
-      throw new Error(`Unsupported department for playbook ${playbook.id}: ${department.name}`);
+    const supported = department.key ? allowedDepartmentKeys.has(department.key) : allowedDepartments.has(department.name);
+    if (!supported) {
+      throw new Error(`Unsupported department for playbook ${playbook.id}: ${department.key ?? department.name}`);
     }
   }
 
@@ -39,8 +41,9 @@ function validateAgainstPlaybook(response: CeoResponseInput, playbook: Playbook)
   }
 
   for (const task of response.blueprint.tasks) {
-    if (!allowedDepartments.has(task.departmentName)) {
-      throw new Error(`Unsupported department for playbook ${playbook.id}: ${task.departmentName}`);
+    const supported = task.departmentKey ? allowedDepartmentKeys.has(task.departmentKey) : allowedDepartments.has(task.departmentName);
+    if (!supported) {
+      throw new Error(`Unsupported department for playbook ${playbook.id}: ${task.departmentKey ?? task.departmentName}`);
     }
 
     if (!allowedProofSchemas.has(task.proofSchemaId)) {

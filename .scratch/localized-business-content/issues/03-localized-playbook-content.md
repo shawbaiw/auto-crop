@@ -1,6 +1,6 @@
 # Localized Playbook Content
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 
 ## Goal
@@ -30,3 +30,18 @@ Convert deterministic playbook-authored business content from single English str
 
 This ticket may need to separate department identity from department display name if the current code still maps tasks by display name.
 
+## Resolution
+
+- Added localized text fields to the core blueprint/runtime contract for departments, objectives, key results, tasks, proof schemas, and task dependency handoff contracts.
+- Localized deterministic AI SaaS playbook-authored content into English and Chinese while preserving stable IDs, task keys, proof schema IDs, metric names, and capability tags.
+- Added stable `key` / `departmentKey` identity for department assignment so translated display names do not drive task routing.
+- Persisted localized playbook content in nullable JSON columns and kept legacy string columns for migration compatibility.
+- Updated API summaries to prefer persisted localized text and only fallback to legacy strings for old records.
+
+## Verification
+
+- `pnpm --filter @auto-crop/core test`
+- `pnpm --filter @auto-crop/core typecheck`
+- `pnpm --filter @auto-crop/server test`
+- `pnpm --filter @auto-crop/server typecheck`
+- `pnpm --filter @auto-crop/dashboard typecheck`

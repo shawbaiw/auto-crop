@@ -17,8 +17,11 @@ export function migrate(database: DatabaseClient): void {
     CREATE TABLE IF NOT EXISTS departments (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      department_key TEXT,
       name TEXT NOT NULL,
+      name_text TEXT,
       responsibility TEXT NOT NULL,
+      responsibility_text TEXT,
       lead_agent_id TEXT NOT NULL,
       memory_path TEXT NOT NULL
     );
@@ -51,6 +54,7 @@ export function migrate(database: DatabaseClient): void {
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
+      title_text TEXT,
       status TEXT NOT NULL,
       priority INTEGER NOT NULL
     );
@@ -59,9 +63,12 @@ export function migrate(database: DatabaseClient): void {
       id TEXT PRIMARY KEY,
       objective_id TEXT NOT NULL REFERENCES objectives(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
+      title_text TEXT,
       metric_name TEXT NOT NULL,
       target_value TEXT NOT NULL,
+      target_value_text TEXT,
       current_value TEXT NOT NULL,
+      current_value_text TEXT,
       status TEXT NOT NULL
     );
 
@@ -69,9 +76,12 @@ export function migrate(database: DatabaseClient): void {
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
       department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+      department_key TEXT,
       key_result_id TEXT REFERENCES key_results(id) ON DELETE SET NULL,
       title TEXT NOT NULL,
+      title_text TEXT,
       description TEXT NOT NULL,
+      description_text TEXT,
       assignee_agent_id TEXT NOT NULL,
       required_capabilities TEXT NOT NULL,
       proof_schema_id TEXT NOT NULL,
@@ -154,6 +164,7 @@ export function migrate(database: DatabaseClient): void {
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       handoff_contract TEXT,
+      handoff_contract_text TEXT,
       PRIMARY KEY (task_id, depends_on_task_id)
     );
 
@@ -229,6 +240,7 @@ export function migrate(database: DatabaseClient): void {
   migrateTaskDependencyContracts(database);
   migrateBusinessArtifactClassificationFields(database);
   migrateReplanProposalDiagnostics(database);
+  migrateLocalizedBusinessContentFields(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_events_company_created_idx ON task_events(company_id, created_at, id)");
@@ -240,6 +252,29 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS ceo_review_decisions_task_created_idx ON ceo_review_decisions(task_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS business_artifacts_task_current_idx ON business_artifacts(task_id, is_current)");
   database.exec("CREATE INDEX IF NOT EXISTS business_artifacts_company_created_idx ON business_artifacts(company_id, created_at, id)");
+}
+
+function migrateLocalizedBusinessContentFields(database: DatabaseClient): void {
+  const departmentColumns = getColumnNames(database, "departments");
+  addColumnIfMissing(database, departmentColumns, "departments", "department_key TEXT");
+  addColumnIfMissing(database, departmentColumns, "departments", "name_text TEXT");
+  addColumnIfMissing(database, departmentColumns, "departments", "responsibility_text TEXT");
+
+  const objectiveColumns = getColumnNames(database, "objectives");
+  addColumnIfMissing(database, objectiveColumns, "objectives", "title_text TEXT");
+
+  const keyResultColumns = getColumnNames(database, "key_results");
+  addColumnIfMissing(database, keyResultColumns, "key_results", "title_text TEXT");
+  addColumnIfMissing(database, keyResultColumns, "key_results", "target_value_text TEXT");
+  addColumnIfMissing(database, keyResultColumns, "key_results", "current_value_text TEXT");
+
+  const taskColumns = getColumnNames(database, "tasks");
+  addColumnIfMissing(database, taskColumns, "tasks", "department_key TEXT");
+  addColumnIfMissing(database, taskColumns, "tasks", "title_text TEXT");
+  addColumnIfMissing(database, taskColumns, "tasks", "description_text TEXT");
+
+  const dependencyColumns = getColumnNames(database, "task_dependencies");
+  addColumnIfMissing(database, dependencyColumns, "task_dependencies", "handoff_contract_text TEXT");
 }
 
 function migrateCompanyPermissionMode(database: DatabaseClient): void {

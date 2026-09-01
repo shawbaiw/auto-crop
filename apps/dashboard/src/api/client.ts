@@ -47,6 +47,7 @@ export type CeoIntakeSummary = {
 
 export type DepartmentSummary = {
   id: string;
+  key?: string;
   name: string;
   nameText?: CompleteLocalizedText;
   responsibility: string;
@@ -62,12 +63,26 @@ export type ObjectiveSummary = {
   priority: number;
 };
 
+export type KeyResultSummary = {
+  id: string;
+  objectiveId: string;
+  title: string;
+  titleText?: CompleteLocalizedText;
+  metricName: string;
+  targetValue: string;
+  targetValueText?: CompleteLocalizedText;
+  currentValue: string;
+  currentValueText?: CompleteLocalizedText;
+  status: string;
+};
+
 export type TaskSummary = {
   id: string;
   title: string;
   titleText?: CompleteLocalizedText;
   status: string;
   departmentId: string;
+  departmentKey?: string;
   assigneeAgentId?: string;
   description?: string;
   descriptionText?: CompleteLocalizedText;
@@ -267,6 +282,7 @@ export type CreateCompanyResponse = {
   company: CompanySummary;
   departments: DepartmentSummary[];
   objectives: ObjectiveSummary[];
+  keyResults?: KeyResultSummary[];
   tasks: TaskSummary[];
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
@@ -294,6 +310,7 @@ export type ServerEvent = {
 };
 
 export type CompanyStateResponse = CreateCompanyResponse & {
+  keyResults?: KeyResultSummary[];
   proof: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   founderReport?: FounderReportSummary;

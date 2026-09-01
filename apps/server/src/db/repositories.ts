@@ -9,6 +9,7 @@ import type {
   Company,
   Department,
   KeyResult,
+  LocalizedText,
   Objective,
   Proof,
   ReplanProposal,
@@ -130,14 +131,17 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO departments (
-            id, company_id, name, responsibility, lead_agent_id, memory_path
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
+            id, company_id, department_key, name, name_text, responsibility, responsibility_text, lead_agent_id, memory_path
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           department.id,
           department.companyId,
+          department.key ?? null,
           department.name,
+          stringifyLocalizedText(department.nameText),
           department.responsibility,
+          stringifyLocalizedText(department.responsibilityText),
           department.leadAgentId,
           department.memoryPath,
         );
@@ -154,10 +158,17 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO objectives (
-            id, company_id, title, status, priority
-          ) VALUES (?, ?, ?, ?, ?)`,
+            id, company_id, title, title_text, status, priority
+          ) VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .run(objective.id, objective.companyId, objective.title, objective.status, objective.priority);
+        .run(
+          objective.id,
+          objective.companyId,
+          objective.title,
+          stringifyLocalizedText(objective.titleText),
+          objective.status,
+          objective.priority,
+        );
     },
 
     listObjectives(companyId: string): Objective[] {
@@ -171,16 +182,19 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO key_results (
-            id, objective_id, title, metric_name, target_value, current_value, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            id, objective_id, title, title_text, metric_name, target_value, target_value_text, current_value, current_value_text, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           keyResult.id,
           keyResult.objectiveId,
           keyResult.title,
+          stringifyLocalizedText(keyResult.titleText),
           keyResult.metricName,
           keyResult.targetValue,
+          stringifyLocalizedText(keyResult.targetValueText),
           keyResult.currentValue,
+          stringifyLocalizedText(keyResult.currentValueText),
           keyResult.status,
         );
     },
@@ -212,20 +226,23 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO tasks (
-            id, company_id, department_id, key_result_id, title, description,
+            id, company_id, department_id, department_key, key_result_id, title, title_text, description, description_text,
             assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, artifact_workspace_path,
             status, risk_level, position, latest_failure_reason, latest_failure_message,
             latest_execution_profile_name, latest_requested_timeout_ms, latest_effective_timeout_ms,
             dependency_note, parent_task_id, task_kind, source
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           task.id,
           task.companyId,
           task.departmentId,
+          task.departmentKey ?? null,
           task.keyResultId,
           task.title,
+          stringifyLocalizedText(task.titleText),
           task.description,
+          stringifyLocalizedText(task.descriptionText),
           task.assigneeAgentId,
           JSON.stringify(task.requiredCapabilities),
           task.proofSchemaId,
@@ -377,18 +394,24 @@ export function createRepositories(database: DatabaseClient) {
     createTaskDependency(dependency: TaskDependency): void {
       database
         .prepare(
-          `INSERT INTO task_dependencies (task_id, depends_on_task_id, handoff_contract)
-           VALUES (?, ?, ?)
+          `INSERT INTO task_dependencies (task_id, depends_on_task_id, handoff_contract, handoff_contract_text)
+           VALUES (?, ?, ?, ?)
            ON CONFLICT(task_id, depends_on_task_id) DO UPDATE SET
-             handoff_contract = COALESCE(excluded.handoff_contract, task_dependencies.handoff_contract)`,
+             handoff_contract = COALESCE(excluded.handoff_contract, task_dependencies.handoff_contract),
+             handoff_contract_text = COALESCE(excluded.handoff_contract_text, task_dependencies.handoff_contract_text)`,
         )
-        .run(dependency.taskId, dependency.dependsOnTaskId, dependency.handoffContract ?? null);
+        .run(
+          dependency.taskId,
+          dependency.dependsOnTaskId,
+          dependency.handoffContract ?? null,
+          stringifyLocalizedText(dependency.handoffContractText),
+        );
     },
 
     listTaskDependencies(taskId: string): TaskDependency[] {
       const rows = database
         .prepare(
-          `SELECT task_id, depends_on_task_id, handoff_contract
+          `SELECT task_id, depends_on_task_id, handoff_contract, handoff_contract_text
            FROM task_dependencies
            WHERE task_id = ?
            ORDER BY depends_on_task_id ASC`,
@@ -416,7 +439,7 @@ export function createRepositories(database: DatabaseClient) {
     listTaskDependenciesForCompany(companyId: string): TaskDependency[] {
       const rows = database
         .prepare(
-          `SELECT task_dependencies.task_id, task_dependencies.depends_on_task_id, task_dependencies.handoff_contract
+          `SELECT task_dependencies.task_id, task_dependencies.depends_on_task_id, task_dependencies.handoff_contract, task_dependencies.handoff_contract_text
            FROM task_dependencies
            INNER JOIN tasks ON tasks.id = task_dependencies.task_id
            WHERE tasks.company_id = ?
@@ -827,8 +850,11 @@ type CeoReviewDecisionRow = {
 type DepartmentRow = {
   id: string;
   company_id: string;
+  department_key: string | null;
   name: string;
+  name_text: string | null;
   responsibility: string;
+  responsibility_text: string | null;
   lead_agent_id: string;
   memory_path: string;
 };
@@ -837,6 +863,7 @@ type ObjectiveRow = {
   id: string;
   company_id: string;
   title: string;
+  title_text: string | null;
   status: Objective["status"];
   priority: number;
 };
@@ -845,9 +872,12 @@ type KeyResultRow = {
   id: string;
   objective_id: string;
   title: string;
+  title_text: string | null;
   metric_name: string;
   target_value: string;
+  target_value_text: string | null;
   current_value: string;
+  current_value_text: string | null;
   status: KeyResult["status"];
 };
 
@@ -855,9 +885,12 @@ type TaskRow = {
   id: string;
   company_id: string;
   department_id: string;
+  department_key: string | null;
   key_result_id: string | null;
   title: string;
+  title_text: string | null;
   description: string;
+  description_text: string | null;
   assignee_agent_id: string;
   required_capabilities: string;
   proof_schema_id: string;
@@ -956,6 +989,7 @@ type TaskDependencyRow = {
   task_id: string;
   depends_on_task_id: string;
   handoff_contract: string | null;
+  handoff_contract_text: string | null;
 };
 
 type TaskEventRow = {
@@ -1034,8 +1068,11 @@ function mapDepartment(row: DepartmentRow): Department {
   return {
     id: row.id,
     companyId: row.company_id,
+    ...(row.department_key ? { key: row.department_key } : {}),
     name: row.name,
+    ...(row.name_text ? { nameText: parseLocalizedText(row.name_text) } : {}),
     responsibility: row.responsibility,
+    ...(row.responsibility_text ? { responsibilityText: parseLocalizedText(row.responsibility_text) } : {}),
     leadAgentId: row.lead_agent_id,
     memoryPath: row.memory_path,
   };
@@ -1046,6 +1083,7 @@ function mapObjective(row: ObjectiveRow): Objective {
     id: row.id,
     companyId: row.company_id,
     title: row.title,
+    ...(row.title_text ? { titleText: parseLocalizedText(row.title_text) } : {}),
     status: row.status,
     priority: row.priority,
   };
@@ -1056,9 +1094,12 @@ function mapKeyResult(row: KeyResultRow): KeyResult {
     id: row.id,
     objectiveId: row.objective_id,
     title: row.title,
+    ...(row.title_text ? { titleText: parseLocalizedText(row.title_text) } : {}),
     metricName: row.metric_name,
     targetValue: row.target_value,
+    ...(row.target_value_text ? { targetValueText: parseLocalizedText(row.target_value_text) } : {}),
     currentValue: row.current_value,
+    ...(row.current_value_text ? { currentValueText: parseLocalizedText(row.current_value_text) } : {}),
     status: row.status,
   };
 }
@@ -1068,9 +1109,12 @@ function mapTask(row: TaskRow): Task {
     id: row.id,
     companyId: row.company_id,
     departmentId: row.department_id,
+    ...(row.department_key ? { departmentKey: row.department_key } : {}),
     keyResultId: row.key_result_id,
     title: row.title,
+    ...(row.title_text ? { titleText: parseLocalizedText(row.title_text) } : {}),
     description: row.description,
+    ...(row.description_text ? { descriptionText: parseLocalizedText(row.description_text) } : {}),
     assigneeAgentId: row.assignee_agent_id,
     requiredCapabilities: JSON.parse(row.required_capabilities) as string[],
     proofSchemaId: row.proof_schema_id,
@@ -1175,7 +1219,20 @@ function mapTaskDependency(row: TaskDependencyRow): TaskDependency {
     taskId: row.task_id,
     dependsOnTaskId: row.depends_on_task_id,
     ...(row.handoff_contract ? { handoffContract: row.handoff_contract } : {}),
+    ...(row.handoff_contract_text ? { handoffContractText: parseLocalizedText(row.handoff_contract_text) } : {}),
   };
+}
+
+function stringifyLocalizedText(text: LocalizedText | null | undefined): string | null {
+  return text ? JSON.stringify(text) : null;
+}
+
+function parseLocalizedText(value: string | null): LocalizedText | null {
+  if (!value) {
+    return null;
+  }
+
+  return JSON.parse(value) as LocalizedText;
 }
 
 function mapTaskEvent(row: TaskEventRow): TaskEvent {
