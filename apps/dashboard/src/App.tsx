@@ -4,6 +4,7 @@ import {
   type AgentSummary,
   type ApiClient,
   type BusinessArtifactSummary,
+  type CeoAttentionRollupSummary,
   type CeoIntakeSummary,
   type CompanyListItem,
   type CreateCompanyResponse,
@@ -15,6 +16,7 @@ import {
   type TaskProgressEventSummary,
   type TaskSummary,
   type TaskUpdateBatchSummary,
+  type VisionGapSummary,
   type WaitStateSummary,
 } from "./api/client";
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
@@ -62,6 +64,8 @@ export default function App({ apiClient }: AppProps) {
   const [businessArtifacts, setBusinessArtifacts] = useState<BusinessArtifactSummary[]>([]);
   const [replanProposals, setReplanProposals] = useState<ReplanProposalSummary[]>([]);
   const [humanActions, setHumanActions] = useState<HumanActionSummary[]>([]);
+  const [visionGaps, setVisionGaps] = useState<VisionGapSummary[]>([]);
+  const [ceoAttentionRollups, setCeoAttentionRollups] = useState<CeoAttentionRollupSummary[]>([]);
   const [waitStates, setWaitStates] = useState<WaitStateSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
@@ -148,6 +152,8 @@ export default function App({ apiClient }: AppProps) {
     setCeoIntakes(response.ceoIntakes ?? []);
     setReplanProposals(response.replanProposals ?? []);
     setHumanActions(response.humanActions ?? []);
+    setVisionGaps(response.visionGaps ?? []);
+    setCeoAttentionRollups(response.ceoAttentionRollups ?? []);
     setWaitStates(response.waitStates ?? []);
     setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
     setView(nextView);
@@ -295,6 +301,8 @@ export default function App({ apiClient }: AppProps) {
     setBusinessArtifacts([]);
     setReplanProposals([]);
     setHumanActions([]);
+    setVisionGaps([]);
+    setCeoAttentionRollups([]);
     setWaitStates([]);
     setReviews([]);
     setEvents([]);
@@ -314,6 +322,8 @@ export default function App({ apiClient }: AppProps) {
       setBusinessArtifacts(response.businessArtifacts ?? []);
       setReplanProposals(response.replanProposals ?? []);
       setHumanActions(response.humanActions ?? []);
+      setVisionGaps(response.visionGaps ?? []);
+      setCeoAttentionRollups(response.ceoAttentionRollups ?? []);
       setWaitStates(response.waitStates ?? []);
       setReviews(response.reviews ?? []);
       setEvents(response.activity ?? []);
@@ -582,6 +592,8 @@ export default function App({ apiClient }: AppProps) {
     setCeoIntakes([]);
     setReplanProposals([]);
     setHumanActions([]);
+    setVisionGaps([]);
+    setCeoAttentionRollups([]);
     setWaitStates([]);
     setDashboardFocusTarget(null);
     setCompanyName("");
@@ -733,7 +745,9 @@ export default function App({ apiClient }: AppProps) {
         onConfirmHumanAction={handleConfirmHumanAction}
         proof={proof}
         businessArtifacts={businessArtifacts}
+        ceoAttentionRollups={ceoAttentionRollups}
         humanActions={humanActions}
+        visionGaps={visionGaps}
         waitStates={waitStates}
         selectedCeoAgentId={selectedAgentId}
         tasks={blueprint.tasks}
