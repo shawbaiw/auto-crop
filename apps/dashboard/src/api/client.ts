@@ -145,6 +145,13 @@ export type TaskCompletionEventSummary = {
   visionGaps: unknown[];
   createdAt: string;
 };
+export type CompanyEventSummary = {
+  type: string;
+  companyId: string;
+  message: string;
+  messageText?: CompleteLocalizedText;
+  status?: string;
+};
 export type VisionGapSummary = VisionGap;
 export type HumanActionSummary = HumanAction;
 export type WaitStateSummary = WaitState;
@@ -357,6 +364,16 @@ export type CreateCompanyResponse = {
   founderReport?: FounderReportSummary;
   reviews?: ReviewSummary[];
   activity?: ServerEvent[];
+  creationEvents?: CompanyEventSummary[];
+  creationAttempts?: Array<{
+    id: string;
+    companyId: string;
+    status: string;
+    startedAt: string;
+    finishedAt: string | null;
+    promptPath: string | null;
+    failureMessage: string | null;
+  }>;
   replanProposals?: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
   taskCompletionEvents?: TaskCompletionEventSummary[];
@@ -370,6 +387,7 @@ export type CreateCompanyResponse = {
 
 export type ServerEvent = {
   type: string;
+  companyId?: string;
   taskId?: string;
   message: string;
   messageText?: CompleteLocalizedText;
@@ -410,7 +428,9 @@ export type ApiClient = {
     selectedCeoAgentId: string;
     permissionMode: string;
     assets: string[];
+    creationIdempotencyKey?: string;
   }): Promise<CreateCompanyResponse>;
+  retryCompanyCreation(companyId: string): Promise<CreateCompanyResponse>;
   getCompanyState(companyId: string): Promise<CompanyStateResponse>;
   createCeoIntake(companyId: string, input: { body: string }): Promise<{ intake: CeoIntakeSummary }>;
   createCeoReviewDecision(input: {
@@ -452,6 +472,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     },
     async createCompany(input) {
       return postJson(`${baseUrl}/api/companies`, input, requestTimeoutMs);
+    },
+    async retryCompanyCreation(companyId) {
+      return postJson(`${baseUrl}/api/companies/${companyId}/retry-creation`, {}, requestTimeoutMs);
     },
     async getCompanyState(companyId) {
       return getJson(`${baseUrl}/api/companies/${companyId}/state`, requestTimeoutMs);

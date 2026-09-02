@@ -10,8 +10,30 @@ export function migrate(database: DatabaseClient): void {
       playbook_id TEXT NOT NULL,
       permission_mode TEXT,
       status TEXT NOT NULL,
+      creation_idempotency_key TEXT,
+      creation_input TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS creation_attempts (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      prompt_path TEXT,
+      failure_message TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS company_events (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      message_text TEXT,
+      created_at TEXT NOT NULL,
+      status TEXT
     );
 
     CREATE TABLE IF NOT EXISTS departments (
@@ -263,6 +285,7 @@ export function migrate(database: DatabaseClient): void {
   `);
   migrateTaskPosition(database);
   migrateCompanyPermissionMode(database);
+  migrateCompanyCreationFields(database);
   migrateTasksExecutionFields(database);
   migrateTaskHierarchyFields(database);
   migrateAgentRunsExecutionFields(database);
@@ -274,6 +297,9 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_events_company_created_idx ON task_events(company_id, created_at, id)");
+  database.exec("CREATE INDEX IF NOT EXISTS companies_creation_idempotency_key_idx ON companies(creation_idempotency_key)");
+  database.exec("CREATE INDEX IF NOT EXISTS creation_attempts_company_started_idx ON creation_attempts(company_id, started_at, id)");
+  database.exec("CREATE INDEX IF NOT EXISTS company_events_company_created_idx ON company_events(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_progress_events_company_created_idx ON task_progress_events(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_progress_events_parent_created_idx ON task_progress_events(parent_task_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_completion_events_company_created_idx ON task_completion_events(company_id, created_at, id)");
@@ -284,6 +310,12 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS ceo_review_decisions_task_created_idx ON ceo_review_decisions(task_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS business_artifacts_task_current_idx ON business_artifacts(task_id, is_current)");
   database.exec("CREATE INDEX IF NOT EXISTS business_artifacts_company_created_idx ON business_artifacts(company_id, created_at, id)");
+}
+
+function migrateCompanyCreationFields(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "companies");
+  addColumnIfMissing(database, columns, "companies", "creation_idempotency_key TEXT");
+  addColumnIfMissing(database, columns, "companies", "creation_input TEXT");
 }
 
 function migrateLocalizedBusinessContentFields(database: DatabaseClient): void {

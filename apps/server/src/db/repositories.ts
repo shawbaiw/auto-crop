@@ -3,10 +3,12 @@ import type {
   AgentFailureReason,
   Approval,
   BusinessArtifact,
+  CompanyEvent,
   CeoIntake,
   CeoIntakeStatus,
   CeoReviewDecision,
   Company,
+  CreationAttempt,
   Department,
   HumanActionConfirmation,
   KeyResult,
@@ -43,8 +45,9 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO companies (
-            id, name, founder_vision, selected_ceo_agent_id, playbook_id, permission_mode, status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            id, name, founder_vision, selected_ceo_agent_id, playbook_id, permission_mode, status,
+            creation_idempotency_key, creation_input, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           company.id,
@@ -54,6 +57,8 @@ export function createRepositories(database: DatabaseClient) {
           company.playbookId,
           company.permissionMode ?? null,
           company.status,
+          company.creationIdempotencyKey ?? null,
+          company.creationInput ? JSON.stringify(company.creationInput) : null,
           company.createdAt,
           company.updatedAt,
         );
@@ -69,10 +74,80 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapCompany(row as CompanyRow));
     },
 
+    getCompanyByCreationIdempotencyKey(key: string): Company | null {
+      const row = database.prepare("SELECT * FROM companies WHERE creation_idempotency_key = ?").get(key);
+      return row ? mapCompany(row as CompanyRow) : null;
+    },
+
     updateCompanyStatus(id: string, status: Company["status"], updatedAt: string): void {
       database
         .prepare("UPDATE companies SET status = ?, updated_at = ? WHERE id = ?")
         .run(status, updatedAt, id);
+    },
+
+    createCreationAttempt(attempt: CreationAttempt): void {
+      database
+        .prepare(
+          `INSERT INTO creation_attempts (
+            id, company_id, status, started_at, finished_at, prompt_path, failure_message
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          attempt.id,
+          attempt.companyId,
+          attempt.status,
+          attempt.startedAt,
+          attempt.finishedAt,
+          attempt.promptPath,
+          attempt.failureMessage,
+        );
+    },
+
+    updateCreationAttempt(attemptId: string, fields: {
+      status: CreationAttempt["status"];
+      finishedAt: string | null;
+      promptPath?: string | null;
+      failureMessage?: string | null;
+    }): void {
+      database
+        .prepare(
+          `UPDATE creation_attempts
+           SET status = ?, finished_at = ?, prompt_path = COALESCE(?, prompt_path), failure_message = ?
+           WHERE id = ?`,
+        )
+        .run(fields.status, fields.finishedAt, fields.promptPath ?? null, fields.failureMessage ?? null, attemptId);
+    },
+
+    listCreationAttemptsForCompany(companyId: string): CreationAttempt[] {
+      const rows = database
+        .prepare("SELECT * FROM creation_attempts WHERE company_id = ? ORDER BY started_at ASC, id ASC")
+        .all(companyId);
+      return rows.map((row) => mapCreationAttempt(row as CreationAttemptRow));
+    },
+
+    appendCompanyEvent(event: CompanyEvent): void {
+      database
+        .prepare(
+          `INSERT INTO company_events (
+            id, company_id, type, message, message_text, created_at, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          event.id,
+          event.companyId,
+          event.type,
+          event.message,
+          stringifyLocalizedText(event.messageText),
+          event.createdAt,
+          event.status ?? null,
+        );
+    },
+
+    listCompanyEventsForCompany(companyId: string): CompanyEvent[] {
+      const rows = database
+        .prepare("SELECT * FROM company_events WHERE company_id = ? ORDER BY created_at ASC, id ASC")
+        .all(companyId);
+      return rows.map((row) => mapCompanyEvent(row as CompanyEventRow));
     },
 
     createCeoIntake(intake: CeoIntake): void {
@@ -921,18 +996,6 @@ export function createRepositories(database: DatabaseClient) {
   };
 }
 
-type CompanyRow = {
-  id: string;
-  name: string;
-  founder_vision: string;
-  selected_ceo_agent_id: string;
-  playbook_id: string;
-  permission_mode: Company["permissionMode"];
-  status: Company["status"];
-  created_at: string;
-  updated_at: string;
-};
-
 type CeoIntakeRow = {
   id: string;
   company_id: string;
@@ -968,6 +1031,40 @@ type DepartmentRow = {
   responsibility_text: string | null;
   lead_agent_id: string;
   memory_path: string;
+};
+
+type CompanyRow = {
+  id: string;
+  name: string;
+  founder_vision: string;
+  selected_ceo_agent_id: string;
+  playbook_id: string;
+  permission_mode: Company["permissionMode"] | null;
+  status: Company["status"];
+  creation_idempotency_key?: string | null;
+  creation_input?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type CreationAttemptRow = {
+  id: string;
+  company_id: string;
+  status: CreationAttempt["status"];
+  started_at: string;
+  finished_at: string | null;
+  prompt_path: string | null;
+  failure_message: string | null;
+};
+
+type CompanyEventRow = {
+  id: string;
+  company_id: string;
+  type: CompanyEvent["type"];
+  message: string;
+  message_text: string | null;
+  created_at: string;
+  status: Company["status"] | null;
 };
 
 type ObjectiveRow = {
@@ -1170,8 +1267,34 @@ function mapCompany(row: CompanyRow): Company {
     playbookId: row.playbook_id,
     permissionMode: row.permission_mode ?? null,
     status: row.status,
+    creationIdempotencyKey: row.creation_idempotency_key ?? null,
+    creationInput: row.creation_input ? JSON.parse(row.creation_input) as unknown : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapCreationAttempt(row: CreationAttemptRow): CreationAttempt {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    status: row.status,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    promptPath: row.prompt_path,
+    failureMessage: row.failure_message,
+  };
+}
+
+function mapCompanyEvent(row: CompanyEventRow): CompanyEvent {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    type: row.type,
+    message: row.message,
+    ...(row.message_text ? { messageText: parseLocalizedText(row.message_text) } : {}),
+    createdAt: row.created_at,
+    status: row.status,
   };
 }
 

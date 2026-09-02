@@ -6,6 +6,7 @@ import {
   type BusinessArtifactSummary,
   type CeoAttentionRollupSummary,
   type CeoIntakeSummary,
+  type CompanyEventSummary,
   type CompanyListItem,
   type CreateCompanyResponse,
   type HumanActionSummary,
@@ -40,6 +41,7 @@ type CompanyListLoadState = "loading" | "ready" | "failed";
 type AppView = "company-picker" | "onboarding" | "creating" | "department-workspace" | "dashboard" | "operations";
 const currentCompanyStorageKey = "auto-crop.currentCompanyId";
 const currentViewStorageKey = "auto-crop.currentView";
+const creationIdempotencyKeyStorageKey = "auto-crop.creationIdempotencyKey";
 
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
@@ -58,6 +60,7 @@ export default function App({ apiClient }: AppProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [events, setEvents] = useState<ServerEvent[]>([]);
+  const [creationEvents, setCreationEvents] = useState<CompanyEventSummary[]>([]);
   const [taskProgressEvents, setTaskProgressEvents] = useState<TaskProgressEventSummary[]>([]);
   const [ceoIntakes, setCeoIntakes] = useState<CeoIntakeSummary[]>([]);
   const [proof, setProof] = useState<ProofSummary[]>([]);
@@ -148,6 +151,7 @@ export default function App({ apiClient }: AppProps) {
     setBusinessArtifacts(response.businessArtifacts ?? []);
     setReviews(response.reviews ?? []);
     setEvents(response.activity ?? []);
+    setCreationEvents(response.creationEvents ?? []);
     setTaskProgressEvents(response.taskProgressEvents ?? []);
     setCeoIntakes(response.ceoIntakes ?? []);
     setReplanProposals(response.replanProposals ?? []);
@@ -156,6 +160,9 @@ export default function App({ apiClient }: AppProps) {
     setCeoAttentionRollups(response.ceoAttentionRollups ?? []);
     setWaitStates(response.waitStates ?? []);
     setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
+    if (response.company.status !== "creating") {
+      clearCreationIdempotencyKey();
+    }
     setView(nextView);
     if (nextView === "onboarding") {
       setOnboardingStep("vision");
@@ -201,12 +208,15 @@ export default function App({ apiClient }: AppProps) {
 
     return client.subscribeEvents(blueprint.company.id, (event) => {
       setEvents((current) => [...current.slice(-49), event]);
+      if (event.type.startsWith("company_creation_") && event.companyId) {
+        setCreationEvents((current) => [...current, event as CompanyEventSummary]);
+      }
       setBlueprint((current) => updateBlueprintTaskStatus(current, event));
 
       if (shouldReloadCompanyStateAfterEvent(event)) {
         void client
           .getCompanyState(blueprint.company.id)
-          .then((response) => applyCompanyState(response, view))
+          .then((response) => applyCompanyState(response, viewAfterReloadEvent(event, view, response.company.status)))
           .catch(() => undefined);
       }
     });
@@ -306,6 +316,7 @@ export default function App({ apiClient }: AppProps) {
     setWaitStates([]);
     setReviews([]);
     setEvents([]);
+    setCreationEvents([]);
     setTaskProgressEvents([]);
     setCeoIntakes([]);
     setDashboardFocusTarget(null);
@@ -316,24 +327,30 @@ export default function App({ apiClient }: AppProps) {
         selectedCeoAgentId: selectedAgentId,
         permissionMode,
         assets: [],
+        creationIdempotencyKey: getOrCreateCreationIdempotencyKey(),
       });
-      setBlueprint(response);
-      setProof(response.proof ?? []);
-      setBusinessArtifacts(response.businessArtifacts ?? []);
-      setReplanProposals(response.replanProposals ?? []);
-      setHumanActions(response.humanActions ?? []);
-      setVisionGaps(response.visionGaps ?? []);
-      setCeoAttentionRollups(response.ceoAttentionRollups ?? []);
-      setWaitStates(response.waitStates ?? []);
-      setReviews(response.reviews ?? []);
-      setEvents(response.activity ?? []);
-      setTaskProgressEvents(response.taskProgressEvents ?? []);
-      setCeoIntakes(response.ceoIntakes ?? []);
       writeCurrentCompanyId(response.company.id);
-      setView("department-workspace");
+      applyCompanyState(response, defaultCompanyView(response.company.status));
     } catch (error) {
       setView("onboarding");
       setOnboardingStep("vision");
+      setCreateError((error as Error).message);
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function handleRetryCompanyCreation() {
+    const companyId = blueprint?.company.id;
+    if (!companyId) {
+      return;
+    }
+
+    setIsCreating(true);
+    try {
+      const response = await client.retryCompanyCreation(companyId);
+      applyCompanyState(response, defaultCompanyView(response.company.status));
+    } catch (error) {
       setCreateError((error as Error).message);
     } finally {
       setIsCreating(false);
@@ -722,8 +739,12 @@ export default function App({ apiClient }: AppProps) {
 
     return renderAppFrame(
       <CompanyCreationLoading
-        companyName={companyName.trim()}
+        companyName={blueprint?.company.name ?? companyName.trim()}
+        events={creationEvents}
+        isFailed={blueprint?.company.status === "creation_failed"}
+        isRetrying={isCreating}
         menuBar={menuBar}
+        onRetry={handleRetryCompanyCreation}
         permissionMode={permissionMode}
         selectedAgent={selectedAgent}
       />,
@@ -1059,10 +1080,20 @@ function taskStatusFromEvent(eventType: string) {
 }
 
 function shouldReloadCompanyStateAfterEvent(event: ServerEvent) {
-  return event.type === "task_review";
+  return event.type === "task_review" || event.type === "company_creation_completed" || event.type === "company_creation_failed";
+}
+
+function viewAfterReloadEvent(event: ServerEvent, currentView: AppView, companyStatus: string): AppView {
+  if (event.type.startsWith("company_creation_")) {
+    return defaultCompanyView(companyStatus);
+  }
+  return currentView;
 }
 
 function defaultCompanyView(companyStatus: string): AppView {
+  if (companyStatus === "creating" || companyStatus === "creation_failed") {
+    return "creating";
+  }
   return companyStatus === "draft" ? "department-workspace" : "dashboard";
 }
 
@@ -1089,6 +1120,32 @@ function clearCurrentCompanyId(): void {
 
   window.localStorage.removeItem(currentCompanyStorageKey);
   window.localStorage.removeItem(currentViewStorageKey);
+  window.localStorage.removeItem(creationIdempotencyKeyStorageKey);
+}
+
+function clearCreationIdempotencyKey(): void {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+
+  window.localStorage.removeItem(creationIdempotencyKeyStorageKey);
+}
+
+function getOrCreateCreationIdempotencyKey(): string {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return `creation-${Date.now()}`;
+  }
+
+  const existing = window.localStorage.getItem(creationIdempotencyKeyStorageKey);
+  if (existing) {
+    return existing;
+  }
+
+  const key = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `creation-${Date.now()}`;
+  window.localStorage.setItem(creationIdempotencyKeyStorageKey, key);
+  return key;
 }
 
 function readCurrentView(): AppView | null {

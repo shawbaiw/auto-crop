@@ -4,13 +4,13 @@
 
 **Blocked by:** 03: Complete Creation In The Background; 05: Surface Company Events Through SSE And State.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] CEO Agent failure moves the company to `creation_failed`.
-- [ ] Blueprint parse failure moves the company to `creation_failed`.
-- [ ] Record writing failure moves the company to `creation_failed`.
-- [ ] Failure records a failed Creation Attempt and failed Company Event with a short user-facing message.
-- [ ] Detailed diagnostics are available through prompt/log paths rather than large API response bodies.
-- [ ] `POST /api/companies/:id/retry-creation` starts a new Creation Attempt on the same company when status is `creation_failed`.
-- [ ] Retry is rejected with `409` for `creating`, `draft`, `active`, `paused`, and `review` companies.
-- [ ] Retrying returns the dashboard to the creation progress view for the same company.
+- [x] CEO Agent failure moves the company to `creation_failed`.
+- [x] Blueprint parse failure moves the company to `creation_failed`.
+- [x] Record writing failure moves the company to `creation_failed`.
+- [x] Failure records a failed Creation Attempt and failed Company Event with a short user-facing message.
+- [x] Detailed diagnostics are available through prompt/log paths rather than large API response bodies.
+- [x] `POST /api/companies/:id/retry-creation` starts a new Creation Attempt on the same company when status is `creation_failed`.
+- [x] Retry is rejected with `409` for `creating`, `draft`, `active`, `paused`, and `review` companies.
+- [x] Retrying returns the dashboard to the creation progress view for the same company.
