@@ -13,6 +13,7 @@ import type {
 } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage } from "../ui/language";
+import { resolveLocalizedValue } from "../ui/language/localizedText";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroPanel } from "../ui/retro";
 import {
@@ -52,7 +53,7 @@ export type CompanyDashboardProps = {
 };
 
 export function CompanyDashboard(props: CompanyDashboardProps) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const sectionRefs = {
     departments: useRef<HTMLElement>(null),
     evidence: useRef<HTMLParagraphElement>(null),
@@ -94,7 +95,10 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
           <VideotexKeyValue items={[{ label: t("dashboard.state"), value: formatCompanyStatus(props.company.status, t) }, { label: t("dashboard.playbook"), value: props.company.playbookId }]} />
         </RetroPanel>
         <RetroPanel icon={<Flag size={18} aria-hidden="true" />} title={t("dashboard.okrSystem")}>
-          <VideotexLog emptyMessage={t("dashboard.noObjectives")} rows={props.objectives.map((objective) => objective.title)} />
+          <VideotexLog
+            emptyMessage={t("dashboard.noObjectives")}
+            rows={props.objectives.map((objective) => resolveLocalizedValue(objective.titleText, language, objective.title))}
+          />
         </RetroPanel>
         <RetroPanel icon={<ClipboardCheck size={18} aria-hidden="true" />} title={t("dashboard.founderReport")}>
           {props.founderReport ? (
@@ -124,7 +128,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
         >
           <VideotexLog
             emptyMessage={t("dashboard.noActiveTasks")}
-            rows={props.tasks.map((task) => `${task.title} / ${formatTaskStatus(task, t).toUpperCase()}`)}
+            rows={props.tasks.map((task) => `${taskTitle(task, language)} / ${formatTaskStatus(task, t).toUpperCase()}`)}
           />
         </RetroPanel>
       </Workspace>
@@ -136,12 +140,12 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
             key={department.id}
             ref={department.id === props.departments[0]?.id ? sectionRefs.departments : undefined}
             tabIndex={department.id === props.departments[0]?.id ? -1 : undefined}
-            title={department.name}
+            title={departmentName(department, language)}
           >
-            <p>{department.responsibility}</p>
+            <p>{departmentResponsibility(department, language)}</p>
             {(tasksByDepartment.get(department.id) ?? []).map((task) => (
               <RetroBadge key={task.id} tone="signal">
-                {task.title}
+                {taskTitle(task, language)}
               </RetroBadge>
             ))}
           </RetroPanel>
@@ -162,7 +166,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
               ref={index === 0 ? sectionRefs.evidence : undefined}
               tabIndex={index === 0 ? -1 : undefined}
             >
-              {proof.uri} <span className="muted">{proof.summary}</span>
+              {proof.uri} <span className="muted">{resolveLocalizedValue(proof.summaryText, language, proof.summary)}</span>
             </p>
           ))}
         </RetroPanel>
@@ -172,7 +176,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
             emptyMessage={t("dashboard.noBusinessArtifacts")}
             rows={props.businessArtifacts.map((artifact) =>
               [
-                taskTitleForArtifact(artifact, props.tasks),
+                taskTitleForArtifact(artifact, props.tasks, language),
                 formatArtifactKind(artifact.artifactKind, t),
                 formatArtifactRole(artifact.artifactRole, t),
                 formatCodeLabel(artifact.artifactSubtype),
@@ -201,12 +205,28 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
       </Workspace>
 
       <RetroPanel title={t("dashboard.liveEvents")}>
-        <VideotexLog emptyMessage={t("dashboard.waitingActivity")} rows={props.events.map((event) => event.message)} />
+        <VideotexLog
+          emptyMessage={t("dashboard.waitingActivity")}
+          rows={props.events.map((event) => resolveLocalizedValue(event.messageText, language, event.message))}
+        />
       </RetroPanel>
     </AppShell>
   );
 }
 
-function taskTitleForArtifact(artifact: BusinessArtifactSummary, tasks: TaskSummary[]): string {
-  return tasks.find((task) => task.id === artifact.taskId)?.title ?? artifact.taskId;
+function taskTitleForArtifact(artifact: BusinessArtifactSummary, tasks: TaskSummary[], language: "en" | "zh"): string {
+  const task = tasks.find((candidate) => candidate.id === artifact.taskId);
+  return task ? taskTitle(task, language) : artifact.taskId;
+}
+
+function departmentName(department: DepartmentSummary, language: "en" | "zh"): string {
+  return resolveLocalizedValue(department.nameText, language, department.name);
+}
+
+function departmentResponsibility(department: DepartmentSummary, language: "en" | "zh"): string {
+  return resolveLocalizedValue(department.responsibilityText, language, department.responsibility);
+}
+
+function taskTitle(task: TaskSummary, language: "en" | "zh"): string {
+  return resolveLocalizedValue(task.titleText, language, task.title);
 }

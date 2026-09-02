@@ -3,6 +3,7 @@ import { useMemo, type ReactNode } from "react";
 import type { CompanySummary, DepartmentSummary, ReplanProposalSummary, ServerEvent, TaskSummary } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage, type TranslationKey } from "../ui/language";
+import { resolveLocalizedValue } from "../ui/language/localizedText";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroButton, RetroPanel } from "../ui/retro";
 import { formatCodeLabel, formatCompanyStatus, formatReplanProposalStatus } from "../ui/tasks/formatDisplayValue";
@@ -31,11 +32,11 @@ export function CompanyOperations({
   replanProposals,
   tasks,
 }: CompanyOperationsProps) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const activityRows = useMemo(
-    () => events.map((event) => formatAgentActivityEvent(event, event.taskId ? tasksById.get(event.taskId) : undefined, t)),
-    [events, tasksById, t],
+    () => events.map((event) => formatAgentActivityEvent(event, event.taskId ? tasksById.get(event.taskId) : undefined, language, t)),
+    [events, tasksById, language, t],
   );
   const replanSourceTaskIds = useMemo(() => new Set(replanProposals.map((proposal) => proposal.sourceTaskId)), [replanProposals]);
   const tasksAwaitingReplanProposal = tasks.filter(
@@ -81,7 +82,7 @@ export function CompanyOperations({
             emptyMessage={t("operations.noAttention")}
             rows={tasks
               .filter((task) => task.status === "blocked" || task.status === "failed" || task.status === "needs_replan")
-              .map((task) => `${task.title} / ${formatTaskStatus(task, t)}`)}
+              .map((task) => `${taskTitle(task, language)} / ${formatTaskStatus(task, t)}`)}
           />
         </RetroPanel>
       </Workspace>
@@ -92,7 +93,7 @@ export function CompanyOperations({
             {tasksAwaitingReplanProposal.map((task) => (
               <div className="replan-card" key={task.id}>
                 <p>
-                  {task.title} — {t("operations.replanAwaitingProposal")}
+                  {taskTitle(task, language)} — {t("operations.replanAwaitingProposal")}
                 </p>
                 <RetroButton onClick={() => onCreateReplanProposal(task.id)} variant="primary">
                   {t("operations.createReplanProposal")}
@@ -112,7 +113,8 @@ export function CompanyOperations({
                 <div className="replan-card" key={proposal.id}>
                   <div className="replan-card__header">
                     <p>
-                      {sourceTask?.title ?? t("operations.unknownTask")} — {proposal.rationale}
+                      {sourceTask ? taskTitle(sourceTask, language) : t("operations.unknownTask")} —{" "}
+                      {resolveLocalizedValue(proposal.rationaleText, language, proposal.rationale)}
                     </p>
                     <span>{formatReplanProposalStatus(proposal.status, t)}</span>
                   </div>
@@ -141,21 +143,21 @@ export function CompanyOperations({
                     <h3>{t("operations.originalTask")}</h3>
                     <VideotexLog
                       emptyMessage={t("operations.unknownTask")}
-                      rows={sourceTask ? [`${sourceTask.title} / ${formatTaskStatus(sourceTask, t)}`] : []}
+                      rows={sourceTask ? [`${taskTitle(sourceTask, language)} / ${formatTaskStatus(sourceTask, t)}`] : []}
                     />
                   </section>
                   <section className="replan-review-section">
                     <h3>{t("operations.replacementChain")}</h3>
                     <VideotexLog
                       emptyMessage={t("operations.noReplacementTasks")}
-                      rows={proposal.replacementTasks.map((task) => task.title)}
+                      rows={proposal.replacementTasks.map((task) => resolveLocalizedValue(task.titleText, language, task.title))}
                     />
                   </section>
                   <section className="replan-review-section">
                     <h3>{t("operations.affectedDownstream")}</h3>
                     <VideotexLog
                       emptyMessage={t("operations.noAffectedDownstream")}
-                      rows={affectedDownstreamTasks.map((task) => task.title)}
+                      rows={affectedDownstreamTasks.map((task) => taskTitle(task, language))}
                     />
                   </section>
                   <section className="replan-review-section">
@@ -164,8 +166,8 @@ export function CompanyOperations({
                       emptyMessage={t("operations.noRewirePreview")}
                       rows={affectedDownstreamTasks.map((task) =>
                         finalReplacementTask
-                          ? `${task.title} ${t("operations.rewirePreviewConnector")} ${finalReplacementTask.title}.`
-                          : `${task.title} ${t("operations.rewirePreviewMissingFinalTask")}`,
+                          ? `${taskTitle(task, language)} ${t("operations.rewirePreviewConnector")} ${resolveLocalizedValue(finalReplacementTask.titleText, language, finalReplacementTask.title)}.`
+                          : `${taskTitle(task, language)} ${t("operations.rewirePreviewMissingFinalTask")}`,
                       )}
                     />
                   </section>
@@ -192,11 +194,14 @@ export function CompanyOperations({
             emptyMessage={t("operations.noReviewTasks")}
             rows={tasks
               .filter((task) => task.taskKind !== "department_subtask" && task.status === "review")
-              .map((task) => task.title)}
+              .map((task) => taskTitle(task, language))}
           />
         </RetroPanel>
         <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title={t("operations.departments")}>
-          <VideotexLog emptyMessage={t("operations.noDepartments")} rows={departments.map((department) => department.name)} />
+          <VideotexLog
+            emptyMessage={t("operations.noDepartments")}
+            rows={departments.map((department) => resolveLocalizedValue(department.nameText, language, department.name))}
+          />
         </RetroPanel>
       </Workspace>
     </AppShell>
@@ -221,9 +226,9 @@ function countTaskStates(tasks: TaskSummary[]) {
   );
 }
 
-function formatAgentActivityEvent(event: ServerEvent, task: TaskSummary | undefined, t: (key: TranslationKey) => string): string {
-  const title = task?.title ?? t("operations.unknownTask");
-  return `${formatAgentActivityState(event, t)} · ${title} — ${formatAgentActivityDetail(event, t)}`;
+function formatAgentActivityEvent(event: ServerEvent, task: TaskSummary | undefined, language: "en" | "zh", t: (key: TranslationKey) => string): string {
+  const title = task ? taskTitle(task, language) : t("operations.unknownTask");
+  return `${formatAgentActivityState(event, t)} · ${title} — ${formatAgentActivityDetail(event, language, t)}`;
 }
 
 function formatAgentActivityState(event: ServerEvent, t: (key: TranslationKey) => string): string {
@@ -253,7 +258,7 @@ function formatAgentActivityState(event: ServerEvent, t: (key: TranslationKey) =
   }
 }
 
-function formatAgentActivityDetail(event: ServerEvent, t: (key: TranslationKey) => string): string {
+function formatAgentActivityDetail(event: ServerEvent, language: "en" | "zh", t: (key: TranslationKey) => string): string {
   if (event.type === "task_started") {
     return event.effectiveTimeoutMs
       ? `${t("operations.agentWorking")} ${t("operations.budget")}: ${formatBudget(event.effectiveTimeoutMs)}.`
@@ -265,7 +270,7 @@ function formatAgentActivityDetail(event: ServerEvent, t: (key: TranslationKey) 
   }
 
   if (event.type === "dependency_waiting") {
-    return event.dependencyNote ?? cleanActivityMessage(event.message) ?? t("operations.waitingDependencyProof");
+    return event.dependencyNote ?? cleanActivityMessage(resolveLocalizedValue(event.messageText, language, event.message)) ?? t("operations.waitingDependencyProof");
   }
 
   if (event.type === "task_retrying") {
@@ -285,11 +290,11 @@ function formatAgentActivityDetail(event: ServerEvent, t: (key: TranslationKey) 
   }
 
   if (event.type === "task_blocked") {
-    return event.dependencyNote ?? cleanActivityMessage(event.message) ?? t("operations.waitingDependency");
+    return event.dependencyNote ?? cleanActivityMessage(resolveLocalizedValue(event.messageText, language, event.message)) ?? t("operations.waitingDependency");
   }
 
   if (event.type === "task_warning") {
-    return cleanActivityMessage(event.message) ?? t("operations.needsAttention");
+    return cleanActivityMessage(resolveLocalizedValue(event.messageText, language, event.message)) ?? t("operations.needsAttention");
   }
 
   if (event.type === "partial_output") {
@@ -298,7 +303,11 @@ function formatAgentActivityDetail(event: ServerEvent, t: (key: TranslationKey) 
       : t("operations.diagnosticOnly");
   }
 
-  return cleanActivityMessage(event.message) ?? t("operations.newActivity");
+  return cleanActivityMessage(resolveLocalizedValue(event.messageText, language, event.message)) ?? t("operations.newActivity");
+}
+
+function taskTitle(task: TaskSummary, language: "en" | "zh"): string {
+  return resolveLocalizedValue(task.titleText, language, task.title);
 }
 
 function formatFailureDetail(reason: string | undefined, t: (key: TranslationKey) => string): string {

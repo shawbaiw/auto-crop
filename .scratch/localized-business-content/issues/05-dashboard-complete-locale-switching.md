@@ -1,6 +1,6 @@
 # Dashboard Complete Locale Switching
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01, 02, 03, 04
 
 ## Goal
@@ -33,3 +33,15 @@ Wire Localized Business Content through the dashboard and verify full English/Ch
 
 This ticket closes the feature and should include a final audit of user-visible strings.
 
+## Resolution
+
+- Added a dashboard localized text resolver with fallback to English and legacy fields.
+- Wired localized business content through Company Dashboard, Company Operations, and Department Workspace views.
+- Covered department names/responsibilities, objective titles, task titles/descriptions, progress labels, event messages, proof summaries, artifact task labels, and replan proposal content where localized fields exist.
+- Preserved raw user/source content such as founder vision, intake body, URLs, file paths, command output, and agent names.
+
+## Verification
+
+- `pnpm --filter @auto-crop/dashboard typecheck`
+- `pnpm --filter @auto-crop/dashboard test`
+- `pnpm --filter @auto-crop/dashboard exec playwright test` was attempted but could not run because the local Playwright Chromium executable is missing.

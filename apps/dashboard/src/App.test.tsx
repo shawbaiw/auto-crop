@@ -1905,6 +1905,82 @@ describe("Dashboard App", () => {
     expect(window.localStorage.getItem("auto-crop.currentLanguage")).toBe("zh");
   });
 
+  it("switches dashboard business content between English and Chinese", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => ({
+      ...createCompanyResponse(),
+      activity: [
+        {
+          type: "task_review",
+          taskId: "task_1",
+          message: "Task is ready for review.",
+          messageText: { en: "Task is ready for review.", zh: "任务已准备好审查。" },
+        },
+      ],
+      proof: [
+        {
+          id: "proof_1",
+          taskId: "task_1",
+          type: "command_output",
+          uri: "agent.log",
+          summary: "Generated landing page",
+          summaryText: { en: "Generated landing page", zh: "已生成落地页" },
+        },
+      ],
+      departments: [
+        {
+          ...createCompanyResponse().departments[0]!,
+          nameText: { en: "Engineering", zh: "工程" },
+          responsibilityText: { en: "Build prototype.", zh: "构建原型。" },
+        },
+      ],
+      objectives: [
+        {
+          ...createCompanyResponse().objectives[0]!,
+          titleText: { en: "Validate first wedge", zh: "验证第一个切入点" },
+        },
+      ],
+      taskProgressEvents: (createCompanyResponse().taskProgressEvents ?? []).map((event) => {
+        if (event.id === "task_progress_1") {
+          return { ...event, labelText: { en: "Received CEO task", zh: "已接收 CEO 任务" } };
+        }
+        if (event.id === "task_progress_2") {
+          return { ...event, labelText: { en: "Assessment complete", zh: "评估完成" } };
+        }
+        return { ...event, labelText: { en: "Task 1 (Create landing page) waiting", zh: "任务 1（创建落地页）等待中" } };
+      }),
+      tasks: [
+        {
+          ...createCompanyResponse().tasks[0]!,
+          titleText: { en: "Create landing page", zh: "创建落地页" },
+          descriptionText: { en: "Build a landing page.", zh: "构建一个落地页。" },
+        },
+      ],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompanyAndOpenDashboard(user);
+    expect(screen.getByText("Engineering")).toBeInTheDocument();
+    expect(screen.getAllByText(/Create landing page/).length).toBeGreaterThan(0);
+    expect(screen.getByText("Validate first wedge")).toBeInTheDocument();
+    expect(screen.getByText("Generated landing page")).toBeInTheDocument();
+    expect(screen.getByText("Task is ready for review.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitem", { name: "View" }));
+    await user.click(screen.getByRole("menuitem", { name: "Language" }));
+    await user.click(screen.getByRole("menuitem", { name: "中文" }));
+
+    expect(screen.getByText("工程")).toBeInTheDocument();
+    expect(screen.getAllByText(/创建落地页/).length).toBeGreaterThan(0);
+    expect(screen.getByText("验证第一个切入点")).toBeInTheDocument();
+    expect(screen.getByText("已生成落地页")).toBeInTheDocument();
+    expect(screen.getByText("任务已准备好审查。")).toBeInTheDocument();
+    expect(screen.queryByText("Build prototype.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Task is ready for review.")).not.toBeInTheDocument();
+  });
+
   it("restores the selected language after refresh", async () => {
     const restoreStorage = installMockLocalStorage({
       "auto-crop.currentLanguage": "zh",

@@ -31,6 +31,7 @@ import type {
 } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { useLanguage } from "../ui/language";
+import { resolveLocalizedValue } from "../ui/language/localizedText";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroListRow, RetroPanel } from "../ui/retro";
 import {
@@ -87,15 +88,15 @@ export function DepartmentWorkspace({
   businessArtifacts = [],
   taskProgressEvents = [],
 }: DepartmentWorkspaceProps) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [selectedRoleId, setSelectedRoleId] = useState(ceoRoleId);
   const [departmentDraft, setDepartmentDraft] = useState("");
   const [ceoIntakeDraft, setCeoIntakeDraft] = useState("");
   const selectedDepartment = departments.find((department) => department.id === selectedRoleId) ?? null;
   const selectedCeoAgent = agents.find((agent) => agent.id === selectedCeoAgentId) ?? null;
   const departmentNamesById = useMemo(
-    () => new Map(departments.map((department) => [department.id, department.name])),
-    [departments],
+    () => new Map(departments.map((department) => [department.id, departmentName(department, language)])),
+    [departments, language],
   );
   const ceoPendingItems = useMemo(
     () => getCeoPendingItems(tasks, businessArtifacts, departmentNamesById),
@@ -132,14 +133,14 @@ export function DepartmentWorkspace({
               icon={departmentIcon(department.name)}
               onClick={() => setSelectedRoleId(department.id)}
               selected={selectedRoleId === department.id}
-              title={department.name}
+              title={departmentName(department, language)}
             />
           ))}
         </RetroPanel>
 
         <section className="department-workspace__main">
           {selectedDepartment ? (
-            <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title={`${selectedDepartment.name} ${t("department.workspace")}`}>
+            <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title={`${departmentName(selectedDepartment, language)} ${t("department.workspace")}`}>
               <div className="role-summary">
                 <section className="department-overview">
                   <DepartmentAgentSummary agents={agents} department={selectedDepartment} />
@@ -147,7 +148,7 @@ export function DepartmentWorkspace({
                 </section>
                 <DepartmentLeaderReport
                   departmentId={selectedDepartment.id}
-                  departmentName={selectedDepartment.name}
+                  departmentName={departmentName(selectedDepartment, language)}
                   draft={departmentDraft}
                   onDraftChange={setDepartmentDraft}
                   onViewCeoPending={() => setSelectedRoleId(ceoRoleId)}
@@ -155,7 +156,7 @@ export function DepartmentWorkspace({
                   onRecoverTask={onRecoverTask}
                   pendingItems={ceoPendingItems}
                   progressEvents={taskProgressEvents}
-                  responsibility={selectedDepartment.responsibility}
+                  responsibility={departmentResponsibility(selectedDepartment, language)}
                   tasks={tasksByDepartment.get(selectedDepartment.id) ?? []}
                 />
               </div>
@@ -276,7 +277,7 @@ function CeoIntakeWorkspace({
   businessArtifacts: BusinessArtifactSummary[];
   tasks: TaskSummary[];
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const selectedPendingItem = pendingItems.find((item) => item.task.id === selectedTaskId) ?? null;
@@ -355,7 +356,7 @@ function CeoPendingQueue({
   onViewTask: (taskId: string) => void;
   successMessage: string | null;
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
 
   return (
     <section className="ceo-pending-queue" aria-label={t("department.ceoPending")}>
@@ -366,9 +367,9 @@ function CeoPendingQueue({
         <article className="ceo-pending-item" key={item.task.id}>
           <div>
             <p>{formatCeoPendingType(item, t)}</p>
-            <h4>{item.task.title}</h4>
+            <h4>{taskTitle(item.task, language)}</h4>
           </div>
-          <RetroButton aria-label={`${t("department.viewTask")} ${item.task.title}`} onClick={() => onViewTask(item.task.id)}>
+          <RetroButton aria-label={`${t("department.viewTask")} ${taskTitle(item.task, language)}`} onClick={() => onViewTask(item.task.id)}>
             {t("department.viewTask")}
           </RetroButton>
         </article>
@@ -395,7 +396,7 @@ function CeoTaskReviewDetail({
   proofs: ProofSummary[];
   businessArtifacts: BusinessArtifactSummary[];
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [returnReason, setReturnReason] = useState<CeoReviewReturnReason | "">("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -462,15 +463,15 @@ function CeoTaskReviewDetail({
       <div className="ceo-task-review-detail__grid">
         <section>
           <h4>{t("department.ceoReviewTaskContent")}</h4>
-          <p>{item.task.title}</p>
-          {item.task.description ? <p className="muted">{item.task.description}</p> : null}
+          <p>{taskTitle(item.task, language)}</p>
+          {item.task.description ? <p className="muted">{taskDescription(item.task, language)}</p> : null}
         </section>
         <section>
           <h4>{t("department.ceoReviewDepartmentSubmission")}</h4>
           {proofs.length === 0 ? <p className="muted">{t("department.ceoReviewNoProof")}</p> : null}
           {proofs.map((proof) => (
             <article className="ceo-task-review-proof" key={proof.id}>
-              <p>{proof.summary}</p>
+              <p>{resolveLocalizedValue(proof.summaryText, language, proof.summary)}</p>
               <p className="muted">{`${formatProofType(proof.type, t)} / ${proof.uri}`}</p>
             </article>
           ))}
@@ -584,13 +585,16 @@ function CeoBlueprintSummary({
   pendingItems: CeoPendingItem[];
   tasks: TaskSummary[];
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
 
   return (
     <section className="ceo-blueprint-summary" aria-label={t("department.ceoBlueprintSummary")}>
       <div>
         <h3>{t("department.objectives")}</h3>
-        <VideotexLog emptyMessage={t("department.noObjectives")} rows={objectives.map((objective) => objective.title)} />
+        <VideotexLog
+          emptyMessage={t("department.noObjectives")}
+          rows={objectives.map((objective) => resolveLocalizedValue(objective.titleText, language, objective.title))}
+        />
       </div>
       <div>
         <h3>{t("department.taskRelationships")}</h3>
@@ -619,7 +623,7 @@ function CeoTaskDependencyGraph({
   pendingItems: CeoPendingItem[];
   tasks: TaskSummary[];
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const parentTasks = useMemo(
     () => tasks.filter((task) => task.taskKind !== "department_subtask"),
     [tasks],
@@ -650,13 +654,13 @@ function CeoTaskDependencyGraph({
               <section className="ceo-task-dependency-graph__lane" key={lane.department.id}>
                 <h4>
                   {departmentIcon(lane.department.name)}
-                  <span>{lane.department.name}</span>
+                  <span>{departmentName(lane.department, language)}</span>
                 </h4>
                 <div className="ceo-task-dependency-graph__lane-stack">
                   {lane.tasks.map((task) => (
                     <CeoTaskDependencyNode
                       key={task.id}
-                      departmentName={departmentsById.get(task.departmentId)?.name ?? task.departmentId}
+                      departmentName={departmentsById.get(task.departmentId) ? departmentName(departmentsById.get(task.departmentId)!, language) : task.departmentId}
                       graph={graph}
                       isPending={pendingTaskIds.has(task.id)}
                       onSelectDepartment={onSelectDepartment}
@@ -725,7 +729,7 @@ function CeoTaskDependencyNode({
   onViewPendingTask: (taskId: string) => void;
   task: TaskSummary;
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const blockers = getUnfinishedDependencies(task, graph.tasksById);
   const primaryBlocker = blockers[0] ?? null;
   const shouldShowOtherDependencies = Boolean(primaryBlocker);
@@ -735,14 +739,14 @@ function CeoTaskDependencyNode({
       .filter((dependency): dependency is TaskSummary => dependency != null && dependency.id !== primaryBlocker?.id)
       .map((dependency) => taskNumber(dependency, graph.tasks))
     : [];
-  const taskLabel = `${t("department.taskTitlePrefix")}${taskNumber(task, graph.tasks)} ${departmentName} ${task.title} ${formatGraphTaskStatus(task, t)}`;
+  const taskLabel = `${t("department.taskTitlePrefix")}${taskNumber(task, graph.tasks)} ${departmentName} ${taskTitle(task, language)} ${formatGraphTaskStatus(task, t)}`;
 
   return (
     <article className={`ceo-task-node ceo-task-node--${graphTaskTone(task)}`}>
       <button
         aria-label={[
           taskLabel,
-          primaryBlocker ? `${t("department.waitingOnTask")} ${taskNumber(primaryBlocker, graph.tasks)}: ${primaryBlocker.title}` : null,
+          primaryBlocker ? `${t("department.waitingOnTask")} ${taskNumber(primaryBlocker, graph.tasks)}: ${taskTitle(primaryBlocker, language)}` : null,
           completedDependencyNumbers.length > 0 ? `${t("department.alsoDependsOn")}: ${completedDependencyNumbers.join(", ")}` : null,
         ].filter(Boolean).join(" ")}
         className="ceo-task-node__main"
@@ -752,11 +756,11 @@ function CeoTaskDependencyNode({
         <span className="ceo-task-node__meta">
           {t("department.taskTitlePrefix")}{taskNumber(task, graph.tasks)} · {departmentName}
         </span>
-        <strong>{task.title}</strong>
+        <strong>{taskTitle(task, language)}</strong>
         <span>{formatGraphTaskStatus(task, t)}</span>
         {primaryBlocker ? (
           <span className="ceo-task-node__blocker">
-            {t("department.waitingOnTask")} {taskNumber(primaryBlocker, graph.tasks)}: {primaryBlocker.title}
+            {t("department.waitingOnTask")} {taskNumber(primaryBlocker, graph.tasks)}: {taskTitle(primaryBlocker, language)}
           </span>
         ) : null}
         {completedDependencyNumbers.length > 0 ? (
@@ -832,7 +836,7 @@ function formatGraphTaskStatus(task: TaskSummary, t: ReturnType<typeof useLangua
 }
 
 function CeoIntakeFlows({ intakes }: { intakes: CeoIntakeSummary[] }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
 
   return (
     <section className="department-progress-flows ceo-intake-flows" aria-label={t("department.ceoIntakeProgress")}>
@@ -908,12 +912,12 @@ function summarizeIntakeBody(body: string): string {
 }
 
 function DepartmentRoleSummary({ department }: { department: DepartmentSummary }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
 
   return (
     <section className="department-role-summary" aria-label={t("department.role")}>
       <h3>{t("department.role")}</h3>
-      <p>{department.name}</p>
+      <p>{departmentName(department, language)}</p>
     </section>
   );
 }
@@ -1004,7 +1008,7 @@ function DepartmentProgressFlows({
   progressEvents: TaskProgressEventSummary[];
   tasks: TaskSummary[];
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const parentTasks = tasks.filter((task) => task.taskKind !== "department_subtask");
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const progressEventsByParent = groupProgressEvents(progressEvents.filter((event) => event.departmentId === departmentId));
@@ -1024,7 +1028,7 @@ function DepartmentProgressFlows({
       {flows.length === 0 ? <p className="muted">{t("department.noTasks")}</p> : null}
       {flows.map((flow, index) => (
         <article className="department-progress-flow" key={flow.task.id}>
-          <h4>{formatDepartmentTaskTitle(index, flow.task.title, t)}</h4>
+          <h4>{formatDepartmentTaskTitle(index, taskTitle(flow.task, language), t)}</h4>
           <ol className="department-progress-flow__steps">
             {flow.events.map((event) => {
               const subjectTask =
@@ -1038,7 +1042,7 @@ function DepartmentProgressFlows({
                 <li className={`department-progress-flow__step department-progress-flow__step--${event.status}`} key={event.id}>
                   <span aria-hidden="true">{progressMarker(event.status)}</span>
                   <div className="department-progress-flow__content">
-                    <p>{formatProgressLabel(event, displayTask, t, hasCeoPendingItem)}</p>
+                    <p>{formatProgressLabel(event, displayTask, language, t, hasCeoPendingItem)}</p>
                     {hasCeoPendingItem && isActiveCeoReviewProgressEvent(event, displayTask) ? (
                       <RetroButton className="department-progress-flow__action" onClick={onViewCeoPending}>
                         {t("department.viewCeoPendingItem")}
@@ -1120,6 +1124,10 @@ function deriveCurrentTaskProgressEvent(task: TaskSummary): TaskProgressEventSum
     step: task.status === "review" ? "awaiting_review" : "executing",
     status,
     label: `Task (${task.title}) ${task.status}`,
+    labelText: {
+      en: `Task (${resolveLocalizedValue(task.titleText, "en", task.title)}) ${task.status}`,
+      zh: `任务（${resolveLocalizedValue(task.titleText, "zh", task.title)}）${task.status}`,
+    },
     detail: null,
     createdAt: "",
   };
@@ -1186,6 +1194,7 @@ function fallbackProgressEvents(task: TaskSummary): TaskProgressEventSummary[] {
       step: "received",
       status: "complete",
       label: "Received CEO task",
+      labelText: { en: "Received CEO task", zh: "已接收 CEO 任务" },
       detail: null,
       createdAt: "",
     },
@@ -1198,6 +1207,10 @@ function fallbackProgressEvents(task: TaskSummary): TaskProgressEventSummary[] {
       step: "assessment_complete",
       status: task.status === "queued" ? "waiting" : "complete",
       label: task.status === "queued" ? "Assessment pending" : "Assessment complete",
+      labelText:
+        task.status === "queued"
+          ? { en: "Assessment pending", zh: "评估待开始" }
+          : { en: "Assessment complete", zh: "评估完成" },
       detail: null,
       createdAt: "",
     },
@@ -1210,6 +1223,10 @@ function fallbackProgressEvents(task: TaskSummary): TaskProgressEventSummary[] {
       step: "executing",
       status: currentStatus,
       label: `Task 1 (${task.title}) ${task.status}`,
+      labelText: {
+        en: `Task 1 (${resolveLocalizedValue(task.titleText, "en", task.title)}) ${task.status}`,
+        zh: `任务 1（${resolveLocalizedValue(task.titleText, "zh", task.title)}）${task.status}`,
+      },
       detail: null,
       createdAt: "",
     },
@@ -1229,6 +1246,7 @@ function progressMarker(status: TaskProgressEventSummary["status"]): string {
 function formatProgressLabel(
   event: TaskProgressEventSummary,
   task: TaskSummary,
+  language: "en" | "zh",
   t: ReturnType<typeof useLanguage>["t"],
   hasCeoPendingItem: boolean,
 ): string {
@@ -1248,24 +1266,27 @@ function formatProgressLabel(
     case "summarizing_proof":
       return t("department.flowSummarizingProof");
     case "awaiting_review":
-      return formatReviewProgressLabel(task, t, hasCeoPendingItem);
+      return formatReviewProgressLabel(task, language, t, hasCeoPendingItem);
     case "complete":
       return t("department.flowComplete");
     case "blocked":
       if (event.label.startsWith("CEO Office returned")) {
-        return event.detail ? `${event.label} ${event.detail}` : event.label;
+        const label = resolveLocalizedValue(event.labelText, language, event.label);
+        const detail = event.detail ? resolveLocalizedValue(event.detailText, language, event.detail) : null;
+        return detail ? `${label} ${detail}` : label;
       }
       return t("department.flowBlocked");
     case "needs_ceo_reassignment":
       return t("department.flowNeedsCeoReassignment");
     case "executing":
-      return formatExecutingProgressLabel(event.label, task, t, hasCeoPendingItem);
+      return formatExecutingProgressLabel(event.label, task, language, t, hasCeoPendingItem);
   }
 }
 
 function formatExecutingProgressLabel(
   label: string,
   task: TaskSummary,
+  language: "en" | "zh",
   t: ReturnType<typeof useLanguage>["t"],
   hasCeoPendingItem: boolean,
 ): string {
@@ -1274,24 +1295,25 @@ function formatExecutingProgressLabel(
     return label;
   }
 
-  const [, taskTitle, status] = match;
+  const [, , status] = match;
   if (status === "review") {
-    return formatReviewProgressLabel(task, t, hasCeoPendingItem);
+    return formatReviewProgressLabel(task, language, t, hasCeoPendingItem);
   }
 
-  return `${t("department.flowTask")} (${task.title}) ${formatFlowTaskStatus(task.status, t)}`;
+  return `${t("department.flowTask")} (${taskTitle(task, language)}) ${formatFlowTaskStatus(task.status, t)}`;
 }
 
 function formatReviewProgressLabel(
   task: TaskSummary,
+  language: "en" | "zh",
   t: ReturnType<typeof useLanguage>["t"],
   hasCeoPendingItem: boolean,
 ): string {
   if (task.status === "review" && hasCeoPendingItem) {
-    return formatCeoReviewSubmittedLabel(task.title, t);
+    return formatCeoReviewSubmittedLabel(taskTitle(task, language), t);
   }
 
-  return `${t("department.flowTask")} (${task.title}) ${formatFlowTaskStatus(task.status, t)}`;
+  return `${t("department.flowTask")} (${taskTitle(task, language)}) ${formatFlowTaskStatus(task.status, t)}`;
 }
 
 function formatCeoReviewSubmittedLabel(title: string, t: ReturnType<typeof useLanguage>["t"]): string {
@@ -1345,7 +1367,7 @@ function CeoIntakeMessageBox({
   onDraftChange: (value: string) => void;
   onSubmit?: (body: string) => Promise<void> | void;
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const messageInputId = useId();
   const [sent, setSent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -1464,7 +1486,7 @@ function TaskStatusAction({
   showStatusBadge?: boolean;
   task: TaskSummary;
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const canRefresh = Boolean(onRefreshTask) && isRefreshableTask(task);
   const canRecover = Boolean(onRecoverTask) && isRecoverableTask(task);
@@ -1487,12 +1509,12 @@ function TaskStatusAction({
     <div className="task-action-row">
       {showStatusBadge ? (
         <RetroBadge tone={task.status === "blocked" || task.status === "failed" ? "danger" : "signal"}>
-          {task.title} / {formatTaskStatus(task, t)}
+          {taskTitle(task, language)} / {formatTaskStatus(task, t)}
         </RetroBadge>
       ) : null}
       {canRefresh ? (
         <RetroButton
-          aria-label={`${t("department.refreshTask")} ${task.title}`}
+          aria-label={`${t("department.refreshTask")} ${taskTitle(task, language)}`}
           icon={<RefreshCcw size={14} aria-hidden="true" />}
           onClick={handleRefresh}
         >
@@ -1501,7 +1523,7 @@ function TaskStatusAction({
       ) : null}
       {canRecover ? (
         <RetroButton
-          aria-label={`${t("department.recoverTask")} ${task.title}`}
+          aria-label={`${t("department.recoverTask")} ${taskTitle(task, language)}`}
           icon={<RefreshCcw size={14} aria-hidden="true" />}
           onClick={handleRecover}
         >
@@ -1511,6 +1533,22 @@ function TaskStatusAction({
       {refreshMessage ? <p className="system-message">{refreshMessage}</p> : null}
     </div>
   );
+}
+
+function departmentName(department: DepartmentSummary, language: "en" | "zh"): string {
+  return resolveLocalizedValue(department.nameText, language, department.name);
+}
+
+function departmentResponsibility(department: DepartmentSummary, language: "en" | "zh"): string {
+  return resolveLocalizedValue(department.responsibilityText, language, department.responsibility);
+}
+
+function taskTitle(task: TaskSummary, language: "en" | "zh"): string {
+  return resolveLocalizedValue(task.titleText, language, task.title);
+}
+
+function taskDescription(task: TaskSummary, language: "en" | "zh"): string {
+  return resolveLocalizedValue(task.descriptionText, language, task.description ?? "");
 }
 
 function isRefreshableTask(task: TaskSummary): boolean {
