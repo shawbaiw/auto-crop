@@ -6,6 +6,7 @@ import type {
   CeoReviewDecisionKind,
   CeoReviewReturnReason,
   Company,
+  CompanyEvent,
   Department,
   HumanAction,
   HumanActionConfirmation,
@@ -27,7 +28,7 @@ import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories, ReviewRecord } from "../db/repositories";
 import { EventStream } from "../events/sse";
 import type { PolicyMode } from "../policies/policy";
-import { createCompany } from "../runtime/createCompany";
+import { generateCompanyBlueprint, writeCompanyBlueprintRecords } from "../runtime/createCompany";
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
 import { projectCeoAttention } from "../runtime/ceoAttention";
@@ -56,6 +57,8 @@ export type ApiServerOptions = {
 };
 
 export type SchedulerWakeReason = "dependency_cascade_queued" | "parent_aggregation_queued";
+const creationAttemptTimeoutMs = 10 * 60 * 1000;
+const creationAttemptGraceMs = 30 * 1000;
 
 export type ApiServer = {
   httpServer: Server;
@@ -100,7 +103,7 @@ async function routeRequest(
       sendJson(response, 400, { error: "companyId is required for event streams." });
       return;
     }
-    events.connect(response);
+    events.connect(companyId, response);
     return;
   }
 
@@ -133,6 +136,7 @@ async function routeRequest(
       selectedCeoAgentId: string;
       permissionMode: PolicyMode;
       assets?: string[];
+      creationIdempotencyKey?: string;
     }>(request);
     const companyName = body.companyName?.trim() ?? "";
 
@@ -148,28 +152,78 @@ async function routeRequest(
       return;
     }
 
-    options.log?.(`Creating company with CEO agent ${selectedCeoAgent.name}`);
-    const result = await createCompany({
-      projectRoot: options.projectRoot,
+    const creationInput = {
       companyName,
       founderVision: body.founderVision,
-      selectedCeoAgent,
-      availableAgents: options.agents,
+      selectedCeoAgentId: body.selectedCeoAgentId,
       permissionMode: body.permissionMode,
       assets: body.assets ?? [],
-      repositories: options.repositories,
+    };
+    const creationIdempotencyKey = body.creationIdempotencyKey?.trim() || createRouteId(options, "creation_key");
+    const existingCompany = options.repositories.getCompanyByCreationIdempotencyKey(creationIdempotencyKey);
+
+    if (existingCompany) {
+      if (JSON.stringify(existingCompany.creationInput ?? null) !== JSON.stringify(creationInput)) {
+        sendJson(response, 409, { error: "Creation Idempotency Key already belongs to different creation input." });
+        return;
+      }
+
+      sendJson(
+        response,
+        existingCompany.status === "creating" ? 202 : 200,
+        buildCompanyState(existingCompany, options.repositories, {
+          now: options.now,
+          createId: options.createId,
+          requestSchedulerWake: options.requestSchedulerWake,
+        }),
+      );
+      return;
+    }
+
+    const timestamp = (options.now ?? (() => new Date()))().toISOString();
+    const company: Company = {
+      id: createRouteId(options, "company"),
+      name: companyName,
+      founderVision: body.founderVision,
+      selectedCeoAgentId: selectedCeoAgent.id,
+      playbookId: selectPlaybook(body.founderVision).id,
+      permissionMode: body.permissionMode,
+      status: "creating",
+      creationIdempotencyKey,
+      creationInput,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const attemptId = createRouteId(options, "creation_attempt");
+    options.repositories.createCompany(company);
+    options.repositories.createCreationAttempt({
+      id: attemptId,
+      companyId: company.id,
+      status: "running",
+      startedAt: timestamp,
+      finishedAt: null,
+      promptPath: null,
+      failureMessage: null,
+    });
+    const acceptedEvent = createCompanyEvent(options, company.id, "company_creation_accepted", "Company Creation accepted.", "creating");
+    options.repositories.appendCompanyEvent(acceptedEvent);
+
+    setTimeout(() => {
+      void completeCompanyCreation({
+        options,
+        events,
+        companyId: company.id,
+        attemptId,
+        creationInput,
+        selectedCeoAgent,
+      });
+    }, 0);
+
+    sendJson(response, 202, buildCompanyState(company, options.repositories, {
       now: options.now,
       createId: options.createId,
-    });
-    sendJson(response, 201, {
-      ...result,
-      tasks: summarizeTasks(result.tasks, options.repositories.listTaskDependenciesForCompany(result.company.id)),
-      proof: [],
-      reviews: [],
-      activity: options.repositories.listTaskEventsForCompany(result.company.id).map(summarizeTaskEvent),
-      taskProgressEvents: options.repositories.listTaskProgressEventsForCompany(result.company.id).map(summarizeTaskProgressEvent),
-      ceoIntakes: [],
-    });
+      requestSchedulerWake: options.requestSchedulerWake,
+    }));
     return;
   }
 
@@ -182,6 +236,73 @@ async function routeRequest(
       (options.now ?? (() => new Date()))().toISOString(),
     );
     sendJson(response, 200, { company: options.repositories.getCompany(companyId) });
+    return;
+  }
+
+  const retryCreationMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/retry-creation$/);
+  if (method === "POST" && retryCreationMatch) {
+    const companyId = retryCreationMatch[1];
+    const company = options.repositories.getCompany(companyId);
+
+    if (!company) {
+      sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      return;
+    }
+
+    if (company.status !== "creation_failed") {
+      sendJson(response, 409, { error: "Only failed Company Creation can be retried." });
+      return;
+    }
+
+    const creationInput = company.creationInput;
+    if (!isCreationInput(creationInput)) {
+      sendJson(response, 409, { error: "Company Creation input is missing and cannot be retried." });
+      return;
+    }
+
+    const selectedCeoAgent = options.agents.find((agent) => agent.id === creationInput.selectedCeoAgentId);
+    if (!selectedCeoAgent) {
+      sendJson(response, 404, { error: `Agent not found: ${creationInput.selectedCeoAgentId}` });
+      return;
+    }
+
+    const timestamp = (options.now ?? (() => new Date()))().toISOString();
+    const attemptId = createRouteId(options, "creation_attempt");
+    options.repositories.updateCompanyStatus(company.id, "creating", timestamp);
+    options.repositories.createCreationAttempt({
+      id: attemptId,
+      companyId: company.id,
+      status: "running",
+      startedAt: timestamp,
+      finishedAt: null,
+      promptPath: null,
+      failureMessage: null,
+    });
+    const acceptedEvent = createCompanyEvent(
+      options,
+      company.id,
+      "company_creation_accepted",
+      "Company Creation retry accepted.",
+      "creating",
+    );
+    options.repositories.appendCompanyEvent(acceptedEvent);
+
+    setTimeout(() => {
+      void completeCompanyCreation({
+        options,
+        events,
+        companyId: company.id,
+        attemptId,
+        creationInput,
+        selectedCeoAgent,
+      });
+    }, 0);
+
+    sendJson(response, 202, buildCompanyState(options.repositories.getCompany(company.id) ?? company, options.repositories, {
+      now: options.now,
+      createId: options.createId,
+      requestSchedulerWake: options.requestSchedulerWake,
+    }));
     return;
   }
 
@@ -527,21 +648,22 @@ function buildCompanyState(
   repositories: ReturnType<typeof createRepositories>,
   options?: { now?: () => Date; createId?: (prefix: string) => string; requestSchedulerWake?: (reason: SchedulerWakeReason) => void },
 ) {
+  const currentCompany = reconcileStaleCompanyCreation(company, repositories, options) ?? company;
   reconcileStaleRunningTasks({
     repositories,
-    companyId: company.id,
+    companyId: currentCompany.id,
     now: options?.now,
     createId: options?.createId,
   });
-  let tasks = repositories.listTasksForCompany(company.id);
-  const keyResults = repositories.listKeyResults(company.id);
-  let taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
-  const departments = repositories.listDepartments(company.id);
-  const businessArtifacts = repositories.listBusinessArtifactsForCompany(company.id).map(summarizeBusinessArtifact);
-  const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(company.id);
-  const humanActionConfirmations = repositories.listHumanActionConfirmationsForCompany(company.id);
+  let tasks = repositories.listTasksForCompany(currentCompany.id);
+  const keyResults = repositories.listKeyResults(currentCompany.id);
+  let taskDependencies = repositories.listTaskDependenciesForCompany(currentCompany.id);
+  const departments = repositories.listDepartments(currentCompany.id);
+  const businessArtifacts = repositories.listBusinessArtifactsForCompany(currentCompany.id).map(summarizeBusinessArtifact);
+  const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(currentCompany.id);
+  const humanActionConfirmations = repositories.listHumanActionConfirmationsForCompany(currentCompany.id);
   let ceoAttention = projectCeoAttention({
-    company,
+    company: currentCompany,
     keyResults,
     tasks,
     taskCompletionEvents,
@@ -558,10 +680,10 @@ function buildCompanyState(
     createId: options?.createId,
   });
   if (humanActionBlockEvents.length > 0) {
-    tasks = repositories.listTasksForCompany(company.id);
-    taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
+    tasks = repositories.listTasksForCompany(currentCompany.id);
+    taskDependencies = repositories.listTaskDependenciesForCompany(currentCompany.id);
     ceoAttention = projectCeoAttention({
-      company,
+      company: currentCompany,
       keyResults,
       tasks,
       taskCompletionEvents,
@@ -581,10 +703,10 @@ function buildCompanyState(
     options?.requestSchedulerWake?.("dependency_cascade_queued");
   }
   if (waitStateRoutingEvents.length > 0) {
-    tasks = repositories.listTasksForCompany(company.id);
-    taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
+    tasks = repositories.listTasksForCompany(currentCompany.id);
+    taskDependencies = repositories.listTaskDependenciesForCompany(currentCompany.id);
     ceoAttention = projectCeoAttention({
-      company,
+      company: currentCompany,
       keyResults,
       tasks,
       taskCompletionEvents,
@@ -595,9 +717,9 @@ function buildCompanyState(
   }
 
   return {
-    company: summarizeCompany(company),
+    company: summarizeCompany(currentCompany),
     departments: departments.map(summarizeDepartment),
-    objectives: repositories.listObjectives(company.id).map(summarizeObjective),
+    objectives: repositories.listObjectives(currentCompany.id).map(summarizeObjective),
     keyResults,
     tasks: summarizeTasks(tasks, taskDependencies),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
@@ -608,7 +730,7 @@ function buildCompanyState(
     waitStates: ceoAttention.waitStates,
     ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
     founderReport: summarizeFounderReport(
-      company,
+      currentCompany,
       tasks,
       businessArtifacts,
       ceoAttention.waitStates,
@@ -617,13 +739,228 @@ function buildCompanyState(
       taskDependencies,
       departments,
     ),
-    reviews: repositories.listReviews(company.id).map(summarizeReview),
-    ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(company.id).map(summarizeCeoReviewDecision),
-    replanProposals: repositories.listReplanProposalsForCompany(company.id).map(summarizeReplanProposal),
-    activity: repositories.listTaskEventsForCompany(company.id).map(summarizeTaskEvent),
-    taskProgressEvents: repositories.listTaskProgressEventsForCompany(company.id).map(summarizeTaskProgressEvent),
-    ceoIntakes: repositories.listCeoIntakesForCompany(company.id).map(summarizeCeoIntake),
+    reviews: repositories.listReviews(currentCompany.id).map(summarizeReview),
+    ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(currentCompany.id).map(summarizeCeoReviewDecision),
+    replanProposals: repositories.listReplanProposalsForCompany(currentCompany.id).map(summarizeReplanProposal),
+    activity: repositories.listTaskEventsForCompany(currentCompany.id).map(summarizeTaskEvent),
+    creationEvents: repositories.listCompanyEventsForCompany(currentCompany.id).map(summarizeCompanyEvent),
+    creationAttempts: repositories.listCreationAttemptsForCompany(currentCompany.id),
+    taskProgressEvents: repositories.listTaskProgressEventsForCompany(currentCompany.id).map(summarizeTaskProgressEvent),
+    ceoIntakes: repositories.listCeoIntakesForCompany(currentCompany.id).map(summarizeCeoIntake),
   };
+}
+
+function reconcileStaleCompanyCreation(
+  company: Company,
+  repositories: ReturnType<typeof createRepositories>,
+  options?: { now?: () => Date; createId?: (prefix: string) => string },
+): Company | null {
+  if (company.status !== "creating") {
+    return null;
+  }
+
+  const activeAttempt = repositories
+    .listCreationAttemptsForCompany(company.id)
+    .find((attempt) => attempt.status === "running");
+  if (!activeAttempt) {
+    return null;
+  }
+
+  const now = options?.now ?? (() => new Date());
+  const nowMs = now().getTime();
+  const startedMs = new Date(activeAttempt.startedAt).getTime();
+  if (!Number.isFinite(startedMs) || nowMs - startedMs <= creationAttemptTimeoutMs + creationAttemptGraceMs) {
+    return null;
+  }
+
+  const timestamp = now().toISOString();
+  const failureMessage = "Company Creation failed: active creation attempt timed out.";
+  repositories.updateCompanyStatus(company.id, "creation_failed", timestamp);
+  repositories.updateCreationAttempt(activeAttempt.id, {
+    status: "failed",
+    finishedAt: timestamp,
+    promptPath: activeAttempt.promptPath,
+    failureMessage,
+  });
+  const alreadyRecorded = repositories
+    .listCompanyEventsForCompany(company.id)
+    .some((event) => event.type === "company_creation_failed" && event.message === failureMessage);
+  if (!alreadyRecorded) {
+    repositories.appendCompanyEvent({
+      id: options?.createId?.("company_event") ?? `company_event_${Date.now()}`,
+      companyId: company.id,
+      type: "company_creation_failed",
+      message: failureMessage,
+      messageText: localizedTextFromString(failureMessage),
+      createdAt: timestamp,
+      status: "creation_failed",
+    });
+  }
+
+  return repositories.getCompany(company.id);
+}
+
+async function completeCompanyCreation(input: {
+  options: ApiServerOptions;
+  events: EventStream;
+  companyId: string;
+  attemptId: string;
+  creationInput: {
+    companyName: string;
+    founderVision: string;
+    selectedCeoAgentId: string;
+    permissionMode: PolicyMode;
+    assets: string[];
+  };
+  selectedCeoAgent: AgentAdapter;
+}): Promise<void> {
+  const { options, events, companyId, attemptId, creationInput, selectedCeoAgent } = input;
+
+  try {
+    const startedEvent = createCompanyEvent(
+      options,
+      companyId,
+      "company_creation_agent_started",
+      "CEO agent started Company Blueprint generation.",
+      "creating",
+    );
+    options.repositories.appendCompanyEvent(startedEvent);
+    events.publish(summarizeCompanyEvent(startedEvent));
+
+    const blueprintResult = await generateCompanyBlueprint({
+      projectRoot: options.projectRoot,
+      companyId,
+      companyName: creationInput.companyName,
+      founderVision: creationInput.founderVision,
+      selectedCeoAgent,
+      availableAgents: options.agents,
+      permissionMode: creationInput.permissionMode,
+      assets: creationInput.assets,
+    });
+    options.repositories.updateCreationAttempt(attemptId, {
+      status: "running",
+      finishedAt: null,
+      promptPath: blueprintResult.promptPath,
+      failureMessage: null,
+    });
+    const parsedEvent = createCompanyEvent(
+      options,
+      companyId,
+      "company_creation_blueprint_parsed",
+      "Company Blueprint parsed.",
+      "creating",
+    );
+    options.repositories.appendCompanyEvent(parsedEvent);
+    events.publish(summarizeCompanyEvent(parsedEvent));
+
+    const timestamp = (options.now ?? (() => new Date()))().toISOString();
+    const company = options.repositories.getCompany(companyId);
+    if (!company) {
+      throw new Error(`Company not found: ${companyId}`);
+    }
+    const draftCompany: Company = {
+      ...company,
+      status: "draft",
+      updatedAt: timestamp,
+    };
+    options.repositories.updateCompanyStatus(companyId, "draft", timestamp);
+    writeCompanyBlueprintRecords({
+      projectRoot: options.projectRoot,
+      company: draftCompany,
+      blueprint: blueprintResult.blueprint,
+      repositories: options.repositories,
+      createdAt: timestamp,
+      createId: options.createId,
+      proofSchemaNormalizations: blueprintResult.proofSchemaNormalizations,
+    });
+
+    const recordsEvent = createCompanyEvent(
+      options,
+      companyId,
+      "company_creation_records_created",
+      "Company departments and tasks created.",
+      "draft",
+    );
+    options.repositories.appendCompanyEvent(recordsEvent);
+    events.publish(summarizeCompanyEvent(recordsEvent));
+    options.repositories.updateCreationAttempt(attemptId, {
+      status: "complete",
+      finishedAt: timestamp,
+      promptPath: blueprintResult.promptPath,
+      failureMessage: null,
+    });
+    const completedEvent = createCompanyEvent(
+      options,
+      companyId,
+      "company_creation_completed",
+      "Company Creation completed.",
+      "draft",
+    );
+    options.repositories.appendCompanyEvent(completedEvent);
+    events.publish(summarizeCompanyEvent(completedEvent));
+  } catch (error) {
+    const timestamp = (options.now ?? (() => new Date()))().toISOString();
+    const message = `Company Creation failed: ${(error as Error).message}`;
+    options.repositories.updateCompanyStatus(companyId, "creation_failed", timestamp);
+    options.repositories.updateCreationAttempt(input.attemptId, {
+      status: "failed",
+      finishedAt: timestamp,
+      failureMessage: message,
+    });
+    const failedEvent = createCompanyEvent(
+      options,
+      companyId,
+      "company_creation_failed",
+      message,
+      "creation_failed",
+    );
+    options.repositories.appendCompanyEvent(failedEvent);
+    events.publish(summarizeCompanyEvent(failedEvent));
+    options.log?.(message);
+  }
+}
+
+function createCompanyEvent(
+  options: ApiServerOptions,
+  companyId: string,
+  type: CompanyEvent["type"],
+  message: string,
+  status: Company["status"],
+): CompanyEvent {
+  return {
+    id: createRouteId(options, "company_event"),
+    companyId,
+    type,
+    message,
+    messageText: localizedTextFromString(message),
+    createdAt: (options.now ?? (() => new Date()))().toISOString(),
+    status,
+  };
+}
+
+function isCreationInput(value: unknown): value is {
+  companyName: string;
+  founderVision: string;
+  selectedCeoAgentId: string;
+  permissionMode: PolicyMode;
+  assets: string[];
+} {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.companyName === "string" &&
+    typeof value.founderVision === "string" &&
+    typeof value.selectedCeoAgentId === "string" &&
+    isPolicyMode(value.permissionMode) &&
+    Array.isArray(value.assets) &&
+    value.assets.every((asset) => typeof asset === "string")
+  );
+}
+
+function isPolicyMode(value: unknown): value is PolicyMode {
+  return value === "safe" || value === "balanced" || value === "autonomous";
 }
 
 type ConfirmHumanActionResult =
@@ -1232,7 +1569,7 @@ function summarizeCompanyListItem(company: Company, repositories: ReturnType<typ
     ...summarizeCompany(company),
     createdAt: company.createdAt,
     updatedAt: company.updatedAt,
-    taskCount: repositories.listTasksForCompany(company.id).length,
+    taskCount: company.status === "creating" ? 0 : repositories.listTasksForCompany(company.id).length,
   };
 }
 
@@ -1581,6 +1918,7 @@ function summarizeReplanProposal(proposal: ReplanProposal) {
 function summarizeTaskEvent(event: TaskEvent) {
   return {
     type: event.type,
+    companyId: event.companyId,
     taskId: event.taskId,
     message: event.message,
     messageText: localizedSummaryText(event.messageText, event.message),
@@ -1592,6 +1930,16 @@ function summarizeTaskEvent(event: TaskEvent) {
     effectiveTimeoutMs: event.effectiveTimeoutMs ?? undefined,
     dependencyNote: event.dependencyNote ?? undefined,
     artifactWorkspacePath: event.artifactWorkspacePath ?? undefined,
+  };
+}
+
+function summarizeCompanyEvent(event: CompanyEvent) {
+  return {
+    type: event.type,
+    companyId: event.companyId,
+    message: event.message,
+    messageText: localizedSummaryText(event.messageText, event.message),
+    status: event.status ?? undefined,
   };
 }
 

@@ -245,6 +245,58 @@ describe("Dashboard App", () => {
     expect(await screen.findByRole("heading", { name: "Pricing Page Studio" })).toBeInTheDocument();
   });
 
+  it("keeps watching async company creation and opens the workspace when creation completes", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    api.createCompany = vi.fn(async () => createCreatingCompanyResponse());
+    api.getCompanyState = vi.fn(async () => ({
+      ...createCompanyResponse(),
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: [],
+    }));
+
+    render(<App apiClient={api} />);
+
+    await fillReadyToCreate(user);
+    await user.click(screen.getByRole("button", { name: /create company/i }));
+
+    expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+    expect(api.subscribeEvents).toHaveBeenCalledWith("company_1", expect.any(Function));
+
+    act(() => {
+      api.lastEventHandler?.({
+        type: "company_creation_completed",
+        companyId: "company_1",
+        message: "Company Creation completed.",
+        status: "draft",
+      });
+    });
+
+    expect(await screen.findByText("Department Workspace")).toBeInTheDocument();
+    expect(api.getCompanyState).toHaveBeenCalledWith("company_1");
+  });
+
+  it("shows failed company creation and retries it from the loading view", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    api.createCompany = vi.fn(async () => createFailedCompanyCreationResponse());
+    api.retryCompanyCreation = vi.fn(async () => createCreatingCompanyResponse());
+
+    render(<App apiClient={api} />);
+
+    await fillReadyToCreate(user);
+    await user.click(screen.getByRole("button", { name: /create company/i }));
+
+    expect(await screen.findByText("Company Creation failed: temporary model failure")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /retry creation/i }));
+
+    expect(api.retryCompanyCreation).toHaveBeenCalledWith("company_1");
+    expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+  });
+
   it("lands in the Department Workspace with CEO selected after creation", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -2343,6 +2395,53 @@ function createDeferred<T>() {
   return { promise, reject, resolve };
 }
 
+function createCreatingCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
+  return {
+    company: {
+      id: "company_1",
+      name: "Pricing Page Studio",
+      status: "creating",
+      playbookId: "ai-saas",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+    },
+    departments: [],
+    objectives: [],
+    keyResults: [],
+    tasks: [],
+    proof: [],
+    reviews: [],
+    activity: [],
+    replanProposals: [],
+    creationEvents: [
+      {
+        type: "company_creation_accepted",
+        companyId: "company_1",
+        message: "Company Creation accepted.",
+        status: "creating",
+      },
+    ],
+  };
+}
+
+function createFailedCompanyCreationResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
+  return {
+    ...createCreatingCompanyResponse(),
+    company: {
+      ...createCreatingCompanyResponse().company,
+      status: "creation_failed",
+    },
+    creationEvents: [
+      {
+        type: "company_creation_failed",
+        companyId: "company_1",
+        message: "Company Creation failed: temporary model failure",
+        status: "creation_failed",
+      },
+    ],
+  };
+}
+
 function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
   return {
     company: {
@@ -2777,6 +2876,9 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
     listCompanies: vi.fn(async () => ({ companies: [] })),
     async createCompany() {
       return createCompanyResponse();
+    },
+    async retryCompanyCreation() {
+      return createCreatingCompanyResponse();
     },
     createCeoIntake: vi.fn(async (companyId, input) => ({
       intake: {

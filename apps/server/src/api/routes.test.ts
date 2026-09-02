@@ -195,6 +195,146 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("accepts slow company creation without waiting for the CEO agent", async () => {
+    let releaseAgent!: () => void;
+    const agentStarted = new Promise<void>((resolve) => {
+      const agentReleased = new Promise<void>((release) => {
+        releaseAgent = release;
+      });
+      void agentReleased.then(resolve);
+    });
+    const fixture = await startFixtureServer({
+      ceoAgent: createDelayedBlueprintAgent(agentStarted),
+    });
+
+    const response = await fetch(`${fixture.baseUrl}/api/companies`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        companyName: "Pricing Page Studio",
+        founderVision: "Build an AI SaaS that creates pricing pages.",
+        selectedCeoAgentId: "codex",
+        permissionMode: "balanced",
+        assets: [],
+        creationIdempotencyKey: "create-key-1",
+      }),
+    });
+    const body = (await response.json()) as { company: { id: string; status: string }; tasks: unknown[]; creationEvents: unknown[] };
+
+    expect(response.status).toBe(202);
+    expect(body.company).toMatchObject({ id: "company_1", status: "creating" });
+    expect(body.tasks).toEqual([]);
+    expect(body.creationEvents).toEqual([
+      expect.objectContaining({ type: "company_creation_accepted", message: "Company Creation accepted." }),
+    ]);
+    expect(fixture.repositories.listTasksForCompany(body.company.id)).toEqual([]);
+
+    const duplicateResponse = await fetch(`${fixture.baseUrl}/api/companies`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        companyName: "Pricing Page Studio",
+        founderVision: "Build an AI SaaS that creates pricing pages.",
+        selectedCeoAgentId: "codex",
+        permissionMode: "balanced",
+        assets: [],
+        creationIdempotencyKey: "create-key-1",
+      }),
+    });
+    const duplicateBody = (await duplicateResponse.json()) as { company: { id: string; status: string } };
+    expect(duplicateResponse.status).toBe(202);
+    expect(duplicateBody.company.id).toBe(body.company.id);
+    expect(fixture.repositories.listCompanies()).toHaveLength(1);
+
+    releaseAgent();
+    await waitForCompanyStatus(fixture, body.company.id, "draft");
+    expect(fixture.repositories.listTasksForCompany(body.company.id).length).toBeGreaterThan(0);
+
+    await fixture.close();
+  });
+
+  it("marks failed creation as retryable and retries on the same company", async () => {
+    const fixture = await startFixtureServer({
+      ceoAgent: createFlakyCreationAgent(),
+    });
+
+    const created = await postCreatingCompany(fixture, "retry-key-1");
+    await waitForCompanyStatus(fixture, created.company.id, "creation_failed");
+
+    const failedState = await getJson<{
+      company: { id: string; status: string };
+      creationEvents: Array<{ type: string; message: string }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    expect(failedState.company.status).toBe("creation_failed");
+    expect(failedState.creationEvents).toContainEqual(
+      expect.objectContaining({ type: "company_creation_failed" }),
+    );
+
+    const retried = await postJson<{
+      company: { id: string; status: string };
+      tasks: unknown[];
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/retry-creation`, {});
+    expect(retried.company.id).toBe(created.company.id);
+    expect(retried.company.status).toBe("draft");
+    expect(retried.tasks.length).toBeGreaterThan(0);
+    expect(fixture.repositories.listCreationAttemptsForCompany(created.company.id)).toHaveLength(2);
+
+    await fixture.close();
+  });
+
+  it("reconciles stale creating companies when reading company state", async () => {
+    const fixture = await startFixtureServer({
+      now: () => new Date("2026-08-17T00:20:00.000Z"),
+    });
+    fixture.repositories.createCompany({
+      id: "company_1",
+      name: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      playbookId: "ai-saas",
+      permissionMode: "balanced",
+      status: "creating",
+      creationIdempotencyKey: "stuck-key",
+      creationInput: {
+        companyName: "Pricing Page Studio",
+        founderVision: "Build an AI SaaS that creates pricing pages.",
+        selectedCeoAgentId: "codex",
+        permissionMode: "balanced",
+        assets: [],
+      },
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    });
+    fixture.repositories.createCreationAttempt({
+      id: "creation_attempt_1",
+      companyId: "company_1",
+      status: "running",
+      startedAt: "2026-08-17T00:00:00.000Z",
+      finishedAt: null,
+      promptPath: ".auto-crop/companies/company_1/ceo-prompt.md",
+      failureMessage: null,
+    });
+
+    const state = await getJson<{
+      company: { status: string };
+      creationEvents: Array<{ type: string; message: string }>;
+      creationAttempts: Array<{ status: string; failureMessage: string | null }>;
+    }>(`${fixture.baseUrl}/api/companies/company_1/state`);
+
+    expect(state.company.status).toBe("creation_failed");
+    expect(state.creationAttempts).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        failureMessage: "Company Creation failed: active creation attempt timed out.",
+      }),
+    ]);
+    expect(state.creationEvents).toContainEqual(
+      expect.objectContaining({ type: "company_creation_failed" }),
+    );
+
+    await fixture.close();
+  });
+
   it("streams server-sent events", async () => {
     const fixture = await startFixtureServer();
     const response = await fetch(`${fixture.baseUrl}/api/events?companyId=company_1`);
@@ -2055,6 +2195,7 @@ describe("API routes", () => {
 
 async function startFixtureServer(options: {
   now?: () => Date;
+  ceoAgent?: AgentAdapter;
   plannerOutput?: string;
   schedulerWakeRequests?: SchedulerWakeReason[];
 } = {}) {
@@ -2070,7 +2211,7 @@ async function startFixtureServer(options: {
     preferredStrategyAgentId: "codex",
   });
   const plannerRequests: AgentRunRequest[] = [];
-  const codex = options.plannerOutput
+  const codex = options.ceoAgent ?? (options.plannerOutput
     ? createRoutedAgent({
         blueprintOutput: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
         plannerOutput: options.plannerOutput,
@@ -2081,7 +2222,7 @@ async function startFixtureServer(options: {
         name: "Codex",
         capabilities: ["code", "frontend", "test"],
         output: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
-      });
+      }));
   const server = createApiServer({
     projectRoot,
     repositories,
@@ -2110,6 +2251,104 @@ async function startFixtureServer(options: {
       client.close();
     },
   };
+}
+
+function createDelayedBlueprintAgent(release: Promise<void>): AgentAdapter {
+  const blueprint = aiSaasPlaybook.createBlueprint({
+    companyName: "Pricing Page Studio",
+    founderVision: "Build an AI SaaS that creates pricing pages.",
+    preferredEngineeringAgentId: "codex",
+    preferredStrategyAgentId: "codex",
+  });
+
+  return {
+    id: "codex",
+    name: "Codex",
+    capabilities: ["code", "frontend", "test"],
+    async detect() {
+      return true;
+    },
+    async run() {
+      await release;
+      return {
+        status: "complete",
+        exitCode: 0,
+        stdout: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
+        stderr: "",
+      };
+    },
+  };
+}
+
+function createFlakyCreationAgent(): AgentAdapter {
+  const blueprint = aiSaasPlaybook.createBlueprint({
+    companyName: "Pricing Page Studio",
+    founderVision: "Build an AI SaaS that creates pricing pages.",
+    preferredEngineeringAgentId: "codex",
+    preferredStrategyAgentId: "codex",
+  });
+  let attempts = 0;
+
+  return {
+    id: "codex",
+    name: "Codex",
+    capabilities: ["code", "frontend", "test"],
+    async detect() {
+      return true;
+    },
+    async run() {
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          status: "failed",
+          exitCode: 1,
+          stdout: "",
+          stderr: "temporary model failure",
+        };
+      }
+
+      return {
+        status: "complete",
+        exitCode: 0,
+        stdout: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
+        stderr: "",
+      };
+    },
+  };
+}
+
+async function postCreatingCompany(
+  fixture: Awaited<ReturnType<typeof startFixtureServer>>,
+  creationIdempotencyKey: string,
+): Promise<{ company: { id: string; status: string } }> {
+  const response = await fetch(`${fixture.baseUrl}/api/companies`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+      creationIdempotencyKey,
+    }),
+  });
+  expect(response.status).toBe(202);
+  return (await response.json()) as { company: { id: string; status: string } };
+}
+
+async function waitForCompanyStatus(
+  fixture: Awaited<ReturnType<typeof startFixtureServer>>,
+  companyId: string,
+  status: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (fixture.repositories.getCompany(companyId)?.status === status) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Company ${companyId} did not reach ${status}.`);
 }
 
 function createRoutedAgent(options: {
@@ -2227,7 +2466,26 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   expect(response.ok).toBe(true);
-  return (await response.json()) as T;
+  const json = await response.json() as { company?: { id?: string; status?: string } };
+  if (json.company?.id && json.company.status === "creating") {
+    const companiesUrl = url.endsWith("/api/companies") ? url : url.replace(/\/[^/]+\/retry-creation$/, "");
+    return (await waitForCompanyStateUrl(companiesUrl, json.company.id, "draft")) as T;
+  }
+  return json as T;
+}
+
+async function waitForCompanyStateUrl(createUrl: string, companyId: string, status: string): Promise<unknown> {
+  const stateUrl = `${createUrl}/${companyId}/state`;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await fetch(stateUrl);
+    expect(response.ok).toBe(true);
+    const state = await response.json() as { company?: { status?: string } };
+    if (state.company?.status === status) {
+      return state;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Company ${companyId} did not reach ${status}.`);
 }
 
 function createSequentialIdFactory(): (prefix: string) => string {

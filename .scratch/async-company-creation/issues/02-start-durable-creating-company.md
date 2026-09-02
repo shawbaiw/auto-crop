@@ -4,11 +4,11 @@
 
 **Blocked by:** 01: Extract Blueprint Writing Behind Company Creation.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `POST /api/companies` returns quickly with `202 Accepted` and a skeleton company in `creating` status.
-- [ ] The skeleton company persists the submitted company name, Founder Vision, selected CEO Agent, Permission Mode, playbook, assets, and Creation Idempotency Key.
-- [ ] A first Creation Attempt is persisted for the company.
-- [ ] A first Company Event records that Company Creation was accepted.
-- [ ] `GET /api/companies` includes the creating company with `taskCount = 0`.
-- [ ] The dashboard enters a company-level creation progress view after the initial create response.
+- [x] `POST /api/companies` returns quickly with `202 Accepted` and a skeleton company in `creating` status.
+- [x] The skeleton company persists the submitted company name, Founder Vision, selected CEO Agent, Permission Mode, playbook, assets, and Creation Idempotency Key.
+- [x] A first Creation Attempt is persisted for the company.
+- [x] A first Company Event records that Company Creation was accepted.
+- [x] `GET /api/companies` includes the creating company with `taskCount = 0`.
+- [x] The dashboard enters a company-level creation progress view after the initial create response.

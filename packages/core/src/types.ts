@@ -1,6 +1,6 @@
 import type { LocalizedText } from "./localizedText";
 
-export type CompanyStatus = "draft" | "active" | "paused" | "review";
+export type CompanyStatus = "creating" | "creation_failed" | "draft" | "active" | "paused" | "review";
 export type PermissionMode = "safe" | "balanced" | "autonomous";
 export type ObjectiveStatus = "active" | "complete" | "paused";
 export type KeyResultStatus = "active" | "met" | "missed";
@@ -27,6 +27,14 @@ export type ProofType =
   | "test_result"
   | "deployment";
 export type AgentRunStatus = "queued" | "running" | "complete" | "failed" | "cancelled";
+export type CreationAttemptStatus = "running" | "complete" | "failed";
+export type CompanyEventType =
+  | "company_creation_accepted"
+  | "company_creation_agent_started"
+  | "company_creation_blueprint_parsed"
+  | "company_creation_records_created"
+  | "company_creation_completed"
+  | "company_creation_failed";
 export type ApprovalStatus = "pending" | "approved" | "denied";
 export type ReplanProposalStatus = "proposed" | "confirmed" | "dismissed";
 export type ReplanProposalSource = "planner_agent" | "deterministic_template";
@@ -238,8 +246,30 @@ export type Company = {
   playbookId: string;
   permissionMode?: PermissionMode | null;
   status: CompanyStatus;
+  creationIdempotencyKey?: string | null;
+  creationInput?: unknown;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CreationAttempt = {
+  id: string;
+  companyId: string;
+  status: CreationAttemptStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  promptPath: string | null;
+  failureMessage: string | null;
+};
+
+export type CompanyEvent = {
+  id: string;
+  companyId: string;
+  type: CompanyEventType;
+  message: string;
+  messageText?: LocalizedText | null;
+  createdAt: string;
+  status?: CompanyStatus | null;
 };
 
 export type CeoIntake = {
