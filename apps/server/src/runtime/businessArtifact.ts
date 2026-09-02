@@ -51,10 +51,22 @@ type DeclaredBusinessArtifact = {
   lineage: unknown;
 };
 
+/**
+ * Reachability evidence the agent recorded while the runtime controlled its Agent Run: the HTTP
+ * status the agent's own fetch of the URL returned. Used to confirm an Environment-Blocked Blocker's
+ * claim when the agent-owned Local Prototype Server is no longer listening by the time the claim is
+ * checked. See ADR 0016.
+ */
+export type ReachabilitySnapshot = {
+  httpStatus: number;
+};
+
 export type EnvironmentBlockerClaim = {
   capability: string;
   /** URL the runtime should independently fetch to check the claim, if one could be resolved. */
   url: string | null;
+  /** Same-run reachability evidence to fall back on when the live fetch cannot reach the URL. */
+  reachabilitySnapshot: ReachabilitySnapshot | null;
 };
 
 export type EnvironmentBlockerVerification = {
@@ -62,6 +74,8 @@ export type EnvironmentBlockerVerification = {
   verified: boolean;
   checkedUrl: string | null;
   status?: number;
+  /** Which evidence path confirmed the claim. Absent when the claim was not confirmed. */
+  verifiedVia?: "runtime_url_check" | "capture_time_snapshot";
   reason?: "unsupported_capability" | "no_verifiable_url" | "fetch_failed" | "non_2xx";
 };
 
@@ -281,7 +295,8 @@ function normalizeParsedArtifactForCapturedProof(
       validationLimits: {
         capability: environmentBlockerVerification.capability,
         status: "degraded_from_environment_blocked",
-        verifiedVia: "runtime_url_check",
+        // A verified result always names its path; default to the live check for the ADR 0015 shape.
+        verifiedVia: environmentBlockerVerification.verifiedVia ?? "runtime_url_check",
         checkedUrl: environmentBlockerVerification.checkedUrl,
         httpStatus: environmentBlockerVerification.status ?? null,
       },
@@ -386,39 +401,83 @@ export function readEnvironmentBlockerClaim(workspacePath: string, proofs: Proof
     proofs.find((proof) => proof.type === "url")?.uri ??
     null;
 
-  return { capability, url };
+  return { capability, url, reachabilitySnapshot: readReachabilitySnapshot(serverValidation) };
 }
 
 /**
- * Independently check an Environment-Blocked Blocker's claim. For `browser_screenshot` the runtime
- * fetches the declared URL and expects a 2xx response; anything else keeps the blocker in place.
+ * Read the agent's same-run reachability evidence from `payload.server_validation.http_status` (the
+ * one key the agent is told to record). A missing or out-of-range value yields no snapshot; a
+ * non-numeric sibling such as `status: "running"` is not consulted.
+ */
+function readReachabilitySnapshot(serverValidation: Record<string, unknown> | null): ReachabilitySnapshot | null {
+  if (!serverValidation) {
+    return null;
+  }
+  const httpStatus = serverValidation.http_status;
+  if (typeof httpStatus !== "number" || !Number.isInteger(httpStatus) || httpStatus < 100 || httpStatus > 599) {
+    return null;
+  }
+  return { httpStatus };
+}
+
+function isOkStatus(status: number): boolean {
+  return status >= 200 && status < 300;
+}
+
+/**
+ * Confirm an Environment-Blocked Blocker's claim, in order of evidence strength (ADR 0016). For
+ * `browser_screenshot`:
+ *
+ * 1. Live check — fetch the declared URL; a 2xx response confirms via `runtime_url_check`.
+ * 2. Reachability Snapshot — when the URL cannot be reached at all (the Local Prototype Server has
+ *    exited, or there is no URL), confirm against the agent's same-run `server_validation`
+ *    `http_status` 2xx via `capture_time_snapshot`.
+ *
+ * A live non-2xx response is an affirmative "the route is broken now" signal and keeps the blocker in
+ * place — the snapshot only backstops the absence of a live signal, not a contradicting one. The
+ * snapshot is trusted only because this runs inside a runtime-controlled Agent Run (the scheduler
+ * calls it after `agentResult.status === "complete"`).
  */
 export async function verifyEnvironmentBlockerClaim(input: {
   claim: EnvironmentBlockerClaim;
   fetchImpl?: typeof fetch;
 }): Promise<EnvironmentBlockerVerification> {
-  const { capability, url } = input.claim;
+  const { capability, url, reachabilitySnapshot } = input.claim;
 
   if (!VERIFIABLE_ENVIRONMENT_BLOCKER_CAPABILITIES.has(capability)) {
     return { capability, verified: false, checkedUrl: url, reason: "unsupported_capability" };
   }
-  if (!url) {
-    return { capability, verified: false, checkedUrl: null, reason: "no_verifiable_url" };
+
+  if (url) {
+    const fetchImpl = input.fetchImpl ?? fetch;
+    try {
+      const response = await fetchImpl(url, { method: "GET" });
+      if (response.ok) {
+        return { capability, verified: true, checkedUrl: url, status: response.status, verifiedVia: "runtime_url_check" };
+      }
+      // Server answered and the route is not serving: don't let a stale snapshot override it.
+      return { capability, verified: false, checkedUrl: url, status: response.status, reason: "non_2xx" };
+    } catch {
+      // Nothing listening — fall through to the same-run snapshot.
+    }
   }
 
-  const fetchImpl = input.fetchImpl ?? fetch;
-  try {
-    const response = await fetchImpl(url, { method: "GET" });
+  if (reachabilitySnapshot && isOkStatus(reachabilitySnapshot.httpStatus)) {
     return {
       capability,
-      verified: response.ok,
+      verified: true,
       checkedUrl: url,
-      status: response.status,
-      reason: response.ok ? undefined : "non_2xx",
+      status: reachabilitySnapshot.httpStatus,
+      verifiedVia: "capture_time_snapshot",
     };
-  } catch {
-    return { capability, verified: false, checkedUrl: url, reason: "fetch_failed" };
   }
+
+  return {
+    capability,
+    verified: false,
+    checkedUrl: url,
+    reason: url ? "fetch_failed" : "no_verifiable_url",
+  };
 }
 
 function firstUrlString(value: unknown): string | null {

@@ -198,6 +198,7 @@ describe("captureBusinessArtifact", () => {
     expect(readEnvironmentBlockerClaim(workspacePath, [])).toEqual({
       capability: "browser_screenshot",
       url: "http://127.0.0.1:4173/index.html?variant=A",
+      reachabilitySnapshot: { httpStatus: 200 },
     });
   });
 
@@ -230,6 +231,32 @@ describe("captureBusinessArtifact", () => {
     });
   });
 
+  it("records verifiedVia: capture_time_snapshot when the claim was confirmed from the snapshot", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    writeNaturalScreenshotBlockerArtifact(workspacePath);
+
+    const artifact = captureBusinessArtifact({
+      task: { ...createTaskRecord(), title: "Capture Prototype Screenshot", proofSchemaId: "screenshot" },
+      proofs: [],
+      workspacePath,
+      environmentBlockerVerification: {
+        capability: "browser_screenshot",
+        verified: true,
+        checkedUrl: "http://127.0.0.1:4173/index.html?variant=A",
+        status: 200,
+        verifiedVia: "capture_time_snapshot",
+      },
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact.artifactKind).toBe("deliverable");
+    expect(artifact.payload).toMatchObject({
+      validationLimits: { verifiedVia: "capture_time_snapshot", httpStatus: 200 },
+    });
+  });
+
   it("isVerifiableEnvironmentBlocker requires blocker_class and capability", () => {
     expect(
       isVerifiableEnvironmentBlocker({ artifactKind: "blocker", payload: { blocker_class: "environment_blocked", capability: "browser_screenshot" } }),
@@ -246,6 +273,7 @@ describe("captureBusinessArtifact", () => {
     expect(readEnvironmentBlockerClaim(workspacePath, [])).toEqual({
       capability: "browser_screenshot",
       url: "http://localhost:4173/",
+      reachabilitySnapshot: null,
     });
   });
 
@@ -268,25 +296,80 @@ describe("captureBusinessArtifact", () => {
 
     expect(
       readEnvironmentBlockerClaim(workspacePath, [{ ...createProofRecord(), type: "url", uri: "http://localhost:5173" }]),
-    ).toEqual({ capability: "browser_screenshot", url: "http://localhost:5173" });
+    ).toEqual({ capability: "browser_screenshot", url: "http://localhost:5173", reachabilitySnapshot: null });
+  });
+
+  it("readEnvironmentBlockerClaim reads a reachability snapshot from server_validation", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "blocker",
+        artifact_role: "validation",
+        artifact_subtype: "screenshot",
+        task_type: "t",
+        payload: {
+          blocker_class: "environment_blocked",
+          capability: "browser_screenshot",
+          target_url: "http://127.0.0.1:4173/",
+          server_validation: { status: "running", http_status: 200 },
+        },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    expect(readEnvironmentBlockerClaim(workspacePath, [])).toEqual({
+      capability: "browser_screenshot",
+      url: "http://127.0.0.1:4173/",
+      reachabilitySnapshot: { httpStatus: 200 },
+    });
+  });
+
+  it("readEnvironmentBlockerClaim ignores a non-numeric server_validation status", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "blocker",
+        artifact_role: "validation",
+        artifact_subtype: "screenshot",
+        task_type: "t",
+        payload: {
+          blocker_class: "environment_blocked",
+          capability: "browser_screenshot",
+          target_url: "http://127.0.0.1:4173/",
+          server_validation: { status: "running" },
+        },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    expect(readEnvironmentBlockerClaim(workspacePath, [])?.reachabilitySnapshot).toBeNull();
   });
 
   it("verifyEnvironmentBlockerClaim passes on a 2xx response and fails otherwise", async () => {
     const ok = await verifyEnvironmentBlockerClaim({
-      claim: { capability: "browser_screenshot", url: "http://localhost:4173/" },
+      claim: { capability: "browser_screenshot", url: "http://localhost:4173/", reachabilitySnapshot: null },
       fetchImpl: async () => new Response("ok", { status: 200 }),
     });
     expect(ok.verified).toBe(true);
+    expect(ok.verifiedVia).toBe("runtime_url_check");
 
     const notFound = await verifyEnvironmentBlockerClaim({
-      claim: { capability: "browser_screenshot", url: "http://localhost:4173/" },
+      claim: { capability: "browser_screenshot", url: "http://localhost:4173/", reachabilitySnapshot: null },
       fetchImpl: async () => new Response("nope", { status: 404 }),
     });
     expect(notFound.verified).toBe(false);
     expect(notFound.reason).toBe("non_2xx");
 
     const threw = await verifyEnvironmentBlockerClaim({
-      claim: { capability: "browser_screenshot", url: "http://localhost:4173/" },
+      claim: { capability: "browser_screenshot", url: "http://localhost:4173/", reachabilitySnapshot: null },
       fetchImpl: async () => {
         throw new Error("ECONNREFUSED");
       },
@@ -297,11 +380,73 @@ describe("captureBusinessArtifact", () => {
 
   it("verifyEnvironmentBlockerClaim refuses unknown capabilities and missing URLs", async () => {
     expect(
-      (await verifyEnvironmentBlockerClaim({ claim: { capability: "time_travel", url: "http://x/" } })).reason,
+      (
+        await verifyEnvironmentBlockerClaim({
+          claim: { capability: "time_travel", url: "http://x/", reachabilitySnapshot: null },
+        })
+      ).reason,
     ).toBe("unsupported_capability");
     expect(
-      (await verifyEnvironmentBlockerClaim({ claim: { capability: "browser_screenshot", url: null } })).reason,
+      (
+        await verifyEnvironmentBlockerClaim({
+          claim: { capability: "browser_screenshot", url: null, reachabilitySnapshot: null },
+        })
+      ).reason,
     ).toBe("no_verifiable_url");
+  });
+
+  it("verifyEnvironmentBlockerClaim falls back to the reachability snapshot when the server is gone", async () => {
+    const result = await verifyEnvironmentBlockerClaim({
+      claim: {
+        capability: "browser_screenshot",
+        url: "http://127.0.0.1:4173/index.html?variant=A",
+        reachabilitySnapshot: { httpStatus: 200 },
+      },
+      fetchImpl: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    });
+    expect(result).toMatchObject({ verified: true, verifiedVia: "capture_time_snapshot", status: 200 });
+  });
+
+  it("verifyEnvironmentBlockerClaim prefers the live check over the snapshot when both confirm", async () => {
+    const result = await verifyEnvironmentBlockerClaim({
+      claim: {
+        capability: "browser_screenshot",
+        url: "http://127.0.0.1:4173/",
+        reachabilitySnapshot: { httpStatus: 200 },
+      },
+      fetchImpl: async () => new Response("ok", { status: 200 }),
+    });
+    expect(result.verifiedVia).toBe("runtime_url_check");
+  });
+
+  it("verifyEnvironmentBlockerClaim keeps the blocker when the server is gone and the snapshot is non-2xx", async () => {
+    const result = await verifyEnvironmentBlockerClaim({
+      claim: {
+        capability: "browser_screenshot",
+        url: "http://127.0.0.1:4173/",
+        reachabilitySnapshot: { httpStatus: 500 },
+      },
+      fetchImpl: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    });
+    expect(result.verified).toBe(false);
+    expect(result.reason).toBe("fetch_failed");
+  });
+
+  it("verifyEnvironmentBlockerClaim keeps the blocker when a live non-2xx contradicts a 2xx snapshot", async () => {
+    const result = await verifyEnvironmentBlockerClaim({
+      claim: {
+        capability: "browser_screenshot",
+        url: "http://127.0.0.1:4173/",
+        reachabilitySnapshot: { httpStatus: 200 },
+      },
+      fetchImpl: async () => new Response("gone", { status: 404 }),
+    });
+    expect(result.verified).toBe(false);
+    expect(result.reason).toBe("non_2xx");
   });
 
   it("infers kind and role for an unknown legacy artifactType", () => {
