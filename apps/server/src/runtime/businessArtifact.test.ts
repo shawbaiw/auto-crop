@@ -163,6 +163,73 @@ describe("captureBusinessArtifact", () => {
     });
   });
 
+  // The shape a real codex run left for task_cf0714bc "Capture Prototype Screenshot": an honest
+  // blocker with a reachable local URL, but no `blocker_class`/`capability` gate keys.
+  function writeNaturalScreenshotBlockerArtifact(workspacePath: string): void {
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "blocker",
+        artifact_role: "validation",
+        artifact_subtype: "prototype_screenshot_capture",
+        task_type: "screenshot_capture",
+        payload: {
+          target_url: "http://127.0.0.1:4173/index.html?variant=A",
+          server_validation: {
+            status: "running",
+            http_status: 200,
+            url: "http://127.0.0.1:4173/index.html?variant=A",
+          },
+          proof: { schema: "screenshot", status: "blocked", created: false },
+          capture_attempts: [{ method: "Playwright Chromium", result: "failed" }],
+        },
+        lineage: {},
+      }),
+      "utf8",
+    );
+  }
+
+  it("reads a screenshot-capture blocker claim even without blocker_class/capability keys", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    writeNaturalScreenshotBlockerArtifact(workspacePath);
+
+    expect(readEnvironmentBlockerClaim(workspacePath, [])).toEqual({
+      capability: "browser_screenshot",
+      url: "http://127.0.0.1:4173/index.html?variant=A",
+    });
+  });
+
+  it("degrades a screenshot-capture blocker to a deliverable when the runtime verifies the claim", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    writeNaturalScreenshotBlockerArtifact(workspacePath);
+
+    const artifact = captureBusinessArtifact({
+      task: { ...createTaskRecord(), title: "Capture Prototype Screenshot", proofSchemaId: "screenshot" },
+      proofs: [],
+      workspacePath,
+      environmentBlockerVerification: {
+        capability: "browser_screenshot",
+        verified: true,
+        checkedUrl: "http://127.0.0.1:4173/index.html?variant=A",
+        status: 200,
+      },
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact).toMatchObject({
+      artifactKind: "deliverable",
+      validationStatus: "valid",
+      reviewStatus: "unreviewed",
+    });
+    expect(artifact.payload).toMatchObject({
+      validationLimits: { capability: "browser_screenshot", status: "degraded_from_environment_blocked" },
+    });
+  });
+
   it("isVerifiableEnvironmentBlocker requires blocker_class and capability", () => {
     expect(
       isVerifiableEnvironmentBlocker({ artifactKind: "blocker", payload: { blocker_class: "environment_blocked", capability: "browser_screenshot" } }),

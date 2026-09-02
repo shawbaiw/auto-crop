@@ -1729,6 +1729,67 @@ describe("runSchedulerOnce", () => {
 
     client.close();
   });
+
+  it("degrades a natural screenshot-capture blocker with no gate keys instead of failing no_proof", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      { ...createTaskRecord("task_1", "queued", "medium", "screenshot") },
+    ]);
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "could not screenshot in this sandbox",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      // The shape a real codex run left for "Capture Prototype Screenshot": an honest blocker with a
+      // reachable local URL, but without `blocker_class`/`capability`. No collectable proof.
+      proofCollector: ({ task }) => {
+        const workspacePath = task.workspacePath!;
+        mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+        writeFileSync(
+          join(workspacePath, ".auto-crop", "business-artifact.json"),
+          JSON.stringify({
+            artifact_kind: "blocker",
+            artifact_role: "validation",
+            artifact_subtype: "prototype_screenshot_capture",
+            task_type: "screenshot_capture",
+            payload: {
+              target_url: "http://127.0.0.1:4173/index.html?variant=A",
+              server_validation: { status: "running", http_status: 200, url: "http://127.0.0.1:4173/index.html?variant=A" },
+              proof: { schema: "screenshot", status: "blocked", created: false },
+            },
+            lineage: {},
+          }),
+          "utf8",
+        );
+        return [];
+      },
+      environmentBlockerFetch: async () => new Response("ok", { status: 200 }),
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.failed).not.toContain("task_1");
+    expect(result.completed).toContain("task_1");
+    const artifact = repositories.getCurrentBusinessArtifactForTask("task_1");
+    expect(artifact?.artifactKind).toBe("deliverable");
+    expect((artifact?.payload as { validationLimits?: unknown }).validationLimits).toMatchObject({
+      capability: "browser_screenshot",
+      status: "degraded_from_environment_blocked",
+    });
+
+    client.close();
+  });
 });
 
 function createSchedulerFixture(tasks: Task[]) {

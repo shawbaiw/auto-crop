@@ -34,6 +34,15 @@ export function buildProofContractInstructions(task: Pick<Task, "id" | "proofSch
     return [...instructions, "Before finishing, leave a research-report.md file in the task workspace."];
   }
 
+  if (task.proofSchemaId === "screenshot") {
+    return [
+      ...instructions,
+      "A real screenshot PNG saved in the task workspace is the proof. Capture the running result and save it.",
+      "If every browser and screenshot path is blocked by the sandbox, do not fabricate a screenshot. Instead write `.auto-crop/business-artifact.json` as a `blocker` with `payload.blocker_class: \"environment_blocked\"`, `payload.capability: \"browser_screenshot\"`, and `payload.target_url` set to the running prototype URL the runtime can fetch.",
+      "On a 2xx response from that URL the runtime accepts the task with a validation-limits caveat instead of failing it.",
+    ];
+  }
+
   if (task.proofSchemaId === "test-output") {
     return [
       ...instructions,
