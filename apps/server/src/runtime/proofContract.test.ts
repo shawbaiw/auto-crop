@@ -14,5 +14,6 @@ describe("buildProofContractInstructions", () => {
     expect(text).toContain("environment_blocked");
     expect(text).toContain("browser_screenshot");
     expect(text).toContain("payload.target_url");
+    expect(text).toContain("server_validation.http_status");
   });
 });
