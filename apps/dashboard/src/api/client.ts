@@ -165,6 +165,35 @@ export type FounderReportSummary = {
   completedTaskCount: number;
   reviewTaskCount: number;
   blockedTaskCount: number;
+  departmentContributions?: Array<{
+    departmentId: string;
+    departmentName: string;
+    completedTaskCount: number;
+    acceptedOutputCount: number;
+    blockedTaskCount: number;
+    humanActionCount: number;
+    waitStateCount: number;
+    visionGapCount: number;
+  }>;
+  dependencyState?: Array<{
+    taskId: string;
+    title: string;
+    departmentId: string;
+    departmentName: string;
+    status: string;
+    dependsOnTaskIds: string[];
+    hasAcceptedOutput: boolean;
+    dependencyNote?: string | null;
+  }>;
+  humanActionCount?: number;
+  humanActions?: Array<{
+    id: string;
+    label: string;
+    status: string;
+    departmentId: string;
+    blockedTaskIds: string[];
+    confirmationRequirements: string[];
+  }>;
   waitStateCount?: number;
   waitStates?: Array<{
     id: string;
@@ -172,6 +201,14 @@ export type FounderReportSummary = {
     status: string;
     nextCheckAt: string;
     affectedTaskIds: string[];
+  }>;
+  visionGapCount?: number;
+  visionGaps?: Array<{
+    id: string;
+    label: string;
+    severity: string;
+    departmentId: string;
+    relatedTaskId: string | null;
   }>;
   directionDriftDetected: boolean;
   nextSteps: string[];

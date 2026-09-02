@@ -6,9 +6,9 @@ Blocked by: 07: Add Conservative Automatic Acceptance; 08: Rebuild CEO Office Ho
 
 Status: ready-for-agent
 
-- [ ] A playbook-neutral smoke scenario shows a valid low-risk task automatically accepting and unblocking downstream work.
-- [ ] A Web artifact scenario creates a deployment Human Action instead of claiming the Founder Vision is achieved.
-- [ ] Launch-dependent SEO or indexing work waits on the deployment Human Action.
-- [ ] Content or preparation work that does not depend on deployment remains eligible.
-- [ ] Founder-facing report inputs show actual outputs, department contributions, Human Actions, Wait States, Vision Gaps, dependency state, and drift status.
-- [ ] The scenario does not hard-code SEO, Google, subscriptions, ads, affiliate marketing, or one playbook into the core Task Completion Event model.
+- [x] A playbook-neutral smoke scenario shows a valid low-risk task automatically accepting and unblocking downstream work.
+- [x] A Web artifact scenario creates a deployment Human Action instead of claiming the Founder Vision is achieved.
+- [x] Launch-dependent SEO or indexing work waits on the deployment Human Action.
+- [x] Content or preparation work that does not depend on deployment remains eligible.
+- [x] Founder-facing report inputs show actual outputs, department contributions, Human Actions, Wait States, Vision Gaps, dependency state, and drift status.
+- [x] The scenario does not hard-code SEO, Google, subscriptions, ads, affiliate marketing, or one playbook into the core Task Completion Event model.

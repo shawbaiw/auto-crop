@@ -17,6 +17,7 @@ import type {
   TaskDependency,
   TaskEvent,
   TaskProgressEvent,
+  VisionGap,
   WaitState,
 } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
@@ -527,6 +528,7 @@ function buildCompanyState(
   let tasks = repositories.listTasksForCompany(company.id);
   const keyResults = repositories.listKeyResults(company.id);
   let taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
+  const departments = repositories.listDepartments(company.id);
   const businessArtifacts = repositories.listBusinessArtifactsForCompany(company.id).map(summarizeBusinessArtifact);
   const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(company.id);
   const humanActionConfirmations = repositories.listHumanActionConfirmationsForCompany(company.id);
@@ -586,7 +588,7 @@ function buildCompanyState(
 
   return {
     company: summarizeCompany(company),
-    departments: repositories.listDepartments(company.id).map(summarizeDepartment),
+    departments: departments.map(summarizeDepartment),
     objectives: repositories.listObjectives(company.id).map(summarizeObjective),
     keyResults,
     tasks: summarizeTasks(tasks, taskDependencies),
@@ -597,7 +599,16 @@ function buildCompanyState(
     humanActions: ceoAttention.humanActions,
     waitStates: ceoAttention.waitStates,
     ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
-    founderReport: summarizeFounderReport(company, tasks, businessArtifacts, ceoAttention.waitStates),
+    founderReport: summarizeFounderReport(
+      company,
+      tasks,
+      businessArtifacts,
+      ceoAttention.waitStates,
+      ceoAttention.humanActions,
+      ceoAttention.visionGaps,
+      taskDependencies,
+      departments,
+    ),
     reviews: repositories.listReviews(company.id).map(summarizeReview),
     ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(company.id).map(summarizeCeoReviewDecision),
     replanProposals: repositories.listReplanProposalsForCompany(company.id).map(summarizeReplanProposal),
@@ -1389,11 +1400,18 @@ function summarizeFounderReport(
   tasks: Task[],
   artifacts: ReturnType<typeof summarizeBusinessArtifact>[],
   waitStates: WaitState[],
+  humanActions: HumanAction[],
+  visionGaps: VisionGap[],
+  taskDependencies: TaskDependency[],
+  departments: Department[],
 ) {
   const acceptedArtifacts = artifacts.filter((artifact) => artifact.reviewStatus === "accepted" && artifact.isCurrent);
   const blockedTasks = tasks.filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed");
   const reviewTasks = tasks.filter((task) => task.status === "review");
   const driftArtifacts = artifacts.filter((artifact) => artifact.validationStatus === "invalid_drift");
+  const dependenciesByTaskId = groupTaskDependenciesByTaskId(taskDependencies);
+  const departmentById = new Map(departments.map((department) => [department.id, department]));
+  const acceptedArtifactsByTaskId = new Map(acceptedArtifacts.map((artifact) => [artifact.taskId, artifact]));
 
   return {
     founderVision: company.founderVision,
@@ -1409,6 +1427,39 @@ function summarizeFounderReport(
     completedTaskCount: tasks.filter((task) => task.status === "complete").length,
     reviewTaskCount: reviewTasks.length,
     blockedTaskCount: blockedTasks.length,
+    departmentContributions: departments.map((department) => {
+      const departmentTasks = tasks.filter((task) => task.departmentId === department.id);
+      const departmentTaskIds = new Set(departmentTasks.map((task) => task.id));
+      return {
+        departmentId: department.id,
+        departmentName: department.name,
+        completedTaskCount: departmentTasks.filter((task) => task.status === "complete").length,
+        acceptedOutputCount: acceptedArtifacts.filter((artifact) => departmentTaskIds.has(artifact.taskId)).length,
+        blockedTaskCount: departmentTasks.filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed").length,
+        humanActionCount: humanActions.filter((action) => action.departmentId === department.id).length,
+        waitStateCount: waitStates.filter((waitState) => waitState.departmentId === department.id).length,
+        visionGapCount: visionGaps.filter((gap) => gap.departmentId === department.id).length,
+      };
+    }),
+    dependencyState: tasks.map((task) => ({
+      taskId: task.id,
+      title: task.title,
+      departmentId: task.departmentId,
+      departmentName: departmentById.get(task.departmentId)?.name ?? task.departmentId,
+      status: task.status,
+      dependsOnTaskIds: (dependenciesByTaskId.get(task.id) ?? []).map((dependency) => dependency.dependsOnTaskId),
+      hasAcceptedOutput: acceptedArtifactsByTaskId.has(task.id),
+      dependencyNote: task.dependencyNote,
+    })),
+    humanActionCount: humanActions.length,
+    humanActions: humanActions.map((action) => ({
+      id: action.id,
+      label: action.label,
+      status: action.status,
+      departmentId: action.departmentId,
+      blockedTaskIds: action.blockedTaskIds,
+      confirmationRequirements: action.confirmationRequirements,
+    })),
     waitStateCount: waitStates.length,
     waitStates: waitStates.map((waitState) => ({
       id: waitState.id,
@@ -1417,9 +1468,21 @@ function summarizeFounderReport(
       nextCheckAt: waitState.nextCheckAt,
       affectedTaskIds: waitState.affectedTaskIds,
     })),
+    visionGapCount: visionGaps.length,
+    visionGaps: visionGaps.map((gap) => ({
+      id: gap.id,
+      label: gap.label,
+      severity: gap.severity,
+      departmentId: gap.departmentId,
+      relatedTaskId: gap.relatedTaskId,
+    })),
     directionDriftDetected: driftArtifacts.length > 0,
     nextSteps: [
       ...reviewTasks.map((task) => `Review ${task.title}.`),
+      ...humanActions.filter((action) => action.status === "pending").map((action) => `Complete Human Action: ${action.label}`),
+      ...visionGaps
+        .filter((gap) => gap.severity === "blocking" || gap.severity === "strategic")
+        .map((gap) => `Resolve Vision Gap: ${gap.label}`),
       ...blockedTasks.map((task) => task.dependencyNote ?? task.latestFailureMessage ?? `Resolve ${task.title}.`),
       ...waitStates.map(formatWaitStateNextStep),
     ],

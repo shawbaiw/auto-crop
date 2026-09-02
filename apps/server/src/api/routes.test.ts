@@ -9,6 +9,7 @@ import { createDatabaseClient } from "../db/client";
 import { createRepositories, type ReviewRecord } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
+import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
 import { createApiServer, type SchedulerWakeReason } from "./routes";
 
 const createdDirs: string[] = [];
@@ -1255,6 +1256,310 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("proves the operating model with playbook-neutral task completion events", async () => {
+    const schedulerWakeRequests: SchedulerWakeReason[] = [];
+    const fixture = await startFixtureServer({ schedulerWakeRequests });
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Launch Readiness Studio",
+      founderVision: "Publish an educational checklist and learn whether teams want it.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const departments = fixture.repositories.listDepartments(created.company.id);
+    const ownerDepartment = departments[0]!;
+    const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id) ?? ownerDepartment;
+    const internalProducer = {
+      ...createIsolatedTask(templateTask, "operating_model_internal_source", "Prepare reusable checklist outline", "review", 350),
+      departmentId: ownerDepartment.id,
+      riskLevel: "low" as const,
+    };
+    const internalConsumer = {
+      ...createIsolatedTask(templateTask, "operating_model_internal_consumer", "Use accepted outline for next draft", "blocked", 351),
+      departmentId: downstreamDepartment.id,
+      latestFailureReason: "missing_deliverable" as const,
+      latestFailureMessage: "Waiting for accepted outline.",
+      dependencyNote: "Waiting for accepted outline.",
+      riskLevel: "low" as const,
+    };
+    const webProducer = {
+      ...createIsolatedTask(templateTask, "operating_model_web_package", "Build public checklist package", "complete", 352),
+      departmentId: ownerDepartment.id,
+      riskLevel: "medium" as const,
+    };
+    const indexingTask = {
+      ...createIsolatedTask(templateTask, "operating_model_indexing", "Prepare public indexing handoff", "queued", 353),
+      departmentId: downstreamDepartment.id,
+      riskLevel: "low" as const,
+    };
+    const contentPrepTask = {
+      ...createIsolatedTask(templateTask, "operating_model_content_prep", "Prepare launch comparison copy", "queued", 354),
+      departmentId: downstreamDepartment.id,
+      riskLevel: "low" as const,
+    };
+    const observationTask = {
+      ...createIsolatedTask(templateTask, "operating_model_observation", "Observe public listing signals", "queued", 355),
+      departmentId: downstreamDepartment.id,
+      riskLevel: "low" as const,
+    };
+    fixture.repositories.createTask(internalProducer);
+    fixture.repositories.createTask(internalConsumer);
+    fixture.repositories.createTask(webProducer);
+    fixture.repositories.createTask(indexingTask);
+    fixture.repositories.createTask(contentPrepTask);
+    fixture.repositories.createTask(observationTask);
+    fixture.repositories.createTaskDependency({ taskId: internalConsumer.id, dependsOnTaskId: internalProducer.id });
+    const webCompletionEventId = "task_completion_event_operating_model_web_package";
+    const deploymentHumanActionId = `${webCompletionEventId}_human_action_1`;
+    fixture.repositories.createTaskDependency({
+      taskId: indexingTask.id,
+      dependsOnTaskId: webProducer.id,
+      handoffContract: `human_action:${deploymentHumanActionId}`,
+    });
+    fixture.repositories.createTaskDependency({
+      taskId: contentPrepTask.id,
+      dependsOnTaskId: webProducer.id,
+      handoffContract: "accepted package can be used for preparation",
+    });
+    fixture.repositories.createTaskDependency({
+      taskId: observationTask.id,
+      dependsOnTaskId: webProducer.id,
+      handoffContract: "wait_state:public_listing_observation",
+    });
+    fixture.repositories.appendProof({
+      id: "proof_operating_model_internal",
+      taskId: internalProducer.id,
+      type: "file",
+      uri: "outline.md",
+      summary: "Reusable outline exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    const internalArtifact = {
+      ...createBusinessArtifactRecord("business_artifact_operating_model_internal", internalProducer.id, "proof_operating_model_internal"),
+      payload: {
+        acceptance: { mode: "automatic", scope: "internal" },
+        result: "Reusable checklist outline is ready for downstream drafting.",
+      },
+      lineage: {
+        founder_vision: "Publish an educational checklist and learn whether teams want it.",
+        objective: "Prove a useful launch path",
+      },
+    } satisfies BusinessArtifact;
+    fixture.repositories.createBusinessArtifact(internalArtifact);
+
+    acceptTaskBusinessArtifact({
+      repositories: fixture.repositories,
+      task: internalProducer,
+      artifact: internalArtifact,
+      acceptanceProvenance: "automatic_acceptance",
+      eventType: "automatic_acceptance",
+      eventMessage: "Automatically accepted low-risk internal outline.",
+      dependencyCascade: { maxDepth: 2 },
+      requestSchedulerWake: () => schedulerWakeRequests.push("dependency_cascade_queued"),
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createOperatingModelIdFactory(),
+    });
+    fixture.repositories.appendProof({
+      id: "proof_operating_model_web",
+      taskId: webProducer.id,
+      type: "file",
+      uri: "dist/index.html",
+      summary: "Public checklist package exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.createBusinessArtifact({
+      ...createBusinessArtifactRecord("business_artifact_operating_model_web", webProducer.id, "proof_operating_model_web"),
+      artifactRole: "implementation",
+      artifactSubtype: "web_package",
+      payload: { result: "Public checklist package is built, but not yet deployed." },
+      lineage: {
+        founder_vision: "Publish an educational checklist and learn whether teams want it.",
+        objective: "Prove a useful launch path",
+      },
+      reviewStatus: "accepted",
+    });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: webCompletionEventId,
+      companyId: created.company.id,
+      taskId: webProducer.id,
+      departmentId: webProducer.departmentId,
+      keyResultId: webProducer.keyResultId,
+      businessArtifactId: "business_artifact_operating_model_web",
+      outcome: "accepted",
+      acceptanceProvenance: "manual_ceo_review",
+      dependencyImpact: { producedArtifact: "business_artifact_operating_model_web" },
+      nextStepItems: [
+        {
+          type: "human_action",
+          label: "Deploy the built site package to a reachable URL.",
+          ownerDepartmentId: webProducer.departmentId,
+          relatedTaskId: indexingTask.id,
+          relatedBusinessArtifactId: "business_artifact_operating_model_web",
+          dependencyImpact: { blocks: [indexingTask.id] },
+          severity: "blocking",
+          priority: 1,
+          evidenceRequirements: ["url"],
+        },
+        {
+          type: "wait_state",
+          label: "Observe public listing signals.",
+          ownerDepartmentId: downstreamDepartment.id,
+          relatedTaskId: observationTask.id,
+          relatedBusinessArtifactId: "business_artifact_operating_model_web",
+          dependencyImpact: { blocks: [observationTask.id], nextCheckAt: "2026-08-18T00:00:00.000Z" },
+          severity: "informational",
+          priority: 2,
+          evidenceRequirements: [],
+        },
+        {
+          type: "vision_gap",
+          label: "Validated offer and conversion signal are still unknown.",
+          ownerDepartmentId: downstreamDepartment.id,
+          relatedTaskId: contentPrepTask.id,
+          relatedBusinessArtifactId: "business_artifact_operating_model_web",
+          dependencyImpact: {},
+          severity: "strategic",
+          priority: 3,
+          evidenceRequirements: [],
+        },
+      ],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    const state = await getJson<{
+      tasks: Array<{ id: string; status: string; dependencyNote?: string | null }>;
+      taskCompletionEvents: Array<{ taskId: string; acceptanceProvenance: string | null; nextStepItems: Array<{ type: string; label: string }> }>;
+      humanActions: Array<{ id: string; label: string; status: string; blockedTaskIds: string[] }>;
+      waitStates: Array<{ label: string; affectedTaskIds: string[]; status: string }>;
+      visionGaps: Array<{ label: string; severity: string; departmentId: string }>;
+      ceoAttentionRollups: Array<{
+        title: string;
+        reasons: string[];
+        recommendedNextAction: string;
+        relevantHumanActions: Array<{ id: string }>;
+        relevantWaitStates: Array<{ label: string }>;
+        relevantVisionGaps: Array<{ label: string }>;
+      }>;
+      founderReport: {
+        actualOutputs: Array<{ taskId: string; payload: unknown }>;
+        departmentContributions: Array<{ departmentId: string; completedTaskCount: number; acceptedOutputCount: number; humanActionCount: number; waitStateCount: number; visionGapCount: number }>;
+        dependencyState: Array<{ taskId: string; status: string; dependsOnTaskIds: string[]; hasAcceptedOutput: boolean; dependencyNote?: string | null }>;
+        humanActionCount: number;
+        humanActions: Array<{ id: string; label: string; blockedTaskIds: string[] }>;
+        waitStateCount: number;
+        waitStates: Array<{ label: string; affectedTaskIds: string[] }>;
+        visionGapCount: number;
+        visionGaps: Array<{ label: string; severity: string }>;
+        directionDriftDetected: boolean;
+        nextSteps: string[];
+      };
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(state.taskCompletionEvents).toContainEqual(
+      expect.objectContaining({
+        taskId: internalProducer.id,
+        acceptanceProvenance: "automatic_acceptance",
+        nextStepItems: [],
+      }),
+    );
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: internalProducer.id, status: "complete" }));
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: internalConsumer.id, status: "queued" }));
+    expect(schedulerWakeRequests).toEqual(["dependency_cascade_queued"]);
+    expect(state.humanActions).toEqual([
+      expect.objectContaining({
+        id: deploymentHumanActionId,
+        label: "Deploy the built site package to a reachable URL.",
+        status: "pending",
+        blockedTaskIds: [indexingTask.id],
+      }),
+    ]);
+    expect(state.tasks).toContainEqual(
+      expect.objectContaining({
+        id: indexingTask.id,
+        status: "blocked",
+        dependencyNote: `Waiting for Human Action confirmation: ${deploymentHumanActionId}.`,
+      }),
+    );
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: contentPrepTask.id, status: "queued" }));
+    expect(state.waitStates).toEqual([
+      expect.objectContaining({
+        label: "Observe public listing signals.",
+        affectedTaskIds: [observationTask.id],
+        status: "waiting",
+      }),
+    ]);
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: observationTask.id, status: "waiting_dependency" }));
+    expect(state.visionGaps).toEqual([
+      expect.objectContaining({
+        label: "Validated offer and conversion signal are still unknown.",
+        severity: "strategic",
+        departmentId: downstreamDepartment.id,
+      }),
+    ]);
+    expect(state.ceoAttentionRollups).toContainEqual(
+      expect.objectContaining({
+        reasons: expect.arrayContaining(["human_action", "wait_state", "vision_gap", "cross_department_impact"]),
+        relevantHumanActions: [expect.objectContaining({ id: deploymentHumanActionId })],
+        relevantWaitStates: [expect.objectContaining({ label: "Observe public listing signals." })],
+        relevantVisionGaps: [expect.objectContaining({ label: "Validated offer and conversion signal are still unknown." })],
+      }),
+    );
+    expect(state.founderReport.actualOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ taskId: internalProducer.id }),
+        expect.objectContaining({ taskId: webProducer.id }),
+      ]),
+    );
+    expect(state.founderReport.departmentContributions).toContainEqual(
+      expect.objectContaining({
+        departmentId: ownerDepartment.id,
+        completedTaskCount: 2,
+        acceptedOutputCount: 2,
+        humanActionCount: 1,
+      }),
+    );
+    expect(state.founderReport.departmentContributions).toContainEqual(
+      expect.objectContaining({
+        departmentId: downstreamDepartment.id,
+        waitStateCount: 1,
+        visionGapCount: 1,
+      }),
+    );
+    expect(state.founderReport.dependencyState).toContainEqual(
+      expect.objectContaining({
+        taskId: indexingTask.id,
+        status: "blocked",
+        dependsOnTaskIds: [webProducer.id],
+        hasAcceptedOutput: false,
+      }),
+    );
+    expect(state.founderReport.humanActionCount).toBe(1);
+    expect(state.founderReport.humanActions).toEqual([
+      expect.objectContaining({ id: deploymentHumanActionId, blockedTaskIds: [indexingTask.id] }),
+    ]);
+    expect(state.founderReport.waitStateCount).toBe(1);
+    expect(state.founderReport.waitStates).toEqual([
+      expect.objectContaining({ label: "Observe public listing signals.", affectedTaskIds: [observationTask.id] }),
+    ]);
+    expect(state.founderReport.visionGapCount).toBe(1);
+    expect(state.founderReport.visionGaps).toEqual([
+      expect.objectContaining({ label: "Validated offer and conversion signal are still unknown.", severity: "strategic" }),
+    ]);
+    expect(state.founderReport.directionDriftDetected).toBe(false);
+    expect(state.founderReport.nextSteps).toEqual(
+      expect.arrayContaining([
+        "Complete Human Action: Deploy the built site package to a reachable URL.",
+        "Resolve Vision Gap: Validated offer and conversion signal are still unknown.",
+        `Waiting for Human Action confirmation: ${deploymentHumanActionId}.`,
+        "Monitor Observe public listing signals until 2026-08-18T00:00:00.000Z.",
+      ]),
+    );
+
+    await fixture.close();
+  });
+
   it("cascades dependency readiness after CEO approves an upstream task with proof", async () => {
     const schedulerWakeRequests: SchedulerWakeReason[] = [];
     const fixture = await startFixtureServer({ schedulerWakeRequests });
@@ -1887,6 +2192,16 @@ function createSequentialIdFactory(): (prefix: string) => string {
     const next = (counts.get(prefix) ?? 0) + 1;
     counts.set(prefix, next);
     return `${prefix}_${next}`;
+  };
+}
+
+function createOperatingModelIdFactory(): (prefix: string) => string {
+  const counts = new Map<string, number>();
+
+  return (prefix) => {
+    const next = (counts.get(prefix) ?? 0) + 1;
+    counts.set(prefix, next);
+    return `${prefix}_operating_model_${next}`;
   };
 }
 
