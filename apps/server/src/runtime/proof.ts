@@ -3,6 +3,25 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { Proof, ProofSchema, ProofType, Task } from "@auto-crop/core";
 import { fileProofSummaryText, runtimeText } from "./localizedRuntimeText";
 
+/**
+ * Proof types the runtime collector (`createProofCollector` -> `captureProofs`) can actually
+ * produce from workspace files or command output. A proof schema that accepts none of these has
+ * no collector path: tasks using it can never record Proof and loop until the Bounded Recovery
+ * ceiling. `screenshot` and `test_result` are deliberately excluded because nothing in the
+ * runtime turns workspace state into proof of those types.
+ */
+export const COLLECTABLE_PROOF_TYPES = ["file", "diff", "url", "command_output", "deployment"] as const;
+
+/**
+ * A Collectable Proof Schema is one the runtime can satisfy: at least one accepted type has a
+ * collector path. Enforced by a registration test over every playbook and a runtime filter on
+ * the CEO planning menu.
+ */
+export function isCollectableSchema(proofSchema: ProofSchema): boolean {
+  const collectable = new Set<ProofType>(COLLECTABLE_PROOF_TYPES);
+  return proofSchema.acceptedTypes.some((acceptedType) => collectable.has(acceptedType));
+}
+
 export type CaptureProofsInput = {
   task: Task;
   proofSchema: ProofSchema;

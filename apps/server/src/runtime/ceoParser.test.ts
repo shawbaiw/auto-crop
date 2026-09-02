@@ -128,6 +128,34 @@ describe("parseCeoOutput", () => {
     ).toThrow(/unsupported proof schema/i);
   });
 
+  it("normalizes a non-collectable task proof schema to test-output instead of throwing", () => {
+    const blueprint = {
+      ...validBlueprint,
+      proofSchemas: [
+        ...validBlueprint.proofSchemas,
+        {
+          id: "screenshot",
+          description: "A screenshot proving the prototype renders.",
+          acceptedTypes: ["screenshot"],
+        },
+      ],
+      tasks: validBlueprint.tasks.map((task, index) =>
+        index === 0 ? { ...task, proofSchemaId: "screenshot" } : task,
+      ),
+    };
+
+    const response = parseCeoOutput(
+      ["```json", JSON.stringify({ brief: "Screenshot task.", blueprint }), "```"].join("\n"),
+      aiSaasPlaybook,
+    );
+
+    expect(response.blueprint.tasks[0]?.proofSchemaId).toBe("test-output");
+    expect(response.proofSchemaNormalizations).toEqual([
+      { taskKey: validBlueprint.tasks[0]!.key, from: "screenshot", to: "test-output", reason: "not_collectable" },
+    ]);
+    expect(response.blueprint.proofSchemas.some((proofSchema) => proofSchema.id === "screenshot")).toBe(false);
+  });
+
   it("rejects departments outside the selected playbook", () => {
     const blueprint = {
       ...validBlueprint,

@@ -51,13 +51,31 @@ type DeclaredBusinessArtifact = {
   lineage: unknown;
 };
 
+export type EnvironmentBlockerClaim = {
+  capability: string;
+  /** URL the runtime should independently fetch to check the claim, if one could be resolved. */
+  url: string | null;
+};
+
+export type EnvironmentBlockerVerification = {
+  capability: string;
+  verified: boolean;
+  checkedUrl: string | null;
+  status?: number;
+  reason?: "unsupported_capability" | "no_verifiable_url" | "fetch_failed" | "non_2xx";
+};
+
 export type CaptureBusinessArtifactInput = {
   task: Task;
   proofs: Proof[];
   workspacePath: string;
+  /** Result of independently checking an Environment-Blocked Blocker's claim. A verified claim degrades the blocker to a deliverable. */
+  environmentBlockerVerification?: EnvironmentBlockerVerification;
   now?: () => Date;
   createId?: (prefix: string) => string;
 };
+
+const VERIFIABLE_ENVIRONMENT_BLOCKER_CAPABILITIES = new Set(["browser_screenshot"]);
 
 export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): BusinessArtifact {
   const timestamp = (input.now ?? (() => new Date()))().toISOString();
@@ -117,7 +135,12 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
       updatedAt: timestamp,
     };
   }
-  const artifactValue = normalizeParsedArtifactForCapturedProof(input.task, input.proofs, parsed.value);
+  const artifactValue = normalizeParsedArtifactForCapturedProof(
+    input.task,
+    input.proofs,
+    parsed.value,
+    input.environmentBlockerVerification,
+  );
 
   return {
     id,
@@ -240,57 +263,121 @@ function normalizeParsedArtifactForCapturedProof(
   task: Task,
   proofs: Proof[],
   artifact: DeclaredBusinessArtifact,
+  environmentBlockerVerification: EnvironmentBlockerVerification | undefined,
 ): DeclaredBusinessArtifact {
-  if (!isRecoverableLandingPageScreenshotBlocker(task, proofs, artifact)) {
+  if (!isVerifiableEnvironmentBlocker(artifact) || !environmentBlockerVerification?.verified) {
+    // Unverified render evidence is never accepted on the agent's word: the blocker stands.
     return artifact;
   }
 
   return {
     ...artifact,
     artifactKind: "deliverable",
-    artifactRole: "implementation",
-    artifactSubtype: "prototype_implementation",
-    artifactType: "implementation_summary",
+    artifactRole: artifact.artifactRole === "none" ? "validation" : artifact.artifactRole,
+    artifactSubtype: artifact.artifactSubtype,
+    artifactType: "validation_result",
     payload: {
       ...(isRecord(artifact.payload) ? artifact.payload : { originalPayload: artifact.payload }),
       validationLimits: {
-        screenshotCapture: "blocked_by_browser_sandbox",
+        capability: environmentBlockerVerification.capability,
+        status: "degraded_from_environment_blocked",
+        verifiedVia: "runtime_url_check",
+        checkedUrl: environmentBlockerVerification.checkedUrl,
+        httpStatus: environmentBlockerVerification.status ?? null,
       },
     },
   };
 }
 
-function isRecoverableLandingPageScreenshotBlocker(
-  task: Task,
-  proofs: Proof[],
-  artifact: DeclaredBusinessArtifact,
+/**
+ * True when a blocker artifact declares `blocker_class: "environment_blocked"` plus a capability,
+ * i.e. an Environment-Blocked Blocker whose claim the runtime may independently check.
+ */
+export function isVerifiableEnvironmentBlocker(
+  artifact: Pick<DeclaredBusinessArtifact, "artifactKind" | "payload">,
 ): boolean {
-  return (
-    task.proofSchemaId === "landing-page-file" &&
-    artifact.artifactKind === "blocker" &&
-    artifact.artifactRole === "validation" &&
-    artifact.artifactSubtype.includes("screenshot") &&
-    hasFileProof(proofs) &&
-    hasBrowserSandboxStatus(artifact.payload)
-  );
-}
-
-function hasFileProof(proofs: Proof[]): boolean {
-  return proofs.some((proof) => proof.type === "file");
-}
-
-function hasBrowserSandboxStatus(payload: unknown): boolean {
-  if (!isRecord(payload)) {
+  if (artifact.artifactKind !== "blocker" || !isRecord(artifact.payload)) {
     return false;
   }
+  const blockerClass = artifact.payload.blocker_class ?? artifact.payload.blockerClass;
+  const capability = artifact.payload.capability;
+  return blockerClass === "environment_blocked" && typeof capability === "string" && capability.length > 0;
+}
 
-  const status = payload.status;
-  if (status === "blocked_by_browser_sandbox") {
-    return true;
+/**
+ * Read an Environment-Blocked Blocker's checkable claim from `.auto-crop/business-artifact.json`.
+ * The URL to check is resolved as `payload.target_url` -> `payload.server_validation.url` ->
+ * the first `url` (local-url) proof.
+ */
+export function readEnvironmentBlockerClaim(workspacePath: string, proofs: Proof[]): EnvironmentBlockerClaim | null {
+  const sourcePath = join(workspacePath, BUSINESS_ARTIFACT_PATH);
+  if (!existsSync(sourcePath)) {
+    return null;
   }
 
-  const proof = payload.proof;
-  return isRecord(proof) && proof.status === "blocked_by_browser_sandbox";
+  let json: unknown;
+  try {
+    json = JSON.parse(readFileSync(sourcePath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!isRecord(json)) {
+    return null;
+  }
+
+  const artifactKind = json.artifactKind ?? json.artifact_kind;
+  const payload = json.payload;
+  if (artifactKind !== "blocker" || !isRecord(payload)) {
+    return null;
+  }
+  if (!isVerifiableEnvironmentBlocker({ artifactKind: "blocker", payload })) {
+    return null;
+  }
+
+  const serverValidation = isRecord(payload.server_validation) ? payload.server_validation : null;
+  const url =
+    firstUrlString(payload.target_url) ??
+    firstUrlString(serverValidation?.url) ??
+    proofs.find((proof) => proof.type === "url")?.uri ??
+    null;
+
+  return { capability: payload.capability as string, url };
+}
+
+/**
+ * Independently check an Environment-Blocked Blocker's claim. For `browser_screenshot` the runtime
+ * fetches the declared URL and expects a 2xx response; anything else keeps the blocker in place.
+ */
+export async function verifyEnvironmentBlockerClaim(input: {
+  claim: EnvironmentBlockerClaim;
+  fetchImpl?: typeof fetch;
+}): Promise<EnvironmentBlockerVerification> {
+  const { capability, url } = input.claim;
+
+  if (!VERIFIABLE_ENVIRONMENT_BLOCKER_CAPABILITIES.has(capability)) {
+    return { capability, verified: false, checkedUrl: url, reason: "unsupported_capability" };
+  }
+  if (!url) {
+    return { capability, verified: false, checkedUrl: null, reason: "no_verifiable_url" };
+  }
+
+  const fetchImpl = input.fetchImpl ?? fetch;
+  try {
+    const response = await fetchImpl(url, { method: "GET" });
+    return {
+      capability,
+      verified: response.ok,
+      checkedUrl: url,
+      status: response.status,
+      reason: response.ok ? undefined : "non_2xx",
+    };
+  } catch {
+    return { capability, verified: false, checkedUrl: url, reason: "fetch_failed" };
+  }
+}
+
+function firstUrlString(value: unknown): string | null {
+  return typeof value === "string" && /^https?:\/\//i.test(value.trim()) ? value.trim() : null;
 }
 
 function classifyLegacyArtifactType(

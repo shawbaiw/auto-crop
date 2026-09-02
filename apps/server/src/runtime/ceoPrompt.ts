@@ -1,5 +1,6 @@
 import type { PolicyMode } from "../policies/policy";
 import type { Playbook } from "../playbooks/types";
+import { isCollectableSchema } from "./proof";
 
 export type CeoPromptAgent = {
   id: string;
@@ -17,6 +18,10 @@ export type BuildCeoPromptInput = {
 };
 
 export function buildCeoPrompt(input: BuildCeoPromptInput): string {
+  // Only advertise Collectable Proof Schemas: a schema with no runtime collector is a landmine
+  // because tasks that use it can never record Proof.
+  const collectableProofSchemas = input.playbook.proofSchemas.filter(isCollectableSchema);
+
   return [
     "# CEO Office",
     "",
@@ -41,7 +46,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
     ),
     "",
     "## Allowed Proof Schemas",
-    ...input.playbook.proofSchemas.map(
+    ...collectableProofSchemas.map(
       (proofSchema) =>
         `- ${proofSchema.id}: ${proofSchema.description} (${proofSchema.acceptedTypes.join(", ")})`,
     ),
@@ -112,7 +117,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
               ],
             },
           ],
-          proofSchemas: input.playbook.proofSchemas,
+          proofSchemas: collectableProofSchemas,
           tasks: [
             {
               key: "task_key",
@@ -124,7 +129,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
               descriptionText: { en: "Task description", zh: "任务描述" },
               assigneeAgentId: "agent-id",
               requiredCapabilities: ["writing"],
-              proofSchemaId: input.playbook.proofSchemas[0]?.id ?? "proof-schema-id",
+              proofSchemaId: collectableProofSchemas[0]?.id ?? "proof-schema-id",
               riskLevel: "low",
               dependsOnTaskKeys: [],
               handoffContract: "Specific consumable deliverable this task must produce for downstream work.",

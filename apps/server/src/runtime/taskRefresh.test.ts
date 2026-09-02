@@ -290,7 +290,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
   });
 
-  it("recovers landing-page file proof from blocked non-reviewable screenshot sandbox artifacts", () => {
+  it("does not degrade an unverified screenshot sandbox blocker during proof recovery", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);
     writeFileSync(join(workspacePath, "index.html"), "<main>Auto Crop Workspace</main>", "utf8");
@@ -315,18 +315,10 @@ describe("refreshTaskDependencyState proof recovery", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(result.task.status).toBe("review");
-    expect(result.recovery).toEqual({
-      status: "recovered",
-      message: "Found checkable proof and submitted it to CEO Office for review.",
-    });
-    expect(result.businessArtifacts?.[0]).toMatchObject({
-      artifactKind: "deliverable",
-      artifactRole: "implementation",
-      artifactSubtype: "prototype_implementation",
-      reviewStatus: "unreviewed",
-      validationStatus: "valid",
-    });
+    // Render evidence is never accepted on the agent's word: without an independent runtime check
+    // the blocker stands and the task stays blocked instead of reaching CEO review.
+    expect(result.task.status).toBe("blocked");
+    expect(result.businessArtifacts?.[0]?.artifactKind).toBe("blocker");
   });
 
   it("does not recover unrelated failed tasks", () => {
@@ -393,6 +385,42 @@ describe("refreshTaskDependencyState proof recovery", () => {
     expect(result.recovery?.message).toContain("top-level workspace *.diff/*.patch");
     expect(result.recovery?.message).toContain(".auto-crop/business-artifact.json is not diff proof");
     expect(fixture.repositories.listProofsForTask("task_1")).toEqual([]);
+  });
+
+  it("refuses to refresh a task that has reached the recovery ceiling", () => {
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        status: "blocked",
+        latestFailureReason: "retry_exhausted",
+        latestFailureMessage: "Task blocked: Record implementation changes / retry_exhausted.",
+      },
+    ]);
+    for (const id of ["run_1", "run_2", "run_3"]) {
+      fixture.repositories.createAgentRun({
+        id,
+        taskId: "task_1",
+        agentId: "codex",
+        status: "failed",
+        logPath: "agent.log",
+        startedAt: "2026-08-25T00:00:00.000Z",
+        finishedAt: "2026-08-25T00:01:00.000Z",
+        executionProfileName: "short",
+        requestedTimeoutMs: 1_000,
+        effectiveTimeoutMs: 1_000,
+        failureReason: "no_proof",
+        failureMessage: "no_proof",
+      });
+    }
+
+    expect(() =>
+      refreshTaskDependencyState({
+        repositories: fixture.repositories,
+        taskId: "task_1",
+        now: () => new Date("2026-08-25T00:00:00.000Z"),
+        createId: createSequentialIdFactory(),
+      }),
+    ).toThrow(/retry_exhausted/i);
   });
 });
 

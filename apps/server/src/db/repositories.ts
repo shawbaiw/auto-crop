@@ -765,6 +765,40 @@ export function createRepositories(database: DatabaseClient) {
         .run(status, finishedAt, outcome.failureReason ?? null, outcome.failureMessage ?? null, id);
     },
 
+    countAgentRunsForTask(taskId: string): number {
+      // Counts attempts since the last reset marker (if any) so agent-run history is preserved
+      // for diagnosis (ADR 0002) rather than deleted when the count is reset.
+      const marker = database
+        .prepare("SELECT value FROM runtime_state WHERE key = ?")
+        .get(taskAttemptsResetKey(taskId)) as { value: string } | undefined;
+      const row = (
+        marker
+          ? database
+              .prepare(
+                `SELECT COUNT(*) AS count FROM agent_runs
+                 WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')
+                   AND (started_at IS NULL OR started_at > ?)`,
+              )
+              .get(taskId, marker.value)
+          : database
+              .prepare(
+                "SELECT COUNT(*) AS count FROM agent_runs WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')",
+              )
+              .get(taskId)
+      ) as { count: number };
+      return row.count;
+    },
+
+    markTaskAttemptsReset(taskId: string, at: string): void {
+      database
+        .prepare(
+          `INSERT INTO runtime_state (key, value)
+           VALUES (?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        )
+        .run(taskAttemptsResetKey(taskId), at);
+    },
+
     listRunningAgentRuns(companyId: string): AgentRun[] {
       const rows = database
         .prepare(
@@ -1328,6 +1362,10 @@ function mapTaskDependency(row: TaskDependencyRow): TaskDependency {
     ...(row.handoff_contract ? { handoffContract: row.handoff_contract } : {}),
     ...(row.handoff_contract_text ? { handoffContractText: parseLocalizedText(row.handoff_contract_text) } : {}),
   };
+}
+
+function taskAttemptsResetKey(taskId: string): string {
+  return `task_attempts_reset:${taskId}`;
 }
 
 function stringifyLocalizedText(text: LocalizedText | null | undefined): string | null {

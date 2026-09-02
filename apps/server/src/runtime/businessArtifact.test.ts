@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Proof, Task } from "@auto-crop/core";
-import { captureBusinessArtifact } from "./businessArtifact";
+import {
+  captureBusinessArtifact,
+  isVerifiableEnvironmentBlocker,
+  readEnvironmentBlockerClaim,
+  verifyEnvironmentBlockerClaim,
+} from "./businessArtifact";
 
 const createdDirs: string[] = [];
 
@@ -87,9 +92,7 @@ describe("captureBusinessArtifact", () => {
     });
   });
 
-  it("downgrades browser-sandbox screenshot blockers to reviewable landing page deliverables when file proof exists", () => {
-    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
-    createdDirs.push(workspacePath);
+  function writeEnvironmentBlockerArtifact(workspacePath: string): void {
     mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
     writeFileSync(join(workspacePath, "index.html"), "<main>Auto Crop Workspace</main>", "utf8");
     writeFileSync(
@@ -100,55 +103,138 @@ describe("captureBusinessArtifact", () => {
         artifact_subtype: "prototype_screenshot_validation",
         task_type: "local_prototype_exposure",
         payload: {
-          proof: {
-            status: "blocked_by_browser_sandbox",
-            screenshot_path: null,
-          },
+          blocker_class: "environment_blocked",
+          capability: "browser_screenshot",
+          target_url: "http://localhost:4173/",
+          proof: { status: "blocked_by_browser_sandbox", screenshot_path: null },
         },
-        lineage: {
-          proof_schema: "landing-page-file",
-        },
+        lineage: { proof_schema: "landing-page-file" },
       }),
       "utf8",
     );
+  }
+
+  it("keeps an environment-blocked blocker in place when its claim is not verified", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    writeEnvironmentBlockerArtifact(workspacePath);
 
     const artifact = captureBusinessArtifact({
-      task: {
-        ...createTaskRecord(),
-        title: "Execute Provide local prototype access",
-        description: "Expose the working prototype through a local development URL and capture a screenshot.",
-        proofSchemaId: "landing-page-file",
-      },
-      proofs: [
-        {
-          ...createProofRecord(),
-          type: "file",
-          uri: join(workspacePath, "index.html"),
-          summary: "File proof: index.html",
-        },
-      ],
+      task: { ...createTaskRecord(), proofSchemaId: "landing-page-file" },
+      proofs: [{ ...createProofRecord(), type: "file", uri: join(workspacePath, "index.html") }],
       workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact.artifactKind).toBe("blocker");
+  });
+
+  it("degrades an environment-blocked blocker to a reviewable deliverable when the runtime verifies the claim", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    writeEnvironmentBlockerArtifact(workspacePath);
+
+    const artifact = captureBusinessArtifact({
+      task: { ...createTaskRecord(), proofSchemaId: "landing-page-file" },
+      proofs: [{ ...createProofRecord(), type: "file", uri: join(workspacePath, "index.html") }],
+      workspacePath,
+      environmentBlockerVerification: {
+        capability: "browser_screenshot",
+        verified: true,
+        checkedUrl: "http://localhost:4173/",
+        status: 200,
+      },
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: () => "business_artifact_1",
     });
 
     expect(artifact).toMatchObject({
       artifactKind: "deliverable",
-      artifactRole: "implementation",
-      artifactSubtype: "prototype_implementation",
-      artifactType: "implementation_summary",
-      taskType: "local_prototype_exposure",
       validationStatus: "valid",
       reviewStatus: "unreviewed",
     });
     expect(artifact.payload).toMatchObject({
-      proof: {
-        status: "blocked_by_browser_sandbox",
-      },
       validationLimits: {
-        screenshotCapture: "blocked_by_browser_sandbox",
+        capability: "browser_screenshot",
+        status: "degraded_from_environment_blocked",
+        checkedUrl: "http://localhost:4173/",
       },
     });
+  });
+
+  it("isVerifiableEnvironmentBlocker requires blocker_class and capability", () => {
+    expect(
+      isVerifiableEnvironmentBlocker({ artifactKind: "blocker", payload: { blocker_class: "environment_blocked", capability: "browser_screenshot" } }),
+    ).toBe(true);
+    expect(isVerifiableEnvironmentBlocker({ artifactKind: "blocker", payload: { capability: "browser_screenshot" } })).toBe(false);
+    expect(isVerifiableEnvironmentBlocker({ artifactKind: "deliverable", payload: { blocker_class: "environment_blocked", capability: "x" } })).toBe(false);
+  });
+
+  it("readEnvironmentBlockerClaim resolves the check URL by precedence", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    writeEnvironmentBlockerArtifact(workspacePath);
+
+    expect(readEnvironmentBlockerClaim(workspacePath, [])).toEqual({
+      capability: "browser_screenshot",
+      url: "http://localhost:4173/",
+    });
+  });
+
+  it("readEnvironmentBlockerClaim falls back to a local-url proof", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "blocker",
+        artifact_role: "validation",
+        artifact_subtype: "screenshot",
+        task_type: "t",
+        payload: { blocker_class: "environment_blocked", capability: "browser_screenshot" },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    expect(
+      readEnvironmentBlockerClaim(workspacePath, [{ ...createProofRecord(), type: "url", uri: "http://localhost:5173" }]),
+    ).toEqual({ capability: "browser_screenshot", url: "http://localhost:5173" });
+  });
+
+  it("verifyEnvironmentBlockerClaim passes on a 2xx response and fails otherwise", async () => {
+    const ok = await verifyEnvironmentBlockerClaim({
+      claim: { capability: "browser_screenshot", url: "http://localhost:4173/" },
+      fetchImpl: async () => new Response("ok", { status: 200 }),
+    });
+    expect(ok.verified).toBe(true);
+
+    const notFound = await verifyEnvironmentBlockerClaim({
+      claim: { capability: "browser_screenshot", url: "http://localhost:4173/" },
+      fetchImpl: async () => new Response("nope", { status: 404 }),
+    });
+    expect(notFound.verified).toBe(false);
+    expect(notFound.reason).toBe("non_2xx");
+
+    const threw = await verifyEnvironmentBlockerClaim({
+      claim: { capability: "browser_screenshot", url: "http://localhost:4173/" },
+      fetchImpl: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    });
+    expect(threw.verified).toBe(false);
+    expect(threw.reason).toBe("fetch_failed");
+  });
+
+  it("verifyEnvironmentBlockerClaim refuses unknown capabilities and missing URLs", async () => {
+    expect(
+      (await verifyEnvironmentBlockerClaim({ claim: { capability: "time_travel", url: "http://x/" } })).reason,
+    ).toBe("unsupported_capability");
+    expect(
+      (await verifyEnvironmentBlockerClaim({ claim: { capability: "browser_screenshot", url: null } })).reason,
+    ).toBe("no_verifiable_url");
   });
 
   it("infers kind and role for an unknown legacy artifactType", () => {

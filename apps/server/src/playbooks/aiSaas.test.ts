@@ -19,7 +19,7 @@ describe("AI SaaS playbook", () => {
     expect(aiSaasPlaybook.reviewCriteria.length).toBeGreaterThan(0);
   });
 
-  it("includes proof schemas for first-version SaaS proof", () => {
+  it("includes only Collectable Proof Schemas for first-version SaaS proof", () => {
     expect(aiSaasPlaybook.proofSchemas.map((proofSchema) => proofSchema.id)).toEqual([
       "product-brief",
       "research-report",
@@ -27,7 +27,6 @@ describe("AI SaaS playbook", () => {
       "repo-diff",
       "test-output",
       "local-url",
-      "screenshot",
       "deployment-url",
     ]);
   });

@@ -197,7 +197,6 @@ export function DepartmentWorkspace({
                   onDraftChange={setCeoIntakeDraft}
                   onCreateCeoReviewDecision={onCreateCeoReviewDecision}
                   onConfirmHumanAction={onConfirmHumanAction}
-                  onRefreshTask={onRefreshTask}
                   onSelectDepartment={setSelectedRoleId}
                   onSubmit={onCreateCeoIntake}
                   pendingItems={ceoPendingItems}
@@ -282,7 +281,6 @@ function CeoIntakeWorkspace({
   onCreateCeoReviewDecision,
   onConfirmHumanAction,
   onDraftChange,
-  onRefreshTask,
   onSelectDepartment,
   onSubmit,
   pendingItems,
@@ -301,7 +299,6 @@ function CeoIntakeWorkspace({
   onCreateCeoReviewDecision?: DepartmentWorkspaceProps["onCreateCeoReviewDecision"];
   onConfirmHumanAction?: DepartmentWorkspaceProps["onConfirmHumanAction"];
   onDraftChange: (value: string) => void;
-  onRefreshTask?: (taskId: string) => void;
   onSelectDepartment: (departmentId: string) => void;
   onSubmit?: (body: string) => Promise<void> | void;
   pendingItems: CeoPendingItem[];
@@ -357,7 +354,6 @@ function CeoIntakeWorkspace({
         <CeoTaskReviewDetail
           item={selectedPendingItem}
           onDecision={handleDecision}
-          onRefreshTask={onRefreshTask}
           proofs={proofsByTask.get(selectedPendingItem.task.id) ?? []}
           businessArtifacts={artifactsByTask.get(selectedPendingItem.task.id) ?? []}
         />
@@ -534,7 +530,6 @@ function CeoPendingQueue({
 function CeoTaskReviewDetail({
   item,
   onDecision,
-  onRefreshTask,
   proofs,
   businessArtifacts,
 }: {
@@ -545,7 +540,6 @@ function CeoTaskReviewDetail({
     returnReason?: CeoReviewReturnReason;
     note?: string;
   }) => Promise<void>;
-  onRefreshTask?: (taskId: string) => void;
   proofs: ProofSummary[];
   businessArtifacts: BusinessArtifactSummary[];
 }) {
@@ -680,7 +674,6 @@ function CeoTaskReviewDetail({
           </label>
           {error ? <p role="alert" className="warning-message">{error}</p> : null}
           <div className="ceo-task-review-detail__actions">
-            <RetroButton onClick={() => onRefreshTask?.(item.task.id)}>{t("department.viewTask")}</RetroButton>
             {canApprove ? (
               <RetroButton
                 aria-busy={submittingAction === "approve"}

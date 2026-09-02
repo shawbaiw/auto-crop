@@ -50,6 +50,30 @@ describe("task recovery", () => {
     );
   });
 
+  it("refuses to recover a task that has exhausted its recovery attempts", () => {
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        status: "blocked",
+        latestFailureReason: "retry_exhausted",
+        latestFailureMessage: "Task blocked: Record implementation changes / retry_exhausted.",
+      },
+    ]);
+    for (const id of ["run_1", "run_2", "run_3"]) {
+      fixture.repositories.createAgentRun({ ...createAgentRunRecord(), id, status: "failed" });
+    }
+
+    expect(() =>
+      recoverTask({
+        repositories: fixture.repositories,
+        taskId: "task_1",
+        now: () => new Date("2026-08-25T00:03:01.000Z"),
+        createId: createSequentialIdFactory(),
+      }),
+    ).toThrow(/retry_exhausted/i);
+    expect(fixture.repositories.getTask("task_1")?.status).toBe("blocked");
+  });
+
   it("requeues a failed timeout task when there is no Partial Output", () => {
     const fixture = createFixture([
       {
