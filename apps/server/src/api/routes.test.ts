@@ -722,6 +722,7 @@ describe("API routes", () => {
         departmentId: string;
         businessArtifactId: string | null;
         outcome: string;
+        acceptanceProvenance: string | null;
         dependencyImpact: { nextStepValidationErrors?: string[] };
         nextStepItems: Array<{ type: string; label: string; ownerDepartmentId: string | null }>;
         createdAt: string;
@@ -741,6 +742,7 @@ describe("API routes", () => {
         departmentId: approvedTask!.departmentId,
         businessArtifactId: "business_artifact_1",
         outcome: "accepted",
+        acceptanceProvenance: "manual_ceo_review",
         nextStepItems: [
           expect.objectContaining({
             type: "human_action",

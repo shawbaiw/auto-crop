@@ -35,6 +35,7 @@ export const agentFailureReasonSchema = z.enum([
 export const taskEventTypeSchema = z.enum([
   "task_started",
   "task_review",
+  "automatic_acceptance",
   "ceo_review_decision",
   "proof_recovered",
   "task_failed",

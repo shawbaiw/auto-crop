@@ -195,6 +195,7 @@ export function migrate(database: DatabaseClient): void {
       key_result_id TEXT REFERENCES key_results(id) ON DELETE SET NULL,
       business_artifact_id TEXT REFERENCES business_artifacts(id) ON DELETE SET NULL,
       outcome TEXT NOT NULL,
+      acceptance_provenance TEXT,
       dependency_impact TEXT NOT NULL,
       next_step_items TEXT NOT NULL,
       vision_gaps TEXT NOT NULL,
@@ -251,6 +252,7 @@ export function migrate(database: DatabaseClient): void {
   migrateAgentRunsExecutionFields(database);
   migrateTaskDependencyContracts(database);
   migrateBusinessArtifactClassificationFields(database);
+  migrateTaskCompletionAcceptanceProvenance(database);
   migrateReplanProposalDiagnostics(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
@@ -279,6 +281,11 @@ function migrateReplanProposalDiagnostics(database: DatabaseClient): void {
   addColumnIfMissing(database, columns, "replan_proposals", "planner_prompt_path TEXT");
   addColumnIfMissing(database, columns, "replan_proposals", "planner_failure_reason TEXT");
   addColumnIfMissing(database, columns, "replan_proposals", "planner_failure_message TEXT");
+}
+
+function migrateTaskCompletionAcceptanceProvenance(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "task_completion_events");
+  addColumnIfMissing(database, columns, "task_completion_events", "acceptance_provenance TEXT");
 }
 
 function migrateTaskPosition(database: DatabaseClient): void {

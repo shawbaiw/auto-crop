@@ -2,6 +2,7 @@ import type {
   BusinessArtifact,
   KeyResult,
   Task,
+  TaskAcceptanceProvenance,
   TaskEvent,
   TaskEventType,
 } from "@auto-crop/core";
@@ -19,6 +20,7 @@ export function acceptTaskBusinessArtifact(input: {
   repositories: ReturnType<typeof createRepositories>;
   task: Task;
   artifact: BusinessArtifact;
+  acceptanceProvenance: TaskAcceptanceProvenance;
   eventType: TaskEventType;
   eventMessage: string;
   keyResultProgress?: {
@@ -78,6 +80,7 @@ export function acceptTaskBusinessArtifact(input: {
     task: input.task,
     businessArtifact: input.artifact,
     outcome: "accepted",
+    acceptanceProvenance: input.acceptanceProvenance,
     dependencyImpact: {
       updatedTasks: dependencyCascade?.updatedTasks.map((update) => ({
         taskId: update.task.id,

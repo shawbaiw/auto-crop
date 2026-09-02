@@ -1,10 +1,11 @@
-import { nextStepItemSeveritySchema, nextStepItemTypeSchema, type BusinessArtifact, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
+import { nextStepItemSeveritySchema, nextStepItemTypeSchema, type BusinessArtifact, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 
 export function recordTaskCompletionEvent(input: {
   repositories: ReturnType<typeof createRepositories>;
   task: Task;
   outcome: TaskCompletionOutcome;
+  acceptanceProvenance?: TaskAcceptanceProvenance | null;
   businessArtifact?: BusinessArtifact | null;
   dependencyImpact?: unknown;
   nextStepItems?: unknown[];
@@ -23,6 +24,7 @@ export function recordTaskCompletionEvent(input: {
     keyResultId: input.task.keyResultId,
     businessArtifactId: input.businessArtifact?.id ?? null,
     outcome: input.outcome,
+    acceptanceProvenance: input.acceptanceProvenance ?? null,
     dependencyImpact: mergeNextStepErrors(input.dependencyImpact ?? {}, [...proposal.errors, ...validatedNextSteps.errors]),
     nextStepItems: validatedNextSteps.items,
     visionGaps: input.visionGaps ?? [],

@@ -111,6 +111,7 @@ export type TaskCompletionEventSummary = {
   keyResultId: string | null;
   businessArtifactId: string | null;
   outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan";
+  acceptanceProvenance: "manual_ceo_review" | "automatic_acceptance" | null;
   dependencyImpact: unknown;
   nextStepItems: NextStepItemSummary[];
   visionGaps: unknown[];

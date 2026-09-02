@@ -1067,6 +1067,7 @@ function createCeoReviewDecision(input: {
       repositories: input.repositories,
       task,
       artifact: artifact!,
+      acceptanceProvenance: "manual_ceo_review",
       eventType: "ceo_review_decision",
       eventMessage: `CEO Office approved task: ${task.title}.`,
       keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },

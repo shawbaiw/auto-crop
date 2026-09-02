@@ -6,10 +6,10 @@ Blocked by: 01: Extract Shared Business Acceptance Path; 02: Record Task Complet
 
 Status: ready-for-agent
 
-- [ ] Low-risk internal valid deliverables can be automatically accepted.
-- [ ] Automatic Acceptance records acceptance provenance without creating a fake CEO Review Decision.
-- [ ] Automatic Acceptance reuses the shared business acceptance path.
-- [ ] Dependency Readiness accepts downstream work whether upstream acceptance came from manual CEO Review or Automatic Acceptance.
-- [ ] Automatic Acceptance is forbidden for public launch, account permissions, spending, legal or compliance exposure, direction changes, user data exposure, credentials, and irreversible external actions.
-- [ ] Automatic Acceptance is forbidden for missing, invalid, stale, blocked, drifted, not-reviewable, or non-current Business Artifacts.
-- [ ] Medium-risk and high-risk tasks do not auto-accept in the first implementation.
+- [x] Low-risk internal valid deliverables can be automatically accepted.
+- [x] Automatic Acceptance records acceptance provenance without creating a fake CEO Review Decision.
+- [x] Automatic Acceptance reuses the shared business acceptance path.
+- [x] Dependency Readiness accepts downstream work whether upstream acceptance came from manual CEO Review or Automatic Acceptance.
+- [x] Automatic Acceptance is forbidden for public launch, account permissions, spending, legal or compliance exposure, direction changes, user data exposure, credentials, and irreversible external actions.
+- [x] Automatic Acceptance is forbidden for missing, invalid, stale, blocked, drifted, not-reviewable, or non-current Business Artifacts.
+- [x] Medium-risk and high-risk tasks do not auto-accept in the first implementation.

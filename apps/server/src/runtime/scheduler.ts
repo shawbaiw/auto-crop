@@ -11,6 +11,8 @@ import type {
   TaskProgressEvent,
   TaskStatus,
 } from "@auto-crop/core";
+import { evaluateAutomaticAcceptance } from "./automaticAcceptance";
+import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { captureBusinessArtifact } from "./businessArtifact";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
@@ -471,11 +473,44 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             return;
           }
 
-          input.repositories.updateTaskStatus(task.id, "review");
           if (task.artifactWorkspacePath && task.artifactWorkspacePath !== runWorkspacePath) {
             input.repositories.updateTaskArtifactWorkspacePath(task.id, runWorkspacePath);
           }
           input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
+          const automaticAcceptance = evaluateAutomaticAcceptance({ task, artifact: businessArtifact });
+          if (automaticAcceptance.kind === "accept") {
+            const accepted = acceptTaskBusinessArtifact({
+              repositories: input.repositories,
+              task,
+              artifact: businessArtifact,
+              acceptanceProvenance: "automatic_acceptance",
+              eventType: "automatic_acceptance",
+              eventMessage: `Automatic Acceptance accepted task: ${task.title}.`,
+              keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
+              dependencyCascade: { maxDepth: 2 },
+              requestSchedulerWake: () => undefined,
+              now,
+              createId,
+            });
+            emitTaskEvent(input, accepted.event);
+            for (const update of accepted.dependencyCascade?.updatedTasks ?? []) {
+              if (update.event) {
+                emitTaskEvent(input, update.event);
+              }
+            }
+            appendTaskProgressEvent(input, {
+              task,
+              step: "complete",
+              status: "complete",
+              label: "Automatically accepted",
+              subjectTaskId: task.id,
+            });
+            emitParentTaskAggregationEvents(input, task);
+            result.completed.push(task.id);
+            return;
+          }
+
+          input.repositories.updateTaskStatus(task.id, "review");
           appendTaskProgressEvent(input, {
             task,
             step: "awaiting_review",

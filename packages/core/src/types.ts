@@ -92,6 +92,7 @@ export type AgentFailureReason =
 export type TaskEventType =
   | "task_started"
   | "task_review"
+  | "automatic_acceptance"
   | "ceo_review_decision"
   | "proof_recovered"
   | "task_failed"
@@ -119,6 +120,7 @@ export type TaskProgressStep =
   | "needs_ceo_reassignment";
 export type TaskProgressStatus = "complete" | "current" | "waiting" | "blocked";
 export type TaskCompletionOutcome = "accepted" | "blocked" | "failed_to_review" | "needs_replan";
+export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance";
 export type NextStepItemType =
   | "automatic_downstream_task"
   | "human_action"
@@ -336,6 +338,7 @@ export type TaskCompletionEvent = {
   keyResultId: string | null;
   businessArtifactId: string | null;
   outcome: TaskCompletionOutcome;
+  acceptanceProvenance?: TaskAcceptanceProvenance | null;
   dependencyImpact: unknown;
   nextStepItems: NextStepItem[];
   visionGaps: unknown[];
