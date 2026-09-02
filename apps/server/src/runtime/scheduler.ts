@@ -16,6 +16,7 @@ import {
   MAX_TASK_ATTEMPTS,
   retryExhaustedFailureMessage,
   taskAttemptCount,
+  terminateAsRetryExhausted as terminateTaskAsRetryExhausted,
 } from "./boundedRecovery";
 import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import {
@@ -982,46 +983,26 @@ function terminateAsRetryExhausted(
   now: () => Date,
   createId: (prefix: string) => string,
 ): string[] {
-  const failure = retryExhaustedFailureMessage(task);
-  input.repositories.updateTaskStatus(task.id, "blocked");
-  input.repositories.updateTaskExecutionSummary(task.id, {
-    latestFailureReason: "retry_exhausted",
-    latestFailureMessage: failure,
-  });
   if (agentRunId) {
     input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
       failureReason: "retry_exhausted",
-      failureMessage: failure,
+      failureMessage: retryExhaustedFailureMessage(task),
     });
   }
-  appendAndEmitTaskEvent(input, {
+  const blockedConsumerIds = blockDirectDependencyConsumers(input, task);
+  const termination = terminateTaskAsRetryExhausted({
+    repositories: input.repositories,
     task,
-    type: "task_blocked",
-    failureReason: "retry_exhausted",
-    failureMessage: failure,
-    message: failure,
-    status: "blocked",
     executionProfileName: timeoutResolution.executionProfile.name,
     requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
     effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-  });
-  appendTaskProgressEvent(input, {
-    task,
-    step: "blocked",
-    status: "blocked",
-    label: "Recovery ceiling reached",
-    detail: failure,
-    subjectTaskId: task.id,
-  });
-  const blockedConsumerIds = blockDirectDependencyConsumers(input, task);
-  recordTaskCompletionEvent({
-    repositories: input.repositories,
-    task,
-    outcome: "blocked",
     dependencyImpact: { blockedTaskIds: blockedConsumerIds, reason: "retry_exhausted" },
     now,
     createId,
   });
+  if (termination) {
+    emitTaskEvent(input, termination.taskEvent);
+  }
   emitParentTaskAggregationEvents(input, task);
   return blockedConsumerIds;
 }

@@ -9,7 +9,7 @@ import type {
   TaskStatus,
 } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
-import { isRetryExhausted, retryExhaustedRefusalMessage } from "./boundedRecovery";
+import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhausted } from "./boundedRecovery";
 import { captureBusinessArtifact } from "./businessArtifact";
 import { refreshDependencyTasks } from "./dependencyCascade";
 import { refreshParentTaskAggregationTask } from "./parentTaskAggregation";
@@ -49,6 +49,13 @@ export function refreshTaskDependencyState(
   }
 
   if (isRetryExhausted(input.repositories, task.id)) {
+    // Land it in the CEO Blocked Queue if an earlier path left it merely `failed`, then refuse.
+    terminateAsRetryExhausted({
+      repositories: input.repositories,
+      task,
+      now: input.now,
+      createId: input.createId,
+    });
     throw new Error(retryExhaustedRefusalMessage(task));
   }
 

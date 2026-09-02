@@ -422,6 +422,49 @@ describe("refreshTaskDependencyState proof recovery", () => {
       }),
     ).toThrow(/retry_exhausted/i);
   });
+
+  it("routes a still-failed exhausted task into the CEO Blocked Queue before refusing", () => {
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        status: "failed",
+        latestFailureReason: "no_proof",
+        latestFailureMessage: "Task failed: Record implementation changes / no_proof.",
+      },
+    ]);
+    for (const id of ["run_1", "run_2", "run_3"]) {
+      fixture.repositories.createAgentRun({
+        id,
+        taskId: "task_1",
+        agentId: "codex",
+        status: "failed",
+        logPath: "agent.log",
+        startedAt: "2026-08-25T00:00:00.000Z",
+        finishedAt: "2026-08-25T00:01:00.000Z",
+        executionProfileName: "short",
+        requestedTimeoutMs: 1_000,
+        effectiveTimeoutMs: 1_000,
+        failureReason: "no_proof",
+        failureMessage: "no_proof",
+      });
+    }
+
+    expect(() =>
+      refreshTaskDependencyState({
+        repositories: fixture.repositories,
+        taskId: "task_1",
+        now: () => new Date("2026-08-25T00:00:00.000Z"),
+        createId: createSequentialIdFactory(),
+      }),
+    ).toThrow(/retry_exhausted/i);
+
+    const task = fixture.repositories.getTask("task_1");
+    expect(task?.status).toBe("blocked");
+    expect(task?.latestFailureReason).toBe("retry_exhausted");
+    expect(fixture.repositories.listTaskEventsForCompany("company_1")).toContainEqual(
+      expect.objectContaining({ taskId: "task_1", type: "task_blocked", failureReason: "retry_exhausted" }),
+    );
+  });
 });
 
 function createFixture(tasks: Task[]) {

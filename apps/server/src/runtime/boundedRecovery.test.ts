@@ -3,7 +3,13 @@ import type { AgentRun } from "@auto-crop/core";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
-import { MAX_TASK_ATTEMPTS, isRetryExhausted, resetTaskAttempts, taskAttemptCount } from "./boundedRecovery";
+import {
+  MAX_TASK_ATTEMPTS,
+  isRetryExhausted,
+  resetTaskAttempts,
+  taskAttemptCount,
+  terminateAsRetryExhausted,
+} from "./boundedRecovery";
 
 function fixture() {
   const client = createDatabaseClient(":memory:");
@@ -90,6 +96,48 @@ describe("bounded recovery", () => {
     expect(taskAttemptCount(repositories, "task_1")).toBe(0);
     repositories.createAgentRun(run("r4", "failed", "2026-09-01T00:06:00.000Z"));
     expect(taskAttemptCount(repositories, "task_1")).toBe(1);
+    client.close();
+  });
+
+  it("terminateAsRetryExhausted moves a failed task to blocked / retry_exhausted with Blocked Queue signals", () => {
+    const { repositories, client } = fixture();
+    repositories.updateTaskStatus("task_1", "failed");
+    repositories.updateTaskExecutionSummary("task_1", {
+      latestFailureReason: "no_proof",
+      latestFailureMessage: "Task failed: T / no_proof.",
+    });
+
+    const result = terminateAsRetryExhausted({
+      repositories,
+      task: repositories.getTask("task_1")!,
+      now: () => new Date("2026-09-01T01:00:00.000Z"),
+      createId: (() => {
+        let n = 0;
+        return (prefix: string) => `${prefix}_${(n += 1)}`;
+      })(),
+    });
+
+    expect(result?.taskEvent).toMatchObject({ type: "task_blocked", failureReason: "retry_exhausted" });
+    expect(result?.progressEvent).toMatchObject({ step: "blocked", label: "Recovery ceiling reached" });
+    expect(repositories.getTask("task_1")).toMatchObject({ status: "blocked", latestFailureReason: "retry_exhausted" });
+    expect(
+      repositories.listTaskCompletionEventsForCompany("company_1").some((event) => event.outcome === "blocked"),
+    ).toBe(true);
+    client.close();
+  });
+
+  it("terminateAsRetryExhausted is a no-op when the task is already blocked / retry_exhausted", () => {
+    const { repositories, client } = fixture();
+    repositories.updateTaskStatus("task_1", "blocked");
+    repositories.updateTaskExecutionSummary("task_1", {
+      latestFailureReason: "retry_exhausted",
+      latestFailureMessage: "already blocked",
+    });
+
+    const result = terminateAsRetryExhausted({ repositories, task: repositories.getTask("task_1")! });
+
+    expect(result).toBeNull();
+    expect(repositories.listTaskEventsForCompany("company_1")).toEqual([]);
     client.close();
   });
 });
