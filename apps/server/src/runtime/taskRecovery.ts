@@ -1,6 +1,8 @@
 import type { Proof, ProofSchema, Task, TaskEvent, TaskProgressEvent } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { isRetryExhausted, retryExhaustedRefusalMessage } from "./boundedRecovery";
 import { formatExecutionBudget } from "./executionProfile";
+import { buildProofContractInstructions } from "./proofContract";
 import { recoverProofIfPossible } from "./taskRefresh";
 
 export type ReconcileStaleRunningTasksInput = {
@@ -130,6 +132,10 @@ export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
   const currentTask = input.repositories.getTask(input.taskId);
   if (!currentTask) {
     throw new Error(`Task disappeared during recovery: ${input.taskId}`);
+  }
+
+  if (isRetryExhausted(input.repositories, currentTask.id)) {
+    throw new Error(retryExhaustedRefusalMessage(currentTask));
   }
 
   const proofRecoveryResult = recoverProofIfPossible(input, currentTask);
@@ -327,23 +333,6 @@ function buildRecoveryFollowUpDescription(failedTask: Task): string {
     ...buildProofContractInstructions(failedTask),
     "Do not mark the task complete unless you leave proof that satisfies the original proof schema.",
   ].join("\n");
-}
-
-function buildProofContractInstructions(task: Task): string[] {
-  const instructions = ["## Proof Contract", "", `Original Proof Schema: ${task.proofSchemaId}`];
-
-  if (task.proofSchemaId === "repo-diff") {
-    return [
-      ...instructions,
-      "Before finishing, leave registerable diff proof in one of these runtime-collected locations:",
-      `- .auto-crop-proof/${task.id}.diff`,
-      "- a top-level workspace `.diff` or `.patch` file",
-      "Files under `.auto-crop/` are not proof for repo-diff tasks.",
-      "Do not rely on `.auto-crop/business-artifact.json` alone; it is a business artifact, not diff proof.",
-    ];
-  }
-
-  return [...instructions, "Before finishing, leave proof that matches the original proof schema."];
 }
 
 function isPartialOutputFollowUpTask(task: Task): boolean {

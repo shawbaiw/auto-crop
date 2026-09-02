@@ -569,6 +569,9 @@ describe("Dashboard App", () => {
     const taskReview = screen.getByRole("region", { name: "Task Review" });
     expect(within(taskReview).getByText("File proof: index.html")).toBeInTheDocument();
     expect(within(taskReview).getByRole("button", { name: "Approve, mark complete" })).toBeEnabled();
+    // The CEO review detail must not offer a control that re-queues the task; that is how the
+    // stuck task kept looping past its recovery ceiling.
+    expect(within(taskReview).queryByRole("button", { name: "View Task" })).not.toBeInTheDocument();
   });
 
   it("loads review artifacts after a task_review event so CEO Pending becomes actionable", async () => {

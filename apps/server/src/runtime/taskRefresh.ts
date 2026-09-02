@@ -9,6 +9,7 @@ import type {
   TaskStatus,
 } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { isRetryExhausted, retryExhaustedRefusalMessage } from "./boundedRecovery";
 import { captureBusinessArtifact } from "./businessArtifact";
 import { refreshDependencyTasks } from "./dependencyCascade";
 import { refreshParentTaskAggregationTask } from "./parentTaskAggregation";
@@ -45,6 +46,10 @@ export function refreshTaskDependencyState(
 
   if (!isRefreshableStatus(task.status)) {
     throw new Error(`Task ${task.id} cannot be refreshed from status ${task.status}.`);
+  }
+
+  if (isRetryExhausted(input.repositories, task.id)) {
+    throw new Error(retryExhaustedRefusalMessage(task));
   }
 
   const recoveryResult = recoverProofIfPossible(input, task);

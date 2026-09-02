@@ -1,5 +1,6 @@
 import type { AgentFailureReason, Task, TaskEvent, TaskProgressEvent, TaskStatus } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { isRetryExhausted, resetTaskAttempts } from "./boundedRecovery";
 import { resolveDependencyReadiness } from "./dependencyReadiness";
 
 export type DependencyCascadeUpdate = {
@@ -158,6 +159,13 @@ function refreshDependencyTask(
     return null;
   }
 
+  // A manual refresh (ignoreCascadeEligibility) cannot bypass the Bounded Recovery ceiling.
+  if (update.status === "queued" && options.ignoreCascadeEligibility && isRetryExhausted(input.repositories, task.id)) {
+    throw new Error(
+      `Task ${task.id} has reached the recovery ceiling (retry_exhausted); a new accepted upstream Business Artifact or a CEO replan is required.`,
+    );
+  }
+
   if (!hasMeaningfulChange(task, update)) {
     if (options.forceEvent) {
       const event = createTaskEvent(input, task, update);
@@ -185,6 +193,12 @@ function refreshDependencyTask(
       return refreshedTaskOnly(input.repositories, task);
     }
     return null;
+  }
+
+  if (update.status === "queued" && !options.ignoreCascadeEligibility) {
+    // A fresh upstream Business Artifact acceptance re-queues the task and resets its recovery budget.
+    const resetAt = (input.now ?? (() => new Date()))().toISOString();
+    resetTaskAttempts(input.repositories, task.id, resetAt);
   }
 
   input.repositories.updateTaskStatus(task.id, update.status);
@@ -228,6 +242,7 @@ function isCascadeEligible(task: Task): boolean {
     task.latestFailureReason === "dependency_failed" ||
     task.latestFailureReason === "missing_deliverable" ||
     task.latestFailureReason === "needs_replan" ||
+    task.latestFailureReason === "retry_exhausted" ||
     Boolean(task.dependencyNote)
   );
 }

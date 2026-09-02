@@ -240,12 +240,6 @@ export const aiSaasPlaybook = {
       acceptedTypes: ["url"],
     },
     {
-      id: "screenshot",
-      description: "A screenshot proving the prototype renders.",
-      descriptionText: text("A screenshot proving the prototype renders.", "证明原型已渲染的截图。"),
-      acceptedTypes: ["screenshot"],
-    },
-    {
       id: "deployment-url",
       description: "An optional deployed URL when a development deployment provider is configured.",
       descriptionText: text(

@@ -4,6 +4,7 @@ import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { Playbook } from "../playbooks/types";
 import { defaultAgentSessionManager, type AgentSessionManager, type AgentSessionRunEvent } from "./agentSessions";
+import { resetTaskAttempts } from "./boundedRecovery";
 import { buildReplanPlannerPrompt, parseReplanPlannerOutput } from "./replanPlanner";
 import { resolveAgentSessionPolicy } from "./sessionPolicy";
 import { createCompanyWorkspace, createTaskWorkspace } from "./workspace";
@@ -249,6 +250,8 @@ export function confirmReplanProposal(input: ConfirmReplanProposalInput): Confir
     latestFailureMessage: `Task replaced by replan proposal ${proposal.id}.`,
     dependencyNote: `Replaced by replan proposal ${proposal.id}.`,
   });
+  // A CEO replan resets the source task's Bounded Recovery budget so it can be recovered again.
+  resetTaskAttempts(input.repositories, sourceTask.id, now);
   input.repositories.updateReplanProposalStatus(proposal.id, "confirmed", now);
   input.repositories.appendTaskEvent({
     id: createId("task_event"),

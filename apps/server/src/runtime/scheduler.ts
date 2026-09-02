@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
@@ -12,12 +12,22 @@ import type {
   TaskStatus,
 } from "@auto-crop/core";
 import { evaluateAutomaticAcceptance } from "./automaticAcceptance";
+import {
+  MAX_TASK_ATTEMPTS,
+  retryExhaustedFailureMessage,
+  taskAttemptCount,
+} from "./boundedRecovery";
 import { acceptTaskBusinessArtifact } from "./businessAcceptance";
-import { captureBusinessArtifact } from "./businessArtifact";
+import {
+  captureBusinessArtifact,
+  readEnvironmentBlockerClaim,
+  verifyEnvironmentBlockerClaim,
+} from "./businessArtifact";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
+import { buildProofContractInstructions } from "./proofContract";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
@@ -48,6 +58,8 @@ export type RunSchedulerOnceInput = {
   createId?: (prefix: string) => string;
   approvalRequired: (task: Task) => boolean;
   proofCollector: (input: { task: Task; stdout: string; stderr: string; logPath: string }) => Proof[];
+  /** Injectable fetch used to independently verify Environment-Blocked Blocker claims. Defaults to global fetch. */
+  environmentBlockerFetch?: typeof fetch;
   emit: (event: SchedulerEvent) => void;
 };
 
@@ -152,6 +164,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               status: "blocked",
             });
             result.blocked.push(task.id);
+            return;
+          }
+
+          // Reached the recovery ceiling without a qualifying reset (a new accepted upstream
+          // Business Artifact or a CEO replan): terminate instead of dispatching another run.
+          if (endedAtRetryCeiling(input, result, task, null, resolveEffectiveTimeout(task), now, createId)) {
             return;
           }
 
@@ -302,6 +320,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 logPath,
               });
             } catch (error) {
+              if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
+                return;
+              }
               const failureReason = "proof_capture_failed";
               const failure = `Task failed: ${task.title} / proof_capture_failed / ${(error as Error).message}`;
               input.repositories.updateTaskStatus(task.id, "failed");
@@ -331,15 +352,35 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           for (const item of proof) {
             input.repositories.appendProof(item);
           }
-          let businessArtifact = null;
-          if (proof.length > 0) {
+          let businessArtifact: BusinessArtifact | null = null;
+          let environmentBlockerDegraded = false;
+          const hasBusinessArtifactFile = existsSync(
+            join(runWorkspacePath, ".auto-crop", "business-artifact.json"),
+          );
+          if (proof.length > 0 || hasBusinessArtifactFile) {
+            // An Environment-Blocked Blocker with a runtime-checkable claim is verified independently
+            // (never on the agent's word). A passing check degrades the blocker to a deliverable.
+            const environmentBlockerClaim =
+              agentResult.status === "complete"
+                ? readEnvironmentBlockerClaim(runWorkspacePath, proof)
+                : null;
+            const environmentBlockerVerification = environmentBlockerClaim
+              ? await verifyEnvironmentBlockerClaim({
+                  claim: environmentBlockerClaim,
+                  fetchImpl: input.environmentBlockerFetch,
+                })
+              : undefined;
             businessArtifact = captureBusinessArtifact({
               task: { ...task, workspacePath: runWorkspacePath },
               proofs: proof,
               workspacePath: runWorkspacePath,
+              environmentBlockerVerification,
               now,
               createId,
             });
+            environmentBlockerDegraded = Boolean(
+              environmentBlockerVerification?.verified && businessArtifact.artifactKind !== "blocker",
+            );
             input.repositories.createBusinessArtifact(businessArtifact);
           }
           createHandoffPackage({
@@ -349,7 +390,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             logPath,
           });
 
-          if (agentResult.status !== "complete" || proof.length === 0) {
+          if ((agentResult.status !== "complete" || proof.length === 0) && !environmentBlockerDegraded) {
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
             if (failureReason === "timeout" && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
               const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
@@ -385,6 +426,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               });
               emitParentTaskAggregationEvents(input, task);
               result.blocked.push(task.id);
+              return;
+            }
+            if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
               return;
             }
             const failure = failureMessage(task, failureReason, timeoutResolution.effectiveTimeoutMs);
@@ -427,6 +471,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           }
 
           if (!businessArtifact || !isReviewableBusinessArtifact(businessArtifact)) {
+            if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
+              return;
+            }
             const failureReason = businessArtifactFailureReason(businessArtifact);
             const failure = businessArtifactFailureMessage(task, businessArtifact);
             input.repositories.updateTaskStatus(task.id, "blocked");
@@ -904,6 +951,81 @@ function blockTaskForMissingDeliverable(
   });
 }
 
+/**
+ * If the task has reached the Bounded Recovery ceiling, terminate it as `blocked` / `retry_exhausted`,
+ * route it to the CEO Blocked Queue, record the outcome, and return true so the caller can stop.
+ */
+function endedAtRetryCeiling(
+  input: RunSchedulerOnceInput,
+  result: RunSchedulerOnceResult,
+  task: Task,
+  agentRunId: string | null,
+  timeoutResolution: ReturnType<typeof resolveEffectiveTimeout>,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): boolean {
+  if (taskAttemptCount(input.repositories, task.id) < MAX_TASK_ATTEMPTS) {
+    return false;
+  }
+  result.blocked.push(
+    task.id,
+    ...terminateAsRetryExhausted(input, task, agentRunId, timeoutResolution, now, createId),
+  );
+  return true;
+}
+
+function terminateAsRetryExhausted(
+  input: RunSchedulerOnceInput,
+  task: Task,
+  agentRunId: string | null,
+  timeoutResolution: ReturnType<typeof resolveEffectiveTimeout>,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): string[] {
+  const failure = retryExhaustedFailureMessage(task);
+  input.repositories.updateTaskStatus(task.id, "blocked");
+  input.repositories.updateTaskExecutionSummary(task.id, {
+    latestFailureReason: "retry_exhausted",
+    latestFailureMessage: failure,
+  });
+  if (agentRunId) {
+    input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
+      failureReason: "retry_exhausted",
+      failureMessage: failure,
+    });
+  }
+  appendAndEmitTaskEvent(input, {
+    task,
+    type: "task_blocked",
+    failureReason: "retry_exhausted",
+    failureMessage: failure,
+    message: failure,
+    status: "blocked",
+    executionProfileName: timeoutResolution.executionProfile.name,
+    requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+    effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+  });
+  appendTaskProgressEvent(input, {
+    task,
+    step: "blocked",
+    status: "blocked",
+    label: "Recovery ceiling reached",
+    detail: failure,
+    subjectTaskId: task.id,
+  });
+  const blockedConsumerIds = blockDirectDependencyConsumers(input, task);
+  recordTaskCompletionEvent({
+    repositories: input.repositories,
+    task,
+    outcome: "blocked",
+    dependencyImpact: { blockedTaskIds: blockedConsumerIds, reason: "retry_exhausted" },
+    now,
+    createId,
+  });
+  emitParentTaskAggregationEvents(input, task);
+  return blockedConsumerIds;
+}
+
 function appendAndEmitTaskEvent(
   input: RunSchedulerOnceInput,
   event: {
@@ -1053,45 +1175,6 @@ function buildAgentPrompt(task: Task, handoffs: TaskHandoff[]): string {
       ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
     ]),
   ].join("\n");
-}
-
-function buildProofContractInstructions(task: Task): string[] {
-  const instructions = ["## Proof Contract", "", `Original Proof Schema: ${task.proofSchemaId}`];
-
-  if (task.proofSchemaId === "repo-diff") {
-    return [
-      ...instructions,
-      "Before finishing, leave registerable diff proof in one of these runtime-collected locations:",
-      `- .auto-crop-proof/${task.id}.diff`,
-      "- a top-level workspace `.diff` or `.patch` file",
-      "Files under `.auto-crop/` are not proof for repo-diff tasks.",
-      "Do not rely on `.auto-crop/business-artifact.json` alone; it is a business artifact, not diff proof.",
-    ];
-  }
-
-  if (task.proofSchemaId === "landing-page-file") {
-    return [
-      ...instructions,
-      "Before finishing, leave runnable prototype files directly in the task workspace, such as index.html, src/main.tsx, src/App.tsx, app/page.tsx, or package.json.",
-    ];
-  }
-
-  if (task.proofSchemaId === "product-brief") {
-    return [...instructions, "Before finishing, leave a product-brief.md file in the task workspace."];
-  }
-
-  if (task.proofSchemaId === "research-report") {
-    return [...instructions, "Before finishing, leave a research-report.md file in the task workspace."];
-  }
-
-  if (task.proofSchemaId === "test-output") {
-    return [
-      ...instructions,
-      "Before finishing, run the relevant validation command and make sure the command output appears in stdout.",
-    ];
-  }
-
-  return [...instructions, "Before finishing, leave proof that matches the original proof schema."];
 }
 
 function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolean {

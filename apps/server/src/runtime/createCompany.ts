@@ -15,7 +15,7 @@ import type { createRepositories } from "../db/repositories";
 import type { PolicyMode } from "../policies/policy";
 import { defaultAgentSessionManager, type AgentSessionManager } from "./agentSessions";
 import { buildCeoPrompt } from "./ceoPrompt";
-import { parseCeoOutput } from "./ceoParser";
+import { parseCeoOutput, type ProofSchemaNormalization } from "./ceoParser";
 import { receivedCeoTaskText } from "./localizedRuntimeText";
 import { resolveAgentSessionPolicy } from "./sessionPolicy";
 import { createCompanyWorkspace, createDepartmentWorkspace, createTaskWorkspace } from "./workspace";
@@ -51,6 +51,7 @@ export type WriteCompanyBlueprintRecordsInput = {
   repositories: ReturnType<typeof createRepositories>;
   createdAt: string;
   createId?: (prefix: string) => string;
+  proofSchemaNormalizations?: ProofSchemaNormalization[];
 };
 
 export type GenerateCompanyBlueprintInput = {
@@ -69,6 +70,7 @@ export type GenerateCompanyBlueprintInput = {
 export type GenerateCompanyBlueprintResult = {
   blueprint: CompanyBlueprint;
   promptPath: string;
+  proofSchemaNormalizations: ProofSchemaNormalization[];
 };
 
 export async function createCompany(input: CreateCompanyInput): Promise<CreateCompanyResult> {
@@ -114,6 +116,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     repositories: input.repositories,
     createdAt: now,
     createId,
+    proofSchemaNormalizations: blueprintResult.proofSchemaNormalizations,
   });
 }
 
@@ -164,9 +167,11 @@ export async function generateCompanyBlueprint(input: GenerateCompanyBlueprintIn
     throw new Error(`CEO agent failed to create company blueprint: ${failureDetail}`);
   }
 
+  const parsed = parseCeoOutput(agentResult.stdout, playbook);
   return {
-    blueprint: parseCeoOutput(agentResult.stdout, playbook).blueprint,
+    blueprint: parsed.blueprint,
     promptPath,
+    proofSchemaNormalizations: parsed.proofSchemaNormalizations,
   };
 }
 
@@ -235,6 +240,9 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
 
   const firstKeyResultId = keyResults[0]?.id ?? null;
   const taskWarnings: TaskEvent[] = [];
+  const normalizationsByKey = new Map(
+    (input.proofSchemaNormalizations ?? []).map((normalization) => [normalization.taskKey, normalization]),
+  );
   const taskIdsByBlueprintKey = new Map<string, string>();
   const handoffContractsByBlueprintKey = new Map<string, string>();
   const handoffContractTextsByBlueprintKey = new Map<string, BlueprintTask["handoffContractText"]>();
@@ -295,13 +303,17 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
     taskIdsByBlueprintKey.set(taskBlueprint.key, task.id);
     handoffContractsByBlueprintKey.set(taskBlueprint.key, taskBlueprint.handoffContract);
     handoffContractTextsByBlueprintKey.set(taskBlueprint.key, taskBlueprint.handoffContractText);
-    if (schemaDecision.warning) {
+    const normalization = normalizationsByKey.get(taskBlueprint.key);
+    const warningMessage = normalization
+      ? `Task warning: ${task.title} proof schema ${normalization.from} is not a Collectable Proof Schema; normalized to ${normalization.to}.`
+      : schemaDecision.warning;
+    if (warningMessage) {
       taskWarnings.push({
         id: createId("task_event"),
         companyId: company.id,
         taskId: task.id,
         type: "task_warning",
-        message: schemaDecision.warning,
+        message: warningMessage,
         createdAt: input.createdAt,
         status: task.status,
         failureReason: null,
@@ -455,7 +467,7 @@ function isProofSchemaCompatible(actual: string, expected: string): boolean {
   }
 
   if (expected === "test-output") {
-    return actual === "local-url" || actual === "screenshot";
+    return actual === "local-url";
   }
 
   if (expected === "landing-page-file") {

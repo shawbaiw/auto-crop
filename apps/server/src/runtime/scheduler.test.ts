@@ -1620,6 +1620,115 @@ describe("runSchedulerOnce", () => {
 
     client.close();
   });
+
+  it("terminates a task as blocked / retry_exhausted after the recovery ceiling and routes it to the CEO Blocked Queue", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+    const events: SchedulerEventRecord[] = [];
+    // Two prior failed attempts already recorded; this scheduler run is the third.
+    for (const id of ["agent_run_prior_1", "agent_run_prior_2"]) {
+      repositories.createAgentRun({
+        id,
+        taskId: "task_1",
+        agentId: "mock-worker",
+        status: "failed",
+        logPath: "agent.log",
+        startedAt: "2026-08-17T00:00:00.000Z",
+        finishedAt: "2026-08-17T00:01:00.000Z",
+        executionProfileName: "short",
+        requestedTimeoutMs: 1_000,
+        effectiveTimeoutMs: 1_000,
+        failureReason: "no_proof",
+        failureMessage: "Task failed: Task task_1 / no_proof.",
+      });
+    }
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "no proof here" }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:05:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.blocked).toContain("task_1");
+    expect(repositories.getTask("task_1")).toMatchObject({
+      status: "blocked",
+      latestFailureReason: "retry_exhausted",
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "task_blocked", taskId: "task_1", failureReason: "retry_exhausted" }),
+    );
+    expect(
+      repositories.listTaskCompletionEventsForCompany("company_1").some((event) => event.outcome === "blocked"),
+    ).toBe(true);
+
+    client.close();
+  });
+
+  it("degrades a verified environment-blocked blocker to a reviewable deliverable", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      { ...createTaskRecord("task_1", "queued", "medium", "landing-page-file") },
+    ]);
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "prototype built" }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => {
+        const workspacePath = task.workspacePath!;
+        mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+        writeFileSync(join(workspacePath, "index.html"), "<main>prototype</main>", "utf8");
+        writeFileSync(
+          join(workspacePath, ".auto-crop", "business-artifact.json"),
+          JSON.stringify({
+            artifact_kind: "blocker",
+            artifact_role: "validation",
+            artifact_subtype: "prototype_screenshot_validation",
+            task_type: "local_prototype_exposure",
+            payload: {
+              blocker_class: "environment_blocked",
+              capability: "browser_screenshot",
+              target_url: "http://localhost:4173/",
+            },
+            lineage: {},
+          }),
+          "utf8",
+        );
+        return [
+          { id: `proof_${task.id}`, taskId: task.id, type: "file" as const, uri: join(workspacePath, "index.html"), summary: "File proof: index.html", verifiedAt: null },
+        ];
+      },
+      environmentBlockerFetch: async () => new Response("ok", { status: 200 }),
+      emit: (event) => events.push(event),
+    });
+
+    expect(result.completed).toContain("task_1");
+    const artifact = repositories.getCurrentBusinessArtifactForTask("task_1");
+    expect(artifact?.artifactKind).toBe("deliverable");
+    expect((artifact?.payload as { validationLimits?: unknown }).validationLimits).toMatchObject({
+      capability: "browser_screenshot",
+      status: "degraded_from_environment_blocked",
+    });
+
+    client.close();
+  });
 });
 
 function createSchedulerFixture(tasks: Task[]) {

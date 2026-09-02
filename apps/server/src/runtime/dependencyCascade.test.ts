@@ -57,6 +57,47 @@ describe("refreshDependencyTasks", () => {
     client.close();
   });
 
+  it("resets the recovery attempt count when a fresh upstream acceptance re-queues a retry_exhausted task", () => {
+    const { repositories, client } = createFixture([
+      createTaskRecord("task_1", "complete"),
+      {
+        ...createTaskRecord("task_2", "blocked"),
+        latestFailureReason: "retry_exhausted",
+        latestFailureMessage: "Task blocked: Task task_2 / retry_exhausted.",
+      },
+    ]);
+    repositories.createTaskDependency({ taskId: "task_2", dependsOnTaskId: "task_1" });
+    appendProof(repositories, "proof_1", "task_1");
+    for (const id of ["run_1", "run_2", "run_3"]) {
+      repositories.createAgentRun({
+        id,
+        taskId: "task_2",
+        agentId: "mock-worker",
+        status: "failed",
+        logPath: "agent.log",
+        startedAt: "2026-08-17T00:00:00.000Z",
+        finishedAt: "2026-08-17T00:01:00.000Z",
+        executionProfileName: "short",
+        requestedTimeoutMs: 1_000,
+        effectiveTimeoutMs: 1_000,
+        failureReason: "no_proof",
+        failureMessage: "no_proof",
+      });
+    }
+    expect(repositories.countAgentRunsForTask("task_2")).toBe(3);
+
+    const cascade = propagateDependencyCascade({
+      repositories,
+      sourceTaskId: "task_1",
+      now: fixedNow,
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(cascade.updatedTasks[0]?.task).toMatchObject({ id: "task_2", status: "queued", latestFailureReason: null });
+    expect(repositories.countAgentRunsForTask("task_2")).toBe(0);
+    client.close();
+  });
+
   it("writes waiting dependency state", () => {
     const { repositories, client } = createFixture([
       createTaskRecord("task_1", "running"),

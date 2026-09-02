@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProofSchema, Task } from "@auto-crop/core";
-import { captureProofs, createHandoffPackage, createProofCollector, getHandoffPackageManifestPath } from "./proof";
+import { captureProofs, createHandoffPackage, createProofCollector, getHandoffPackageManifestPath, isCollectableSchema } from "./proof";
 
 const createdDirs: string[] = [];
 
@@ -11,6 +11,19 @@ afterEach(() => {
   for (const dir of createdDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+describe("isCollectableSchema", () => {
+  it("accepts schemas whose accepted types have a runtime collector", () => {
+    expect(isCollectableSchema({ id: "a", description: "d", acceptedTypes: ["file"] })).toBe(true);
+    expect(isCollectableSchema({ id: "b", description: "d", acceptedTypes: ["command_output", "test_result"] })).toBe(true);
+    expect(isCollectableSchema({ id: "c", description: "d", acceptedTypes: ["url"] })).toBe(true);
+  });
+
+  it("rejects schemas that only accept types the runtime never collects", () => {
+    expect(isCollectableSchema({ id: "shot", description: "d", acceptedTypes: ["screenshot"] })).toBe(false);
+    expect(isCollectableSchema({ id: "tr", description: "d", acceptedTypes: ["test_result"] })).toBe(false);
+  });
 });
 
 describe("captureProofs", () => {
