@@ -1,3 +1,5 @@
+import type { CeoAttentionRollup, HumanAction, NextStepItem, VisionGap, WaitState } from "@auto-crop/core";
+
 export type AgentSummary = {
   id: string;
   name: string;
@@ -127,6 +129,27 @@ export type TaskProgressEventSummary = {
   createdAt: string;
 };
 
+export type NextStepItemSummary = NextStepItem;
+
+export type TaskCompletionEventSummary = {
+  id: string;
+  companyId: string;
+  taskId: string;
+  departmentId: string;
+  keyResultId: string | null;
+  businessArtifactId: string | null;
+  outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan";
+  acceptanceProvenance: "manual_ceo_review" | "automatic_acceptance" | null;
+  dependencyImpact: unknown;
+  nextStepItems: NextStepItemSummary[];
+  visionGaps: unknown[];
+  createdAt: string;
+};
+export type VisionGapSummary = VisionGap;
+export type HumanActionSummary = HumanAction;
+export type WaitStateSummary = WaitState;
+export type CeoAttentionRollupSummary = CeoAttentionRollup;
+
 export type ProofSummary = {
   id: string;
   taskId: string;
@@ -171,6 +194,51 @@ export type FounderReportSummary = {
   completedTaskCount: number;
   reviewTaskCount: number;
   blockedTaskCount: number;
+  departmentContributions?: Array<{
+    departmentId: string;
+    departmentName: string;
+    completedTaskCount: number;
+    acceptedOutputCount: number;
+    blockedTaskCount: number;
+    humanActionCount: number;
+    waitStateCount: number;
+    visionGapCount: number;
+  }>;
+  dependencyState?: Array<{
+    taskId: string;
+    title: string;
+    departmentId: string;
+    departmentName: string;
+    status: string;
+    dependsOnTaskIds: string[];
+    hasAcceptedOutput: boolean;
+    dependencyNote?: string | null;
+  }>;
+  humanActionCount?: number;
+  humanActions?: Array<{
+    id: string;
+    label: string;
+    status: string;
+    departmentId: string;
+    blockedTaskIds: string[];
+    confirmationRequirements: string[];
+  }>;
+  waitStateCount?: number;
+  waitStates?: Array<{
+    id: string;
+    label: string;
+    status: string;
+    nextCheckAt: string;
+    affectedTaskIds: string[];
+  }>;
+  visionGapCount?: number;
+  visionGaps?: Array<{
+    id: string;
+    label: string;
+    severity: string;
+    departmentId: string;
+    relatedTaskId: string | null;
+  }>;
   directionDriftDetected: boolean;
   nextSteps: string[];
 };
@@ -291,6 +359,11 @@ export type CreateCompanyResponse = {
   activity?: ServerEvent[];
   replanProposals?: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
+  taskCompletionEvents?: TaskCompletionEventSummary[];
+  visionGaps?: VisionGapSummary[];
+  humanActions?: HumanActionSummary[];
+  waitStates?: WaitStateSummary[];
+  ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
 };
@@ -319,6 +392,11 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   activity: ServerEvent[];
   replanProposals: ReplanProposalSummary[];
   taskProgressEvents?: TaskProgressEventSummary[];
+  taskCompletionEvents?: TaskCompletionEventSummary[];
+  visionGaps?: VisionGapSummary[];
+  humanActions?: HumanActionSummary[];
+  waitStates?: WaitStateSummary[];
+  ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
 };
@@ -352,6 +430,11 @@ export type ApiClient = {
     sourceTask: TaskSummary;
     createdTasks: TaskSummary[];
     dependencyCascade?: TaskUpdateBatchSummary;
+  }>;
+  confirmHumanAction(companyId: string, humanActionId: string, input: { evidence: Record<string, string> }): Promise<{
+    humanAction: HumanActionSummary;
+    updatedTasks: TaskSummary[];
+    events: ServerEvent[];
   }>;
   triggerKillSwitch(companyId: string): Promise<{ paused: boolean; company: CompanySummary }>;
   subscribeEvents(companyId: string, handler: (event: ServerEvent) => void): () => void;
@@ -399,6 +482,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     },
     async confirmReplanProposal(proposalId) {
       return postJson(`${baseUrl}/api/replan-proposals/${proposalId}/confirm`, {}, requestTimeoutMs);
+    },
+    async confirmHumanAction(companyId, humanActionId, input) {
+      return postJson(`${baseUrl}/api/companies/${companyId}/human-actions/${humanActionId}/confirm`, input, requestTimeoutMs);
     },
     async triggerKillSwitch(companyId) {
       return postJson(`${baseUrl}/api/kill-switch`, { companyId }, requestTimeoutMs);

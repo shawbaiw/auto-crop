@@ -108,6 +108,9 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
                 { label: t("dashboard.acceptedOutputs"), value: String(props.founderReport.actualOutputs.length) },
                 { label: t("dashboard.awaitingReview"), value: String(props.founderReport.reviewTaskCount) },
                 { label: t("dashboard.blocked"), value: String(props.founderReport.blockedTaskCount) },
+                { label: t("dashboard.humanActions"), value: String(props.founderReport.humanActionCount ?? props.founderReport.humanActions?.length ?? 0) },
+                { label: t("dashboard.waitStates"), value: String(props.founderReport.waitStateCount ?? props.founderReport.waitStates?.length ?? 0) },
+                { label: t("dashboard.visionGaps"), value: String(props.founderReport.visionGapCount ?? props.founderReport.visionGaps?.length ?? 0) },
                 { label: t("dashboard.directionDrift"), value: props.founderReport.directionDriftDetected ? "yes" : "no" },
                 {
                   label: t("dashboard.nextStep"),

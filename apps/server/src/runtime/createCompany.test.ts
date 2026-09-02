@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
-import type { AgentAdapter, AgentSession } from "../adapters/types";
+import type { AgentAdapter, AgentRunRequest, AgentSession } from "../adapters/types";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
-import { createCompany } from "./createCompany";
+import { createCompany, generateCompanyBlueprint, writeCompanyBlueprintRecords } from "./createCompany";
 
 const createdDirs: string[] = [];
 
@@ -19,6 +19,105 @@ afterEach(() => {
 });
 
 describe("createCompany", () => {
+  it("generates and parses a Company Blueprint without writing company records", async () => {
+    const projectRoot = createTempProjectRoot();
+    const blueprint = aiSaasPlaybook.createBlueprint({
+      companyName: "CEO Renamed Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      preferredEngineeringAgentId: "codex",
+      preferredStrategyAgentId: "claude-code",
+    });
+    let request: AgentRunRequest | null = null;
+    const ceoAgent: AgentAdapter = {
+      id: "codex",
+      name: "Codex",
+      capabilities: ["code", "frontend", "test"],
+      async detect() {
+        return true;
+      },
+      async run(input) {
+        request = input;
+        return {
+          status: "complete",
+          exitCode: 0,
+          stdout: ["```json", JSON.stringify({ brief: "Independent blueprint.", blueprint }), "```"].join("\n"),
+          stderr: "",
+        };
+      },
+    };
+
+    const result = await generateCompanyBlueprint({
+      projectRoot,
+      companyId: "company_1",
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgent: ceoAgent,
+      availableAgents: [ceoAgent],
+      permissionMode: "balanced",
+      assets: [],
+    });
+
+    expect(result.blueprint.company.playbookId).toBe("ai-saas");
+    expect(result.promptPath).toBe(join(projectRoot, ".auto-crop", "companies", "company_1", "ceo-prompt.md"));
+    expect(request).toMatchObject({
+      taskId: "company_1_ceo_blueprint",
+      workspacePath: join(projectRoot, ".auto-crop", "companies", "company_1"),
+      metadata: {
+        playbookId: "ai-saas",
+        permissionMode: "balanced",
+      },
+    });
+  });
+
+  it("writes draft company blueprint records for an existing company without running the CEO agent", () => {
+    const projectRoot = createTempProjectRoot();
+    const client = createDatabaseClient(":memory:");
+    migrate(client);
+    const repositories = createRepositories(client);
+    const blueprint = aiSaasPlaybook.createBlueprint({
+      companyName: "CEO Renamed Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      preferredEngineeringAgentId: "codex",
+      preferredStrategyAgentId: "claude-code",
+    });
+    const company = {
+      id: "company_1",
+      name: "Pricing Page Studio",
+      founderVision: blueprint.company.founderVision,
+      selectedCeoAgentId: "codex",
+      playbookId: blueprint.company.playbookId,
+      permissionMode: "balanced" as const,
+      status: "draft" as const,
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    };
+    repositories.createCompany(company);
+
+    const result = writeCompanyBlueprintRecords({
+      projectRoot,
+      company,
+      blueprint,
+      repositories,
+      createdAt: "2026-08-17T00:00:00.000Z",
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.company.status).toBe("draft");
+    expect(repositories.getCompany("company_1")?.name).toBe("Pricing Page Studio");
+    expect(result.departments.map((department) => department.name)).toEqual([
+      "Product",
+      "Research",
+      "Growth",
+      "Engineering",
+    ]);
+    expect(result.objectives).toHaveLength(1);
+    expect(result.keyResults).toHaveLength(2);
+    expect(result.tasks.map((task) => task.position)).toEqual(result.tasks.map((_, index) => index));
+    expect(repositories.listTaskDependencies(result.tasks.at(-1)?.id ?? "").length).toBeGreaterThan(0);
+
+    client.close();
+  });
+
   it("creates a draft company from founder vision, selected CEO, permission mode, and assets", async () => {
     const projectRoot = createTempProjectRoot();
     const client = createDatabaseClient(":memory:");

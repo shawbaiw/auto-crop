@@ -1,5 +1,15 @@
 import { writeFileSync } from "node:fs";
-import type { BlueprintTask, Company, Department, KeyResult, Objective, Task, TaskDependency, TaskEvent } from "@auto-crop/core";
+import type {
+  BlueprintTask,
+  Company,
+  CompanyBlueprint,
+  Department,
+  KeyResult,
+  Objective,
+  Task,
+  TaskDependency,
+  TaskEvent,
+} from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { PolicyMode } from "../policies/policy";
@@ -34,6 +44,33 @@ export type CreateCompanyResult = {
   tasks: Task[];
 };
 
+export type WriteCompanyBlueprintRecordsInput = {
+  projectRoot: string;
+  company: Company;
+  blueprint: CompanyBlueprint;
+  repositories: ReturnType<typeof createRepositories>;
+  createdAt: string;
+  createId?: (prefix: string) => string;
+};
+
+export type GenerateCompanyBlueprintInput = {
+  projectRoot: string;
+  companyId: string;
+  companyName: string;
+  founderVision: string;
+  selectedCeoAgent: AgentAdapter;
+  availableAgents: AgentAdapter[];
+  permissionMode: PolicyMode;
+  assets: string[];
+  agentSessionManager?: AgentSessionManager;
+  agentSessionEnv?: Record<string, string | undefined>;
+};
+
+export type GenerateCompanyBlueprintResult = {
+  blueprint: CompanyBlueprint;
+  promptPath: string;
+};
+
 export async function createCompany(input: CreateCompanyInput): Promise<CreateCompanyResult> {
   const companyName = input.companyName.trim();
 
@@ -43,11 +80,48 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
 
   const now = (input.now ?? (() => new Date()))().toISOString();
   const createId = input.createId ?? defaultCreateId;
-  const playbook = selectPlaybook(input.founderVision);
   const companyId = createId("company");
-  const companyWorkspace = createCompanyWorkspace(input.projectRoot, companyId);
-  const prompt = buildCeoPrompt({
+  const blueprintResult = await generateCompanyBlueprint({
+    projectRoot: input.projectRoot,
+    companyId,
     companyName,
+    founderVision: input.founderVision,
+    selectedCeoAgent: input.selectedCeoAgent,
+    availableAgents: input.availableAgents,
+    permissionMode: input.permissionMode,
+    assets: input.assets,
+    agentSessionManager: input.agentSessionManager,
+    agentSessionEnv: input.agentSessionEnv,
+  });
+  const company: Company = {
+    id: companyId,
+    name: companyName,
+    founderVision: blueprintResult.blueprint.company.founderVision,
+    selectedCeoAgentId: input.selectedCeoAgent.id,
+    playbookId: blueprintResult.blueprint.company.playbookId,
+    permissionMode: input.permissionMode,
+    status: "draft",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  input.repositories.createCompany(company);
+
+  return writeCompanyBlueprintRecords({
+    projectRoot: input.projectRoot,
+    company,
+    blueprint: blueprintResult.blueprint,
+    repositories: input.repositories,
+    createdAt: now,
+    createId,
+  });
+}
+
+export async function generateCompanyBlueprint(input: GenerateCompanyBlueprintInput): Promise<GenerateCompanyBlueprintResult> {
+  const playbook = selectPlaybook(input.founderVision);
+  const companyWorkspace = createCompanyWorkspace(input.projectRoot, input.companyId);
+  const prompt = buildCeoPrompt({
+    companyName: input.companyName,
     founderVision: input.founderVision,
     playbook,
     availableAgents: input.availableAgents.map((agent) => ({
@@ -62,7 +136,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   writeFileSync(promptPath, prompt, "utf8");
 
   const agentRequest = {
-    taskId: `${companyId}_ceo_blueprint`,
+    taskId: `${input.companyId}_ceo_blueprint`,
     prompt,
     promptPath,
     workspacePath: companyWorkspace.companyRoot,
@@ -72,7 +146,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     },
   };
   const sessionPolicy = resolveAgentSessionPolicy({
-    companyId,
+    companyId: input.companyId,
     agentId: input.selectedCeoAgent.id,
     permissionMode: input.permissionMode,
     purpose: "ceo_blueprint",
@@ -90,22 +164,17 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     throw new Error(`CEO agent failed to create company blueprint: ${failureDetail}`);
   }
 
-  const ceoResponse = parseCeoOutput(agentResult.stdout, playbook);
-  const company: Company = {
-    id: companyId,
-    name: companyName,
-    founderVision: ceoResponse.blueprint.company.founderVision,
-    selectedCeoAgentId: input.selectedCeoAgent.id,
-    playbookId: ceoResponse.blueprint.company.playbookId,
-    permissionMode: input.permissionMode,
-    status: "draft",
-    createdAt: now,
-    updatedAt: now,
+  return {
+    blueprint: parseCeoOutput(agentResult.stdout, playbook).blueprint,
+    promptPath,
   };
+}
 
-  input.repositories.createCompany(company);
+export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecordsInput): CreateCompanyResult {
+  const createId = input.createId ?? defaultCreateId;
+  const { company, repositories } = input;
 
-  const departments = ceoResponse.blueprint.departments.map((departmentBlueprint) => {
+  const departments = input.blueprint.departments.map((departmentBlueprint) => {
     const departmentId = createId("department");
     const departmentWorkspace = createDepartmentWorkspace(
       input.projectRoot,
@@ -123,7 +192,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       leadAgentId: departmentBlueprint.leadAgentId,
       memoryPath: departmentWorkspace.memoryPath,
     };
-    input.repositories.createDepartment(department);
+    repositories.createDepartment(department);
     return department;
   });
   const departmentIdsByName = new Map(departments.map((department) => [department.name, department.id]));
@@ -134,7 +203,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   const objectives: Objective[] = [];
   const keyResults: KeyResult[] = [];
 
-  for (const objectiveBlueprint of ceoResponse.blueprint.objectives) {
+  for (const objectiveBlueprint of input.blueprint.objectives) {
     const objective: Objective = {
       id: createId("objective"),
       companyId: company.id,
@@ -143,7 +212,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       status: "active",
       priority: objectiveBlueprint.priority,
     };
-    input.repositories.createObjective(objective);
+    repositories.createObjective(objective);
     objectives.push(objective);
 
     for (const keyResultBlueprint of objectiveBlueprint.keyResults) {
@@ -159,7 +228,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
         currentValueText: keyResultBlueprint.currentValueText ?? null,
         status: "active",
       };
-      input.repositories.createKeyResult(keyResult);
+      repositories.createKeyResult(keyResult);
       keyResults.push(keyResult);
     }
   }
@@ -169,7 +238,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   const taskIdsByBlueprintKey = new Map<string, string>();
   const handoffContractsByBlueprintKey = new Map<string, string>();
   const handoffContractTextsByBlueprintKey = new Map<string, BlueprintTask["handoffContractText"]>();
-  const tasks = ceoResponse.blueprint.tasks.map((taskBlueprint, position) => {
+  const tasks = input.blueprint.tasks.map((taskBlueprint, position) => {
     const departmentId = taskBlueprint.departmentKey
       ? departmentIdsByKey.get(taskBlueprint.departmentKey)
       : departmentIdsByName.get(taskBlueprint.departmentName);
@@ -209,8 +278,8 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       taskKind: "parent",
       source: "ceo",
     };
-    input.repositories.createTask(task);
-    input.repositories.appendTaskProgressEvent({
+    repositories.createTask(task);
+    repositories.appendTaskProgressEvent({
       id: createId("task_progress"),
       companyId: company.id,
       departmentId,
@@ -221,7 +290,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
       label: "Received CEO task",
       labelText: receivedCeoTaskText(),
       detail: null,
-      createdAt: now,
+      createdAt: input.createdAt,
     });
     taskIdsByBlueprintKey.set(taskBlueprint.key, task.id);
     handoffContractsByBlueprintKey.set(taskBlueprint.key, taskBlueprint.handoffContract);
@@ -233,7 +302,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
         taskId: task.id,
         type: "task_warning",
         message: schemaDecision.warning,
-        createdAt: now,
+        createdAt: input.createdAt,
         status: task.status,
         failureReason: null,
         failureMessage: null,
@@ -248,13 +317,13 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
   });
 
   createBlueprintDependencies(
-    ceoResponse.blueprint.tasks,
+    input.blueprint.tasks,
     taskIdsByBlueprintKey,
     handoffContractsByBlueprintKey,
     handoffContractTextsByBlueprintKey,
-  ).forEach((dependency) => input.repositories.createTaskDependency(dependency));
-  inferValidationDependencies(tasks).forEach((dependency) => input.repositories.createTaskDependency(dependency));
-  taskWarnings.forEach((warning) => input.repositories.appendTaskEvent(warning));
+  ).forEach((dependency) => repositories.createTaskDependency(dependency));
+  inferValidationDependencies(tasks).forEach((dependency) => repositories.createTaskDependency(dependency));
+  taskWarnings.forEach((warning) => repositories.appendTaskEvent(warning));
 
   return {
     company,

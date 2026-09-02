@@ -8,6 +8,7 @@ import type {
   CeoReviewDecision,
   Company,
   Department,
+  HumanActionConfirmation,
   KeyResult,
   LocalizedText,
   Objective,
@@ -15,6 +16,7 @@ import type {
   ReplanProposal,
   ReplanProposalStatus,
   Task,
+  TaskCompletionEvent,
   TaskDependency,
   TaskEvent,
   TaskEventType,
@@ -392,6 +394,76 @@ export function createRepositories(database: DatabaseClient) {
         )
         .all(parentTaskId);
       return rows.map((row) => mapTaskProgressEvent(row as TaskProgressEventRow));
+    },
+
+    appendTaskCompletionEvent(event: TaskCompletionEvent): void {
+      database
+        .prepare(
+          `INSERT INTO task_completion_events (
+            id, company_id, task_id, department_id, key_result_id, business_artifact_id,
+            outcome, acceptance_provenance, dependency_impact, next_step_items, vision_gaps, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          event.id,
+          event.companyId,
+          event.taskId,
+          event.departmentId,
+          event.keyResultId,
+          event.businessArtifactId,
+          event.outcome,
+          event.acceptanceProvenance ?? null,
+          JSON.stringify(event.dependencyImpact),
+          JSON.stringify(event.nextStepItems),
+          JSON.stringify(event.visionGaps),
+          event.createdAt,
+        );
+    },
+
+    listTaskCompletionEventsForCompany(companyId: string): TaskCompletionEvent[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM task_completion_events
+           WHERE company_id = ?
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapTaskCompletionEvent(row as TaskCompletionEventRow));
+    },
+
+    upsertHumanActionConfirmation(confirmation: HumanActionConfirmation): void {
+      database
+        .prepare(
+          `INSERT INTO human_action_confirmations (
+            human_action_id, company_id, evidence, status, verified_at, verification_errors
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(human_action_id) DO UPDATE SET
+            evidence = excluded.evidence,
+            status = excluded.status,
+            verified_at = excluded.verified_at,
+            verification_errors = excluded.verification_errors`,
+        )
+        .run(
+          confirmation.humanActionId,
+          confirmation.companyId,
+          JSON.stringify(confirmation.evidence),
+          confirmation.status,
+          confirmation.verifiedAt,
+          JSON.stringify(confirmation.verificationErrors),
+        );
+    },
+
+    listHumanActionConfirmationsForCompany(companyId: string): HumanActionConfirmation[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM human_action_confirmations
+           WHERE company_id = ?
+           ORDER BY verified_at ASC, human_action_id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapHumanActionConfirmation(row as HumanActionConfirmationRow));
     },
 
     createTaskDependency(dependency: TaskDependency): void {
@@ -1031,6 +1103,30 @@ type TaskProgressEventRow = {
   created_at: string;
 };
 
+type TaskCompletionEventRow = {
+  id: string;
+  company_id: string;
+  task_id: string;
+  department_id: string;
+  key_result_id: string | null;
+  business_artifact_id: string | null;
+  outcome: TaskCompletionEvent["outcome"];
+  acceptance_provenance: TaskCompletionEvent["acceptanceProvenance"];
+  dependency_impact: string;
+  next_step_items: string;
+  vision_gaps: string;
+  created_at: string;
+};
+
+type HumanActionConfirmationRow = {
+  human_action_id: string;
+  company_id: string;
+  evidence: string;
+  status: HumanActionConfirmation["status"];
+  verified_at: string;
+  verification_errors: string;
+};
+
 function mapCompany(row: CompanyRow): Company {
   return {
     id: row.id,
@@ -1280,5 +1376,33 @@ function mapTaskProgressEvent(row: TaskProgressEventRow): TaskProgressEvent {
     detail: row.detail,
     ...(row.detail_text ? { detailText: parseLocalizedText(row.detail_text) } : {}),
     createdAt: row.created_at,
+  };
+}
+
+function mapTaskCompletionEvent(row: TaskCompletionEventRow): TaskCompletionEvent {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    taskId: row.task_id,
+    departmentId: row.department_id,
+    keyResultId: row.key_result_id,
+    businessArtifactId: row.business_artifact_id,
+    outcome: row.outcome,
+    acceptanceProvenance: row.acceptance_provenance ?? null,
+    dependencyImpact: JSON.parse(row.dependency_impact) as unknown,
+    nextStepItems: JSON.parse(row.next_step_items) as TaskCompletionEvent["nextStepItems"],
+    visionGaps: JSON.parse(row.vision_gaps) as unknown[],
+    createdAt: row.created_at,
+  };
+}
+
+function mapHumanActionConfirmation(row: HumanActionConfirmationRow): HumanActionConfirmation {
+  return {
+    humanActionId: row.human_action_id,
+    companyId: row.company_id,
+    evidence: JSON.parse(row.evidence) as Record<string, string>,
+    status: row.status,
+    verifiedAt: row.verified_at,
+    verificationErrors: JSON.parse(row.verification_errors) as string[],
   };
 }

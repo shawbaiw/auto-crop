@@ -7,13 +7,19 @@ import type {
   CeoReviewReturnReason,
   Company,
   Department,
+  HumanAction,
+  HumanActionConfirmation,
   KeyResult,
   Objective,
   Proof,
   ReplanProposal,
   Task,
+  TaskCompletionEvent,
+  TaskDependency,
   TaskEvent,
   TaskProgressEvent,
+  VisionGap,
+  WaitState,
 } from "@auto-crop/core";
 import type { CompleteLocalizedText, LocalizedText } from "@auto-crop/core";
 import { localizedTextFromString } from "@auto-crop/core";
@@ -23,6 +29,8 @@ import { EventStream } from "../events/sse";
 import type { PolicyMode } from "../policies/policy";
 import { createCompany } from "../runtime/createCompany";
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
+import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
+import { projectCeoAttention } from "../runtime/ceoAttention";
 import {
   ceoReturnProgressDetailText,
   ceoReturnProgressLabelText,
@@ -32,7 +40,7 @@ import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
-import { propagateDependencyCascade, refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
+import { refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
 import { propagateParentTaskAggregation, type ParentTaskAggregationResult } from "../runtime/parentTaskAggregation";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { selectPlaybook } from "../playbooks/selectPlaybook";
@@ -190,6 +198,7 @@ async function routeRequest(
     sendJson(response, 200, buildCompanyState(company, options.repositories, {
       now: options.now,
       createId: options.createId,
+      requestSchedulerWake: options.requestSchedulerWake,
     }));
     return;
   }
@@ -272,6 +281,7 @@ async function routeRequest(
       note: body.note?.trim() ? body.note.trim() : null,
       now: options.now,
       createId: options.createId,
+      requestSchedulerWake: () => options.requestSchedulerWake?.("dependency_cascade_queued"),
     });
 
     if (result.kind === "not_found") {
@@ -294,22 +304,12 @@ async function routeRequest(
       return;
     }
 
-    const dependencyCascade =
-      result.decision.decision === "approve"
-        ? propagateDependencyCascade({
-          repositories: options.repositories,
-          sourceTaskId: result.task.id,
-          maxDepth: 2,
-          now: options.now,
-          createId: options.createId,
-        })
-        : undefined;
+    const dependencyCascade = result.dependencyCascade;
     for (const cascadeUpdate of dependencyCascade?.updatedTasks ?? []) {
       if (cascadeUpdate.event) {
         events.publish(summarizeTaskEvent(cascadeUpdate.event));
       }
     }
-    requestSchedulerWakeForQueuedUpdates(options, dependencyCascade, "dependency_cascade_queued");
 
     sendJson(response, 201, {
       decision: summarizeCeoReviewDecision(result.decision),
@@ -457,6 +457,44 @@ async function routeRequest(
     return;
   }
 
+  const confirmHumanActionMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/human-actions\/([^/]+)\/confirm$/);
+  if (method === "POST" && confirmHumanActionMatch) {
+    const body = await readJson<{ evidence?: unknown }>(request);
+    const result = await confirmHumanAction({
+      repositories: options.repositories,
+      companyId: confirmHumanActionMatch[1],
+      humanActionId: confirmHumanActionMatch[2],
+      evidence: body.evidence,
+      now: options.now,
+      createId: options.createId,
+    });
+
+    if (result.kind === "not_found") {
+      sendJson(response, 404, { error: "Human Action not found." });
+      return;
+    }
+    if (result.kind === "invalid_evidence") {
+      sendJson(response, 400, { error: "Human Action evidence is invalid.", verificationErrors: result.verificationErrors });
+      return;
+    }
+
+    for (const event of result.events) {
+      events.publish(summarizeTaskEvent(event));
+    }
+    if (result.updatedTasks.some((task) => task.status === "queued")) {
+      options.requestSchedulerWake?.("dependency_cascade_queued");
+    }
+    sendJson(response, 200, {
+      humanAction: result.humanAction,
+      updatedTasks: summarizeTasks(
+        result.updatedTasks,
+        result.updatedTasks.flatMap((task) => options.repositories.listTaskDependencies(task.id)),
+      ),
+      events: result.events.map(summarizeTaskEvent),
+    });
+    return;
+  }
+
   const approvalMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)$/);
   if (method === "POST" && approvalMatch) {
     const body = await readJson<{ decision: "approved" | "denied" }>(request);
@@ -487,7 +525,7 @@ async function routeRequest(
 function buildCompanyState(
   company: Company,
   repositories: ReturnType<typeof createRepositories>,
-  options?: { now?: () => Date; createId?: (prefix: string) => string },
+  options?: { now?: () => Date; createId?: (prefix: string) => string; requestSchedulerWake?: (reason: SchedulerWakeReason) => void },
 ) {
   reconcileStaleRunningTasks({
     repositories,
@@ -495,18 +533,90 @@ function buildCompanyState(
     now: options?.now,
     createId: options?.createId,
   });
-  const tasks = repositories.listTasksForCompany(company.id);
+  let tasks = repositories.listTasksForCompany(company.id);
+  const keyResults = repositories.listKeyResults(company.id);
+  let taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
+  const departments = repositories.listDepartments(company.id);
   const businessArtifacts = repositories.listBusinessArtifactsForCompany(company.id).map(summarizeBusinessArtifact);
+  const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(company.id);
+  const humanActionConfirmations = repositories.listHumanActionConfirmationsForCompany(company.id);
+  let ceoAttention = projectCeoAttention({
+    company,
+    keyResults,
+    tasks,
+    taskCompletionEvents,
+    taskDependencies,
+    humanActionConfirmations,
+    now: options?.now,
+  });
+  const humanActionBlockEvents = applyPendingHumanActionBlocks({
+    repositories,
+    tasks,
+    taskDependencies,
+    humanActions: ceoAttention.humanActions,
+    now: options?.now,
+    createId: options?.createId,
+  });
+  if (humanActionBlockEvents.length > 0) {
+    tasks = repositories.listTasksForCompany(company.id);
+    taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
+    ceoAttention = projectCeoAttention({
+      company,
+      keyResults,
+      tasks,
+      taskCompletionEvents,
+      taskDependencies,
+      humanActionConfirmations,
+      now: options?.now,
+    });
+  }
+  const waitStateRoutingEvents = applyWaitStateRouting({
+    repositories,
+    tasks,
+    waitStates: ceoAttention.waitStates,
+    now: options?.now,
+    createId: options?.createId,
+  });
+  if (waitStateRoutingEvents.some((event) => event.status === "queued")) {
+    options?.requestSchedulerWake?.("dependency_cascade_queued");
+  }
+  if (waitStateRoutingEvents.length > 0) {
+    tasks = repositories.listTasksForCompany(company.id);
+    taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
+    ceoAttention = projectCeoAttention({
+      company,
+      keyResults,
+      tasks,
+      taskCompletionEvents,
+      taskDependencies,
+      humanActionConfirmations,
+      now: options?.now,
+    });
+  }
 
   return {
     company: summarizeCompany(company),
-    departments: repositories.listDepartments(company.id).map(summarizeDepartment),
+    departments: departments.map(summarizeDepartment),
     objectives: repositories.listObjectives(company.id).map(summarizeObjective),
-    keyResults: repositories.listKeyResults(company.id).map(summarizeKeyResult),
-    tasks: summarizeTasks(tasks, repositories.listTaskDependenciesForCompany(company.id)),
+    keyResults,
+    tasks: summarizeTasks(tasks, taskDependencies),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
     businessArtifacts,
-    founderReport: summarizeFounderReport(company, tasks, businessArtifacts),
+    taskCompletionEvents: taskCompletionEvents.map(summarizeTaskCompletionEvent),
+    visionGaps: ceoAttention.visionGaps,
+    humanActions: ceoAttention.humanActions,
+    waitStates: ceoAttention.waitStates,
+    ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
+    founderReport: summarizeFounderReport(
+      company,
+      tasks,
+      businessArtifacts,
+      ceoAttention.waitStates,
+      ceoAttention.humanActions,
+      ceoAttention.visionGaps,
+      taskDependencies,
+      departments,
+    ),
     reviews: repositories.listReviews(company.id).map(summarizeReview),
     ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(company.id).map(summarizeCeoReviewDecision),
     replanProposals: repositories.listReplanProposalsForCompany(company.id).map(summarizeReplanProposal),
@@ -516,8 +626,408 @@ function buildCompanyState(
   };
 }
 
+type ConfirmHumanActionResult =
+  | { kind: "confirmed"; humanAction: HumanAction; updatedTasks: Task[]; events: TaskEvent[] }
+  | { kind: "invalid_evidence"; verificationErrors: string[] }
+  | { kind: "not_found" };
+
+async function confirmHumanAction(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  companyId: string;
+  humanActionId: string;
+  evidence: unknown;
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+}): Promise<ConfirmHumanActionResult> {
+  const company = input.repositories.getCompany(input.companyId);
+  if (!company) {
+    return { kind: "not_found" };
+  }
+
+  const tasks = input.repositories.listTasksForCompany(company.id);
+  const taskCompletionEvents = input.repositories.listTaskCompletionEventsForCompany(company.id);
+  const attention = projectCeoAttention({
+    company,
+    keyResults: input.repositories.listKeyResults(company.id),
+    tasks,
+    taskCompletionEvents,
+    taskDependencies: input.repositories.listTaskDependenciesForCompany(company.id),
+    humanActionConfirmations: input.repositories.listHumanActionConfirmationsForCompany(company.id),
+    now: input.now,
+  });
+  const humanAction = attention.humanActions.find((action) => action.id === input.humanActionId);
+  if (!humanAction) {
+    return { kind: "not_found" };
+  }
+
+  const verification = await verifyHumanActionEvidence(humanAction, input.evidence);
+  if (verification.kind === "invalid") {
+    return { kind: "invalid_evidence", verificationErrors: verification.errors };
+  }
+
+  const verifiedAt = (input.now ?? (() => new Date()))().toISOString();
+  input.repositories.upsertHumanActionConfirmation({
+    humanActionId: humanAction.id,
+    companyId: company.id,
+    evidence: verification.evidence,
+    status: "confirmed",
+    verifiedAt,
+    verificationErrors: [],
+  } satisfies HumanActionConfirmation);
+
+  const events: TaskEvent[] = [];
+  const updatedTasks: Task[] = [];
+  const taskIdsToUnblock = new Set(humanAction.blockedTaskIds);
+  const createId = input.createId ?? defaultCreateId;
+
+  for (const task of tasks) {
+    const dependencies = input.repositories.listTaskDependencies(task.id);
+    if (!taskIdsToUnblock.has(task.id) || !isHumanActionBlockedTask(task) || !taskDependenciesRequireHumanAction(dependencies, humanAction)) {
+      continue;
+    }
+
+    input.repositories.updateTaskStatus(task.id, "queued");
+    input.repositories.updateTaskExecutionSummary(task.id, {
+      latestFailureReason: null,
+      latestFailureMessage: null,
+      dependencyNote: null,
+    });
+
+    const refreshed = input.repositories.getTask(task.id);
+    if (!refreshed) {
+      continue;
+    }
+
+    const event: TaskEvent = {
+      id: createId("task_event"),
+      companyId: refreshed.companyId,
+      taskId: refreshed.id,
+      type: "dependency_ready",
+      message: `Human Action confirmed; task queued: ${refreshed.title}.`,
+      createdAt: verifiedAt,
+      status: "queued",
+      failureReason: null,
+      failureMessage: null,
+      executionProfileName: null,
+      requestedTimeoutMs: null,
+      effectiveTimeoutMs: null,
+      dependencyNote: null,
+      artifactWorkspacePath: refreshed.artifactWorkspacePath ?? null,
+    };
+    input.repositories.appendTaskEvent(event);
+    events.push(event);
+    updatedTasks.push(refreshed);
+  }
+
+  const confirmedHumanAction = projectCeoAttention({
+    company,
+    keyResults: input.repositories.listKeyResults(company.id),
+    tasks: input.repositories.listTasksForCompany(company.id),
+    taskCompletionEvents,
+    taskDependencies: input.repositories.listTaskDependenciesForCompany(company.id),
+    humanActionConfirmations: input.repositories.listHumanActionConfirmationsForCompany(company.id),
+    now: input.now,
+  }).humanActions.find((action) => action.id === input.humanActionId);
+
+  return {
+    kind: "confirmed",
+    humanAction: confirmedHumanAction ?? { ...humanAction, evidence: verification.evidence, status: "confirmed", verifiedAt, verificationErrors: [] },
+    updatedTasks,
+    events,
+  };
+}
+
+function applyPendingHumanActionBlocks(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  tasks: Task[];
+  taskDependencies: TaskDependency[];
+  humanActions: HumanAction[];
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+}): TaskEvent[] {
+  const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
+  const dependenciesByTaskId = groupTaskDependenciesByTaskId(input.taskDependencies);
+  const createdAt = (input.now ?? (() => new Date()))().toISOString();
+  const createId = input.createId ?? defaultCreateId;
+  const events: TaskEvent[] = [];
+
+  for (const humanAction of input.humanActions.filter((action) => action.status === "pending")) {
+    for (const taskId of humanAction.blockedTaskIds) {
+      const task = tasksById.get(taskId);
+      if (!task || !isHumanActionBlockableTask(task)) {
+        continue;
+      }
+
+      const dependencies = dependenciesByTaskId.get(task.id) ?? [];
+      if (!taskDependenciesRequireHumanAction(dependencies, humanAction)) {
+        continue;
+      }
+
+      const dependencyNote = humanActionDependencyNote(humanAction);
+      if (task.status === "blocked" && task.dependencyNote === dependencyNote) {
+        continue;
+      }
+
+      input.repositories.updateTaskStatus(task.id, "blocked");
+      input.repositories.updateTaskExecutionSummary(task.id, {
+        latestFailureReason: "missing_deliverable",
+        latestFailureMessage: `Human Action required: ${humanAction.label}`,
+        dependencyNote,
+      });
+
+      const refreshed = input.repositories.getTask(task.id);
+      if (!refreshed) {
+        continue;
+      }
+
+      const event: TaskEvent = {
+        id: createId("task_event"),
+        companyId: refreshed.companyId,
+        taskId: refreshed.id,
+        type: "task_blocked",
+        message: `Human Action required before this task can proceed: ${humanAction.label}.`,
+        createdAt,
+        status: "blocked",
+        failureReason: "missing_deliverable",
+        failureMessage: `Human Action required: ${humanAction.label}`,
+        executionProfileName: null,
+        requestedTimeoutMs: null,
+        effectiveTimeoutMs: null,
+        dependencyNote,
+        artifactWorkspacePath: refreshed.artifactWorkspacePath ?? null,
+      };
+      input.repositories.appendTaskEvent(event);
+      events.push(event);
+      tasksById.set(refreshed.id, refreshed);
+    }
+  }
+
+  return events;
+}
+
+function applyWaitStateRouting(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  tasks: Task[];
+  waitStates: WaitState[];
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+}): TaskEvent[] {
+  const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
+  const timestamp = (input.now ?? (() => new Date()))().toISOString();
+  const createId = input.createId ?? defaultCreateId;
+  const events: TaskEvent[] = [];
+
+  for (const waitState of input.waitStates) {
+    for (const taskId of waitState.affectedTaskIds) {
+      const task = tasksById.get(taskId);
+      if (!task) {
+        continue;
+      }
+
+      const dependencyNote = waitStateDependencyNote(waitState);
+      if (waitState.status === "waiting" && task.status === "queued") {
+        input.repositories.updateTaskStatus(task.id, "waiting_dependency");
+        input.repositories.updateTaskExecutionSummary(task.id, {
+          latestFailureReason: null,
+          latestFailureMessage: null,
+          dependencyNote,
+        });
+
+        const refreshed = input.repositories.getTask(task.id);
+        if (!refreshed) {
+          continue;
+        }
+
+        const event = waitStateTaskEvent({
+          createId,
+          task: refreshed,
+          type: "dependency_waiting",
+          message: `Wait State active until ${waitState.nextCheckAt}: ${waitState.label}.`,
+          createdAt: timestamp,
+          status: "waiting_dependency",
+          dependencyNote,
+        });
+        input.repositories.appendTaskEvent(event);
+        events.push(event);
+        tasksById.set(refreshed.id, refreshed);
+      }
+
+      if (waitState.status === "ready_for_check_in" && task.status === "waiting_dependency" && task.dependencyNote === dependencyNote) {
+        input.repositories.updateTaskStatus(task.id, "queued");
+        input.repositories.updateTaskExecutionSummary(task.id, {
+          latestFailureReason: null,
+          latestFailureMessage: null,
+          dependencyNote: null,
+        });
+
+        const refreshed = input.repositories.getTask(task.id);
+        if (!refreshed) {
+          continue;
+        }
+
+        const event = waitStateTaskEvent({
+          createId,
+          task: refreshed,
+          type: "dependency_ready",
+          message: `Wait State check-in is due; task queued: ${refreshed.title}.`,
+          createdAt: timestamp,
+          status: "queued",
+          dependencyNote: null,
+        });
+        input.repositories.appendTaskEvent(event);
+        events.push(event);
+        tasksById.set(refreshed.id, refreshed);
+      }
+    }
+  }
+
+  return events;
+}
+
+async function verifyHumanActionEvidence(
+  humanAction: HumanAction,
+  evidence: unknown,
+): Promise<{ kind: "valid"; evidence: Record<string, string> } | { kind: "invalid"; errors: string[] }> {
+  if (!isRecord(evidence)) {
+    return { kind: "invalid", errors: ["evidence: Expected an object."] };
+  }
+
+  const normalized: Record<string, string> = {};
+  const errors: string[] = [];
+  for (const requirement of humanActionConfirmationRequirements(humanAction)) {
+    const value = evidence[requirement];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      errors.push(`evidence.${requirement}: Expected a non-empty string.`);
+      continue;
+    }
+
+    const trimmed = value.trim();
+    if (requirement === "url" && !(await isReachableHttpUrl(trimmed))) {
+      errors.push("evidence.url: Expected a reachable http(s) URL.");
+      continue;
+    }
+    normalized[requirement] = trimmed;
+  }
+
+  return errors.length > 0 ? { kind: "invalid", errors } : { kind: "valid", evidence: normalized };
+}
+
+function humanActionConfirmationRequirements(humanAction: HumanAction): string[] {
+  return humanAction.confirmationRequirements.length > 0 ? humanAction.confirmationRequirements : ["configuration_value"];
+}
+
+function isHumanActionBlockedTask(task: Task): boolean {
+  return task.status === "blocked" || task.status === "waiting_dependency";
+}
+
+function isHumanActionBlockableTask(task: Task): boolean {
+  return task.status === "queued" || task.status === "waiting_dependency";
+}
+
+function taskDependenciesRequireHumanAction(dependencies: TaskDependency[], humanAction: HumanAction): boolean {
+  return dependencies.some((dependency) => handoffContractRequiresHumanAction(dependency.handoffContract, humanAction));
+}
+
+function handoffContractRequiresHumanAction(handoffContract: string | null | undefined, humanAction: HumanAction): boolean {
+  const normalizedContract = handoffContract?.trim().toLowerCase();
+  if (!normalizedContract) {
+    return false;
+  }
+
+  const normalizedId = humanAction.id.toLowerCase();
+  const normalizedLabel = humanAction.label.toLowerCase();
+  return (
+    normalizedContract.includes(`human_action:${normalizedId}`) ||
+    normalizedContract.includes(`human_action:${normalizedLabel}`) ||
+    (normalizedContract.includes("human_action") && normalizedContract.includes(normalizedId))
+  );
+}
+
+function humanActionDependencyNote(humanAction: HumanAction): string {
+  return `Waiting for Human Action confirmation: ${humanAction.id}.`;
+}
+
+function groupTaskDependenciesByTaskId(dependencies: TaskDependency[]): Map<string, TaskDependency[]> {
+  const grouped = new Map<string, TaskDependency[]>();
+  for (const dependency of dependencies) {
+    grouped.set(dependency.taskId, [...(grouped.get(dependency.taskId) ?? []), dependency]);
+  }
+  return grouped;
+}
+
+function waitStateDependencyNote(waitState: WaitState): string {
+  return `Waiting for Wait State check-in: ${waitState.id} at ${waitState.nextCheckAt}.`;
+}
+
+function waitStateTaskEvent(input: {
+  createId: (prefix: string) => string;
+  task: Task;
+  type: "dependency_waiting" | "dependency_ready";
+  message: string;
+  createdAt: string;
+  status: "waiting_dependency" | "queued";
+  dependencyNote: string | null;
+}): TaskEvent {
+  return {
+    id: input.createId("task_event"),
+    companyId: input.task.companyId,
+    taskId: input.task.id,
+    type: input.type,
+    message: input.message,
+    createdAt: input.createdAt,
+    status: input.status,
+    failureReason: null,
+    failureMessage: null,
+    executionProfileName: null,
+    requestedTimeoutMs: null,
+    effectiveTimeoutMs: null,
+    dependencyNote: input.dependencyNote,
+    artifactWorkspacePath: input.task.artifactWorkspacePath ?? null,
+  };
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+async function isReachableHttpUrl(value: string): Promise<boolean> {
+  if (!isHttpUrl(value)) {
+    return false;
+  }
+
+  if (await fetchUrl(value, "HEAD")) {
+    return true;
+  }
+  return fetchUrl(value, "GET");
+}
+
+async function fetchUrl(value: string, method: "GET" | "HEAD"): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_500);
+  try {
+    const response = await fetch(value, { method, redirect: "follow", signal: controller.signal });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 type CeoReviewDecisionResult =
-  | { kind: "created"; decision: CeoReviewDecision; task: Task; event: TaskEvent; progressEvent?: TaskProgressEvent }
+  | {
+      kind: "created";
+      decision: CeoReviewDecision;
+      task: Task;
+      event: TaskEvent;
+      progressEvent?: TaskProgressEvent;
+      dependencyCascade?: DependencyCascadeResult;
+    }
   | { kind: "not_found" }
   | { kind: "not_in_review" }
   | { kind: "missing_proof" }
@@ -531,6 +1041,7 @@ function createCeoReviewDecision(input: {
   note: string | null;
   now?: () => Date;
   createId?: (prefix: string) => string;
+  requestSchedulerWake?: () => void;
 }): CeoReviewDecisionResult {
   const task = input.repositories.getTask(input.taskId);
 
@@ -571,36 +1082,53 @@ function createCeoReviewDecision(input: {
     createdAt: timestamp,
   };
   input.repositories.createCeoReviewDecision(decision);
+  if (input.decision === "approve") {
+    const accepted = acceptTaskBusinessArtifact({
+      repositories: input.repositories,
+      task,
+      artifact: artifact!,
+      acceptanceProvenance: "manual_ceo_review",
+      eventType: "ceo_review_decision",
+      eventMessage: `CEO Office approved task: ${task.title}.`,
+      keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
+      dependencyCascade: { maxDepth: 2 },
+      requestSchedulerWake: input.requestSchedulerWake,
+      now: input.now,
+      createId: input.createId,
+    });
+
+    return {
+      kind: "created",
+      decision,
+      task: accepted.task,
+      event: accepted.event,
+      dependencyCascade: accepted.dependencyCascade,
+    };
+  }
+
   if (artifact) {
     input.repositories.updateBusinessArtifactReviewStatus(
       artifact.id,
-      input.decision === "approve" ? "accepted" : "returned",
+      "returned",
       timestamp,
     );
   }
 
-  const nextStatus = input.decision === "approve" ? "complete" : "queued";
-  input.repositories.updateTaskStatus(task.id, nextStatus);
-  if (input.decision === "approve" && task.keyResultId) {
-    input.repositories.updateKeyResultProgress(task.keyResultId, "accepted_business_artifact", "met");
-  }
+  input.repositories.updateTaskStatus(task.id, "queued");
 
   const event: TaskEvent = {
     id: input.createId?.("task_event") ?? `task_event_${Date.now()}`,
     companyId: task.companyId,
     taskId: task.id,
     type: "ceo_review_decision",
-    message:
-      input.decision === "approve"
-        ? `CEO Office approved task: ${task.title}.`
-        : `CEO Office returned task: ${task.title}.`,
+    message: `CEO Office returned task: ${task.title}.`,
     messageText: ceoReviewDecisionMessageText({
       decision: input.decision,
       taskTitle: task.title,
       taskTitleText: task.titleText,
     }),
     createdAt: timestamp,
-    status: nextStatus,
+    status: "queued",
     failureReason: null,
     failureMessage: null,
     executionProfileName: task.latestExecutionProfileName ?? null,
@@ -612,34 +1140,32 @@ function createCeoReviewDecision(input: {
   input.repositories.appendTaskEvent(event);
 
   let progressEvent: TaskProgressEvent | undefined;
-  if (input.decision === "return") {
-    progressEvent = {
-      id: input.createId?.("task_progress") ?? `task_progress_${Date.now()}`,
-      companyId: task.companyId,
-      departmentId: task.departmentId,
-      parentTaskId: task.parentTaskId ?? task.id,
-      subjectTaskId: task.id,
-      step: "blocked",
-      status: "current",
-      label: "CEO Office returned this, waiting for the department to rework it.",
-      labelText: ceoReturnProgressLabelText(),
-      detail: formatCeoReturnProgressDetail(input.returnReason, input.note),
-      detailText: ceoReturnProgressDetailText({
-        reason: input.returnReason ? formatCeoReturnReason(input.returnReason) : null,
-        note: input.note,
-        fallback: formatCeoReturnProgressDetail(input.returnReason, input.note),
-      }),
-      createdAt: timestamp,
-    };
-    input.repositories.appendTaskProgressEvent(progressEvent);
-  }
+  progressEvent = {
+    id: input.createId?.("task_progress") ?? `task_progress_${Date.now()}`,
+    companyId: task.companyId,
+    departmentId: task.departmentId,
+    parentTaskId: task.parentTaskId ?? task.id,
+    subjectTaskId: task.id,
+    step: "blocked",
+    status: "current",
+    label: "CEO Office returned this, waiting for the department to rework it.",
+    labelText: ceoReturnProgressLabelText(),
+    detail: formatCeoReturnProgressDetail(input.returnReason, input.note),
+    detailText: ceoReturnProgressDetailText({
+      reason: input.returnReason ? formatCeoReturnReason(input.returnReason) : null,
+      note: input.note,
+      fallback: formatCeoReturnProgressDetail(input.returnReason, input.note),
+    }),
+    createdAt: timestamp,
+  };
+  input.repositories.appendTaskProgressEvent(progressEvent);
 
   return {
     kind: "created",
     decision,
     task: {
       ...task,
-      status: nextStatus,
+      status: "queued",
     },
     event,
     progressEvent,
@@ -930,11 +1456,19 @@ function summarizeFounderReport(
   company: Company,
   tasks: Task[],
   artifacts: ReturnType<typeof summarizeBusinessArtifact>[],
+  waitStates: WaitState[],
+  humanActions: HumanAction[],
+  visionGaps: VisionGap[],
+  taskDependencies: TaskDependency[],
+  departments: Department[],
 ) {
   const acceptedArtifacts = artifacts.filter((artifact) => artifact.reviewStatus === "accepted" && artifact.isCurrent);
   const blockedTasks = tasks.filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed");
   const reviewTasks = tasks.filter((task) => task.status === "review");
   const driftArtifacts = artifacts.filter((artifact) => artifact.validationStatus === "invalid_drift");
+  const dependenciesByTaskId = groupTaskDependenciesByTaskId(taskDependencies);
+  const departmentById = new Map(departments.map((department) => [department.id, department]));
+  const acceptedArtifactsByTaskId = new Map(acceptedArtifacts.map((artifact) => [artifact.taskId, artifact]));
 
   return {
     founderVision: company.founderVision,
@@ -950,12 +1484,71 @@ function summarizeFounderReport(
     completedTaskCount: tasks.filter((task) => task.status === "complete").length,
     reviewTaskCount: reviewTasks.length,
     blockedTaskCount: blockedTasks.length,
+    departmentContributions: departments.map((department) => {
+      const departmentTasks = tasks.filter((task) => task.departmentId === department.id);
+      const departmentTaskIds = new Set(departmentTasks.map((task) => task.id));
+      return {
+        departmentId: department.id,
+        departmentName: department.name,
+        completedTaskCount: departmentTasks.filter((task) => task.status === "complete").length,
+        acceptedOutputCount: acceptedArtifacts.filter((artifact) => departmentTaskIds.has(artifact.taskId)).length,
+        blockedTaskCount: departmentTasks.filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed").length,
+        humanActionCount: humanActions.filter((action) => action.departmentId === department.id).length,
+        waitStateCount: waitStates.filter((waitState) => waitState.departmentId === department.id).length,
+        visionGapCount: visionGaps.filter((gap) => gap.departmentId === department.id).length,
+      };
+    }),
+    dependencyState: tasks.map((task) => ({
+      taskId: task.id,
+      title: task.title,
+      departmentId: task.departmentId,
+      departmentName: departmentById.get(task.departmentId)?.name ?? task.departmentId,
+      status: task.status,
+      dependsOnTaskIds: (dependenciesByTaskId.get(task.id) ?? []).map((dependency) => dependency.dependsOnTaskId),
+      hasAcceptedOutput: acceptedArtifactsByTaskId.has(task.id),
+      dependencyNote: task.dependencyNote,
+    })),
+    humanActionCount: humanActions.length,
+    humanActions: humanActions.map((action) => ({
+      id: action.id,
+      label: action.label,
+      status: action.status,
+      departmentId: action.departmentId,
+      blockedTaskIds: action.blockedTaskIds,
+      confirmationRequirements: action.confirmationRequirements,
+    })),
+    waitStateCount: waitStates.length,
+    waitStates: waitStates.map((waitState) => ({
+      id: waitState.id,
+      label: waitState.label,
+      status: waitState.status,
+      nextCheckAt: waitState.nextCheckAt,
+      affectedTaskIds: waitState.affectedTaskIds,
+    })),
+    visionGapCount: visionGaps.length,
+    visionGaps: visionGaps.map((gap) => ({
+      id: gap.id,
+      label: gap.label,
+      severity: gap.severity,
+      departmentId: gap.departmentId,
+      relatedTaskId: gap.relatedTaskId,
+    })),
     directionDriftDetected: driftArtifacts.length > 0,
     nextSteps: [
       ...reviewTasks.map((task) => `Review ${task.title}.`),
+      ...humanActions.filter((action) => action.status === "pending").map((action) => `Complete Human Action: ${action.label}`),
+      ...visionGaps
+        .filter((gap) => gap.severity === "blocking" || gap.severity === "strategic")
+        .map((gap) => `Resolve Vision Gap: ${gap.label}`),
       ...blockedTasks.map((task) => task.dependencyNote ?? task.latestFailureMessage ?? `Resolve ${task.title}.`),
+      ...waitStates.map(formatWaitStateNextStep),
     ],
   };
+}
+
+function formatWaitStateNextStep(waitState: WaitState): string {
+  const label = waitState.label.replace(/[.!?]+$/, "");
+  return waitState.status === "ready_for_check_in" ? `Check ${label}.` : `Monitor ${label} until ${waitState.nextCheckAt}.`;
 }
 
 function summarizeReview(review: ReviewRecord) {
@@ -1010,6 +1603,10 @@ function summarizeTaskProgressEvent(event: TaskProgressEvent) {
   };
 }
 
+function summarizeTaskCompletionEvent(event: TaskCompletionEvent) {
+  return event;
+}
+
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
   response.writeHead(statusCode, { "content-type": "application/json", ...corsHeaders() });
   response.end(JSON.stringify(body));
@@ -1041,4 +1638,12 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
   }
 
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function defaultCreateId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
