@@ -4,7 +4,7 @@
 
 Blocked by: 03: Accept Structured Next Step Items From Business Artifacts.
 
-Status: ready-for-agent
+Status: resolved
 
 - [x] Human Action Next Step Items become Human Actions in Company State Snapshot.
 - [x] Human Actions include owner department, blocked downstream tasks, confirmation requirements, and display copy.

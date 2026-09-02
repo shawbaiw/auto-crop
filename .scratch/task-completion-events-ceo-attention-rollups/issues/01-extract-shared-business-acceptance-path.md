@@ -4,7 +4,7 @@
 
 Blocked by: None (can start immediately).
 
-Status: ready-for-agent
+Status: resolved
 
 - [x] Manual CEO approval still accepts the current valid Business Artifact and marks the task complete.
 - [x] Manual CEO approval still rejects stale, missing-proof, and invalid-artifact approval attempts.

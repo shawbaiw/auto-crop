@@ -4,7 +4,7 @@
 
 Blocked by: 03: Accept Structured Next Step Items From Business Artifacts.
 
-Status: ready-for-agent
+Status: resolved
 
 - [x] Blocking and strategic Vision Gaps appear in CEO Attention Rollups.
 - [x] Informational Vision Gaps remain visible without becoming interruptive attention.

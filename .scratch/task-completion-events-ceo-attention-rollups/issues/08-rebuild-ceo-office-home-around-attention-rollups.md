@@ -4,7 +4,7 @@
 
 Blocked by: 04: Route Vision Gaps And CEO Attention Rollups; 05: Route Human Actions With Confirmation Evidence; 06: Route Wait States Into Timed Check-Ins.
 
-Status: ready-for-agent
+Status: resolved
 
 - [x] CEO Workspace renders the executive overview before review queues.
 - [x] CEO Attention Rollups show business situation, department ownership, downstream impact, and recommended next action.

@@ -4,7 +4,7 @@
 
 Blocked by: 07: Add Conservative Automatic Acceptance; 08: Rebuild CEO Office Home Around Attention Rollups.
 
-Status: ready-for-agent
+Status: resolved
 
 - [x] A playbook-neutral smoke scenario shows a valid low-risk task automatically accepting and unblocking downstream work.
 - [x] A Web artifact scenario creates a deployment Human Action instead of claiming the Founder Vision is achieved.

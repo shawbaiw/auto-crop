@@ -4,7 +4,7 @@
 
 Blocked by: 02: Record Task Completion Events For Stable Outcomes.
 
-Status: ready-for-agent
+Status: resolved
 
 - [x] Business Artifact payloads may include structured Next Step Item proposals.
 - [x] Valid Next Step Item proposals are copied into the Task Completion Event.

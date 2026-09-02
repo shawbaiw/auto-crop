@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 
 # Task Completion Events And CEO Attention Rollups
 

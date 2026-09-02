@@ -4,7 +4,7 @@
 
 Blocked by: 01: Extract Shared Business Acceptance Path.
 
-Status: ready-for-agent
+Status: resolved
 
 - [x] Accepted manual CEO approval creates a Task Completion Event.
 - [x] Blocked review-ineligible Business Artifacts create Task Completion Events.

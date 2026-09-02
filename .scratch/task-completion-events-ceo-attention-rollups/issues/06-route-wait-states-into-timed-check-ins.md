@@ -4,7 +4,7 @@
 
 Blocked by: 03: Accept Structured Next Step Items From Business Artifacts.
 
-Status: ready-for-agent
+Status: resolved
 
 - [x] Wait State Next Step Items become Wait States in Company State Snapshot.
 - [x] Wait States are not treated as task failures.
