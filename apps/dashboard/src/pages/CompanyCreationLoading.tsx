@@ -55,11 +55,13 @@ export function CompanyCreationLoading({
         titleId={titleId}
       />
 
-      <section aria-label={t("creating.status")} className="creation-progress">
-        <div aria-label={t("creating.statusText")} className="creation-progress__track" role="progressbar">
-          <span className="creation-progress__bar" />
-        </div>
-      </section>
+      {!isFailed ? (
+        <section aria-label={t("creating.status")} className="creation-progress">
+          <div aria-label={t("creating.statusText")} className="creation-progress__track" role="progressbar">
+            <span className="creation-progress__bar" />
+          </div>
+        </section>
+      ) : null}
 
       <Workspace className="creation-loading">
         <RetroPanel icon={<LoaderCircle size={18} aria-hidden="true" />} title={t("creating.panel")}>

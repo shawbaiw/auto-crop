@@ -290,6 +290,7 @@ describe("Dashboard App", () => {
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
     expect(await screen.findByText("Company Creation failed: temporary model failure")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /retry creation/i }));
 
     expect(api.retryCompanyCreation).toHaveBeenCalledWith("company_1");

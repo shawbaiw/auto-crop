@@ -7,6 +7,46 @@ describe("createApiClient", () => {
     vi.unstubAllGlobals();
   });
 
+  it("subscribes to company creation events", () => {
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    class FakeEventSource {
+      url: string;
+
+      constructor(url: string) {
+        this.url = url;
+      }
+
+      addEventListener(type: string, listener: (event: MessageEvent) => void) {
+        listeners.set(type, listener);
+      }
+
+      close() {}
+    }
+    vi.stubGlobal("EventSource", FakeEventSource);
+
+    const handler = vi.fn();
+    const client = createApiClient("http://127.0.0.1:8787");
+    client.subscribeEvents("company_1", handler);
+
+    listeners.get("company_creation_failed")?.(
+      new MessageEvent("company_creation_failed", {
+        data: JSON.stringify({
+          type: "company_creation_failed",
+          companyId: "company_1",
+          message: "Company Creation failed: temporary model failure",
+          status: "creation_failed",
+        }),
+      }),
+    );
+
+    expect(handler).toHaveBeenCalledWith({
+      type: "company_creation_failed",
+      companyId: "company_1",
+      message: "Company Creation failed: temporary model failure",
+      status: "creation_failed",
+    });
+  });
+
   it("times out company loading requests instead of leaving the picker loading forever", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
