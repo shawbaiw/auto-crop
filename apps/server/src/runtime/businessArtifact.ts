@@ -289,19 +289,58 @@ function normalizeParsedArtifactForCapturedProof(
   };
 }
 
+const SCREENSHOT_BLOCKER_PATTERN = /screenshot|screen[_ -]?capture|render[_ -]?evidence/i;
+
+type EnvironmentBlockerShape = {
+  artifactKind: unknown;
+  artifactSubtype?: unknown;
+  taskType?: unknown;
+  payload: unknown;
+};
+
 /**
- * True when a blocker artifact declares `blocker_class: "environment_blocked"` plus a capability,
- * i.e. an Environment-Blocked Blocker whose claim the runtime may independently check.
+ * The capability an Environment-Blocked Blocker's claim can be checked against, or null when the
+ * artifact is not a verifiable environment blocker.
+ *
+ * The explicit contract is `blocker_class: "environment_blocked"` plus a `capability` string. As a
+ * fallback the runtime also recognizes the shape a render-evidence agent naturally leaves when the
+ * sandbox blocks every capture path: a `blocker` whose subtype, task type, or `payload.proof.schema`
+ * names a screenshot but which omits the gate keys. Recognition is deliberately generous because
+ * verification stays strict — an unverifiable claim keeps the blocker in place.
+ */
+function resolveEnvironmentBlockerCapability(artifact: EnvironmentBlockerShape): string | null {
+  if (artifact.artifactKind !== "blocker" || !isRecord(artifact.payload)) {
+    return null;
+  }
+  const payload = artifact.payload;
+  const declaredCapability =
+    typeof payload.capability === "string" && payload.capability.length > 0 ? payload.capability : null;
+  const blockerClass = payload.blocker_class ?? payload.blockerClass;
+
+  if (blockerClass === "environment_blocked" && declaredCapability) {
+    return declaredCapability;
+  }
+
+  const proof = isRecord(payload.proof) ? payload.proof : null;
+  const namesScreenshot = [artifact.artifactSubtype, artifact.taskType, proof?.schema].some(
+    (value) => typeof value === "string" && SCREENSHOT_BLOCKER_PATTERN.test(value),
+  );
+  if (namesScreenshot) {
+    return declaredCapability ?? "browser_screenshot";
+  }
+  return null;
+}
+
+/**
+ * True when a blocker artifact carries an Environment-Blocked claim the runtime may independently
+ * check — either the explicit `blocker_class`/`capability` contract or the natural screenshot-capture
+ * blocker shape. See {@link resolveEnvironmentBlockerCapability}.
  */
 export function isVerifiableEnvironmentBlocker(
-  artifact: Pick<DeclaredBusinessArtifact, "artifactKind" | "payload">,
+  artifact: Pick<DeclaredBusinessArtifact, "artifactKind" | "payload"> &
+    Partial<Pick<DeclaredBusinessArtifact, "artifactSubtype" | "taskType">>,
 ): boolean {
-  if (artifact.artifactKind !== "blocker" || !isRecord(artifact.payload)) {
-    return false;
-  }
-  const blockerClass = artifact.payload.blocker_class ?? artifact.payload.blockerClass;
-  const capability = artifact.payload.capability;
-  return blockerClass === "environment_blocked" && typeof capability === "string" && capability.length > 0;
+  return resolveEnvironmentBlockerCapability(artifact) !== null;
 }
 
 /**
@@ -330,7 +369,13 @@ export function readEnvironmentBlockerClaim(workspacePath: string, proofs: Proof
   if (artifactKind !== "blocker" || !isRecord(payload)) {
     return null;
   }
-  if (!isVerifiableEnvironmentBlocker({ artifactKind: "blocker", payload })) {
+  const capability = resolveEnvironmentBlockerCapability({
+    artifactKind: "blocker",
+    artifactSubtype: json.artifactSubtype ?? json.artifact_subtype,
+    taskType: json.taskType ?? json.task_type,
+    payload,
+  });
+  if (!capability) {
     return null;
   }
 
@@ -341,7 +386,7 @@ export function readEnvironmentBlockerClaim(workspacePath: string, proofs: Proof
     proofs.find((proof) => proof.type === "url")?.uri ??
     null;
 
-  return { capability: payload.capability as string, url };
+  return { capability, url };
 }
 
 /**

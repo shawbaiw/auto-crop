@@ -1,6 +1,6 @@
 import type { Proof, ProofSchema, Task, TaskEvent, TaskProgressEvent } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
-import { isRetryExhausted, retryExhaustedRefusalMessage } from "./boundedRecovery";
+import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhausted } from "./boundedRecovery";
 import { formatExecutionBudget } from "./executionProfile";
 import { buildProofContractInstructions } from "./proofContract";
 import { recoverProofIfPossible } from "./taskRefresh";
@@ -135,6 +135,13 @@ export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
   }
 
   if (isRetryExhausted(input.repositories, currentTask.id)) {
+    // Land it in the CEO Blocked Queue if an earlier path left it merely `failed`, then refuse.
+    terminateAsRetryExhausted({
+      repositories: input.repositories,
+      task: currentTask,
+      now: input.now,
+      createId: input.createId,
+    });
     throw new Error(retryExhaustedRefusalMessage(currentTask));
   }
 

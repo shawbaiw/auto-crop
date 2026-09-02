@@ -74,6 +74,42 @@ describe("task recovery", () => {
     expect(fixture.repositories.getTask("task_1")?.status).toBe("blocked");
   });
 
+  it("routes a still-failed exhausted task into the CEO Blocked Queue before refusing", () => {
+    // A task left `failed` (not `blocked`) by a path that never ran the ceiling routing -- e.g. an
+    // agent run from before Bounded Recovery existed. `recover` must still land it in the Blocked
+    // Queue so the CEO can see it, not just bounce off with an error.
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        status: "failed",
+        latestFailureReason: "no_proof",
+        latestFailureMessage: "Task failed: Record implementation changes / no_proof.",
+      },
+    ]);
+    for (const id of ["run_1", "run_2", "run_3"]) {
+      fixture.repositories.createAgentRun({ ...createAgentRunRecord(), id, status: "failed" });
+    }
+
+    expect(() =>
+      recoverTask({
+        repositories: fixture.repositories,
+        taskId: "task_1",
+        now: () => new Date("2026-08-25T00:03:01.000Z"),
+        createId: createSequentialIdFactory(),
+      }),
+    ).toThrow(/retry_exhausted/i);
+
+    const task = fixture.repositories.getTask("task_1");
+    expect(task?.status).toBe("blocked");
+    expect(task?.latestFailureReason).toBe("retry_exhausted");
+    expect(fixture.repositories.listTaskEventsForCompany("company_1")).toContainEqual(
+      expect.objectContaining({ taskId: "task_1", type: "task_blocked", failureReason: "retry_exhausted" }),
+    );
+    expect(
+      fixture.repositories.listTaskCompletionEventsForCompany("company_1").some((event) => event.outcome === "blocked"),
+    ).toBe(true);
+  });
+
   it("requeues a failed timeout task when there is no Partial Output", () => {
     const fixture = createFixture([
       {
