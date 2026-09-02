@@ -16,24 +16,30 @@ import { useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
   BusinessArtifactSummary,
+  CeoAttentionRollupSummary,
   CeoReviewDecisionResponse,
   CeoReviewReturnReason,
   CeoIntakeSummary,
   CeoIntakeStatus,
   CompanySummary,
   DepartmentSummary,
+  HumanActionSummary,
   ObjectiveSummary,
   ProofSummary,
   TaskRecoveryResponse,
   TaskRefreshResponse,
   TaskProgressEventSummary,
   TaskSummary,
+  VisionGapSummary,
+  WaitStateSummary,
 } from "../api/client";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
+import { HumanActionPanel } from "../ui/humanActions/HumanActionPanel";
 import { useLanguage } from "../ui/language";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroListRow, RetroPanel } from "../ui/retro";
 import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
+import { WaitStatePanel } from "../ui/waitStates/WaitStatePanel";
 
 export type DepartmentWorkspaceProps = {
   agents: AgentSummary[];
@@ -47,6 +53,11 @@ export type DepartmentWorkspaceProps = {
   ceoIntakes?: CeoIntakeSummary[];
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
+  ceoAttentionRollups?: CeoAttentionRollupSummary[];
+  humanActions?: HumanActionSummary[];
+  visionGaps?: VisionGapSummary[];
+  waitStates?: WaitStateSummary[];
+  onConfirmHumanAction?: (humanActionId: string, evidence: Record<string, string>) => Promise<void> | void;
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
   onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
@@ -68,6 +79,7 @@ export function DepartmentWorkspace({
   objectives,
   onCreateCeoIntake,
   onCreateCeoReviewDecision,
+  onConfirmHumanAction,
   onRefreshTask,
   onRecoverTask,
   selectedCeoAgentId,
@@ -75,6 +87,10 @@ export function DepartmentWorkspace({
   ceoIntakes = [],
   proof = [],
   businessArtifacts = [],
+  ceoAttentionRollups = [],
+  humanActions = [],
+  visionGaps = [],
+  waitStates = [],
   taskProgressEvents = [],
 }: DepartmentWorkspaceProps) {
   const { t } = useLanguage();
@@ -139,6 +155,9 @@ export function DepartmentWorkspace({
                   departmentId={selectedDepartment.id}
                   departmentName={selectedDepartment.name}
                   draft={departmentDraft}
+                  humanActions={humanActions.filter((action) => action.departmentId === selectedDepartment.id)}
+                  waitStates={waitStates.filter((waitState) => waitState.departmentId === selectedDepartment.id)}
+                  onConfirmHumanAction={onConfirmHumanAction}
                   onDraftChange={setDepartmentDraft}
                   onViewCeoPending={() => setSelectedRoleId(ceoRoleId)}
                   onRefreshTask={onRefreshTask}
@@ -163,14 +182,19 @@ export function DepartmentWorkspace({
                   departments={departments}
                   intakes={ceoIntakes}
                   objectives={objectives}
+                  ceoAttentionRollups={ceoAttentionRollups}
                   onDraftChange={setCeoIntakeDraft}
                   onCreateCeoReviewDecision={onCreateCeoReviewDecision}
+                  onConfirmHumanAction={onConfirmHumanAction}
                   onRefreshTask={onRefreshTask}
                   onSelectDepartment={setSelectedRoleId}
                   onSubmit={onCreateCeoIntake}
                   pendingItems={ceoPendingItems}
                   proof={proof}
                   businessArtifacts={businessArtifacts}
+                  humanActions={humanActions}
+                  visionGaps={visionGaps}
+                  waitStates={waitStates}
                   tasks={tasks}
                 />
                 <p className="muted">{t("department.schedulerNote")}</p>
@@ -238,11 +262,14 @@ function departmentIcon(departmentName: string): ReactNode {
 }
 
 function CeoIntakeWorkspace({
+  ceoAttentionRollups,
   departments,
   draft,
+  humanActions,
   intakes,
   objectives,
   onCreateCeoReviewDecision,
+  onConfirmHumanAction,
   onDraftChange,
   onRefreshTask,
   onSelectDepartment,
@@ -251,12 +278,17 @@ function CeoIntakeWorkspace({
   proof,
   businessArtifacts,
   tasks,
+  visionGaps,
+  waitStates,
 }: {
+  ceoAttentionRollups: CeoAttentionRollupSummary[];
   departments: DepartmentSummary[];
   draft: string;
+  humanActions: HumanActionSummary[];
   intakes: CeoIntakeSummary[];
   objectives: ObjectiveSummary[];
   onCreateCeoReviewDecision?: DepartmentWorkspaceProps["onCreateCeoReviewDecision"];
+  onConfirmHumanAction?: DepartmentWorkspaceProps["onConfirmHumanAction"];
   onDraftChange: (value: string) => void;
   onRefreshTask?: (taskId: string) => void;
   onSelectDepartment: (departmentId: string) => void;
@@ -265,11 +297,15 @@ function CeoIntakeWorkspace({
   proof: ProofSummary[];
   businessArtifacts: BusinessArtifactSummary[];
   tasks: TaskSummary[];
+  visionGaps: VisionGapSummary[];
+  waitStates: WaitStateSummary[];
 }) {
   const { t } = useLanguage();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const selectedPendingItem = pendingItems.find((item) => item.task.id === selectedTaskId) ?? null;
+  const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const departmentsById = useMemo(() => new Map(departments.map((department) => [department.id, department])), [departments]);
   const proofsByTask = useMemo(() => groupProofByTask(proof), [proof]);
   const artifactsByTask = useMemo(() => groupBusinessArtifactsByTask(businessArtifacts), [businessArtifacts]);
 
@@ -285,6 +321,16 @@ function CeoIntakeWorkspace({
 
   return (
     <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
+      <CeoExecutiveOverview
+        ceoAttentionRollups={ceoAttentionRollups}
+        companyTaskCount={tasks.length}
+        departmentsById={departmentsById}
+        humanActions={humanActions}
+        objectives={objectives}
+        tasksById={tasksById}
+        visionGaps={visionGaps}
+        waitStates={waitStates}
+      />
       <CeoIntakeFlows intakes={intakes} />
       <CeoPendingQueue
         items={pendingItems}
@@ -294,6 +340,8 @@ function CeoIntakeWorkspace({
         }}
         successMessage={successMessage}
       />
+      <HumanActionPanel actions={humanActions} onConfirm={onConfirmHumanAction} title={t("department.humanActions")} />
+      <WaitStatePanel title={t("department.waitStates")} waitStates={waitStates} />
       {selectedPendingItem ? (
         <CeoTaskReviewDetail
           item={selectedPendingItem}
@@ -334,6 +382,111 @@ function groupBusinessArtifactsByTask(artifacts: BusinessArtifactSummary[]): Map
     grouped.set(artifact.taskId, [...(grouped.get(artifact.taskId) ?? []), artifact]);
   }
   return grouped;
+}
+
+function CeoExecutiveOverview({
+  ceoAttentionRollups,
+  companyTaskCount,
+  departmentsById,
+  humanActions,
+  objectives,
+  tasksById,
+  visionGaps,
+  waitStates,
+}: {
+  ceoAttentionRollups: CeoAttentionRollupSummary[];
+  companyTaskCount: number;
+  departmentsById: Map<string, DepartmentSummary>;
+  humanActions: HumanActionSummary[];
+  objectives: ObjectiveSummary[];
+  tasksById: Map<string, TaskSummary>;
+  visionGaps: VisionGapSummary[];
+  waitStates: WaitStateSummary[];
+}) {
+  const { t } = useLanguage();
+  const blockingTasks = [...tasksById.values()].filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed");
+  const completedTasks = [...tasksById.values()].filter((task) => task.status === "complete");
+
+  return (
+    <section className="ceo-executive-overview" aria-label={t("department.ceoExecutiveOverview")}>
+      <h3>{t("department.ceoExecutiveOverview")}</h3>
+      <VideotexKeyValue
+        items={[
+          { label: t("department.objectives"), value: String(objectives.length) },
+          { label: t("department.completedTasks"), value: `${completedTasks.length}/${companyTaskCount}` },
+          { label: t("department.attentionRollups"), value: String(ceoAttentionRollups.length) },
+          { label: t("department.blockedTasks"), value: String(blockingTasks.length) },
+        ]}
+      />
+      <section className="ceo-attention-rollups" aria-label={t("department.attentionRollups")}>
+        <h4>{t("department.attentionRollups")}</h4>
+        {ceoAttentionRollups.length === 0 ? <p className="muted">{t("department.noAttentionRollups")}</p> : null}
+        {ceoAttentionRollups.map((rollup) => (
+          <article className="ceo-attention-rollup" key={rollup.id}>
+            <div>
+              <p>{formatRollupOwner(rollup.ownerDepartmentId, departmentsById)}</p>
+              <h5>{rollup.title}</h5>
+              <p className="muted">{rollup.summary}</p>
+            </div>
+            <VideotexKeyValue
+              items={[
+                { label: t("department.rollupSeverity"), value: rollup.severity },
+                { label: t("department.downstreamImpact"), value: formatDepartments(rollup.downstreamDepartmentIds, departmentsById, t("department.none")) },
+                { label: t("department.currentBlocker"), value: rollup.currentBlocker ?? t("department.none") },
+                { label: t("department.recommendedNextAction"), value: rollup.recommendedNextAction },
+              ]}
+            />
+          </article>
+        ))}
+      </section>
+      <VideotexLog
+        emptyMessage={t("department.noCriticalChains")}
+        rows={criticalDependencyRows([...tasksById.values()], departmentsById)}
+      />
+      <section className="ceo-executive-overview__signal-list" aria-label={t("department.humanActions")}>
+        <p className="ceo-executive-overview__label">{t("department.humanActions")}</p>
+        <VideotexLog
+          emptyMessage={t("department.noHumanActions")}
+          rows={humanActions.map((action) => `${formatRollupOwner(action.departmentId, departmentsById)} / ${action.status} / ${action.label}`)}
+        />
+      </section>
+      <section className="ceo-executive-overview__signal-list" aria-label={t("department.waitStates")}>
+        <p className="ceo-executive-overview__label">{t("department.waitStates")}</p>
+        <VideotexLog
+          emptyMessage={t("department.noWaitStates")}
+          rows={waitStates.map(
+            (waitState) => `${formatRollupOwner(waitState.departmentId, departmentsById)} / ${waitState.status} / ${waitState.label} / ${waitState.nextCheckAt}`,
+          )}
+        />
+      </section>
+      <section className="ceo-executive-overview__signal-list" aria-label={t("department.visionGaps")}>
+        <p className="ceo-executive-overview__label">{t("department.visionGaps")}</p>
+        <VideotexLog
+          emptyMessage={t("department.noVisionGaps")}
+          rows={visionGaps.map((gap) => `${gap.label} / ${gap.severity} / ${formatRollupOwner(gap.departmentId, departmentsById)}`)}
+        />
+      </section>
+    </section>
+  );
+}
+
+function formatRollupOwner(departmentId: string, departmentsById: Map<string, DepartmentSummary>): string {
+  return departmentsById.get(departmentId)?.name ?? departmentId;
+}
+
+function formatDepartments(departmentIds: string[], departmentsById: Map<string, DepartmentSummary>, emptyLabel: string): string {
+  if (departmentIds.length === 0) {
+    return emptyLabel;
+  }
+
+  return departmentIds.map((departmentId) => departmentsById.get(departmentId)?.name ?? departmentId).join(", ");
+}
+
+function criticalDependencyRows(tasks: TaskSummary[], departmentsById: Map<string, DepartmentSummary>): string[] {
+  return tasks
+    .filter((task) => task.taskKind !== "department_subtask")
+    .filter((task) => task.status === "blocked" || task.status === "waiting_dependency" || task.status === "needs_replan")
+    .map((task) => `${task.title} / ${formatRollupOwner(task.departmentId, departmentsById)} / ${task.dependencyNote ?? task.status}`);
 }
 
 function CeoPendingQueue({
@@ -934,6 +1087,9 @@ function DepartmentLeaderReport({
   departmentId,
   departmentName,
   draft,
+  humanActions,
+  waitStates,
+  onConfirmHumanAction,
   onDraftChange,
   onRecoverTask,
   onRefreshTask,
@@ -946,6 +1102,9 @@ function DepartmentLeaderReport({
   departmentId: string;
   departmentName: string;
   draft: string;
+  humanActions: HumanActionSummary[];
+  waitStates: WaitStateSummary[];
+  onConfirmHumanAction?: DepartmentWorkspaceProps["onConfirmHumanAction"];
   onDraftChange: (value: string) => void;
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
@@ -962,6 +1121,8 @@ function DepartmentLeaderReport({
       <p className="department-leader-report__mission">
         <strong>{t("department.currentResponsibility")}:</strong> {responsibility}
       </p>
+      <HumanActionPanel actions={humanActions} onConfirm={onConfirmHumanAction} title={t("department.humanActions")} />
+      <WaitStatePanel title={t("department.waitStates")} waitStates={waitStates} />
       <DepartmentProgressFlows
         departmentId={departmentId}
         onRefreshTask={onRefreshTask}

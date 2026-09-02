@@ -4,7 +4,16 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { ApiClient, BusinessArtifactSummary, ReplanProposalSummary, ServerEvent } from "./api/client";
+import type {
+  ApiClient,
+  BusinessArtifactSummary,
+  CeoAttentionRollupSummary,
+  HumanActionSummary,
+  ReplanProposalSummary,
+  ServerEvent,
+  VisionGapSummary,
+  WaitStateSummary,
+} from "./api/client";
 
 describe("Dashboard App", () => {
   it("starts on the company-name step only", async () => {
@@ -287,6 +296,44 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("button", { name: "Growth" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("renders CEO Office around attention rollups before the review queue", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createCeoOfficeAttentionCompanyResponse());
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    const overview = within(ceoReport).getByRole("region", { name: "Executive Overview" });
+    const pending = within(ceoReport).getByRole("region", { name: "CEO Pending" });
+    expect(Boolean(overview.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+
+    expect(overview).toHaveTextContent("Launch path blocked on deployment evidence");
+    expect(overview).toHaveTextContent("Website exists but launch cannot continue until a deployable URL is confirmed.");
+    expect(overview).toHaveTextContent("Engineering");
+    expect(overview).toHaveTextContent("Growth");
+    expect(overview).toHaveTextContent("Production URL missing.");
+    expect(overview).toHaveTextContent("Confirm deployment evidence or assign deployment follow-up.");
+    expect(overview).toHaveTextContent("Prepare SEO launch");
+    expect(overview).toHaveTextContent("Needs deployed URL from Engineering.");
+    expect(overview).toHaveTextContent("Human Actions");
+    expect(overview).toHaveTextContent("Wait States");
+    expect(overview).toHaveTextContent("Vision Gaps");
+    expect(overview).toHaveTextContent("Vision does not yet define pricing conversion KPI.");
+    expect(overview).not.toHaveTextContent("Hidden blocked implementation subtask");
+
+    expect(within(pending).getByRole("button", { name: "View Task Review gated launch artifact" })).toBeInTheDocument();
+    expect(within(pending).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
+
+    await user.click(within(pending).getByRole("button", { name: "View Task Review gated launch artifact" }));
+
+    const reviewDetail = within(ceoReport).getByRole("region", { name: "Task Review" });
+    expect(within(reviewDetail).getByRole("button", { name: "Approve, mark complete" })).toBeInTheDocument();
+    expect(within(reviewDetail).getByRole("button", { name: "Return to department" })).toBeInTheDocument();
+  });
+
   it("creates a durable CEO intake from the CEO Workspace", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -398,6 +445,67 @@ describe("Dashboard App", () => {
     expect(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" })).toBeInTheDocument();
     expect(within(ceoPending).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
     expect(within(ceoPending).queryByRole("button", { name: /return/i })).not.toBeInTheDocument();
+  });
+
+  it("shows Human Actions in CEO Office and the owning department, then submits evidence", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      humanActions: [createHumanActionSummary()],
+    }));
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    expect(within(ceoReport).getByRole("heading", { name: "Human Actions" })).toBeInTheDocument();
+    expect(within(ceoReport).getByText("Publish the prototype URL.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(within(leaderReport).getByText("Publish the prototype URL.")).toBeInTheDocument();
+    await user.type(within(leaderReport).getByLabelText("configuration_value"), "DEPLOYMENT_URL=https://example.test");
+    await user.type(within(leaderReport).getByLabelText("approval_note"), "Deployment confirmed by founder.");
+    await user.click(within(leaderReport).getByRole("button", { name: "Confirm Human Action" }));
+
+    expect(api.confirmHumanAction).toHaveBeenCalledWith(
+      "company_1",
+      "task_completion_event_1_human_action_1",
+      {
+        evidence: {
+          configuration_value: "DEPLOYMENT_URL=https://example.test",
+          approval_note: "Deployment confirmed by founder.",
+        },
+      },
+    );
+    expect(await within(leaderReport).findByText("Evidence accepted.")).toBeInTheDocument();
+  });
+
+  it("shows Wait States in CEO Office and the owning department as monitoring work", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      waitStates: [createWaitStateSummary()],
+    }));
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    expect(within(ceoReport).getByRole("heading", { name: "Wait States" })).toBeInTheDocument();
+    expect(within(ceoReport).getAllByText("Wait for search indexing signals.")).toHaveLength(2);
+    expect(within(ceoReport).getByText("Monitoring")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    expect(within(leaderReport).getAllByText("Wait for search indexing signals.")).toHaveLength(2);
+    expect(within(leaderReport).getByText("2026-08-18T00:00:00.000Z")).toBeInTheDocument();
   });
 
   it("routes review-ready department subtasks to CEO Pending", async () => {
@@ -2264,6 +2372,154 @@ function createBusinessArtifactSummary(
   };
 }
 
+function createHumanActionSummary(): HumanActionSummary {
+  return {
+    id: "task_completion_event_1_human_action_1",
+    companyId: "company_1",
+    sourceTaskCompletionEventId: "task_completion_event_1",
+    taskId: "task_1",
+    departmentId: "department_1",
+    label: "Publish the prototype URL.",
+    blockedTaskIds: ["task_2"],
+    confirmationRequirements: ["configuration_value", "approval_note"],
+    evidence: {},
+    status: "pending",
+    verifiedAt: null,
+    verificationErrors: [],
+    createdAt: "2026-08-17T00:02:00.000Z",
+  };
+}
+
+function createWaitStateSummary(): WaitStateSummary {
+  return {
+    id: "task_completion_event_1_wait_state_1",
+    companyId: "company_1",
+    sourceTaskCompletionEventId: "task_completion_event_1",
+    taskId: "task_1",
+    departmentId: "department_1",
+    keyResultId: "key_result_1",
+    businessArtifactId: null,
+    label: "Wait for search indexing signals.",
+    reason: "Wait for search indexing signals.",
+    relatedTaskId: "task_2",
+    relatedBusinessArtifactId: null,
+    affectedTaskIds: ["task_2"],
+    nextCheckAt: "2026-08-18T00:00:00.000Z",
+    status: "waiting",
+    severity: "informational",
+    createdAt: "2026-08-17T00:02:00.000Z",
+  };
+}
+
+function createVisionGapSummary(): VisionGapSummary {
+  return {
+    id: "task_completion_event_1_vision_gap_1",
+    companyId: "company_1",
+    sourceTaskCompletionEventId: "task_completion_event_1",
+    taskId: "task_1",
+    departmentId: "department_1",
+    keyResultId: "key_result_1",
+    businessArtifactId: null,
+    label: "Vision does not yet define pricing conversion KPI.",
+    severity: "strategic",
+    relatedTaskId: "task_2",
+    relatedBusinessArtifactId: null,
+    createdAt: "2026-08-17T00:02:00.000Z",
+  };
+}
+
+function createCeoAttentionRollupSummary(): CeoAttentionRollupSummary {
+  const humanAction = createHumanActionSummary();
+  const waitState = createWaitStateSummary();
+  const visionGap = createVisionGapSummary();
+
+  return {
+    id: "ceo_attention_rollup_1",
+    companyId: "company_1",
+    group: { type: "dependency_chain", taskId: "task_2" },
+    title: "Launch path blocked on deployment evidence",
+    summary: "Website exists but launch cannot continue until a deployable URL is confirmed.",
+    ownerDepartmentId: "department_1",
+    downstreamDepartmentIds: ["department_growth"],
+    affectedTaskIds: ["task_2"],
+    currentBlocker: "Production URL missing.",
+    recommendedNextAction: "Confirm deployment evidence or assign deployment follow-up.",
+    severity: "blocking",
+    reasons: ["human_action", "cross_department_impact"],
+    relevantHumanActions: [humanAction],
+    relevantWaitStates: [waitState],
+    relevantVisionGaps: [visionGap],
+    sourceTaskCompletionEventIds: ["task_completion_event_1"],
+    createdAt: "2026-08-17T00:02:00.000Z",
+  };
+}
+
+function createCeoOfficeAttentionCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
+  const created = createCompanyResponse();
+
+  return {
+    ...created,
+    departments: [
+      ...created.departments,
+      {
+        id: "department_growth",
+        name: "Growth",
+        responsibility: "Prepare launch channels.",
+        leadAgentId: "codex",
+      },
+    ],
+    tasks: [
+      {
+        ...created.tasks[0],
+        id: "task_1",
+        title: "Build deployable website",
+        status: "complete",
+        departmentId: "department_1",
+      },
+      {
+        ...created.tasks[0],
+        id: "task_2",
+        title: "Prepare SEO launch",
+        status: "blocked",
+        departmentId: "department_growth",
+        dependsOnTaskIds: ["task_1"],
+        dependencyNote: "Needs deployed URL from Engineering.",
+      },
+      {
+        ...created.tasks[0],
+        id: "task_3",
+        title: "Hidden blocked implementation subtask",
+        status: "blocked",
+        departmentId: "department_1",
+        parentTaskId: "task_1",
+        taskKind: "department_subtask",
+        dependencyNote: "Internal implementation detail.",
+      },
+      {
+        ...created.tasks[0],
+        id: "task_4",
+        title: "Review gated launch artifact",
+        status: "review",
+        departmentId: "department_1",
+      },
+    ],
+    proof: [
+      {
+        id: "proof_1",
+        taskId: "task_4",
+        type: "command_output",
+        uri: "agent.log",
+        summary: "Generated launch artifact",
+      },
+    ],
+    businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_4", "proof_1")],
+    ceoAttentionRollups: [createCeoAttentionRollupSummary()],
+    humanActions: [createHumanActionSummary()],
+    visionGaps: [createVisionGapSummary()],
+    waitStates: [createWaitStateSummary()],
+  };
+}
+
 function createReviewReadyCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
   const created = createCompanyResponse();
   return {
@@ -2548,6 +2804,25 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         createdTasks: [],
       };
     },
+    confirmHumanAction: vi.fn(async (_companyId, humanActionId, input) => ({
+      humanAction: {
+        id: humanActionId,
+        companyId: "company_1",
+        sourceTaskCompletionEventId: "task_completion_event_1",
+        taskId: "task_1",
+        departmentId: "department_1",
+        label: "Publish the prototype URL.",
+        blockedTaskIds: ["task_2"],
+        confirmationRequirements: ["configuration_value", "approval_note"],
+        evidence: input.evidence,
+        status: "confirmed" as const,
+        verifiedAt: "2026-08-17T00:03:00.000Z",
+        verificationErrors: [],
+        createdAt: "2026-08-17T00:02:00.000Z",
+      },
+      updatedTasks: [{ ...createCompanyResponse().tasks[0], id: "task_2", status: "queued" }],
+      events: [{ type: "dependency_ready", taskId: "task_2", message: "Human Action confirmed; task queued." }],
+    })),
     async triggerKillSwitch(companyId) {
       return {
         paused: true,

@@ -35,6 +35,7 @@ export const agentFailureReasonSchema = z.enum([
 export const taskEventTypeSchema = z.enum([
   "task_started",
   "task_review",
+  "automatic_acceptance",
   "ceo_review_decision",
   "proof_recovered",
   "task_failed",
@@ -65,6 +66,16 @@ export const taskProgressStepSchema = z.enum([
 ]);
 
 export const taskProgressStatusSchema = z.enum(["complete", "current", "waiting", "blocked"]);
+export const taskCompletionOutcomeSchema = z.enum(["accepted", "blocked", "failed_to_review", "needs_replan"]);
+export const nextStepItemTypeSchema = z.enum([
+  "automatic_downstream_task",
+  "human_action",
+  "ceo_decision",
+  "wait_state",
+  "downstream_handoff",
+  "vision_gap",
+]);
+export const nextStepItemSeveritySchema = z.enum(["informational", "blocking", "strategic"]);
 
 export const ceoIntakeStatusSchema = z.enum([
   "received",

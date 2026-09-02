@@ -106,8 +106,7 @@ describe("startAutoCrop", () => {
       });
 
       expect(response.ok).toBe(true);
-      await waitFor(() => logs.some((line) => line.includes("Scheduler task_started:")));
-      expect(logs.some((line) => line.includes("Scheduler tick: started=1"))).toBe(true);
+      await waitFor(() => logs.some((line) => line.includes("Scheduler tick: started=1")));
     } finally {
       await started.close();
     }

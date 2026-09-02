@@ -92,6 +92,7 @@ export type AgentFailureReason =
 export type TaskEventType =
   | "task_started"
   | "task_review"
+  | "automatic_acceptance"
   | "ceo_review_decision"
   | "proof_recovered"
   | "task_failed"
@@ -118,6 +119,114 @@ export type TaskProgressStep =
   | "blocked"
   | "needs_ceo_reassignment";
 export type TaskProgressStatus = "complete" | "current" | "waiting" | "blocked";
+export type TaskCompletionOutcome = "accepted" | "blocked" | "failed_to_review" | "needs_replan";
+export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance";
+export type NextStepItemType =
+  | "automatic_downstream_task"
+  | "human_action"
+  | "ceo_decision"
+  | "wait_state"
+  | "downstream_handoff"
+  | "vision_gap";
+export type NextStepItemSeverity = "informational" | "blocking" | "strategic";
+export type NextStepItem = {
+  type: NextStepItemType;
+  label: string;
+  ownerDepartmentId: string | null;
+  relatedTaskId: string | null;
+  relatedBusinessArtifactId: string | null;
+  dependencyImpact: unknown;
+  severity: NextStepItemSeverity | null;
+  priority: number | null;
+  evidenceRequirements: string[];
+};
+export type VisionGap = {
+  id: string;
+  companyId: string;
+  sourceTaskCompletionEventId: string;
+  taskId: string;
+  departmentId: string;
+  keyResultId: string | null;
+  businessArtifactId: string | null;
+  label: string;
+  severity: NextStepItemSeverity;
+  relatedTaskId: string | null;
+  relatedBusinessArtifactId: string | null;
+  createdAt: string;
+};
+export type CeoAttentionRollupReason =
+  | "vision_gap"
+  | "ceo_decision"
+  | "human_action"
+  | "wait_state"
+  | "cross_department_impact"
+  | "exception_outcome";
+export type HumanActionStatus = "pending" | "confirmed";
+export type HumanAction = {
+  id: string;
+  companyId: string;
+  sourceTaskCompletionEventId: string;
+  taskId: string;
+  departmentId: string;
+  label: string;
+  blockedTaskIds: string[];
+  confirmationRequirements: string[];
+  evidence: Record<string, string>;
+  status: HumanActionStatus;
+  verifiedAt: string | null;
+  verificationErrors: string[];
+  createdAt: string;
+};
+export type HumanActionConfirmation = {
+  humanActionId: string;
+  companyId: string;
+  evidence: Record<string, string>;
+  status: "confirmed";
+  verifiedAt: string;
+  verificationErrors: string[];
+};
+export type WaitStateStatus = "waiting" | "ready_for_check_in";
+export type WaitState = {
+  id: string;
+  companyId: string;
+  sourceTaskCompletionEventId: string;
+  taskId: string;
+  departmentId: string;
+  keyResultId: string | null;
+  businessArtifactId: string | null;
+  label: string;
+  reason: string;
+  relatedTaskId: string | null;
+  relatedBusinessArtifactId: string | null;
+  affectedTaskIds: string[];
+  nextCheckAt: string;
+  status: WaitStateStatus;
+  severity: NextStepItemSeverity;
+  createdAt: string;
+};
+export type CeoAttentionRollupGroup =
+  | { type: "founder_vision"; companyId: string }
+  | { type: "objective"; objectiveId: string }
+  | { type: "dependency_chain"; taskId: string };
+export type CeoAttentionRollup = {
+  id: string;
+  companyId: string;
+  group: CeoAttentionRollupGroup;
+  title: string;
+  summary: string;
+  ownerDepartmentId: string;
+  downstreamDepartmentIds: string[];
+  affectedTaskIds: string[];
+  currentBlocker: string | null;
+  recommendedNextAction: string;
+  severity: NextStepItemSeverity;
+  reasons: CeoAttentionRollupReason[];
+  relevantHumanActions: HumanAction[];
+  relevantWaitStates: WaitState[];
+  relevantVisionGaps: VisionGap[];
+  sourceTaskCompletionEventIds: string[];
+  createdAt: string;
+};
 
 export type Company = {
   id: string;
@@ -218,6 +327,21 @@ export type TaskProgressEvent = {
   status: TaskProgressStatus;
   label: string;
   detail: string | null;
+  createdAt: string;
+};
+
+export type TaskCompletionEvent = {
+  id: string;
+  companyId: string;
+  taskId: string;
+  departmentId: string;
+  keyResultId: string | null;
+  businessArtifactId: string | null;
+  outcome: TaskCompletionOutcome;
+  acceptanceProvenance?: TaskAcceptanceProvenance | null;
+  dependencyImpact: unknown;
+  nextStepItems: NextStepItem[];
+  visionGaps: unknown[];
   createdAt: string;
 };
 

@@ -604,6 +604,53 @@ h3 {
   min-height: 30px;
 }
 
+.ceo-executive-overview {
+  background:
+    linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
+    var(--surface-alt);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.ceo-executive-overview h3,
+.ceo-attention-rollups h4 {
+  font-size: 0.9rem;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.ceo-attention-rollups,
+.ceo-executive-overview__signal-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ceo-attention-rollup {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.75fr);
+  padding: 10px;
+}
+
+.ceo-attention-rollup > div > p:first-child,
+.ceo-executive-overview__label {
+  color: var(--accent-secondary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.ceo-attention-rollup h5 {
+  font-size: 0.86rem;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
 .ceo-pending-queue {
   display: grid;
   gap: 10px;
@@ -631,6 +678,53 @@ h3 {
   font-size: 0.86rem;
   line-height: 1.35;
   text-transform: uppercase;
+}
+
+.human-action-list,
+.wait-state-list {
+  display: grid;
+  gap: 10px;
+}
+
+.human-action-card,
+.wait-state-card {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.human-action-card h4,
+.wait-state-card h4 {
+  font-size: 0.86rem;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.human-action-card > div > p:first-child,
+.wait-state-card > div > p:first-child {
+  color: var(--accent-secondary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.wait-state-card dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.wait-state-card dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.wait-state-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .ceo-task-review-detail {
@@ -1457,6 +1551,10 @@ h3 {
   }
 
   .department-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .ceo-attention-rollup {
     grid-template-columns: 1fr;
   }
 
