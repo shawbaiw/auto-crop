@@ -345,6 +345,16 @@ export type CeoReviewDecisionResponse = {
   dependencyCascade?: TaskUpdateBatchSummary;
 };
 
+export type FounderDecisionResolutionResponse = {
+  founderDecision: FounderDecisionSummary;
+  accepted: boolean;
+  task: TaskSummary;
+  businessArtifacts?: BusinessArtifactSummary[];
+  event?: ServerEvent;
+  progressEvent?: TaskProgressEventSummary;
+  dependencyCascade?: TaskUpdateBatchSummary;
+};
+
 export type TaskUpdateBatchSummary = {
   updatedTasks: TaskSummary[];
   events: ServerEvent[];
@@ -443,6 +453,13 @@ export type ApiClient = {
     returnReason?: CeoReviewReturnReason;
     note?: string;
   }): Promise<CeoReviewDecisionResponse>;
+  resolveFounderDecision(input: {
+    founderDecisionId: string;
+    chosenOption?: string;
+    action?: "return";
+    returnReason?: CeoReviewReturnReason;
+    note?: string;
+  }): Promise<FounderDecisionResolutionResponse>;
   activateCompany(companyId: string): Promise<{ company: CompanySummary }>;
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
@@ -488,6 +505,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     },
     async createCeoReviewDecision(input) {
       return postJson(`${baseUrl}/api/ceo-review-decisions`, input, requestTimeoutMs);
+    },
+    async resolveFounderDecision(input) {
+      return postJson(`${baseUrl}/api/founder-decisions`, input, requestTimeoutMs);
     },
     async activateCompany(companyId) {
       return postJson(`${baseUrl}/api/companies/${companyId}/activate`, {}, requestTimeoutMs);

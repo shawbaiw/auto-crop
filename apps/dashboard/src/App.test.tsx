@@ -2646,6 +2646,7 @@ function createCeoAttentionRollupSummary(): CeoAttentionRollupSummary {
     relevantHumanActions: [humanAction],
     relevantWaitStates: [waitState],
     relevantVisionGaps: [visionGap],
+    relevantFounderDecisions: [],
     sourceTaskCompletionEventIds: ["task_completion_event_1"],
     createdAt: "2026-08-17T00:02:00.000Z",
   };
@@ -2920,6 +2921,29 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         ...createCompanyResponse().tasks[0],
         id: input.taskId,
         status: input.decision === "approve" ? "complete" : "queued",
+      },
+    })),
+    resolveFounderDecision: vi.fn(async (input) => ({
+      founderDecision: {
+        id: input.founderDecisionId,
+        companyId: "company_1",
+        sourceTaskCompletionEventId: "task_completion_event_1",
+        taskId: "task_1",
+        departmentId: "department_1",
+        decisionKind: "product_direction" as const,
+        options: [],
+        rationale: "",
+        status: input.action === "return" ? ("returned" as const) : ("resolved" as const),
+        resolvedOption: input.chosenOption ?? null,
+        resolvedAt: "2026-08-17T00:03:00.000Z",
+        blockedTaskIds: [],
+        createdAt: "2026-08-17T00:02:00.000Z",
+      },
+      accepted: input.action !== "return",
+      task: {
+        ...createCompanyResponse().tasks[0],
+        id: "task_1",
+        status: input.action === "return" ? "queued" : "complete",
       },
     })),
     async getCompanyState() {

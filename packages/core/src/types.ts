@@ -135,7 +135,7 @@ export type TaskCompletionOutcome =
   | "failed_to_review"
   | "needs_replan"
   | "awaiting_founder_decision";
-export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance";
+export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance" | "founder_decision";
 export type NextStepItemType =
   | "automatic_downstream_task"
   | "human_action"
@@ -188,7 +188,8 @@ export type CeoAttentionRollupReason =
   | "human_action"
   | "wait_state"
   | "cross_department_impact"
-  | "exception_outcome";
+  | "exception_outcome"
+  | "founder_decision";
 export type HumanActionStatus = "pending" | "confirmed";
 export type HumanAction = {
   id: string;
@@ -218,8 +219,10 @@ export type FounderDecisionOption = {
  * A choice reserved for the human founder that a completed task's deliverable surfaces: several
  * viable options for a Strategic Decision Kind that has no fixed value yet. Projected from a
  * `founder_decision` Next Step Item on a Task Completion Event, mirroring the {@link HumanAction}
- * projection. The runtime and CEO Agent must not resolve it. Resolution (pick / return) is a later
- * concern; until then `status` is always `pending` and `resolvedOption` / `resolvedAt` are null.
+ * projection. The runtime and CEO Agent must not resolve it. The founder resolves it by picking one
+ * option (which accepts the deliverable once every decision on the task is resolved) or by returning
+ * the task; a {@link FounderDecisionResolution} row carries the outcome and fills `status`,
+ * `resolvedOption`, and `resolvedAt` here.
  */
 export type FounderDecision = {
   id: string;
@@ -235,6 +238,23 @@ export type FounderDecision = {
   resolvedAt: string | null;
   blockedTaskIds: string[];
   createdAt: string;
+};
+
+/**
+ * The founder's resolution of a single {@link FounderDecision}, keyed by the projected decision id.
+ * `resolved` records a picked option (`chosenOption`); `returned` records that the founder rejected
+ * every option and sent the task back to the department (`returnReason` / `note`). A return discards
+ * every resolution row for the task, so at most one row per decision id is ever live.
+ */
+export type FounderDecisionResolution = {
+  founderDecisionId: string;
+  companyId: string;
+  taskId: string;
+  status: "resolved" | "returned";
+  chosenOption: string | null;
+  returnReason: CeoReviewReturnReason | null;
+  note: string | null;
+  resolvedAt: string;
 };
 
 export type HumanActionConfirmation = {
@@ -284,6 +304,7 @@ export type CeoAttentionRollup = {
   relevantHumanActions: HumanAction[];
   relevantWaitStates: WaitState[];
   relevantVisionGaps: VisionGap[];
+  relevantFounderDecisions: FounderDecision[];
   sourceTaskCompletionEventIds: string[];
   createdAt: string;
 };

@@ -8,6 +8,7 @@ import type {
 } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { propagateDependencyCascade, type DependencyCascadeResult } from "./dependencyCascade";
+import type { FounderDecisionDeclaration } from "./founderDecision";
 import { createDefaultId } from "./ids";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 
@@ -24,6 +25,12 @@ export function acceptTaskBusinessArtifact(input: {
   acceptanceProvenance: TaskAcceptanceProvenance;
   eventType: TaskEventType;
   eventMessage: string;
+  /**
+   * Passed straight to {@link recordTaskCompletionEvent}. The Founder Decision resolution path passes
+   * `[]` so the accepted deliverable's Task Completion Event carries no `founder_decision` Next Step
+   * Items even if a stale `open_decisions` entry lingers in the payload.
+   */
+  founderDecisions?: FounderDecisionDeclaration[];
   keyResultProgress?: {
     currentValue: string;
     status: KeyResult["status"];
@@ -82,6 +89,7 @@ export function acceptTaskBusinessArtifact(input: {
     businessArtifact: input.artifact,
     outcome: "accepted",
     acceptanceProvenance: input.acceptanceProvenance,
+    ...(input.founderDecisions ? { founderDecisions: input.founderDecisions } : {}),
     dependencyImpact: {
       updatedTasks: dependencyCascade?.updatedTasks.map((update) => ({
         taskId: update.task.id,

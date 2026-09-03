@@ -82,6 +82,11 @@ export const taskCompletionOutcomeSchema = z.enum([
   "needs_replan",
   "awaiting_founder_decision",
 ]);
+export const taskAcceptanceProvenanceSchema = z.enum([
+  "manual_ceo_review",
+  "automatic_acceptance",
+  "founder_decision",
+]);
 export const nextStepItemTypeSchema = z.enum([
   "automatic_downstream_task",
   "human_action",

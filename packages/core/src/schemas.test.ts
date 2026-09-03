@@ -7,6 +7,7 @@ import {
   nextStepItemTypeSchema,
   parseCeoResponse,
   strategicDecisionKindSchema,
+  taskAcceptanceProvenanceSchema,
   taskCompletionOutcomeSchema,
   taskEventTypeSchema,
   taskSchema,
@@ -227,6 +228,13 @@ describe("runtime status schemas", () => {
 
   it("accepts the awaiting_founder_decision task completion outcome", () => {
     expect(taskCompletionOutcomeSchema.safeParse("awaiting_founder_decision").success).toBe(true);
+  });
+
+  it("accepts every task acceptance provenance, including founder_decision", () => {
+    for (const provenance of ["manual_ceo_review", "automatic_acceptance", "founder_decision"]) {
+      expect(taskAcceptanceProvenanceSchema.safeParse(provenance).success).toBe(true);
+    }
+    expect(taskAcceptanceProvenanceSchema.safeParse("ceo_review").success).toBe(false);
   });
 
   it("accepts every Strategic Decision Kind and rejects choices outside the fixed set", () => {

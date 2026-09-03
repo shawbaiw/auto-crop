@@ -10,6 +10,7 @@ import type {
   Company,
   CreationAttempt,
   Department,
+  FounderDecisionResolution,
   HumanActionConfirmation,
   KeyResult,
   LocalizedText,
@@ -508,6 +509,64 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapTaskCompletionEvent(row as TaskCompletionEventRow));
     },
 
+    listTaskCompletionEventsForTask(taskId: string): TaskCompletionEvent[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM task_completion_events
+           WHERE task_id = ?
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all(taskId);
+      return rows.map((row) => mapTaskCompletionEvent(row as TaskCompletionEventRow));
+    },
+
+    getTaskCompletionEvent(id: string): TaskCompletionEvent | null {
+      const row = database.prepare("SELECT * FROM task_completion_events WHERE id = ?").get(id);
+      return row ? mapTaskCompletionEvent(row as TaskCompletionEventRow) : null;
+    },
+
+    upsertFounderDecisionResolution(resolution: FounderDecisionResolution): void {
+      database
+        .prepare(
+          `INSERT INTO founder_decision_resolutions (
+            founder_decision_id, company_id, task_id, status, chosen_option, return_reason, note, resolved_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(founder_decision_id) DO UPDATE SET
+            status = excluded.status,
+            chosen_option = excluded.chosen_option,
+            return_reason = excluded.return_reason,
+            note = excluded.note,
+            resolved_at = excluded.resolved_at`,
+        )
+        .run(
+          resolution.founderDecisionId,
+          resolution.companyId,
+          resolution.taskId,
+          resolution.status,
+          resolution.chosenOption,
+          resolution.returnReason,
+          resolution.note,
+          resolution.resolvedAt,
+        );
+    },
+
+    listFounderDecisionResolutionsForCompany(companyId: string): FounderDecisionResolution[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM founder_decision_resolutions
+           WHERE company_id = ?
+           ORDER BY resolved_at ASC, founder_decision_id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapFounderDecisionResolution(row as FounderDecisionResolutionRow));
+    },
+
+    deleteFounderDecisionResolutionsForTask(taskId: string): void {
+      database.prepare("DELETE FROM founder_decision_resolutions WHERE task_id = ?").run(taskId);
+    },
+
     upsertHumanActionConfirmation(confirmation: HumanActionConfirmation): void {
       database
         .prepare(
@@ -776,6 +835,12 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare("UPDATE business_artifacts SET review_status = ?, updated_at = ? WHERE id = ?")
         .run(reviewStatus, updatedAt, id);
+    },
+
+    updateBusinessArtifactPayload(id: string, payload: unknown, updatedAt: string): void {
+      database
+        .prepare("UPDATE business_artifacts SET payload = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(payload), updatedAt, id);
     },
 
     createApproval(approval: Approval): void {
@@ -1260,6 +1325,17 @@ type HumanActionConfirmationRow = {
   verification_errors: string;
 };
 
+type FounderDecisionResolutionRow = {
+  founder_decision_id: string;
+  company_id: string;
+  task_id: string;
+  status: FounderDecisionResolution["status"];
+  chosen_option: string | null;
+  return_reason: FounderDecisionResolution["returnReason"];
+  note: string | null;
+  resolved_at: string;
+};
+
 function mapCompany(row: CompanyRow): Company {
   return {
     id: row.id,
@@ -1557,6 +1633,19 @@ function mapTaskCompletionEvent(row: TaskCompletionEventRow): TaskCompletionEven
     nextStepItems: JSON.parse(row.next_step_items) as TaskCompletionEvent["nextStepItems"],
     visionGaps: JSON.parse(row.vision_gaps) as unknown[],
     createdAt: row.created_at,
+  };
+}
+
+function mapFounderDecisionResolution(row: FounderDecisionResolutionRow): FounderDecisionResolution {
+  return {
+    founderDecisionId: row.founder_decision_id,
+    companyId: row.company_id,
+    taskId: row.task_id,
+    status: row.status,
+    chosenOption: row.chosen_option,
+    returnReason: row.return_reason ?? null,
+    note: row.note,
+    resolvedAt: row.resolved_at,
   };
 }
 
