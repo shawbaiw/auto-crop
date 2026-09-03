@@ -4,7 +4,7 @@
 
 Governing decision: `docs/adr/0017-ceo-office-surfaces-business-outcomes.md`. Spec: `.scratch/ceo-office-business-outcomes/spec.md`.
 
-**Blocked by:** 02 (Task Outcome Summary), 04 (Founder Decision — resolution)
+**Blocked by:** 02 (Task Outcome Summary) — done; 04 (Founder Decision — resolution) — done. Unblocked; 06 (Upgrade reconciliation) is also done, so the whole ADR 0017 series except this ticket has landed.
 
 **Status:** ready-for-agent
 
