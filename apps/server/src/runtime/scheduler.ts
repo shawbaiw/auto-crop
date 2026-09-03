@@ -102,11 +102,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
       break;
     }
 
-    const assessmentDecision = assessDepartmentTask(input, task);
-    if (assessmentDecision === "deferred") {
-      continue;
-    }
-
     const dependencyDecision = resolveDependencyReadiness(input.repositories, task);
     if (dependencyDecision.kind === "waiting") {
       if (task.status !== "waiting_dependency") {
@@ -134,6 +129,11 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
     if (dependencyDecision.kind === "blocked") {
       blockTaskForDependency(input, task, dependencyDecision.dependency, dependencyDecision.reason, dependencyDecision.note);
       result.blocked.push(task.id);
+      continue;
+    }
+
+    const assessmentDecision = assessDepartmentTask(input, task);
+    if (assessmentDecision === "deferred") {
       continue;
     }
 
@@ -674,6 +674,7 @@ function isLargeDepartmentTask(task: Task): boolean {
 
 function createDepartmentSubtasks(input: RunSchedulerOnceInput, parentTask: Task): Task[] {
   const createId = input.createId ?? defaultCreateId;
+  const inheritedDependencies = input.repositories.listTaskDependencies(parentTask.id);
   const subtaskBlueprints = [
     {
       title: `Define executable slice for ${parentTask.title}`,
@@ -721,6 +722,14 @@ function createDepartmentSubtasks(input: RunSchedulerOnceInput, parentTask: Task
       source: "department",
     };
     input.repositories.createTask(subtask);
+    for (const dependency of inheritedDependencies) {
+      input.repositories.createTaskDependency({
+        taskId: subtask.id,
+        dependsOnTaskId: dependency.dependsOnTaskId,
+        handoffContract: dependency.handoffContract,
+        handoffContractText: dependency.handoffContractText,
+      });
+    }
     input.repositories.createTaskDependency({
       taskId: parentTask.id,
       dependsOnTaskId: subtask.id,

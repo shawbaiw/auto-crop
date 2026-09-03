@@ -982,6 +982,108 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("does not let department subtasks bypass their parent task dependencies", async () => {
+    const producer = createTaskRecord("task_1", "review", "low", "product-brief");
+    const parent = {
+      ...createTaskRecord("task_2", "queued", "low", "landing-page-file"),
+      title: "Build and validate the prototype",
+      description: "Build a browser prototype and validate it against the accepted brief.",
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, parent]);
+    repositories.createTaskDependency({
+      taskId: parent.id,
+      dependsOnTaskId: producer.id,
+      handoffContract: "Use the accepted product brief before implementation work starts.",
+    });
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 2,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    const departmentSubtasks = repositories.listTasksForCompany("company_1").filter((task) => task.parentTaskId === parent.id);
+
+    expect(result.started).toEqual([]);
+    expect(departmentSubtasks).toHaveLength(0);
+    expect(repositories.getTask(parent.id)).toMatchObject({
+      status: "waiting_dependency",
+      dependencyNote: "Waiting for dependency acceptance: Task task_1 (review).",
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "dependency_waiting",
+      taskId: parent.id,
+      dependencyNote: "Waiting for dependency acceptance: Task task_1 (review).",
+    }));
+
+    client.close();
+  });
+
+  it("copies parent task dependencies onto generated department subtasks", async () => {
+    const producer = createTaskRecord("task_1", "complete", "low", "product-brief");
+    const parent = {
+      ...createTaskRecord("task_2", "queued", "low", "landing-page-file"),
+      title: "Build and validate the prototype",
+      description: "Build a browser prototype and validate it against the accepted brief.",
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, parent]);
+    const proof = createProofForTask(producer);
+    repositories.appendProof(proof);
+    repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", producer.id, proof.id));
+    repositories.createTaskDependency({
+      taskId: parent.id,
+      dependsOnTaskId: producer.id,
+      handoffContract: "Use the accepted product brief before implementation work starts.",
+    });
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 2,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: () => undefined,
+    });
+
+    const departmentSubtasks = repositories.listTasksForCompany("company_1").filter((task) => task.parentTaskId === parent.id);
+
+    expect(result.started).toEqual([]);
+    expect(departmentSubtasks).toHaveLength(3);
+    for (const subtask of departmentSubtasks) {
+      expect(repositories.listTaskDependencies(subtask.id)).toContainEqual(expect.objectContaining({
+        taskId: subtask.id,
+        dependsOnTaskId: producer.id,
+        handoffContract: "Use the accepted product brief before implementation work starts.",
+      }));
+    }
+
+    client.close();
+  });
+
   it("injects upstream proof handoffs into dependent agent prompts", async () => {
     const producerWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-upstream-"));
     createdDirs.push(producerWorkspace);
