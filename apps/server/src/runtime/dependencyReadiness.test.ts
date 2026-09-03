@@ -98,6 +98,51 @@ describe("resolveDependencyReadiness", () => {
     client.close();
   });
 
+  it("reports a waiting-on-decision state when the review upstream has an unresolved Founder Decision", () => {
+    const { repositories, client } = createFixture([
+      createTaskRecord("task_1", "review"),
+      createTaskRecord("task_2", "queued"),
+    ]);
+    repositories.createTaskDependency({ taskId: "task_2", dependsOnTaskId: "task_1" });
+    repositories.appendTaskCompletionEvent(createFounderDecisionCompletionEvent());
+
+    const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
+
+    expect(readiness).toEqual({
+      kind: "waiting",
+      waitingOnDecision: true,
+      note: "Waiting on founder decision: pricing model.",
+    });
+    client.close();
+  });
+
+  it("falls back to an ordinary review wait once the Founder Decision is resolved", () => {
+    const { repositories, client } = createFixture([
+      createTaskRecord("task_1", "review"),
+      createTaskRecord("task_2", "queued"),
+    ]);
+    repositories.createTaskDependency({ taskId: "task_2", dependsOnTaskId: "task_1" });
+    repositories.appendTaskCompletionEvent(createFounderDecisionCompletionEvent());
+    repositories.upsertFounderDecisionResolution({
+      founderDecisionId: "task_completion_event_fd_founder_decision_1",
+      companyId: "company_1",
+      taskId: "task_1",
+      status: "resolved",
+      chosenOption: "Flat monthly fee",
+      returnReason: null,
+      note: null,
+      resolvedAt: "2026-08-17T01:00:00.000Z",
+    });
+
+    const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
+
+    expect(readiness).toEqual({
+      kind: "waiting",
+      note: "Waiting for dependency acceptance: Task task_1 (review).",
+    });
+    client.close();
+  });
+
   it("blocks when an upstream dependency is complete but has no accepted business artifact", () => {
     const { repositories, client } = createFixture([
       createTaskRecord("task_1", "complete"),
@@ -251,6 +296,44 @@ function createBusinessArtifactRecord(
     supersedesArtifactId: overrides.supersedesArtifactId ?? null,
     createdAt: overrides.createdAt ?? "2026-08-17T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-08-17T00:00:00.000Z",
+  };
+}
+
+function createFounderDecisionCompletionEvent() {
+  return {
+    id: "task_completion_event_fd",
+    companyId: "company_1",
+    taskId: "task_1",
+    departmentId: "department_1",
+    keyResultId: "key_result_1",
+    businessArtifactId: null,
+    outcome: "awaiting_founder_decision" as const,
+    dependencyImpact: {},
+    nextStepItems: [
+      {
+        type: "founder_decision" as const,
+        label: "Founder decision: pricing model",
+        ownerDepartmentId: "department_1",
+        relatedTaskId: "task_1",
+        relatedBusinessArtifactId: null,
+        dependencyImpact: {
+          founderDecision: {
+            decisionKind: "pricing_model",
+            options: [
+              { label: "Flat monthly fee", tradeoffs: "Predictable revenue.", recommended: true },
+              { label: "Usage-based", tradeoffs: "Scales with value." },
+            ],
+            rationale: "Early buyers want a predictable bill.",
+            blockedTaskIds: ["task_2"],
+          },
+        },
+        severity: "strategic" as const,
+        priority: null,
+        evidenceRequirements: [],
+      },
+    ],
+    visionGaps: [],
+    createdAt: "2026-08-17T00:00:00.000Z",
   };
 }
 

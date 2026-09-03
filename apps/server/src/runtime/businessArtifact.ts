@@ -1,13 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-  BusinessArtifact,
-  BusinessArtifactKind,
-  BusinessArtifactRole,
-  BusinessArtifactType,
-  Proof,
-  Task,
+import {
+  localizedTextSchema,
+  type BusinessArtifact,
+  type BusinessArtifactKind,
+  type BusinessArtifactRole,
+  type BusinessArtifactType,
+  type Proof,
+  type Task,
 } from "@auto-crop/core";
+import { parseOpenDecisions } from "./founderDecision";
 
 const BUSINESS_ARTIFACT_PATH = join(".auto-crop", "business-artifact.json");
 const BUSINESS_ARTIFACT_KINDS = new Set<BusinessArtifactKind>([
@@ -248,6 +250,18 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
   if (!("lineage" in json)) {
     errors.push("lineage: Required.");
   }
+  if (
+    classification &&
+    (classification.artifactKind === "deliverable" || classification.artifactKind === "final_report")
+  ) {
+    const outcomeSummaryError = outcomeSummaryFieldError(json.payload);
+    if (outcomeSummaryError) {
+      errors.push(outcomeSummaryError);
+    }
+    // An `open_decisions` entry on an unknown decisionKind is dropped silently; a malformed entry on a
+    // known decisionKind is a structural failure like any other required-field failure.
+    errors.push(...parseOpenDecisions(json.payload).errors);
+  }
   if (sourceProofId !== undefined && typeof sourceProofId !== "string") {
     errors.push("sourceProofId/source_proof_id: Expected a string.");
   }
@@ -271,6 +285,31 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
       lineage: json.lineage,
     },
   };
+}
+
+/**
+ * A `deliverable` / `final_report` must carry the completing agent's Task Outcome Summary in
+ * `payload.outcome_summary` (or `outcomeSummary`) — a non-empty string or a `{ en, zh }` localized
+ * object. A missing or malformed field is a structural validation failure like any other missing
+ * required field; the runtime does not judge the summary's meaning. Returns the error string, or null
+ * when the field is present and well-shaped.
+ */
+function outcomeSummaryFieldError(payload: unknown): string | null {
+  const required = "payload.outcome_summary: Required for deliverable and final_report artifacts (non-empty string or { en, zh }).";
+  if (!isRecord(payload)) {
+    return required;
+  }
+  const value = payload.outcome_summary ?? payload.outcomeSummary;
+  if (value === undefined || value === null) {
+    return required;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0 ? null : required;
+  }
+  if (isRecord(value)) {
+    return localizedTextSchema.safeParse(value).success ? null : required;
+  }
+  return required;
 }
 
 function normalizeParsedArtifactForCapturedProof(
@@ -344,6 +383,20 @@ function resolveEnvironmentBlockerCapability(artifact: EnvironmentBlockerShape):
     return declaredCapability ?? "browser_screenshot";
   }
   return null;
+}
+
+/**
+ * True when a Business Artifact is a current, valid, still-unreviewed deliverable — the shape that
+ * can go to CEO Office (manual review or Automatic Acceptance). Blockers, superseded or invalid
+ * artifacts, and already-reviewed ones are not reviewable.
+ */
+export function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolean {
+  return (
+    artifact.isCurrent &&
+    artifact.validationStatus === "valid" &&
+    artifact.reviewStatus === "unreviewed" &&
+    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
+  );
 }
 
 /**

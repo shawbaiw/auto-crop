@@ -142,6 +142,8 @@ describe("startAutoCrop", () => {
                 task_type: "test.scheduler_wake",
                 payload: {
                   summary: "Scheduler wake task completed.",
+                  outcome_summary:
+                    "The wake-requested task is complete and validated. It keeps the objective on schedule; the remaining gap is CEO review before downstream work proceeds.",
                   recommendation: "Review the wake-requested task.",
                   evidence: ["proof: wake-requested scheduler tick"],
                   risks: [],
@@ -172,8 +174,9 @@ describe("startAutoCrop", () => {
       scheduler.requestWake("dependency_cascade_queued");
 
       await waitFor(() => events.some((event) => event.type === "task_started" && event.taskId === "task_1"));
+      await waitFor(() => repositories.getTask("task_1")?.status === "complete");
       expect(logs).toContain("Scheduler wake requested: dependency_cascade_queued");
-      expect(repositories.getTask("task_1")?.status).toBe("review");
+      expect(repositories.getTask("task_1")?.status).toBe("complete");
     } finally {
       scheduler.stop();
       client.close();

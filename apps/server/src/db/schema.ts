@@ -234,6 +234,7 @@ export function migrate(database: DatabaseClient): void {
       business_artifact_id TEXT REFERENCES business_artifacts(id) ON DELETE SET NULL,
       outcome TEXT NOT NULL,
       acceptance_provenance TEXT,
+      outcome_summary_text TEXT,
       dependency_impact TEXT NOT NULL,
       next_step_items TEXT NOT NULL,
       vision_gaps TEXT NOT NULL,
@@ -247,6 +248,17 @@ export function migrate(database: DatabaseClient): void {
       status TEXT NOT NULL,
       verified_at TEXT NOT NULL,
       verification_errors TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS founder_decision_resolutions (
+      founder_decision_id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      chosen_option TEXT,
+      return_reason TEXT,
+      note TEXT,
+      resolved_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS approvals (
@@ -292,6 +304,7 @@ export function migrate(database: DatabaseClient): void {
   migrateTaskDependencyContracts(database);
   migrateBusinessArtifactClassificationFields(database);
   migrateTaskCompletionAcceptanceProvenance(database);
+  migrateTaskCompletionOutcomeSummary(database);
   migrateReplanProposalDiagnostics(database);
   migrateLocalizedBusinessContentFields(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
@@ -304,6 +317,8 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS task_progress_events_parent_created_idx ON task_progress_events(parent_task_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS task_completion_events_company_created_idx ON task_completion_events(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS human_action_confirmations_company_idx ON human_action_confirmations(company_id, human_action_id)");
+  database.exec("CREATE INDEX IF NOT EXISTS founder_decision_resolutions_company_idx ON founder_decision_resolutions(company_id, founder_decision_id)");
+  database.exec("CREATE INDEX IF NOT EXISTS founder_decision_resolutions_task_idx ON founder_decision_resolutions(task_id)");
   database.exec("CREATE INDEX IF NOT EXISTS replan_proposals_company_status_idx ON replan_proposals(company_id, status)");
   database.exec("CREATE INDEX IF NOT EXISTS ceo_intakes_company_created_idx ON ceo_intakes(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS ceo_review_decisions_company_created_idx ON ceo_review_decisions(company_id, created_at, id)");
@@ -371,6 +386,11 @@ function migrateReplanProposalDiagnostics(database: DatabaseClient): void {
 function migrateTaskCompletionAcceptanceProvenance(database: DatabaseClient): void {
   const columns = getColumnNames(database, "task_completion_events");
   addColumnIfMissing(database, columns, "task_completion_events", "acceptance_provenance TEXT");
+}
+
+function migrateTaskCompletionOutcomeSummary(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "task_completion_events");
+  addColumnIfMissing(database, columns, "task_completion_events", "outcome_summary_text TEXT");
 }
 
 function migrateTaskPosition(database: DatabaseClient): void {

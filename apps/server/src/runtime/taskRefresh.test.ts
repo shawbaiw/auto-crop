@@ -568,6 +568,8 @@ function writeValidBusinessArtifact(workspacePath: string): void {
       taskType: "engineering.prototype_implementation",
       payload: {
         summary: "Implementation completed.",
+        outcome_summary:
+          "Implementation is complete and ready for review. It advances the objective's build milestone; the remaining gap is validation before launch.",
         nextSteps: ["CEO review"],
       },
       lineage: { taskId: "task_1" },

@@ -8,6 +8,7 @@ import type {
   Company,
   CompanyEvent,
   Department,
+  FounderDecision,
   HumanAction,
   HumanActionConfirmation,
   KeyResult,
@@ -31,7 +32,8 @@ import type { PolicyMode } from "../policies/policy";
 import { generateCompanyBlueprint, writeCompanyBlueprintRecords } from "../runtime/createCompany";
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
-import { projectCeoAttention } from "../runtime/ceoAttention";
+import { founderDecisionSourceEventId, projectCeoAttention } from "../runtime/ceoAttention";
+import { createDefaultId } from "../runtime/ids";
 import {
   ceoReturnProgressDetailText,
   ceoReturnProgressLabelText,
@@ -39,6 +41,7 @@ import {
 } from "../runtime/localizedRuntimeText";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
+import { reconcileReviewTasksForAutomaticAcceptance } from "../runtime/reviewReconciliation";
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
 import { refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
@@ -443,6 +446,81 @@ async function routeRequest(
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/founder-decisions") {
+    const body = await readJson<{
+      founderDecisionId?: string;
+      chosenOption?: string;
+      action?: string;
+      note?: string;
+      returnReason?: CeoReviewReturnReason;
+    }>(request);
+    const founderDecisionId = body.founderDecisionId?.trim() ?? "";
+
+    if (!founderDecisionId) {
+      sendJson(response, 400, { error: "Founder decision id is required." });
+      return;
+    }
+
+    const isReturn = body.action === "return";
+    const result = resolveFounderDecision({
+      repositories: options.repositories,
+      founderDecisionId,
+      chosenOption: typeof body.chosenOption === "string" ? body.chosenOption : null,
+      action: isReturn ? "return" : null,
+      returnReason: isReturn ? body.returnReason ?? null : null,
+      note: body.note?.trim() ? body.note.trim() : null,
+      now: options.now,
+      createId: options.createId,
+      requestSchedulerWake: () => options.requestSchedulerWake?.("dependency_cascade_queued"),
+    });
+
+    if (result.kind === "not_found") {
+      sendJson(response, 404, { error: `Founder decision not found: ${founderDecisionId}` });
+      return;
+    }
+    if (result.kind === "stale") {
+      sendJson(response, 409, { error: "Task is no longer awaiting this founder decision." });
+      return;
+    }
+    if (result.kind === "invalid_return_reason") {
+      sendJson(response, 400, { error: "Return reason is required." });
+      return;
+    }
+    if (result.kind === "invalid_option") {
+      sendJson(response, 400, { error: "Chosen option must match one of the decision's options." });
+      return;
+    }
+    if (result.kind === "invalid_request") {
+      sendJson(response, 400, { error: "Provide a chosen option or a return action." });
+      return;
+    }
+
+    const dependencyCascade = result.kind === "accepted" ? result.dependencyCascade : undefined;
+    for (const cascadeUpdate of dependencyCascade?.updatedTasks ?? []) {
+      if (cascadeUpdate.event) {
+        events.publish(summarizeTaskEvent(cascadeUpdate.event));
+      }
+    }
+
+    sendJson(response, 200, {
+      founderDecision: result.founderDecision,
+      accepted: result.kind === "accepted",
+      task: summarizeTask(
+        result.task,
+        options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId),
+      ),
+      businessArtifacts: options.repositories.listBusinessArtifactsForTask(result.task.id).map(summarizeBusinessArtifact),
+      event:
+        result.kind === "accepted" || result.kind === "returned" ? summarizeTaskEvent(result.event) : undefined,
+      progressEvent:
+        result.kind === "returned" && result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
+      dependencyCascade: dependencyCascade
+        ? summarizeDependencyCascade(dependencyCascade, options.repositories)
+        : undefined,
+    });
+    return;
+  }
+
   const cancelMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
   if (method === "POST" && cancelMatch) {
     const taskId = cancelMatch[1];
@@ -655,6 +733,17 @@ function buildCompanyState(
     now: options?.now,
     createId: options?.createId,
   });
+  // One-time migration pass (ADR 0017 §Migration): the first company-state read after this company
+  // gets the deterministic model accepts the `review` tasks it would have accepted; a per-company
+  // marker makes every later read a no-op. Its events are read back below with the rest of company
+  // state; a downstream task it unblocks wakes the scheduler.
+  reconcileReviewTasksForAutomaticAcceptance({
+    repositories,
+    companyId: currentCompany.id,
+    now: options?.now,
+    createId: options?.createId,
+    requestSchedulerWake: () => options?.requestSchedulerWake?.("dependency_cascade_queued"),
+  });
   let tasks = repositories.listTasksForCompany(currentCompany.id);
   const keyResults = repositories.listKeyResults(currentCompany.id);
   let taskDependencies = repositories.listTaskDependenciesForCompany(currentCompany.id);
@@ -662,6 +751,7 @@ function buildCompanyState(
   const businessArtifacts = repositories.listBusinessArtifactsForCompany(currentCompany.id).map(summarizeBusinessArtifact);
   const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(currentCompany.id);
   const humanActionConfirmations = repositories.listHumanActionConfirmationsForCompany(currentCompany.id);
+  const founderDecisionResolutions = repositories.listFounderDecisionResolutionsForCompany(currentCompany.id);
   let ceoAttention = projectCeoAttention({
     company: currentCompany,
     keyResults,
@@ -669,6 +759,7 @@ function buildCompanyState(
     taskCompletionEvents,
     taskDependencies,
     humanActionConfirmations,
+    founderDecisionResolutions,
     now: options?.now,
   });
   const humanActionBlockEvents = applyPendingHumanActionBlocks({
@@ -689,6 +780,7 @@ function buildCompanyState(
       taskCompletionEvents,
       taskDependencies,
       humanActionConfirmations,
+      founderDecisionResolutions,
       now: options?.now,
     });
   }
@@ -712,6 +804,7 @@ function buildCompanyState(
       taskCompletionEvents,
       taskDependencies,
       humanActionConfirmations,
+      founderDecisionResolutions,
       now: options?.now,
     });
   }
@@ -728,6 +821,7 @@ function buildCompanyState(
     visionGaps: ceoAttention.visionGaps,
     humanActions: ceoAttention.humanActions,
     waitStates: ceoAttention.waitStates,
+    founderDecisions: ceoAttention.founderDecisions,
     ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
     founderReport: summarizeFounderReport(
       currentCompany,
@@ -787,7 +881,7 @@ function reconcileStaleCompanyCreation(
     .some((event) => event.type === "company_creation_failed" && event.message === failureMessage);
   if (!alreadyRecorded) {
     repositories.appendCompanyEvent({
-      id: options?.createId?.("company_event") ?? `company_event_${Date.now()}`,
+      id: options?.createId?.("company_event") ?? createDefaultId("company_event"),
       companyId: company.id,
       type: "company_creation_failed",
       message: failureMessage,
@@ -990,6 +1084,7 @@ async function confirmHumanAction(input: {
     taskCompletionEvents,
     taskDependencies: input.repositories.listTaskDependenciesForCompany(company.id),
     humanActionConfirmations: input.repositories.listHumanActionConfirmationsForCompany(company.id),
+    founderDecisionResolutions: input.repositories.listFounderDecisionResolutionsForCompany(company.id),
     now: input.now,
   });
   const humanAction = attention.humanActions.find((action) => action.id === input.humanActionId);
@@ -1063,6 +1158,7 @@ async function confirmHumanAction(input: {
     taskCompletionEvents,
     taskDependencies: input.repositories.listTaskDependenciesForCompany(company.id),
     humanActionConfirmations: input.repositories.listHumanActionConfirmationsForCompany(company.id),
+    founderDecisionResolutions: input.repositories.listFounderDecisionResolutionsForCompany(company.id),
     now: input.now,
   }).humanActions.find((action) => action.id === input.humanActionId);
 
@@ -1404,7 +1500,7 @@ function createCeoReviewDecision(input: {
   }
 
   const decision: CeoReviewDecision = {
-    id: input.createId?.("ceo_review_decision") ?? `ceo_review_decision_${Date.now()}`,
+    id: input.createId?.("ceo_review_decision") ?? createDefaultId("ceo_review_decision"),
     companyId: task.companyId,
     taskId: task.id,
     departmentId: task.departmentId,
@@ -1454,7 +1550,7 @@ function createCeoReviewDecision(input: {
   input.repositories.updateTaskStatus(task.id, "queued");
 
   const event: TaskEvent = {
-    id: input.createId?.("task_event") ?? `task_event_${Date.now()}`,
+    id: input.createId?.("task_event") ?? createDefaultId("task_event"),
     companyId: task.companyId,
     taskId: task.id,
     type: "ceo_review_decision",
@@ -1478,7 +1574,7 @@ function createCeoReviewDecision(input: {
 
   let progressEvent: TaskProgressEvent | undefined;
   progressEvent = {
-    id: input.createId?.("task_progress") ?? `task_progress_${Date.now()}`,
+    id: input.createId?.("task_progress") ?? createDefaultId("task_progress"),
     companyId: task.companyId,
     departmentId: task.departmentId,
     parentTaskId: task.parentTaskId ?? task.id,
@@ -1507,6 +1603,275 @@ function createCeoReviewDecision(input: {
     event,
     progressEvent,
   };
+}
+
+type FounderDecisionResult =
+  | { kind: "not_found" }
+  | { kind: "stale" }
+  | { kind: "invalid_return_reason" }
+  | { kind: "invalid_option" }
+  | { kind: "invalid_request" }
+  | { kind: "resolved"; founderDecision: FounderDecision; task: Task }
+  | {
+      kind: "accepted";
+      founderDecision: FounderDecision;
+      task: Task;
+      event: TaskEvent;
+      dependencyCascade?: DependencyCascadeResult;
+    }
+  | {
+      kind: "returned";
+      founderDecision: FounderDecision;
+      task: Task;
+      event: TaskEvent;
+      progressEvent?: TaskProgressEvent;
+    };
+
+type FounderDecisionContext = {
+  repositories: ReturnType<typeof createRepositories>;
+  company: Company;
+  task: Task;
+  completionEvent: TaskCompletionEvent;
+  founderDecision: FounderDecision;
+  projectFounderDecisions: () => FounderDecision[];
+  timestamp: string;
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+  requestSchedulerWake?: () => void;
+};
+
+/**
+ * Resolve one Founder Decision. A pick records the resolution and writes the chosen value into the
+ * accepted artifact payload under its `decisionKind`; once every Founder Decision on the same Task
+ * Completion Event is resolved, the shared business-acceptance seam runs with provenance
+ * `founder_decision`. A return sends the task back through the existing CEO-review return path and
+ * discards the task's recorded picks. A resolution for a task no longer parked on the decision is
+ * `stale` (HTTP 409).
+ */
+function resolveFounderDecision(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  founderDecisionId: string;
+  chosenOption: string | null;
+  action: "return" | null;
+  returnReason: CeoReviewReturnReason | null;
+  note: string | null;
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+  requestSchedulerWake?: () => void;
+}): FounderDecisionResult {
+  const { repositories } = input;
+  const sourceEventId = founderDecisionSourceEventId(input.founderDecisionId);
+  if (!sourceEventId) {
+    return { kind: "not_found" };
+  }
+  const completionEvent = repositories.getTaskCompletionEvent(sourceEventId);
+  if (!completionEvent) {
+    return { kind: "not_found" };
+  }
+  const company = repositories.getCompany(completionEvent.companyId);
+  if (!company) {
+    return { kind: "not_found" };
+  }
+
+  const projectFounderDecisions = (): FounderDecision[] =>
+    projectCeoAttention({
+      company,
+      keyResults: repositories.listKeyResults(company.id),
+      tasks: repositories.listTasksForCompany(company.id),
+      taskCompletionEvents: repositories.listTaskCompletionEventsForCompany(company.id),
+      taskDependencies: repositories.listTaskDependenciesForCompany(company.id),
+      humanActionConfirmations: repositories.listHumanActionConfirmationsForCompany(company.id),
+      founderDecisionResolutions: repositories.listFounderDecisionResolutionsForCompany(company.id),
+      now: input.now,
+    }).founderDecisions;
+
+  const founderDecision = projectFounderDecisions().find((decision) => decision.id === input.founderDecisionId);
+  if (!founderDecision) {
+    return { kind: "not_found" };
+  }
+
+  const task = repositories.getTask(founderDecision.taskId);
+  if (!task) {
+    return { kind: "not_found" };
+  }
+
+  const awaitsThisDecision = repositories
+    .listTaskCompletionEventsForTask(task.id)
+    .some((event) => event.id === completionEvent.id && event.outcome === "awaiting_founder_decision");
+  if (task.status !== "review" || founderDecision.status !== "pending" || !awaitsThisDecision) {
+    return { kind: "stale" };
+  }
+
+  const context: FounderDecisionContext = {
+    repositories,
+    company,
+    task,
+    completionEvent,
+    founderDecision,
+    projectFounderDecisions,
+    timestamp: (input.now ?? (() => new Date()))().toISOString(),
+    now: input.now,
+    createId: input.createId,
+    requestSchedulerWake: input.requestSchedulerWake,
+  };
+
+  if (input.action === "return") {
+    if (!isCeoReviewReturnReason(input.returnReason)) {
+      return { kind: "invalid_return_reason" };
+    }
+    return returnTaskForFounderDecision(context, input.returnReason, input.note);
+  }
+
+  const chosenOption = input.chosenOption?.trim() ?? "";
+  if (!chosenOption) {
+    return { kind: "invalid_request" };
+  }
+  if (!founderDecision.options.some((option) => option.label === chosenOption)) {
+    return { kind: "invalid_option" };
+  }
+  return pickFounderDecisionOption(context, chosenOption);
+}
+
+/** Return path: send the task back through the CEO-review return path; discard picks; mark the event's decisions `returned`. */
+function returnTaskForFounderDecision(
+  context: FounderDecisionContext,
+  returnReason: CeoReviewReturnReason,
+  note: string | null,
+): FounderDecisionResult {
+  const { repositories, company, task, completionEvent, founderDecision } = context;
+  const returned = createCeoReviewDecision({
+    repositories,
+    taskId: task.id,
+    decision: "return",
+    returnReason,
+    note,
+    now: context.now,
+    createId: context.createId,
+    requestSchedulerWake: context.requestSchedulerWake,
+  });
+  if (returned.kind !== "created") {
+    return { kind: "stale" };
+  }
+
+  // Discard every recorded pick for the task, then mark all of the returned event's Founder
+  // Decisions `returned` so none keep raising a CEO Attention Item after the task is sent back.
+  repositories.deleteFounderDecisionResolutionsForTask(task.id);
+  const decisionIds = new Set([
+    founderDecision.id,
+    ...context
+      .projectFounderDecisions()
+      .filter((decision) => decision.sourceTaskCompletionEventId === completionEvent.id)
+      .map((decision) => decision.id),
+  ]);
+  for (const decisionId of decisionIds) {
+    repositories.upsertFounderDecisionResolution({
+      founderDecisionId: decisionId,
+      companyId: company.id,
+      taskId: task.id,
+      status: "returned",
+      chosenOption: null,
+      returnReason,
+      note,
+      resolvedAt: context.timestamp,
+    });
+  }
+
+  const projected =
+    context.projectFounderDecisions().find((decision) => decision.id === founderDecision.id) ?? founderDecision;
+  return {
+    kind: "returned",
+    founderDecision: projected,
+    task: returned.task,
+    event: returned.event,
+    progressEvent: returned.progressEvent,
+  };
+}
+
+/** Pick path: record the resolution, write the choice into the artifact payload, and accept once the event's decisions are all resolved. */
+function pickFounderDecisionOption(context: FounderDecisionContext, chosenOption: string): FounderDecisionResult {
+  const { repositories, company, task, completionEvent, founderDecision } = context;
+
+  repositories.upsertFounderDecisionResolution({
+    founderDecisionId: founderDecision.id,
+    companyId: company.id,
+    taskId: task.id,
+    status: "resolved",
+    chosenOption,
+    returnReason: null,
+    note: null,
+    resolvedAt: context.timestamp,
+  });
+
+  const artifact = repositories.getCurrentBusinessArtifactForTask(task.id);
+  if (artifact) {
+    repositories.updateBusinessArtifactPayload(
+      artifact.id,
+      writeResolvedDecisionIntoPayload(artifact.payload, founderDecision.decisionKind, chosenOption),
+      context.timestamp,
+    );
+  }
+
+  // Gate acceptance on the Founder Decisions from the Task Completion Event being resolved — not
+  // every historical one for the task, so a stale awaiting event left by an earlier return + rerun
+  // cannot block acceptance.
+  const decisionsForEvent = context
+    .projectFounderDecisions()
+    .filter((decision) => decision.sourceTaskCompletionEventId === completionEvent.id);
+  const updatedDecision = decisionsForEvent.find((decision) => decision.id === founderDecision.id) ?? founderDecision;
+  if (decisionsForEvent.some((decision) => decision.status === "pending")) {
+    return { kind: "resolved", founderDecision: updatedDecision, task };
+  }
+
+  const acceptedArtifact = repositories.getCurrentBusinessArtifactForTask(task.id);
+  if (!acceptedArtifact) {
+    return { kind: "stale" };
+  }
+  const accepted = acceptTaskBusinessArtifact({
+    repositories,
+    task,
+    artifact: acceptedArtifact,
+    acceptanceProvenance: "founder_decision",
+    eventType: "founder_decision",
+    eventMessage: `Founder decision accepted task: ${task.title}.`,
+    keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
+    dependencyCascade: { maxDepth: 2 },
+    requestSchedulerWake: context.requestSchedulerWake,
+    now: context.now,
+    createId: context.createId,
+    founderDecisions: [],
+  });
+  return {
+    kind: "accepted",
+    founderDecision: updatedDecision,
+    task: accepted.task,
+    event: accepted.event,
+    dependencyCascade: accepted.dependencyCascade,
+  };
+}
+
+/**
+ * Record the founder's pick in the artifact payload under its `decisionKind` and drop the matching
+ * `open_decisions` entry (so a re-emitted Task Completion Event carries no `founder_decision` item).
+ * Accepts either key spelling `parseOpenDecisions` accepts.
+ */
+function writeResolvedDecisionIntoPayload(payload: unknown, decisionKind: string, chosenOption: string): Record<string, unknown> {
+  const next: Record<string, unknown> = isRecord(payload) ? { ...payload } : {};
+  next[decisionKind] = chosenOption;
+  for (const key of ["open_decisions", "openDecisions"]) {
+    const entries = next[key];
+    if (!Array.isArray(entries)) {
+      continue;
+    }
+    const remaining = entries.filter(
+      (entry) => !isRecord(entry) || (entry.decisionKind ?? entry.decision_kind) !== decisionKind,
+    );
+    if (remaining.length > 0) {
+      next[key] = remaining;
+    } else {
+      delete next[key];
+    }
+  }
+  return next;
 }
 
 function isApprovableBusinessArtifact(artifact: BusinessArtifact | null): boolean {
@@ -1548,7 +1913,7 @@ function formatCeoReturnReason(reason: CeoReviewReturnReason): string {
 }
 
 function createRouteId(options: ApiServerOptions, prefix: string): string {
-  return options.createId?.(prefix) ?? `${prefix}_${Date.now()}`;
+  return options.createId?.(prefix) ?? createDefaultId(prefix);
 }
 
 function summarizeCompany(company: Company) {
@@ -1952,7 +2317,10 @@ function summarizeTaskProgressEvent(event: TaskProgressEvent) {
 }
 
 function summarizeTaskCompletionEvent(event: TaskCompletionEvent) {
-  return event;
+  return {
+    ...event,
+    outcomeSummaryText: event.outcomeSummaryText ?? null,
+  };
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
@@ -1993,5 +2361,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function defaultCreateId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  return createDefaultId(prefix);
 }

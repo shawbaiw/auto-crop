@@ -269,6 +269,12 @@ function formatAgentActivityState(event: ServerEvent, t: (key: TranslationKey) =
       return t("operations.warning");
     case "partial_output":
       return t("operations.partialOutput");
+    case "automatic_acceptance":
+      return t("operations.acceptedAutomatically");
+    case "founder_decision":
+      return t("operations.founderDecision");
+    case "ceo_review_decision":
+      return t("operations.ceoReviewDecision");
     default:
       return event.status ? formatCodeLabel(event.status) : t("operations.activity");
   }
@@ -317,6 +323,18 @@ function formatAgentActivityDetail(event: ServerEvent, language: "en" | "zh", t:
     return event.artifactWorkspacePath
       ? `${event.artifactWorkspacePath} ${t("operations.diagnosticPath")}`
       : t("operations.diagnosticOnly");
+  }
+
+  if (event.type === "automatic_acceptance") {
+    return cleanActivityMessage(resolveLocalizedValue(event.messageText, language, event.message)) ?? t("operations.acceptedAutomaticallyDetail");
+  }
+
+  if (event.type === "founder_decision") {
+    return cleanActivityMessage(resolveLocalizedValue(event.messageText, language, event.message)) ?? t("operations.founderDecisionDetail");
+  }
+
+  if (event.type === "ceo_review_decision") {
+    return cleanActivityMessage(resolveLocalizedValue(event.messageText, language, event.message)) ?? t("operations.ceoReviewDecisionDetail");
   }
 
   return cleanActivityMessage(resolveLocalizedValue(event.messageText, language, event.message)) ?? t("operations.newActivity");

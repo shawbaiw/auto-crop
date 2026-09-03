@@ -16,6 +16,7 @@ import { useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
   BusinessArtifactSummary,
+  LocalizedText,
   CeoAttentionRollupSummary,
   CeoReviewDecisionResponse,
   CeoReviewReturnReason,
@@ -23,9 +24,13 @@ import type {
   CeoIntakeStatus,
   CompanySummary,
   DepartmentSummary,
+  FounderDecisionResolutionResponse,
+  FounderDecisionSummary,
   HumanActionSummary,
+  KeyResultSummary,
   ObjectiveSummary,
   ProofSummary,
+  TaskCompletionEventSummary,
   TaskRecoveryResponse,
   TaskRefreshResponse,
   TaskProgressEventSummary,
@@ -65,10 +70,20 @@ export type DepartmentWorkspaceProps = {
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
+  founderDecisions?: FounderDecisionSummary[];
   humanActions?: HumanActionSummary[];
+  keyResults?: KeyResultSummary[];
+  taskCompletionEvents?: TaskCompletionEventSummary[];
   visionGaps?: VisionGapSummary[];
   waitStates?: WaitStateSummary[];
   onConfirmHumanAction?: (humanActionId: string, evidence: Record<string, string>) => Promise<void> | void;
+  onResolveFounderDecision?: (input: {
+    founderDecisionId: string;
+    chosenOption?: string;
+    action?: "return";
+    returnReason?: CeoReviewReturnReason;
+    note?: string;
+  }) => Promise<FounderDecisionResolutionResponse> | FounderDecisionResolutionResponse;
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
   onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
@@ -90,6 +105,7 @@ export function DepartmentWorkspace({
   objectives,
   onCreateCeoIntake,
   onCreateCeoReviewDecision,
+  onResolveFounderDecision,
   onConfirmHumanAction,
   onRefreshTask,
   onRecoverTask,
@@ -99,7 +115,10 @@ export function DepartmentWorkspace({
   proof = [],
   businessArtifacts = [],
   ceoAttentionRollups = [],
+  founderDecisions = [],
   humanActions = [],
+  keyResults = [],
+  taskCompletionEvents = [],
   visionGaps = [],
   waitStates = [],
   taskProgressEvents = [],
@@ -193,9 +212,13 @@ export function DepartmentWorkspace({
                   departments={departments}
                   intakes={ceoIntakes}
                   objectives={objectives}
+                  keyResults={keyResults}
                   ceoAttentionRollups={ceoAttentionRollups}
+                  founderDecisions={founderDecisions}
+                  taskCompletionEvents={taskCompletionEvents}
                   onDraftChange={setCeoIntakeDraft}
                   onCreateCeoReviewDecision={onCreateCeoReviewDecision}
+                  onResolveFounderDecision={onResolveFounderDecision}
                   onConfirmHumanAction={onConfirmHumanAction}
                   onSelectDepartment={setSelectedRoleId}
                   onSubmit={onCreateCeoIntake}
@@ -275,10 +298,14 @@ function CeoIntakeWorkspace({
   ceoAttentionRollups,
   departments,
   draft,
+  founderDecisions,
   humanActions,
   intakes,
+  keyResults,
   objectives,
+  taskCompletionEvents,
   onCreateCeoReviewDecision,
+  onResolveFounderDecision,
   onConfirmHumanAction,
   onDraftChange,
   onSelectDepartment,
@@ -293,10 +320,14 @@ function CeoIntakeWorkspace({
   ceoAttentionRollups: CeoAttentionRollupSummary[];
   departments: DepartmentSummary[];
   draft: string;
+  founderDecisions: FounderDecisionSummary[];
   humanActions: HumanActionSummary[];
   intakes: CeoIntakeSummary[];
+  keyResults: KeyResultSummary[];
   objectives: ObjectiveSummary[];
+  taskCompletionEvents: TaskCompletionEventSummary[];
   onCreateCeoReviewDecision?: DepartmentWorkspaceProps["onCreateCeoReviewDecision"];
+  onResolveFounderDecision?: DepartmentWorkspaceProps["onResolveFounderDecision"];
   onConfirmHumanAction?: DepartmentWorkspaceProps["onConfirmHumanAction"];
   onDraftChange: (value: string) => void;
   onSelectDepartment: (departmentId: string) => void;
@@ -329,6 +360,15 @@ function CeoIntakeWorkspace({
 
   return (
     <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
+      <CeoOutcomesView
+        departmentsById={departmentsById}
+        founderDecisions={founderDecisions}
+        keyResults={keyResults}
+        objectives={objectives}
+        onResolveFounderDecision={onResolveFounderDecision}
+        taskCompletionEvents={taskCompletionEvents}
+        tasksById={tasksById}
+      />
       <CeoExecutiveOverview
         ceoAttentionRollups={ceoAttentionRollups}
         companyTaskCount={tasks.length}
@@ -360,6 +400,7 @@ function CeoIntakeWorkspace({
       ) : null}
       <CeoBlueprintSummary
         departments={departments}
+        founderDecisions={founderDecisions}
         objectives={objectives}
         onSelectDepartment={onSelectDepartment}
         onViewPendingTask={(taskId) => {
@@ -389,6 +430,309 @@ function groupBusinessArtifactsByTask(artifacts: BusinessArtifactSummary[]): Map
     grouped.set(artifact.taskId, [...(grouped.get(artifact.taskId) ?? []), artifact]);
   }
   return grouped;
+}
+
+/** How many of the most recent outcome-carrying Task Completion Events the Outcomes view shows. */
+const RECENT_OUTCOME_LIMIT = 12;
+
+type OutcomeGroup = {
+  key: string;
+  label: string;
+  priority: number;
+  events: TaskCompletionEventSummary[];
+};
+
+function hasOutcomeSummary(event: TaskCompletionEventSummary): boolean {
+  const text = event.outcomeSummaryText;
+  if (!text) {
+    return false;
+  }
+  return Boolean((text.en && text.en.trim()) || (text.zh && text.zh.trim()));
+}
+
+function groupOutcomesByObjective(
+  events: TaskCompletionEventSummary[],
+  keyResults: KeyResultSummary[],
+  objectives: ObjectiveSummary[],
+  ungroupedLabel: string,
+  language: "en" | "zh",
+): OutcomeGroup[] {
+  const keyResultsById = new Map(keyResults.map((keyResult) => [keyResult.id, keyResult]));
+  const objectivesById = new Map(objectives.map((objective) => [objective.id, objective]));
+  const groups = new Map<string, OutcomeGroup>();
+
+  for (const event of events) {
+    const keyResult = event.keyResultId ? keyResultsById.get(event.keyResultId) : undefined;
+    const objective = keyResult ? objectivesById.get(keyResult.objectiveId) : undefined;
+    const key = objective?.id ?? "__ungrouped__";
+    const existing = groups.get(key);
+    if (existing) {
+      existing.events.push(event);
+      continue;
+    }
+    groups.set(key, {
+      key,
+      label: objective ? resolveLocalizedValue(objective.titleText, language, objective.title) : ungroupedLabel,
+      priority: objective?.priority ?? Number.MAX_SAFE_INTEGER,
+      events: [event],
+    });
+  }
+
+  return [...groups.values()].sort((a, b) => a.priority - b.priority);
+}
+
+/**
+ * Business-language read of a Task Completion Event's `dependencyImpact`. The server serializes it as
+ * `{ updatedTasks: [{ taskId, status }], errors }` on an acceptance cascade and `{ blockedTaskIds }`
+ * on a non-acceptance outcome (see `businessAcceptance.ts` / `scheduler.ts`).
+ */
+function outcomeDependencyImpact(
+  event: TaskCompletionEventSummary,
+  t: ReturnType<typeof useLanguage>["t"],
+): string {
+  if (event.outcome === "awaiting_founder_decision") {
+    return t("department.outcomeAwaitingDecision");
+  }
+  const bag = event.dependencyImpact;
+  const record = bag && typeof bag === "object" && !Array.isArray(bag) ? (bag as Record<string, unknown>) : {};
+
+  const unblocked = Array.isArray(record.updatedTasks)
+    ? record.updatedTasks.filter(
+        (entry) =>
+          entry != null &&
+          typeof entry === "object" &&
+          (entry as { status?: unknown }).status === "queued",
+      ).length
+    : 0;
+  if (unblocked > 0) {
+    return `${t("department.outcomeUnblocks")} (${unblocked})`;
+  }
+
+  const blocked = Array.isArray(record.blockedTaskIds)
+    ? record.blockedTaskIds.filter((entry) => typeof entry === "string").length
+    : 0;
+  if (blocked > 0) {
+    return `${t("department.outcomeHolds")} (${blocked})`;
+  }
+
+  return t("department.outcomeNoImpact");
+}
+
+function formatDecisionKind(kind: string, t: ReturnType<typeof useLanguage>["t"]): string {
+  switch (kind) {
+    case "target_market":
+      return t("department.decisionKindTargetMarket");
+    case "product_direction":
+      return t("department.decisionKindProductDirection");
+    case "mvp_type":
+      return t("department.decisionKindMvpType");
+    case "pricing_model":
+      return t("department.decisionKindPricingModel");
+    case "launch_target":
+      return t("department.decisionKindLaunchTarget");
+    default:
+      return formatCodeLabel(kind);
+  }
+}
+
+function CeoOutcomesView({
+  departmentsById,
+  founderDecisions,
+  keyResults,
+  objectives,
+  onResolveFounderDecision,
+  taskCompletionEvents,
+  tasksById,
+}: {
+  departmentsById: Map<string, DepartmentSummary>;
+  founderDecisions: FounderDecisionSummary[];
+  keyResults: KeyResultSummary[];
+  objectives: ObjectiveSummary[];
+  onResolveFounderDecision?: DepartmentWorkspaceProps["onResolveFounderDecision"];
+  taskCompletionEvents: TaskCompletionEventSummary[];
+  tasksById: Map<string, TaskSummary>;
+}) {
+  const { language, t } = useLanguage();
+  const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
+  const pendingDecisions = founderDecisions.filter((decision) => decision.status === "pending");
+  const outcomeEvents = [...taskCompletionEvents]
+    .filter(hasOutcomeSummary)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, RECENT_OUTCOME_LIMIT);
+  const groups = groupOutcomesByObjective(outcomeEvents, keyResults, objectives, t("department.outcomesUngrouped"), language);
+
+  const taskLabel = (taskId: string): string => {
+    const task = tasksById.get(taskId);
+    return task ? taskTitle(task, language) : taskId;
+  };
+  const departmentLabel = (departmentId: string): string => {
+    const department = departmentsById.get(departmentId);
+    return department ? departmentName(department, language) : departmentId;
+  };
+
+  return (
+    <section className="ceo-outcomes-view" aria-label={t("department.ceoOutcomes")}>
+      <h3>{t("department.ceoOutcomes")}</h3>
+      <p className="muted">{t("department.ceoOutcomesNote")}</p>
+      {decisionMessage ? <p className="system-message">{decisionMessage}</p> : null}
+
+      {pendingDecisions.length > 0 ? (
+        <section className="ceo-outcomes-view__decisions" aria-label={t("department.founderDecisionsPinned")}>
+          <h4>{t("department.founderDecisionsPinned")}</h4>
+          {pendingDecisions.map((decision) => (
+            <CeoFounderDecisionCard
+              key={decision.id}
+              decision={decision}
+              departmentLabel={departmentLabel(decision.departmentId)}
+              onResolveFounderDecision={onResolveFounderDecision}
+              onResolved={setDecisionMessage}
+              taskLabel={taskLabel(decision.taskId)}
+            />
+          ))}
+        </section>
+      ) : null}
+
+      {outcomeEvents.length === 0 ? <p className="muted">{t("department.noOutcomes")}</p> : null}
+      {groups.map((group) => (
+        <section className="ceo-outcomes-view__group" aria-label={group.label} key={group.key}>
+          <h4>{group.label}</h4>
+          {group.events.map((event) => (
+            <article className="ceo-outcome" key={event.id}>
+              <h5>{taskLabel(event.taskId)}</h5>
+              <p className="ceo-outcome__summary">
+                {resolveLocalizedValue(event.outcomeSummaryText, language, event.outcomeSummaryText?.en ?? "")}
+              </p>
+              <p className="muted">{outcomeDependencyImpact(event, t)}</p>
+            </article>
+          ))}
+        </section>
+      ))}
+    </section>
+  );
+}
+
+function CeoFounderDecisionCard({
+  decision,
+  departmentLabel,
+  onResolveFounderDecision,
+  onResolved,
+  taskLabel,
+}: {
+  decision: FounderDecisionSummary;
+  departmentLabel: string;
+  onResolveFounderDecision?: DepartmentWorkspaceProps["onResolveFounderDecision"];
+  onResolved: (message: string) => void;
+  taskLabel: string;
+}) {
+  const { t } = useLanguage();
+  const [returnReason, setReturnReason] = useState<CeoReviewReturnReason | "">("");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState<{ kind: "pick"; option: string } | { kind: "return" } | null>(null);
+
+  const runResolution = async (
+    action: { kind: "pick"; option: string } | { kind: "return" },
+    input: Parameters<NonNullable<DepartmentWorkspaceProps["onResolveFounderDecision"]>>[0],
+    resolvedMessage: (accepted: boolean) => string,
+  ) => {
+    if (submitting) {
+      return;
+    }
+    setError(null);
+    setSubmitting(action);
+    try {
+      const response = await onResolveFounderDecision?.(input);
+      onResolved(resolvedMessage(Boolean(response?.accepted)));
+    } catch (resolutionError) {
+      setError((resolutionError as Error).message);
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  const handlePick = (option: string) =>
+    runResolution({ kind: "pick", option }, { founderDecisionId: decision.id, chosenOption: option }, (accepted) =>
+      accepted ? t("department.founderDecisionResolvedAccepted") : t("department.founderDecisionResolvedPartial"),
+    );
+
+  const handleReturn = () => {
+    if (!returnReason) {
+      setError(t("department.ceoReviewReturnReasonRequired"));
+      return;
+    }
+    void runResolution(
+      { kind: "return" },
+      {
+        founderDecisionId: decision.id,
+        action: "return",
+        returnReason,
+        note: note.trim() || undefined,
+      },
+      () => t("department.founderDecisionReturned"),
+    );
+  };
+
+  return (
+    <article className="ceo-founder-decision" aria-label={taskLabel}>
+      <div className="ceo-founder-decision__header">
+        <p className="muted">{departmentLabel}</p>
+        <h5>{taskLabel}</h5>
+        <VideotexKeyValue
+          items={[
+            { label: t("department.founderDecisionKind"), value: formatDecisionKind(decision.decisionKind, t) },
+            ...(decision.blockedTaskIds.length > 0
+              ? [{ label: t("department.founderDecisionBlocking"), value: String(decision.blockedTaskIds.length) }]
+              : []),
+          ]}
+        />
+      </div>
+      {decision.rationale ? (
+        <p className="ceo-founder-decision__rationale">
+          <strong>{t("department.founderDecisionRationale")}:</strong> {decision.rationale}
+        </p>
+      ) : null}
+      <div className="ceo-founder-decision__options">
+        <h6>{t("department.founderDecisionOptions")}</h6>
+        {decision.options.map((option) => (
+          <article className="ceo-founder-decision__option" key={option.label}>
+            <p className="ceo-founder-decision__option-label">
+              {option.label}
+              {option.recommended ? (
+                <RetroBadge tone="signal">{t("department.founderDecisionRecommended")}</RetroBadge>
+              ) : null}
+            </p>
+            {option.tradeoffs ? (
+              <p className="muted">
+                {t("department.founderDecisionTradeoffs")}: {option.tradeoffs}
+              </p>
+            ) : null}
+            <RetroButton
+              aria-label={`${t("department.founderDecisionPick")}: ${option.label}`}
+              aria-busy={submitting?.kind === "pick" && submitting.option === option.label}
+              disabled={submitting !== null}
+              onClick={() => void handlePick(option.label)}
+            >
+              {t("department.founderDecisionPick")}
+            </RetroButton>
+          </article>
+        ))}
+      </div>
+      <div className="ceo-founder-decision__return">
+        <CeoReturnReasonFields
+          note={note}
+          noteLabel={t("department.founderDecisionNote")}
+          onNoteChange={setNote}
+          onReturnReasonChange={setReturnReason}
+          reasonLabel={t("department.founderDecisionReturnReason")}
+          returnReason={returnReason}
+        />
+        <RetroButton aria-busy={submitting?.kind === "return"} disabled={submitting !== null} onClick={handleReturn}>
+          {t("department.founderDecisionReturn")}
+        </RetroButton>
+      </div>
+      {error ? <p role="alert" className="warning-message">{error}</p> : null}
+    </article>
+  );
 }
 
 function CeoExecutiveOverview({
@@ -510,6 +854,7 @@ function CeoPendingQueue({
   return (
     <section className="ceo-pending-queue" aria-label={t("department.ceoPending")}>
       <h3>{t("department.ceoPending")}</h3>
+      <p className="muted">{t("department.ceoPendingNote")}</p>
       {successMessage ? <p className="system-message">{successMessage}</p> : null}
       {items.length === 0 ? <p className="muted">{t("department.noCeoPending")}</p> : null}
       {items.map((item) => (
@@ -548,8 +893,6 @@ function CeoTaskReviewDetail({
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submittingAction, setSubmittingAction] = useState<"approve" | "return" | null>(null);
-  const noteInputId = useId();
-  const reasonInputId = useId();
   const hasProof = proofs.length > 0;
   const currentArtifact = businessArtifacts.find((artifact) => artifact.isCurrent) ?? businessArtifacts[0] ?? null;
   const hasValidArtifact =
@@ -558,6 +901,7 @@ function CeoTaskReviewDetail({
     currentArtifact.reviewStatus === "unreviewed" &&
     (currentArtifact.artifactKind === "deliverable" || currentArtifact.artifactKind === "final_report");
   const canApprove = hasProof && hasValidArtifact;
+  const outcomeSummary = readOutcomeSummary(currentArtifact?.payload);
 
   const handleApprove = async () => {
     if (!canApprove || submittingAction) {
@@ -607,13 +951,26 @@ function CeoTaskReviewDetail({
       <p className={canApprove ? "system-message" : "warning-message"}>
         {canApprove ? t("department.ceoReviewCanPass") : t("department.ceoReviewMissingProof")}
       </p>
+      <section className="ceo-task-review-detail__outcome">
+        <h4>{t("department.ceoReviewOutcomeSummary")}</h4>
+        {outcomeSummary ? (
+          <p className="ceo-task-review-detail__outcome-text">
+            {typeof outcomeSummary === "string"
+              ? outcomeSummary
+              : resolveLocalizedValue(outcomeSummary, language, outcomeSummary.en ?? "")}
+          </p>
+        ) : (
+          <p className="muted">{t("department.ceoReviewNoOutcomeSummary")}</p>
+        )}
+      </section>
       <div className="ceo-task-review-detail__grid">
         <section>
           <h4>{t("department.ceoReviewTaskContent")}</h4>
           <p>{taskTitle(item.task, language)}</p>
           {item.task.description ? <p className="muted">{taskDescription(item.task, language)}</p> : null}
         </section>
-        <section>
+        <details className="ceo-task-review-detail__evidence">
+          <summary>{t("department.ceoReviewEvidenceValidation")}</summary>
           <h4>{t("department.ceoReviewDepartmentSubmission")}</h4>
           {proofs.length === 0 ? <p className="muted">{t("department.ceoReviewNoProof")}</p> : null}
           {proofs.map((proof) => (
@@ -630,7 +987,7 @@ function CeoTaskReviewDetail({
           ) : (
             <p className="muted">{t("dashboard.noBusinessArtifacts")}</p>
           )}
-        </section>
+        </details>
         <section>
           <h4>{t("department.ceoReviewRunStatus")}</h4>
           <VideotexKeyValue
@@ -647,31 +1004,15 @@ function CeoTaskReviewDetail({
         </section>
         <section>
           <h4>{t("department.ceoReviewDecision")}</h4>
-          <label className="retro-field" htmlFor={reasonInputId}>
-            <span>{t("department.ceoReviewReturnReason")}</span>
-            <select
-              id={reasonInputId}
-              className="retro-input"
-              value={returnReason}
-              onChange={(event) => setReturnReason(event.target.value as CeoReviewReturnReason | "")}
-            >
-              <option value="">{t("department.ceoReviewChooseReason")}</option>
-              {ceoReturnReasonOptions(t).map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="retro-field" htmlFor={noteInputId}>
-            <span>{t("department.ceoReviewNextStepNote")}</span>
-            <textarea
-              id={noteInputId}
-              className="retro-textarea ceo-task-review-detail__note"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          </label>
+          <CeoReturnReasonFields
+            note={note}
+            noteClassName="ceo-task-review-detail__note"
+            noteLabel={t("department.ceoReviewNextStepNote")}
+            onNoteChange={setNote}
+            onReturnReasonChange={setReturnReason}
+            reasonLabel={t("department.ceoReviewReturnReason")}
+            returnReason={returnReason}
+          />
           {error ? <p role="alert" className="warning-message">{error}</p> : null}
           <div className="ceo-task-review-detail__actions">
             {canApprove ? (
@@ -699,6 +1040,80 @@ function CeoTaskReviewDetail({
   );
 }
 
+function readOutcomeSummary(payload: unknown): LocalizedText | string | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const value = record.outcome_summary ?? record.outcomeSummary;
+  if (typeof value === "string") {
+    return value.trim().length > 0 ? value.trim() : null;
+  }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const candidate = value as Record<string, unknown>;
+    if (typeof candidate.en === "string" || typeof candidate.zh === "string") {
+      return candidate as LocalizedText;
+    }
+  }
+  return null;
+}
+
+/**
+ * The Review Return Reason select + note textarea, shared by the CEO review detail panel and the
+ * Founder Decision return control so the two return forms cannot drift.
+ */
+function CeoReturnReasonFields({
+  note,
+  noteClassName,
+  noteLabel,
+  onNoteChange,
+  onReturnReasonChange,
+  reasonLabel,
+  returnReason,
+}: {
+  note: string;
+  noteClassName?: string;
+  noteLabel: string;
+  onNoteChange: (value: string) => void;
+  onReturnReasonChange: (value: CeoReviewReturnReason | "") => void;
+  reasonLabel: string;
+  returnReason: CeoReviewReturnReason | "";
+}) {
+  const { t } = useLanguage();
+  const reasonInputId = useId();
+  const noteInputId = useId();
+
+  return (
+    <>
+      <label className="retro-field" htmlFor={reasonInputId}>
+        <span>{reasonLabel}</span>
+        <select
+          id={reasonInputId}
+          className="retro-input"
+          value={returnReason}
+          onChange={(event) => onReturnReasonChange(event.target.value as CeoReviewReturnReason | "")}
+        >
+          <option value="">{t("department.ceoReviewChooseReason")}</option>
+          {ceoReturnReasonOptions(t).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="retro-field" htmlFor={noteInputId}>
+        <span>{noteLabel}</span>
+        <textarea
+          id={noteInputId}
+          className={noteClassName ? `retro-textarea ${noteClassName}` : "retro-textarea"}
+          value={note}
+          onChange={(event) => onNoteChange(event.target.value)}
+        />
+      </label>
+    </>
+  );
+}
+
 function ceoReturnReasonOptions(t: ReturnType<typeof useLanguage>["t"]): Array<{ value: CeoReviewReturnReason; label: string }> {
   return [
     { value: "needs_changes", label: t("department.returnReasonNeedsChanges") },
@@ -718,6 +1133,7 @@ function formatCeoPendingType(item: CeoPendingItem, t: ReturnType<typeof useLang
 
 function CeoBlueprintSummary({
   departments,
+  founderDecisions,
   objectives,
   onSelectDepartment,
   onViewPendingTask,
@@ -725,6 +1141,7 @@ function CeoBlueprintSummary({
   tasks,
 }: {
   departments: DepartmentSummary[];
+  founderDecisions: FounderDecisionSummary[];
   objectives: ObjectiveSummary[];
   onSelectDepartment: (departmentId: string) => void;
   onViewPendingTask: (taskId: string) => void;
@@ -746,6 +1163,7 @@ function CeoBlueprintSummary({
         <h3>{t("department.taskRelationships")}</h3>
         <CeoTaskDependencyGraph
           departments={departments}
+          founderDecisions={founderDecisions}
           onSelectDepartment={onSelectDepartment}
           onViewPendingTask={onViewPendingTask}
           pendingItems={pendingItems}
@@ -756,14 +1174,25 @@ function CeoBlueprintSummary({
   );
 }
 
+/** Downstream task ids held by an unresolved Founder Decision on an upstream deliverable. */
+function waitingOnDecisionTaskIdSet(founderDecisions: FounderDecisionSummary[]): Set<string> {
+  return new Set(
+    founderDecisions
+      .filter((decision) => decision.status === "pending")
+      .flatMap((decision) => decision.blockedTaskIds),
+  );
+}
+
 function CeoTaskDependencyGraph({
   departments,
+  founderDecisions,
   onSelectDepartment,
   onViewPendingTask,
   pendingItems,
   tasks,
 }: {
   departments: DepartmentSummary[];
+  founderDecisions: FounderDecisionSummary[];
   onSelectDepartment: (departmentId: string) => void;
   onViewPendingTask: (taskId: string) => void;
   pendingItems: CeoPendingItem[];
@@ -782,6 +1211,10 @@ function CeoTaskDependencyGraph({
   const pendingTaskIds = useMemo(
     () => new Set(pendingItems.map((item) => item.task.id)),
     [pendingItems],
+  );
+  const waitingOnDecisionTaskIds = useMemo(
+    () => waitingOnDecisionTaskIdSet(founderDecisions),
+    [founderDecisions],
   );
   const lanes = departments
     .map((department) => ({
@@ -809,6 +1242,7 @@ function CeoTaskDependencyGraph({
                       departmentName={departmentsById.get(task.departmentId) ? departmentName(departmentsById.get(task.departmentId)!, language) : task.departmentId}
                       graph={graph}
                       isPending={pendingTaskIds.has(task.id)}
+                      isWaitingOnDecision={waitingOnDecisionTaskIds.has(task.id)}
                       onSelectDepartment={onSelectDepartment}
                       onViewPendingTask={onViewPendingTask}
                       task={task}
@@ -864,6 +1298,7 @@ function CeoTaskDependencyNode({
   departmentName,
   graph,
   isPending,
+  isWaitingOnDecision,
   onSelectDepartment,
   onViewPendingTask,
   task,
@@ -871,6 +1306,7 @@ function CeoTaskDependencyNode({
   departmentName: string;
   graph: CeoTaskGraph;
   isPending: boolean;
+  isWaitingOnDecision: boolean;
   onSelectDepartment: (departmentId: string) => void;
   onViewPendingTask: (taskId: string) => void;
   task: TaskSummary;
@@ -885,14 +1321,17 @@ function CeoTaskDependencyNode({
       .filter((dependency): dependency is TaskSummary => dependency != null && dependency.id !== primaryBlocker?.id)
       .map((dependency) => taskNumber(dependency, graph.tasks))
     : [];
-  const taskLabel = `${t("department.taskTitlePrefix")}${taskNumber(task, graph.tasks)} ${departmentName} ${taskTitle(task, language)} ${formatGraphTaskStatus(task, t)}`;
+  const graphStatus = isWaitingOnDecision ? t("department.graphWaitingOnDecision") : formatGraphTaskStatus(task, t);
+  const taskLabel = `${t("department.taskTitlePrefix")}${taskNumber(task, graph.tasks)} ${departmentName} ${taskTitle(task, language)} ${graphStatus}`;
 
   return (
-    <article className={`ceo-task-node ceo-task-node--${graphTaskTone(task)}`}>
+    <article className={`ceo-task-node ceo-task-node--${isWaitingOnDecision ? "waiting" : graphTaskTone(task)}`}>
       <button
         aria-label={[
           taskLabel,
-          primaryBlocker ? `${t("department.waitingOnTask")} ${taskNumber(primaryBlocker, graph.tasks)}: ${taskTitle(primaryBlocker, language)}` : null,
+          !isWaitingOnDecision && primaryBlocker
+            ? `${t("department.waitingOnTask")} ${taskNumber(primaryBlocker, graph.tasks)}: ${taskTitle(primaryBlocker, language)}`
+            : null,
           completedDependencyNumbers.length > 0 ? `${t("department.alsoDependsOn")}: ${completedDependencyNumbers.join(", ")}` : null,
         ].filter(Boolean).join(" ")}
         className="ceo-task-node__main"
@@ -903,8 +1342,8 @@ function CeoTaskDependencyNode({
           {t("department.taskTitlePrefix")}{taskNumber(task, graph.tasks)} · {departmentName}
         </span>
         <strong>{taskTitle(task, language)}</strong>
-        <span>{formatGraphTaskStatus(task, t)}</span>
-        {primaryBlocker ? (
+        <span>{graphStatus}</span>
+        {!isWaitingOnDecision && primaryBlocker ? (
           <span className="ceo-task-node__blocker">
             {t("department.waitingOnTask")} {taskNumber(primaryBlocker, graph.tasks)}: {taskTitle(primaryBlocker, language)}
           </span>

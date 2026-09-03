@@ -1,5 +1,6 @@
 import type { BusinessArtifact, Proof, Task } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { collectFounderDecisions } from "./ceoAttention";
 import { getHandoffPackageManifestPath } from "./proof";
 
 export type TaskHandoff = {
@@ -24,7 +25,7 @@ export type TaskHandoff = {
 
 export type DependencyReadiness =
   | { kind: "ready"; handoffs: TaskHandoff[] }
-  | { kind: "waiting"; note: string }
+  | { kind: "waiting"; note: string; waitingOnDecision?: boolean }
   | { kind: "blocked"; reason: "dependency_failed" | "needs_replan"; note: string; dependency: Task }
   | { kind: "missing_deliverable"; note: string; dependency: Task };
 
@@ -43,6 +44,10 @@ export function resolveDependencyReadiness(
     }
 
     if (isWaitingStatus(upstream.status)) {
+      const decisionNote = waitingOnFounderDecisionNote(repositories, upstream);
+      if (decisionNote) {
+        return { kind: "waiting", note: decisionNote, waitingOnDecision: true };
+      }
       return {
         kind: "waiting",
         note: formatDependencyWaitingNote(upstream),
@@ -88,6 +93,34 @@ export function resolveDependencyReadiness(
   }
 
   return { kind: "ready", handoffs };
+}
+
+/**
+ * A downstream task blocked on an upstream deliverable that is parked on an unresolved Founder
+ * Decision reads as "waiting on decision", not as an ordinary dependency wait. Derived — no new
+ * persisted `Task` status: an upstream in `review` with a Task Completion Event still carrying a
+ * `pending` Founder Decision (no resolution row) is the whole condition.
+ */
+function waitingOnFounderDecisionNote(
+  repositories: ReturnType<typeof createRepositories>,
+  upstream: Task,
+): string | null {
+  if (upstream.status !== "review") {
+    return null;
+  }
+  const events = repositories.listTaskCompletionEventsForTask(upstream.id);
+  const resolutionsById = new Map(
+    repositories
+      .listFounderDecisionResolutionsForCompany(upstream.companyId)
+      .map((resolution) => [resolution.founderDecisionId, resolution]),
+  );
+  const pending = events
+    .flatMap((event) => collectFounderDecisions(event, resolutionsById))
+    .filter((decision) => decision.status === "pending");
+  if (pending.length === 0) {
+    return null;
+  }
+  return `Waiting on founder decision: ${pending[0]!.decisionKind.replace(/_/g, " ")}.`;
 }
 
 function isWaitingStatus(status: Task["status"]): boolean {

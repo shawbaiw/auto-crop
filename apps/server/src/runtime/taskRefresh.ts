@@ -10,7 +10,7 @@ import type {
 } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhausted } from "./boundedRecovery";
-import { captureBusinessArtifact } from "./businessArtifact";
+import { captureBusinessArtifact, isReviewableBusinessArtifact } from "./businessArtifact";
 import { refreshDependencyTasks } from "./dependencyCascade";
 import { refreshParentTaskAggregationTask } from "./parentTaskAggregation";
 import { captureProofs } from "./proof";
@@ -341,15 +341,6 @@ function proofRecoveryNotFoundMessage(task: Task): string {
     return "No registerable repo-diff proof was found / repo-diff proof missing: expected .auto-crop-proof/*.diff or a top-level workspace *.diff/*.patch file; .auto-crop/business-artifact.json is not diff proof.";
   }
   return "No registerable proof was found.";
-}
-
-function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolean {
-  return (
-    artifact.isCurrent &&
-    artifact.validationStatus === "valid" &&
-    artifact.reviewStatus === "unreviewed" &&
-    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
-  );
 }
 
 function businessArtifactFailureReason(artifact: BusinessArtifact): AgentFailureReason {

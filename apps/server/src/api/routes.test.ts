@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BusinessArtifact, Proof, Task, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter, AgentRunRequest } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
@@ -15,6 +15,7 @@ import { createApiServer, type SchedulerWakeReason } from "./routes";
 const createdDirs: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of createdDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -249,6 +250,30 @@ describe("API routes", () => {
     releaseAgent();
     await waitForCompanyStatus(fixture, body.company.id, "draft");
     expect(fixture.repositories.listTasksForCompany(body.company.id).length).toBeGreaterThan(0);
+
+    await fixture.close();
+  });
+
+  it("uses collision-resistant default ids for async company creation events", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_788_400_651_315);
+    const fixture = await startFixtureServer({ useDefaultCreateId: true });
+
+    const created = await postCreatingCompany(fixture, "default-id-key-1");
+    await waitForCompanyStatus(fixture, created.company.id, "draft");
+
+    expect(fixture.repositories.listCreationAttemptsForCompany(created.company.id)).toEqual([
+      expect.objectContaining({ status: "complete", failureMessage: null }),
+    ]);
+    const creationEvents = fixture.repositories.listCompanyEventsForCompany(created.company.id);
+    expect(creationEvents.map((event) => event.type)).toEqual(expect.arrayContaining([
+      "company_creation_accepted",
+      "company_creation_agent_started",
+      "company_creation_blueprint_parsed",
+      "company_creation_records_created",
+      "company_creation_completed",
+    ]));
+    expect(creationEvents).toHaveLength(5);
+    expect(new Set(creationEvents.map((event) => event.id)).size).toBe(creationEvents.length);
 
     await fixture.close();
   });
@@ -951,6 +976,80 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("reconciles a pre-existing review task on the first company-state read (ADR 0017 migration)", async () => {
+    // A company that predates the deterministic model: seeded straight into the DB, so it carries
+    // no `review_reconciliation_v1` marker the way an API-created company does.
+    const fixture = await startFixtureServer();
+    fixture.repositories.createCompany({
+      id: "company_1",
+      name: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      playbookId: "ai-saas",
+      status: "active",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    });
+    fixture.repositories.createDepartment({
+      id: "department_1",
+      companyId: "company_1",
+      name: "Engineering",
+      responsibility: "Build and validate the product.",
+      leadAgentId: "codex",
+      memoryPath: ".auto-crop/companies/company_1/departments/engineering/Memory.md",
+    });
+    const strandedTask: Task = {
+      id: "task_1",
+      companyId: "company_1",
+      departmentId: "department_1",
+      keyResultId: null,
+      position: 0,
+      title: "Draft the MVP brief",
+      description: "Produce a concise MVP brief for the team.",
+      assigneeAgentId: "codex",
+      requiredCapabilities: ["research"],
+      proofSchemaId: "test-output",
+      workspacePath: null,
+      status: "review",
+      riskLevel: "medium",
+    };
+    fixture.repositories.createTask(strandedTask);
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: "task_1",
+      type: "file",
+      uri: "proof.md",
+      summary: "Proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.createBusinessArtifact({
+      ...createBusinessArtifactRecord("business_artifact_1", "task_1", "proof_1"),
+      payload: { result: "The prototype implementation is complete and passes its checks." },
+    });
+
+    type StateShape = {
+      tasks: Array<{ id: string; status: string }>;
+      businessArtifacts: Array<{ id: string; reviewStatus: string }>;
+      taskCompletionEvents: Array<{ taskId: string; outcome: string; acceptanceProvenance: string | null; outcomeSummaryText?: unknown }>;
+    };
+
+    const state = await getJson<StateShape>(`${fixture.baseUrl}/api/companies/company_1/state`);
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: "task_1", status: "complete" }));
+    expect(state.businessArtifacts).toContainEqual(
+      expect.objectContaining({ id: "business_artifact_1", reviewStatus: "accepted" }),
+    );
+    const completion = state.taskCompletionEvents.find((event) => event.taskId === "task_1");
+    expect(completion).toMatchObject({ outcome: "accepted", acceptanceProvenance: "automatic_acceptance" });
+    // No Task Outcome Summary is synthesized for a reconciled acceptance.
+    expect(completion?.outcomeSummaryText ?? null).toBeNull();
+
+    // The pass ran once: a second read adds no further completion event.
+    const again = await getJson<StateShape>(`${fixture.baseUrl}/api/companies/company_1/state`);
+    expect(again.taskCompletionEvents.filter((event) => event.taskId === "task_1")).toHaveLength(1);
+
+    await fixture.close();
+  });
+
   it("reports malformed structured next-step containers without using freeform next-step prose", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
@@ -1045,6 +1144,7 @@ describe("API routes", () => {
       keyResultId: ordinaryTask.keyResultId,
       businessArtifactId: null,
       outcome: "accepted",
+      outcomeSummaryText: { en: "Ordinary work is done and on-plan.", zh: "常规工作已完成，符合计划。" },
       dependencyImpact: {},
       nextStepItems: [],
       visionGaps: [],
@@ -1160,7 +1260,7 @@ describe("API routes", () => {
     });
 
     const state = await getJson<{
-      taskCompletionEvents: Array<{ id: string }>;
+      taskCompletionEvents: Array<{ id: string; outcomeSummaryText: { en?: string; zh?: string } | null }>;
       visionGaps: Array<{ label: string; severity: string; sourceTaskCompletionEventId: string }>;
       ceoAttentionRollups: Array<{
         sourceTaskCompletionEventIds: string[];
@@ -1178,7 +1278,15 @@ describe("API routes", () => {
       }>;
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
 
-    expect(state.taskCompletionEvents).toContainEqual(expect.objectContaining({ id: "task_completion_event_ordinary" }));
+    expect(state.taskCompletionEvents).toContainEqual(
+      expect.objectContaining({
+        id: "task_completion_event_ordinary",
+        outcomeSummaryText: { en: "Ordinary work is done and on-plan.", zh: "常规工作已完成，符合计划。" },
+      }),
+    );
+    expect(
+      state.taskCompletionEvents.find((event) => event.id === "task_completion_event_wait")?.outcomeSummaryText,
+    ).toBeNull();
     expect(state.visionGaps).toEqual([
       expect.objectContaining({ label: "More customer interviews would improve confidence.", severity: "informational" }),
       expect.objectContaining({ label: "Deployment is still missing before launch.", severity: "blocking" }),
@@ -1205,6 +1313,336 @@ describe("API routes", () => {
     ]);
 
     await fixture.close();
+  });
+
+  it("serializes projected Founder Decisions with their options, recommendation, status, and blocked task ids", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const departments = fixture.repositories.listDepartments(created.company.id);
+    const ownerDepartment = departments[0]!;
+    const sourceTask = createIsolatedTask(templateTask, "founder_decision_source", "Draft the MVP brief", "review", 260);
+    const downstreamTask = createIsolatedTask(templateTask, "founder_decision_downstream", "Build the pricing page", "blocked", 261);
+    sourceTask.departmentId = ownerDepartment.id;
+    fixture.repositories.createTask(sourceTask);
+    fixture.repositories.createTask(downstreamTask);
+    fixture.repositories.createTaskDependency({ taskId: downstreamTask.id, dependsOnTaskId: sourceTask.id });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_founder_decision",
+      companyId: created.company.id,
+      taskId: sourceTask.id,
+      departmentId: sourceTask.departmentId,
+      keyResultId: sourceTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      outcomeSummaryText: { en: "The brief leaves the pricing model open." },
+      dependencyImpact: {},
+      nextStepItems: [
+        {
+          type: "founder_decision",
+          label: "Founder decision: pricing model",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: sourceTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: {
+            founderDecision: {
+              decisionKind: "pricing_model",
+              options: [
+                { label: "Flat monthly fee", tradeoffs: "Predictable revenue; underprices heavy users.", recommended: true },
+                { label: "Usage-based", tradeoffs: "Scales with value; harder to forecast.", recommended: false },
+              ],
+              rationale: "Early buyers want a predictable bill.",
+              blockedTaskIds: [downstreamTask.id],
+            },
+          },
+          severity: "strategic",
+          priority: null,
+          evidenceRequirements: [],
+        },
+      ],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    const state = await getJson<{
+      founderDecisions: Array<{
+        id: string;
+        taskId: string;
+        departmentId: string;
+        decisionKind: string;
+        options: Array<{ label: string; tradeoffs: string; recommended: boolean }>;
+        rationale: string;
+        status: string;
+        resolvedOption: string | null;
+        resolvedAt: string | null;
+        blockedTaskIds: string[];
+      }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(state.founderDecisions).toEqual([
+      expect.objectContaining({
+        taskId: sourceTask.id,
+        departmentId: ownerDepartment.id,
+        decisionKind: "pricing_model",
+        options: [
+          { label: "Flat monthly fee", tradeoffs: "Predictable revenue; underprices heavy users.", recommended: true },
+          { label: "Usage-based", tradeoffs: "Scales with value; harder to forecast.", recommended: false },
+        ],
+        rationale: "Early buyers want a predictable bill.",
+        status: "pending",
+        resolvedOption: null,
+        resolvedAt: null,
+        blockedTaskIds: [downstreamTask.id],
+      }),
+    ]);
+
+    await fixture.close();
+  });
+
+  it("adds founder_decision as a CEO Attention Rollup reason for an unresolved decision and drops it once resolved", async () => {
+    const seed = await seedAwaitingFounderDecision({
+      decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat monthly fee", tradeoffs: "Predictable revenue.", recommended: true },
+            { label: "Usage-based", tradeoffs: "Scales with value." },
+          ],
+        },
+      ],
+    });
+
+    const before = await getJson<{
+      ceoAttentionRollups: Array<{
+        reasons: string[];
+        ownerDepartmentId: string;
+        affectedTaskIds: string[];
+        relevantFounderDecisions: Array<{ decisionKind: string }>;
+      }>;
+    }>(`${seed.fixture.baseUrl}/api/companies/${seed.companyId}/state`);
+    const rollup = before.ceoAttentionRollups.find((entry) => entry.reasons.includes("founder_decision"));
+    expect(rollup).toBeDefined();
+    expect(rollup!.ownerDepartmentId).toBe(seed.ownerDepartment.id);
+    expect(rollup!.affectedTaskIds).toEqual(expect.arrayContaining([seed.downstreamTask.id]));
+    expect(rollup!.relevantFounderDecisions).toEqual([expect.objectContaining({ decisionKind: "pricing_model" })]);
+
+    await postJson(`${seed.fixture.baseUrl}/api/founder-decisions`, {
+      founderDecisionId: seed.decisionId(1),
+      chosenOption: "Flat monthly fee",
+    });
+
+    const after = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
+      `${seed.fixture.baseUrl}/api/companies/${seed.companyId}/state`,
+    );
+    expect(after.ceoAttentionRollups.some((entry) => entry.reasons.includes("founder_decision"))).toBe(false);
+
+    await seed.fixture.close();
+  });
+
+  it("resolves the only Founder Decision on a task, writing the choice into the artifact and accepting via the shared seam", async () => {
+    const seed = await seedAwaitingFounderDecision({
+      decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat monthly fee", tradeoffs: "Predictable revenue.", recommended: true },
+            { label: "Usage-based", tradeoffs: "Scales with value." },
+          ],
+        },
+      ],
+    });
+
+    const result = await postJson<{
+      accepted: boolean;
+      task: { status: string };
+      founderDecision: { status: string; resolvedOption: string };
+    }>(`${seed.fixture.baseUrl}/api/founder-decisions`, {
+      founderDecisionId: seed.decisionId(1),
+      chosenOption: "Usage-based",
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.task.status).toBe("complete");
+    expect(result.founderDecision).toMatchObject({ status: "resolved", resolvedOption: "Usage-based" });
+
+    const artifact = seed.fixture.repositories.getCurrentBusinessArtifactForTask(seed.sourceTask.id)!;
+    expect(artifact.reviewStatus).toBe("accepted");
+    expect(artifact.payload).toMatchObject({ pricing_model: "Usage-based" });
+    expect((artifact.payload as { open_decisions?: unknown[] }).open_decisions).toBeUndefined();
+
+    const completion = seed.fixture.repositories
+      .listTaskCompletionEventsForTask(seed.sourceTask.id)
+      .find((event) => event.outcome === "accepted");
+    expect(completion?.acceptanceProvenance).toBe("founder_decision");
+    expect(completion?.nextStepItems.some((item) => item.type === "founder_decision")).toBe(false);
+
+    expect(
+      seed.fixture.repositories
+        .listTaskEventsForCompany(seed.companyId)
+        .some((event) => event.type === "founder_decision" && event.taskId === seed.sourceTask.id),
+    ).toBe(true);
+
+    await seed.fixture.close();
+  });
+
+  it("accepts a task with two Founder Decisions only after both are resolved", async () => {
+    const seed = await seedAwaitingFounderDecision({
+      decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat", tradeoffs: "Predictable." },
+            { label: "Usage", tradeoffs: "Scales." },
+          ],
+        },
+        {
+          decisionKind: "target_market",
+          options: [
+            { label: "Solo devs", tradeoffs: "Fast to reach." },
+            { label: "Agencies", tradeoffs: "Higher contract value." },
+          ],
+        },
+      ],
+    });
+
+    const first = await postJson<{ accepted: boolean; task: { status: string } }>(
+      `${seed.fixture.baseUrl}/api/founder-decisions`,
+      { founderDecisionId: seed.decisionId(1), chosenOption: "Flat" },
+    );
+    expect(first.accepted).toBe(false);
+    expect(first.task.status).toBe("review");
+    // The first pick is recorded even though the deliverable is not yet accepted.
+    expect(
+      seed.fixture.repositories
+        .listFounderDecisionResolutionsForCompany(seed.companyId)
+        .filter((resolution) => resolution.status === "resolved")
+        .map((resolution) => [resolution.founderDecisionId, resolution.chosenOption]),
+    ).toEqual([[seed.decisionId(1), "Flat"]]);
+
+    const second = await postJson<{ accepted: boolean; task: { status: string } }>(
+      `${seed.fixture.baseUrl}/api/founder-decisions`,
+      { founderDecisionId: seed.decisionId(2), chosenOption: "Agencies" },
+    );
+    expect(second.accepted).toBe(true);
+    expect(second.task.status).toBe("complete");
+
+    const artifact = seed.fixture.repositories.getCurrentBusinessArtifactForTask(seed.sourceTask.id)!;
+    expect(artifact.payload).toMatchObject({ pricing_model: "Flat", target_market: "Agencies" });
+
+    await seed.fixture.close();
+  });
+
+  it("returns 409 for a resolution on a task no longer awaiting the decision", async () => {
+    const seed = await seedAwaitingFounderDecision({
+      decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat", tradeoffs: "Predictable." },
+            { label: "Usage", tradeoffs: "Scales." },
+          ],
+        },
+      ],
+    });
+    await postJson(`${seed.fixture.baseUrl}/api/founder-decisions`, {
+      founderDecisionId: seed.decisionId(1),
+      chosenOption: "Flat",
+    });
+
+    const stale = await fetch(`${seed.fixture.baseUrl}/api/founder-decisions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ founderDecisionId: seed.decisionId(1), chosenOption: "Usage" }),
+    });
+    expect(stale.status).toBe(409);
+
+    await seed.fixture.close();
+  });
+
+  it("returns the task to the department with a reason and discards recorded picks", async () => {
+    const seed = await seedAwaitingFounderDecision({
+      decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat", tradeoffs: "Predictable." },
+            { label: "Usage", tradeoffs: "Scales." },
+          ],
+        },
+        {
+          decisionKind: "target_market",
+          options: [
+            { label: "Solo devs", tradeoffs: "Fast." },
+            { label: "Agencies", tradeoffs: "Bigger." },
+          ],
+        },
+      ],
+    });
+
+    await postJson(`${seed.fixture.baseUrl}/api/founder-decisions`, {
+      founderDecisionId: seed.decisionId(1),
+      chosenOption: "Flat",
+    });
+
+    const missingReason = await fetch(`${seed.fixture.baseUrl}/api/founder-decisions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ founderDecisionId: seed.decisionId(2), action: "return" }),
+    });
+    expect(missingReason.status).toBe(400);
+
+    const returned = await postJson<{ task: { status: string } }>(`${seed.fixture.baseUrl}/api/founder-decisions`, {
+      founderDecisionId: seed.decisionId(2),
+      action: "return",
+      returnReason: "wrong_direction",
+      note: "Need cheaper options.",
+    });
+    expect(returned.task.status).toBe("queued");
+    expect(seed.fixture.repositories.getCurrentBusinessArtifactForTask(seed.sourceTask.id)!.reviewStatus).toBe("returned");
+    expect(
+      seed.fixture.repositories
+        .listFounderDecisionResolutionsForCompany(seed.companyId)
+        .filter((resolution) => resolution.status === "resolved"),
+    ).toEqual([]);
+
+    // Neither Founder Decision keeps raising a CEO Attention Item after the return.
+    const state = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
+      `${seed.fixture.baseUrl}/api/companies/${seed.companyId}/state`,
+    );
+    expect(state.ceoAttentionRollups.some((entry) => entry.reasons.includes("founder_decision"))).toBe(false);
+
+    await seed.fixture.close();
+  });
+
+  it("reports a waiting-on-decision dependency state for a downstream task blocked on an unresolved Founder Decision", async () => {
+    const seed = await seedAwaitingFounderDecision({
+      decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat", tradeoffs: "Predictable." },
+            { label: "Usage", tradeoffs: "Scales." },
+          ],
+        },
+      ],
+    });
+
+    const refreshed = await postJson<{ task: { status: string; dependencyNote?: string } }>(
+      `${seed.fixture.baseUrl}/api/tasks/${seed.downstreamTask.id}/refresh`,
+      {},
+    );
+    expect(refreshed.task).toMatchObject({
+      status: "waiting_dependency",
+      dependencyNote: "Waiting on founder decision: pricing model.",
+    });
+
+    await seed.fixture.close();
   });
 
   it("routes Wait States into timed check-ins without treating them as failures", async () => {
@@ -2198,6 +2636,7 @@ async function startFixtureServer(options: {
   ceoAgent?: AgentAdapter;
   plannerOutput?: string;
   schedulerWakeRequests?: SchedulerWakeReason[];
+  useDefaultCreateId?: boolean;
 } = {}) {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-api-"));
   createdDirs.push(projectRoot);
@@ -2223,14 +2662,16 @@ async function startFixtureServer(options: {
         capabilities: ["code", "frontend", "test"],
         output: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
       }));
-  const server = createApiServer({
+  const serverOptions = {
     projectRoot,
     repositories,
     agents: [codex],
     now: options.now ?? (() => new Date("2026-08-17T00:00:00.000Z")),
-    createId: createSequentialIdFactory(),
-    requestSchedulerWake: (reason) => options.schedulerWakeRequests?.push(reason),
-  });
+    requestSchedulerWake: (reason: SchedulerWakeReason) => options.schedulerWakeRequests?.push(reason),
+  };
+  const server = createApiServer(options.useDefaultCreateId
+    ? serverOptions
+    : { ...serverOptions, createId: createSequentialIdFactory() });
 
   await new Promise<void>((resolve) => server.httpServer.listen(0, resolve));
   const address = server.httpServer.address();
@@ -2408,6 +2849,103 @@ function createIsolatedTask(
   };
 }
 
+async function seedAwaitingFounderDecision(options: {
+  decisions: Array<{
+    decisionKind: string;
+    options: Array<{ label: string; tradeoffs: string; recommended?: boolean }>;
+  }>;
+}) {
+  const fixture = await startFixtureServer();
+  const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    companyName: "Pricing Page Studio",
+    founderVision: "Build an AI SaaS that creates pricing pages.",
+    selectedCeoAgentId: "codex",
+    permissionMode: "balanced",
+    assets: [],
+  });
+  const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+  const departments = fixture.repositories.listDepartments(created.company.id);
+  const ownerDepartment = departments[0]!;
+  const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id) ?? ownerDepartment;
+  const sourceTask = {
+    ...createIsolatedTask(templateTask, "founder_decision_resolve_source", "Draft the MVP brief", "review", 270),
+    departmentId: ownerDepartment.id,
+  };
+  const downstreamTask = {
+    ...createIsolatedTask(templateTask, "founder_decision_resolve_downstream", "Build the pricing page", "blocked", 271),
+    departmentId: downstreamDepartment.id,
+  };
+  fixture.repositories.createTask(sourceTask);
+  fixture.repositories.createTask(downstreamTask);
+  fixture.repositories.createTaskDependency({ taskId: downstreamTask.id, dependsOnTaskId: sourceTask.id });
+  fixture.repositories.appendProof({
+    id: "proof_founder_decision",
+    taskId: sourceTask.id,
+    type: "file",
+    uri: "brief.md",
+    summary: "Brief proof.",
+    verifiedAt: null,
+  });
+  fixture.repositories.createBusinessArtifact({
+    ...createBusinessArtifactRecord("business_artifact_founder_decision", sourceTask.id, "proof_founder_decision"),
+    companyId: created.company.id,
+    artifactRole: "spec",
+    artifactSubtype: "mvp_brief",
+    payload: {
+      summary: "MVP brief drafted.",
+      open_decisions: options.decisions.map((decision) => ({
+        decisionKind: decision.decisionKind,
+        options: decision.options.map((option) => ({ label: option.label, tradeoffs: option.tradeoffs })),
+        recommendation: decision.options.find((option) => option.recommended)?.label ?? decision.options[0]!.label,
+        rationale: "Recorded rationale.",
+      })),
+    },
+  });
+  fixture.repositories.appendTaskCompletionEvent({
+    id: "task_completion_event_fd",
+    companyId: created.company.id,
+    taskId: sourceTask.id,
+    departmentId: sourceTask.departmentId,
+    keyResultId: sourceTask.keyResultId,
+    businessArtifactId: "business_artifact_founder_decision",
+    outcome: "awaiting_founder_decision",
+    outcomeSummaryText: { en: "The brief leaves strategic choices open." },
+    dependencyImpact: {},
+    nextStepItems: options.decisions.map((decision) => ({
+      type: "founder_decision",
+      label: `Founder decision: ${decision.decisionKind.replace(/_/g, " ")}`,
+      ownerDepartmentId: sourceTask.departmentId,
+      relatedTaskId: sourceTask.id,
+      relatedBusinessArtifactId: "business_artifact_founder_decision",
+      dependencyImpact: {
+        founderDecision: {
+          decisionKind: decision.decisionKind,
+          options: decision.options.map((option) => ({
+            label: option.label,
+            tradeoffs: option.tradeoffs,
+            recommended: option.recommended === true,
+          })),
+          rationale: "Recorded rationale.",
+          blockedTaskIds: [downstreamTask.id],
+        },
+      },
+      severity: "strategic",
+      priority: null,
+      evidenceRequirements: [],
+    })),
+    visionGaps: [],
+    createdAt: "2026-08-17T00:00:00.000Z",
+  });
+  return {
+    fixture,
+    companyId: created.company.id,
+    sourceTask,
+    downstreamTask,
+    ownerDepartment,
+    decisionId: (index: number) => `task_completion_event_fd_founder_decision_${index}`,
+  };
+}
+
 function createBusinessArtifactRecord(id: string, taskId: string, sourceProofId: string): BusinessArtifact {
   return {
     id,
@@ -2443,7 +2981,10 @@ function writeValidBusinessArtifactFile(workspacePath: string, taskId: string): 
       artifactRole: "implementation",
       artifactSubtype: "prototype_implementation",
       taskType: "engineering.prototype_implementation",
-      payload: { result: `Recovered artifact for ${taskId}.` },
+      payload: {
+        result: `Recovered artifact for ${taskId}.`,
+        outcome_summary: `Recovered deliverable for ${taskId} is complete and ready for review. It keeps the objective on track; the remaining gap is downstream integration.`,
+      },
       lineage: {
         founderVision: "Build an AI SaaS that creates pricing pages.",
         taskId,

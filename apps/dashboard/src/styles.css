@@ -680,6 +680,72 @@ h3 {
   text-transform: uppercase;
 }
 
+.ceo-outcomes-view {
+  background:
+    linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
+    var(--surface-alt);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.ceo-outcomes-view h3 {
+  font-size: 0.9rem;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.ceo-outcomes-view__decisions,
+.ceo-outcomes-view__group {
+  display: grid;
+  gap: 10px;
+}
+
+.ceo-outcomes-view h4 {
+  color: var(--accent-secondary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.ceo-outcome,
+.ceo-founder-decision {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.ceo-outcome h5,
+.ceo-founder-decision h5 {
+  font-size: 0.86rem;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.ceo-founder-decision__options,
+.ceo-founder-decision__return {
+  display: grid;
+  gap: 8px;
+}
+
+.ceo-founder-decision__option {
+  border: var(--border-px) solid var(--border);
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+}
+
+.ceo-founder-decision__option-label {
+  align-items: center;
+  display: flex;
+  font-weight: 700;
+  gap: 8px;
+}
+
 .human-action-list,
 .wait-state-list {
   display: grid;
@@ -741,11 +807,30 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.ceo-task-review-detail__grid > section {
+.ceo-task-review-detail__grid > section,
+.ceo-task-review-detail__grid > details {
   border: 1px solid color-mix(in srgb, var(--border) 56%, var(--surface));
   display: grid;
   gap: 8px;
   padding: 8px;
+}
+
+.ceo-task-review-detail__outcome {
+  border: var(--border-px) solid var(--accent-secondary);
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+.ceo-task-review-detail__outcome-text {
+  white-space: pre-wrap;
+}
+
+.ceo-task-review-detail__evidence > summary {
+  cursor: pointer;
+  color: var(--accent-secondary);
+  font-size: 0.74rem;
+  text-transform: uppercase;
 }
 
 .ceo-task-review-detail h4 {

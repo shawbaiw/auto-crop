@@ -1,4 +1,4 @@
-import type { CeoAttentionRollup, HumanAction, NextStepItem, VisionGap, WaitState } from "@auto-crop/core";
+import type { CeoAttentionRollup, FounderDecision, HumanAction, NextStepItem, VisionGap, WaitState } from "@auto-crop/core";
 
 export type AgentSummary = {
   id: string;
@@ -138,8 +138,9 @@ export type TaskCompletionEventSummary = {
   departmentId: string;
   keyResultId: string | null;
   businessArtifactId: string | null;
-  outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan";
+  outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan" | "awaiting_founder_decision";
   acceptanceProvenance: "manual_ceo_review" | "automatic_acceptance" | null;
+  outcomeSummaryText?: LocalizedText | null;
   dependencyImpact: unknown;
   nextStepItems: NextStepItemSummary[];
   visionGaps: unknown[];
@@ -155,6 +156,7 @@ export type CompanyEventSummary = {
 export type VisionGapSummary = VisionGap;
 export type HumanActionSummary = HumanAction;
 export type WaitStateSummary = WaitState;
+export type FounderDecisionSummary = FounderDecision;
 export type CeoAttentionRollupSummary = CeoAttentionRollup;
 
 export type ProofSummary = {
@@ -343,6 +345,16 @@ export type CeoReviewDecisionResponse = {
   dependencyCascade?: TaskUpdateBatchSummary;
 };
 
+export type FounderDecisionResolutionResponse = {
+  founderDecision: FounderDecisionSummary;
+  accepted: boolean;
+  task: TaskSummary;
+  businessArtifacts?: BusinessArtifactSummary[];
+  event?: ServerEvent;
+  progressEvent?: TaskProgressEventSummary;
+  dependencyCascade?: TaskUpdateBatchSummary;
+};
+
 export type TaskUpdateBatchSummary = {
   updatedTasks: TaskSummary[];
   events: ServerEvent[];
@@ -380,6 +392,7 @@ export type CreateCompanyResponse = {
   visionGaps?: VisionGapSummary[];
   humanActions?: HumanActionSummary[];
   waitStates?: WaitStateSummary[];
+  founderDecisions?: FounderDecisionSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
@@ -414,6 +427,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   visionGaps?: VisionGapSummary[];
   humanActions?: HumanActionSummary[];
   waitStates?: WaitStateSummary[];
+  founderDecisions?: FounderDecisionSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
@@ -439,6 +453,13 @@ export type ApiClient = {
     returnReason?: CeoReviewReturnReason;
     note?: string;
   }): Promise<CeoReviewDecisionResponse>;
+  resolveFounderDecision(input: {
+    founderDecisionId: string;
+    chosenOption?: string;
+    action?: "return";
+    returnReason?: CeoReviewReturnReason;
+    note?: string;
+  }): Promise<FounderDecisionResolutionResponse>;
   activateCompany(companyId: string): Promise<{ company: CompanySummary }>;
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
@@ -485,6 +506,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     async createCeoReviewDecision(input) {
       return postJson(`${baseUrl}/api/ceo-review-decisions`, input, requestTimeoutMs);
     },
+    async resolveFounderDecision(input) {
+      return postJson(`${baseUrl}/api/founder-decisions`, input, requestTimeoutMs);
+    },
     async activateCompany(companyId) {
       return postJson(`${baseUrl}/api/companies/${companyId}/activate`, {}, requestTimeoutMs);
     },
@@ -520,6 +544,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       events.addEventListener("task_log", listener);
       events.addEventListener("task_started", listener);
       events.addEventListener("task_review", listener);
+      events.addEventListener("automatic_acceptance", listener);
+      events.addEventListener("ceo_review_decision", listener);
+      events.addEventListener("founder_decision", listener);
       events.addEventListener("task_failed", listener);
       events.addEventListener("task_blocked", listener);
       events.addEventListener("task_warning", listener);

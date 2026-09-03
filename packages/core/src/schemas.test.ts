@@ -4,7 +4,11 @@ import {
   ceoResponseSchema,
   companyBlueprintSchema,
   localizedTextSchema,
+  nextStepItemTypeSchema,
   parseCeoResponse,
+  strategicDecisionKindSchema,
+  taskAcceptanceProvenanceSchema,
+  taskCompletionOutcomeSchema,
   taskEventTypeSchema,
   taskSchema,
   taskStatusSchema,
@@ -211,11 +215,35 @@ describe("runtime status schemas", () => {
 
   it("accepts coordination task events", () => {
     expect(taskEventTypeSchema.safeParse("automatic_acceptance").success).toBe(true);
+    expect(taskEventTypeSchema.safeParse("ceo_review_decision").success).toBe(true);
+    expect(taskEventTypeSchema.safeParse("founder_decision").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("dependency_waiting").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("dependency_ready").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("task_retrying").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("task_needs_replan").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("deliverable_missing").success).toBe(true);
+  });
+
+  it("accepts the founder_decision next step item type", () => {
+    expect(nextStepItemTypeSchema.safeParse("founder_decision").success).toBe(true);
+  });
+
+  it("accepts the awaiting_founder_decision task completion outcome", () => {
+    expect(taskCompletionOutcomeSchema.safeParse("awaiting_founder_decision").success).toBe(true);
+  });
+
+  it("accepts every task acceptance provenance, including founder_decision", () => {
+    for (const provenance of ["manual_ceo_review", "automatic_acceptance", "founder_decision"]) {
+      expect(taskAcceptanceProvenanceSchema.safeParse(provenance).success).toBe(true);
+    }
+    expect(taskAcceptanceProvenanceSchema.safeParse("ceo_review").success).toBe(false);
+  });
+
+  it("accepts every Strategic Decision Kind and rejects choices outside the fixed set", () => {
+    for (const kind of ["target_market", "product_direction", "mvp_type", "pricing_model", "launch_target"]) {
+      expect(strategicDecisionKindSchema.safeParse(kind).success).toBe(true);
+    }
+    expect(strategicDecisionKindSchema.safeParse("brand_name").success).toBe(false);
   });
 });
 

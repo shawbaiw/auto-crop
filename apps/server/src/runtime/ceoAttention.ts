@@ -3,6 +3,9 @@ import type {
   CeoAttentionRollupGroup,
   CeoAttentionRollupReason,
   Company,
+  FounderDecision,
+  FounderDecisionOption,
+  FounderDecisionResolution,
   HumanAction,
   HumanActionConfirmation,
   KeyResult,
@@ -14,6 +17,7 @@ import type {
   VisionGap,
   WaitState,
 } from "@auto-crop/core";
+import { strategicDecisionKindSchema } from "@auto-crop/core";
 
 type AttentionCandidate = {
   event: TaskCompletionEvent;
@@ -29,17 +33,25 @@ type AttentionCandidate = {
   relevantHumanActions: HumanAction[];
   relevantWaitStates: WaitState[];
   relevantVisionGaps: VisionGap[];
+  relevantFounderDecisions: FounderDecision[];
 };
 
 export function projectCeoAttention(input: {
   company: Company;
   humanActionConfirmations?: HumanActionConfirmation[];
+  founderDecisionResolutions?: FounderDecisionResolution[];
   keyResults: KeyResult[];
   now?: () => Date;
   tasks: Task[];
   taskCompletionEvents: TaskCompletionEvent[];
   taskDependencies: TaskDependency[];
-}): { visionGaps: VisionGap[]; humanActions: HumanAction[]; waitStates: WaitState[]; ceoAttentionRollups: CeoAttentionRollup[] } {
+}): {
+  visionGaps: VisionGap[];
+  humanActions: HumanAction[];
+  waitStates: WaitState[];
+  founderDecisions: FounderDecision[];
+  ceoAttentionRollups: CeoAttentionRollup[];
+} {
   const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
   const keyResultsById = new Map(input.keyResults.map((keyResult) => [keyResult.id, keyResult]));
   const downstreamTaskIdsByTaskId = mapDownstreamTaskIds(input.taskDependencies);
@@ -48,6 +60,10 @@ export function projectCeoAttention(input: {
   const confirmationsByActionId = new Map((input.humanActionConfirmations ?? []).map((confirmation) => [confirmation.humanActionId, confirmation]));
   const humanActions = input.taskCompletionEvents.flatMap((event) => collectHumanActions(event, confirmationsByActionId));
   const waitStates = input.taskCompletionEvents.flatMap((event) => collectWaitStates(event, now));
+  const resolutionsById = new Map(
+    (input.founderDecisionResolutions ?? []).map((resolution) => [resolution.founderDecisionId, resolution]),
+  );
+  const founderDecisions = input.taskCompletionEvents.flatMap((event) => collectFounderDecisions(event, resolutionsById));
   const candidates = input.taskCompletionEvents.flatMap((event) =>
     createAttentionCandidates({
       company: input.company,
@@ -55,6 +71,7 @@ export function projectCeoAttention(input: {
       eventVisionGaps: visionGaps.filter((gap) => gap.sourceTaskCompletionEventId === event.id),
       eventHumanActions: humanActions.filter((action) => action.sourceTaskCompletionEventId === event.id),
       eventWaitStates: waitStates.filter((waitState) => waitState.sourceTaskCompletionEventId === event.id),
+      eventFounderDecisions: founderDecisions.filter((decision) => decision.sourceTaskCompletionEventId === event.id),
       task: tasksById.get(event.taskId),
       keyResult: event.keyResultId ? keyResultsById.get(event.keyResultId) : undefined,
       tasksById,
@@ -66,8 +83,93 @@ export function projectCeoAttention(input: {
     visionGaps,
     humanActions,
     waitStates,
+    founderDecisions,
     ceoAttentionRollups: rollUpAttentionCandidates(input.company, candidates),
   };
+}
+
+/**
+ * The projected id of the nth (0-based) `founder_decision` Next Step Item on a Task Completion Event.
+ * This is the single authored form of the id; {@link founderDecisionSourceEventId} is its inverse.
+ */
+export function founderDecisionId(sourceTaskCompletionEventId: string, index: number): string {
+  return `${sourceTaskCompletionEventId}_founder_decision_${index + 1}`;
+}
+
+/** Recover the Task Completion Event id from a projected Founder Decision id, or null if it is not one. */
+export function founderDecisionSourceEventId(id: string): string | null {
+  const match = id.match(/^(.+)_founder_decision_\d+$/);
+  return match ? match[1]! : null;
+}
+
+/**
+ * Project each `founder_decision` Next Step Item on a Task Completion Event into a first-class
+ * {@link FounderDecision}, mirroring {@link collectHumanActions}. A {@link FounderDecisionResolution}
+ * row (keyed by the projected id) fills `status`, `resolvedOption`, and `resolvedAt`; without one the
+ * decision stays `pending`.
+ */
+export function collectFounderDecisions(
+  event: TaskCompletionEvent,
+  resolutionsById: Map<string, FounderDecisionResolution> = new Map(),
+): FounderDecision[] {
+  return event.nextStepItems.flatMap((item, index) => {
+    if (item.type !== "founder_decision") {
+      return [];
+    }
+
+    const bag = isRecord(item.dependencyImpact) ? item.dependencyImpact : {};
+    const detail = isRecord(bag.founderDecision) ? bag.founderDecision : {};
+    const decisionKind = strategicDecisionKindSchema.safeParse(detail.decisionKind);
+    if (!decisionKind.success) {
+      return [];
+    }
+
+    const options = parseFounderDecisionOptions(detail.options);
+    if (options.length < 2) {
+      return [];
+    }
+
+    const blockedTaskIds = extractStringArray(detail.blockedTaskIds).filter((taskId) => taskId !== event.taskId);
+    const fallbackTaskIds = item.relatedTaskId && item.relatedTaskId !== event.taskId ? [item.relatedTaskId] : [];
+
+    const id = founderDecisionId(event.id, index);
+    const resolution = resolutionsById.get(id);
+
+    return [
+      {
+        id,
+        companyId: event.companyId,
+        sourceTaskCompletionEventId: event.id,
+        taskId: event.taskId,
+        departmentId: item.ownerDepartmentId ?? event.departmentId,
+        decisionKind: decisionKind.data,
+        options,
+        rationale: optionalString(detail.rationale) ?? "",
+        status: resolution?.status ?? "pending",
+        resolvedOption: resolution?.status === "resolved" ? resolution.chosenOption : null,
+        resolvedAt: resolution?.resolvedAt ?? null,
+        blockedTaskIds: unique([...blockedTaskIds, ...fallbackTaskIds]),
+        createdAt: event.createdAt,
+      },
+    ];
+  });
+}
+
+function parseFounderDecisionOptions(value: unknown): FounderDecisionOption[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((option) => {
+    if (!isRecord(option)) {
+      return [];
+    }
+    const label = optionalString(option.label);
+    const tradeoffs = optionalString(option.tradeoffs ?? option.trade_offs);
+    if (!label || !tradeoffs) {
+      return [];
+    }
+    return [{ label, tradeoffs, recommended: option.recommended === true }];
+  });
 }
 
 function createAttentionCandidates(input: {
@@ -76,6 +178,7 @@ function createAttentionCandidates(input: {
   eventVisionGaps: VisionGap[];
   eventHumanActions: HumanAction[];
   eventWaitStates: WaitState[];
+  eventFounderDecisions: FounderDecision[];
   task?: Task;
   keyResult?: KeyResult;
   tasksById: Map<string, Task>;
@@ -85,12 +188,14 @@ function createAttentionCandidates(input: {
   const decisionItems = input.event.nextStepItems.filter((item) => item.type === "ceo_decision");
   const humanActions = input.eventHumanActions.filter((action) => action.status === "pending");
   const waitStates = input.eventWaitStates;
+  const pendingFounderDecisions = input.eventFounderDecisions.filter((decision) => decision.status === "pending");
   const itemImpactedTaskIds = input.event.nextStepItems.flatMap((item) => extractImpactedTaskIds(item.dependencyImpact));
   const dependencyTaskIds = unique([
     ...input.downstreamTaskIds,
     ...extractImpactedTaskIds(input.event.dependencyImpact),
     ...itemImpactedTaskIds,
     ...input.event.nextStepItems.map((item) => item.relatedTaskId).filter((taskId): taskId is string => Boolean(taskId)),
+    ...pendingFounderDecisions.flatMap((decision) => decision.blockedTaskIds),
   ]);
   const downstreamDepartmentIds = unique(
     dependencyTaskIds
@@ -114,14 +219,22 @@ function createAttentionCandidates(input: {
   if (downstreamDepartmentIds.length > 0) {
     reasons.push("cross_department_impact");
   }
-  if (input.event.outcome !== "accepted") {
+  if (input.event.outcome !== "accepted" && input.event.outcome !== "awaiting_founder_decision") {
+    // A deliverable parked on an unresolved Founder Decision is not an exception outcome. Its CEO
+    // Attention surface is the Founder Decision itself, added here.
     reasons.push("exception_outcome");
+  }
+  if (pendingFounderDecisions.length > 0) {
+    reasons.push("founder_decision");
   }
 
   if (reasons.length === 0) {
     return [];
   }
 
+  const founderDecisionLabel = pendingFounderDecisions[0]
+    ? `Founder decision: ${pendingFounderDecisions[0].decisionKind.replace(/_/g, " ")}`
+    : null;
   const primaryItem = attentionVisionGaps[0] ?? humanActions[0] ?? waitStates[0] ?? decisionItems[0] ?? null;
   return [
     {
@@ -132,22 +245,24 @@ function createAttentionCandidates(input: {
         keyResult: input.keyResult,
         hasCrossDepartmentImpact: downstreamDepartmentIds.length > 0,
       }),
-      title: primaryItem?.label ?? `${input.task?.title ?? "Task"} needs executive attention.`,
+      title: primaryItem?.label ?? founderDecisionLabel ?? `${input.task?.title ?? "Task"} needs executive attention.`,
       ownerDepartmentId: input.event.departmentId,
       downstreamDepartmentIds,
       affectedTaskIds: unique([input.event.taskId, ...dependencyTaskIds]),
       currentBlocker: attentionVisionGaps.find((gap) => gap.severity === "blocking")?.label ?? null,
-      recommendedNextAction: primaryItem?.label ?? recommendedActionForOutcome(input.event, input.task),
+      recommendedNextAction: primaryItem?.label ?? founderDecisionLabel ?? recommendedActionForOutcome(input.event, input.task),
       severity: highestSeverity([
         ...attentionVisionGaps.map((gap) => gap.severity),
         ...humanActions.map((action) => (action.status === "confirmed" ? "informational" : "blocking")),
         ...waitStates.map((waitState) => waitState.severity),
         ...decisionItems.map((item) => item.severity),
+        ...pendingFounderDecisions.map(() => "strategic" as const),
       ]),
       reasons: unique(reasons),
       relevantHumanActions: humanActions,
       relevantWaitStates: waitStates,
       relevantVisionGaps: attentionVisionGaps,
+      relevantFounderDecisions: pendingFounderDecisions,
     },
   ];
 }
@@ -181,6 +296,7 @@ function rollUpAttentionCandidates(company: Company, candidates: AttentionCandid
       relevantHumanActions: groupCandidates.flatMap((candidate) => candidate.relevantHumanActions),
       relevantWaitStates: groupCandidates.flatMap((candidate) => candidate.relevantWaitStates),
       relevantVisionGaps,
+      relevantFounderDecisions: uniqueById(groupCandidates.flatMap((candidate) => candidate.relevantFounderDecisions)),
       sourceTaskCompletionEventIds: unique(groupCandidates.map((candidate) => candidate.event.id)),
       createdAt: first.event.createdAt,
     };

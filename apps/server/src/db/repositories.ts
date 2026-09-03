@@ -10,6 +10,7 @@ import type {
   Company,
   CreationAttempt,
   Department,
+  FounderDecisionResolution,
   HumanActionConfirmation,
   KeyResult,
   LocalizedText,
@@ -476,8 +477,8 @@ export function createRepositories(database: DatabaseClient) {
         .prepare(
           `INSERT INTO task_completion_events (
             id, company_id, task_id, department_id, key_result_id, business_artifact_id,
-            outcome, acceptance_provenance, dependency_impact, next_step_items, vision_gaps, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            outcome, acceptance_provenance, outcome_summary_text, dependency_impact, next_step_items, vision_gaps, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           event.id,
@@ -488,6 +489,7 @@ export function createRepositories(database: DatabaseClient) {
           event.businessArtifactId,
           event.outcome,
           event.acceptanceProvenance ?? null,
+          stringifyLocalizedText(event.outcomeSummaryText),
           JSON.stringify(event.dependencyImpact),
           JSON.stringify(event.nextStepItems),
           JSON.stringify(event.visionGaps),
@@ -505,6 +507,64 @@ export function createRepositories(database: DatabaseClient) {
         )
         .all(companyId);
       return rows.map((row) => mapTaskCompletionEvent(row as TaskCompletionEventRow));
+    },
+
+    listTaskCompletionEventsForTask(taskId: string): TaskCompletionEvent[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM task_completion_events
+           WHERE task_id = ?
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all(taskId);
+      return rows.map((row) => mapTaskCompletionEvent(row as TaskCompletionEventRow));
+    },
+
+    getTaskCompletionEvent(id: string): TaskCompletionEvent | null {
+      const row = database.prepare("SELECT * FROM task_completion_events WHERE id = ?").get(id);
+      return row ? mapTaskCompletionEvent(row as TaskCompletionEventRow) : null;
+    },
+
+    upsertFounderDecisionResolution(resolution: FounderDecisionResolution): void {
+      database
+        .prepare(
+          `INSERT INTO founder_decision_resolutions (
+            founder_decision_id, company_id, task_id, status, chosen_option, return_reason, note, resolved_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(founder_decision_id) DO UPDATE SET
+            status = excluded.status,
+            chosen_option = excluded.chosen_option,
+            return_reason = excluded.return_reason,
+            note = excluded.note,
+            resolved_at = excluded.resolved_at`,
+        )
+        .run(
+          resolution.founderDecisionId,
+          resolution.companyId,
+          resolution.taskId,
+          resolution.status,
+          resolution.chosenOption,
+          resolution.returnReason,
+          resolution.note,
+          resolution.resolvedAt,
+        );
+    },
+
+    listFounderDecisionResolutionsForCompany(companyId: string): FounderDecisionResolution[] {
+      const rows = database
+        .prepare(
+          `SELECT *
+           FROM founder_decision_resolutions
+           WHERE company_id = ?
+           ORDER BY resolved_at ASC, founder_decision_id ASC`,
+        )
+        .all(companyId);
+      return rows.map((row) => mapFounderDecisionResolution(row as FounderDecisionResolutionRow));
+    },
+
+    deleteFounderDecisionResolutionsForTask(taskId: string): void {
+      database.prepare("DELETE FROM founder_decision_resolutions WHERE task_id = ?").run(taskId);
     },
 
     upsertHumanActionConfirmation(confirmation: HumanActionConfirmation): void {
@@ -777,6 +837,12 @@ export function createRepositories(database: DatabaseClient) {
         .run(reviewStatus, updatedAt, id);
     },
 
+    updateBusinessArtifactPayload(id: string, payload: unknown, updatedAt: string): void {
+      database
+        .prepare("UPDATE business_artifacts SET payload = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(payload), updatedAt, id);
+    },
+
     createApproval(approval: Approval): void {
       database
         .prepare(
@@ -872,6 +938,23 @@ export function createRepositories(database: DatabaseClient) {
            ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
         )
         .run(taskAttemptsResetKey(taskId), at);
+    },
+
+    hasReviewReconciliationRun(companyId: string): boolean {
+      const row = database
+        .prepare("SELECT value FROM runtime_state WHERE key = ?")
+        .get(reviewReconciliationKey(companyId)) as { value: string } | undefined;
+      return row !== undefined;
+    },
+
+    markReviewReconciliationRun(companyId: string, at: string): void {
+      database
+        .prepare(
+          `INSERT INTO runtime_state (key, value)
+           VALUES (?, ?)
+           ON CONFLICT(key) DO NOTHING`,
+        )
+        .run(reviewReconciliationKey(companyId), at);
     },
 
     listRunningAgentRuns(companyId: string): AgentRun[] {
@@ -1243,6 +1326,7 @@ type TaskCompletionEventRow = {
   business_artifact_id: string | null;
   outcome: TaskCompletionEvent["outcome"];
   acceptance_provenance: TaskCompletionEvent["acceptanceProvenance"];
+  outcome_summary_text: string | null;
   dependency_impact: string;
   next_step_items: string;
   vision_gaps: string;
@@ -1256,6 +1340,17 @@ type HumanActionConfirmationRow = {
   status: HumanActionConfirmation["status"];
   verified_at: string;
   verification_errors: string;
+};
+
+type FounderDecisionResolutionRow = {
+  founder_decision_id: string;
+  company_id: string;
+  task_id: string;
+  status: FounderDecisionResolution["status"];
+  chosen_option: string | null;
+  return_reason: FounderDecisionResolution["returnReason"];
+  note: string | null;
+  resolved_at: string;
 };
 
 function mapCompany(row: CompanyRow): Company {
@@ -1491,6 +1586,11 @@ function taskAttemptsResetKey(taskId: string): string {
   return `task_attempts_reset:${taskId}`;
 }
 
+function reviewReconciliationKey(companyId: string): string {
+  // Bump the version suffix to force a re-run when the deterministic acceptance conditions change.
+  return `review_reconciliation_v1:${companyId}`;
+}
+
 function stringifyLocalizedText(text: LocalizedText | null | undefined): string | null {
   return text ? JSON.stringify(text) : null;
 }
@@ -1550,10 +1650,24 @@ function mapTaskCompletionEvent(row: TaskCompletionEventRow): TaskCompletionEven
     businessArtifactId: row.business_artifact_id,
     outcome: row.outcome,
     acceptanceProvenance: row.acceptance_provenance ?? null,
+    ...(row.outcome_summary_text ? { outcomeSummaryText: parseLocalizedText(row.outcome_summary_text) } : {}),
     dependencyImpact: JSON.parse(row.dependency_impact) as unknown,
     nextStepItems: JSON.parse(row.next_step_items) as TaskCompletionEvent["nextStepItems"],
     visionGaps: JSON.parse(row.vision_gaps) as unknown[],
     createdAt: row.created_at,
+  };
+}
+
+function mapFounderDecisionResolution(row: FounderDecisionResolutionRow): FounderDecisionResolution {
+  return {
+    founderDecisionId: row.founder_decision_id,
+    companyId: row.company_id,
+    taskId: row.task_id,
+    status: row.status,
+    chosenOption: row.chosen_option,
+    returnReason: row.return_reason ?? null,
+    note: row.note,
+    resolvedAt: row.resolved_at,
   };
 }
 

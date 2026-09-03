@@ -104,6 +104,7 @@ export type TaskEventType =
   | "task_review"
   | "automatic_acceptance"
   | "ceo_review_decision"
+  | "founder_decision"
   | "proof_recovered"
   | "task_failed"
   | "task_blocked"
@@ -129,15 +130,33 @@ export type TaskProgressStep =
   | "blocked"
   | "needs_ceo_reassignment";
 export type TaskProgressStatus = "complete" | "current" | "waiting" | "blocked";
-export type TaskCompletionOutcome = "accepted" | "blocked" | "failed_to_review" | "needs_replan";
-export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance";
+export type TaskCompletionOutcome =
+  | "accepted"
+  | "blocked"
+  | "failed_to_review"
+  | "needs_replan"
+  | "awaiting_founder_decision";
+export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance" | "founder_decision";
 export type NextStepItemType =
   | "automatic_downstream_task"
   | "human_action"
   | "ceo_decision"
   | "wait_state"
   | "downstream_handoff"
-  | "vision_gap";
+  | "vision_gap"
+  | "founder_decision";
+/**
+ * The fixed, playbook-neutral set of business decisions whose first value is the founder's to set.
+ * A completing agent declares an open choice against one of these in `open_decisions`; the runtime
+ * turns it into a Founder Decision. A choice outside this set is the agent's own call. Extended only
+ * by code change, never by runtime configuration.
+ */
+export type StrategicDecisionKind =
+  | "target_market"
+  | "product_direction"
+  | "mvp_type"
+  | "pricing_model"
+  | "launch_target";
 export type NextStepItemSeverity = "informational" | "blocking" | "strategic";
 export type NextStepItem = {
   type: NextStepItemType;
@@ -170,7 +189,8 @@ export type CeoAttentionRollupReason =
   | "human_action"
   | "wait_state"
   | "cross_department_impact"
-  | "exception_outcome";
+  | "exception_outcome"
+  | "founder_decision";
 export type HumanActionStatus = "pending" | "confirmed";
 export type HumanAction = {
   id: string;
@@ -187,6 +207,57 @@ export type HumanAction = {
   verificationErrors: string[];
   createdAt: string;
 };
+export type FounderDecisionStatus = "pending" | "resolved" | "returned";
+export type FounderDecisionOption = {
+  /** The display label the agent gave this option; also how `recommendation` and a resolved pick refer to it. */
+  label: string;
+  /** The option's trade-offs, in the agent's words. */
+  tradeoffs: string;
+  /** True for the single option the completing agent recommended. */
+  recommended: boolean;
+};
+/**
+ * A choice reserved for the human founder that a completed task's deliverable surfaces: several
+ * viable options for a Strategic Decision Kind that has no fixed value yet. Projected from a
+ * `founder_decision` Next Step Item on a Task Completion Event, mirroring the {@link HumanAction}
+ * projection. The runtime and CEO Agent must not resolve it. The founder resolves it by picking one
+ * option (which accepts the deliverable once every decision on the task is resolved) or by returning
+ * the task; a {@link FounderDecisionResolution} row carries the outcome and fills `status`,
+ * `resolvedOption`, and `resolvedAt` here.
+ */
+export type FounderDecision = {
+  id: string;
+  companyId: string;
+  sourceTaskCompletionEventId: string;
+  taskId: string;
+  departmentId: string;
+  decisionKind: StrategicDecisionKind;
+  options: FounderDecisionOption[];
+  rationale: string;
+  status: FounderDecisionStatus;
+  resolvedOption: string | null;
+  resolvedAt: string | null;
+  blockedTaskIds: string[];
+  createdAt: string;
+};
+
+/**
+ * The founder's resolution of a single {@link FounderDecision}, keyed by the projected decision id.
+ * `resolved` records a picked option (`chosenOption`); `returned` records that the founder rejected
+ * every option and sent the task back to the department (`returnReason` / `note`). A return discards
+ * every resolution row for the task, so at most one row per decision id is ever live.
+ */
+export type FounderDecisionResolution = {
+  founderDecisionId: string;
+  companyId: string;
+  taskId: string;
+  status: "resolved" | "returned";
+  chosenOption: string | null;
+  returnReason: CeoReviewReturnReason | null;
+  note: string | null;
+  resolvedAt: string;
+};
+
 export type HumanActionConfirmation = {
   humanActionId: string;
   companyId: string;
@@ -234,6 +305,7 @@ export type CeoAttentionRollup = {
   relevantHumanActions: HumanAction[];
   relevantWaitStates: WaitState[];
   relevantVisionGaps: VisionGap[];
+  relevantFounderDecisions: FounderDecision[];
   sourceTaskCompletionEventIds: string[];
   createdAt: string;
 };
@@ -384,6 +456,13 @@ export type TaskCompletionEvent = {
   businessArtifactId: string | null;
   outcome: TaskCompletionOutcome;
   acceptanceProvenance?: TaskAcceptanceProvenance | null;
+  /**
+   * The completing agent's plain-language Task Outcome Summary: the conclusion reached, what it means
+   * for the objective served, and what gap remains. Null for completion paths that carry no summary
+   * (blocked / needs-replan outcomes, migration-reconciled acceptances). Distinct from the Task
+   * Execution Summary, which is failure facts.
+   */
+  outcomeSummaryText?: LocalizedText | null;
   dependencyImpact: unknown;
   nextStepItems: NextStepItem[];
   visionGaps: unknown[];

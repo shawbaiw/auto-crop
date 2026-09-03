@@ -46,6 +46,7 @@ export const taskEventTypeSchema = z.enum([
   "task_review",
   "automatic_acceptance",
   "ceo_review_decision",
+  "founder_decision",
   "proof_recovered",
   "task_failed",
   "task_blocked",
@@ -75,7 +76,18 @@ export const taskProgressStepSchema = z.enum([
 ]);
 
 export const taskProgressStatusSchema = z.enum(["complete", "current", "waiting", "blocked"]);
-export const taskCompletionOutcomeSchema = z.enum(["accepted", "blocked", "failed_to_review", "needs_replan"]);
+export const taskCompletionOutcomeSchema = z.enum([
+  "accepted",
+  "blocked",
+  "failed_to_review",
+  "needs_replan",
+  "awaiting_founder_decision",
+]);
+export const taskAcceptanceProvenanceSchema = z.enum([
+  "manual_ceo_review",
+  "automatic_acceptance",
+  "founder_decision",
+]);
 export const nextStepItemTypeSchema = z.enum([
   "automatic_downstream_task",
   "human_action",
@@ -83,8 +95,17 @@ export const nextStepItemTypeSchema = z.enum([
   "wait_state",
   "downstream_handoff",
   "vision_gap",
+  "founder_decision",
 ]);
 export const nextStepItemSeveritySchema = z.enum(["informational", "blocking", "strategic"]);
+
+export const strategicDecisionKindSchema = z.enum([
+  "target_market",
+  "product_direction",
+  "mvp_type",
+  "pricing_model",
+  "launch_target",
+]);
 
 export const ceoIntakeStatusSchema = z.enum([
   "received",

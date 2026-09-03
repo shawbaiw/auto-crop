@@ -1,5 +1,7 @@
-import { nextStepItemSeveritySchema, nextStepItemTypeSchema, type BusinessArtifact, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
+import { localizedTextFromString, localizedTextSchema, nextStepItemSeveritySchema, nextStepItemTypeSchema, type BusinessArtifact, type LocalizedText, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { parseOpenDecisions, type FounderDecisionDeclaration } from "./founderDecision";
+import { createDefaultId } from "./ids";
 
 export function recordTaskCompletionEvent(input: {
   repositories: ReturnType<typeof createRepositories>;
@@ -7,6 +9,20 @@ export function recordTaskCompletionEvent(input: {
   outcome: TaskCompletionOutcome;
   acceptanceProvenance?: TaskAcceptanceProvenance | null;
   businessArtifact?: BusinessArtifact | null;
+  /** Overrides the summary read from the Business Artifact payload (e.g. migration reconciliation passes null). */
+  outcomeSummaryText?: LocalizedText | null;
+  /**
+   * The kept `open_decisions` declarations for this task. Pass to reuse an already-parsed result;
+   * omitted, they are re-read from `businessArtifact.payload`. Each becomes a `founder_decision`
+   * Next Step Item.
+   */
+  founderDecisions?: FounderDecisionDeclaration[];
+  /**
+   * Direct downstream consumer task ids blocked while a Founder Decision on this task is unresolved.
+   * Recorded on each synthesized `founder_decision` Next Step Item so the projection can show which
+   * work is waiting on the founder.
+   */
+  founderDecisionBlockedTaskIds?: string[];
   dependencyImpact?: unknown;
   nextStepItems?: unknown[];
   visionGaps?: unknown[];
@@ -14,10 +30,20 @@ export function recordTaskCompletionEvent(input: {
   createId?: (prefix: string) => string;
 }): TaskCompletionEvent {
   const proposal = input.nextStepItems ? { items: input.nextStepItems, errors: [] } : extractNextStepItems(input.businessArtifact?.payload);
-  const proposedNextSteps = proposal.items;
+  const founderDecisionItems = buildFounderDecisionItems(
+    input.founderDecisions ?? parseOpenDecisions(input.businessArtifact?.payload).kept,
+    input.businessArtifact,
+    input.task,
+    input.founderDecisionBlockedTaskIds ?? [],
+  );
+  const proposedNextSteps = [...proposal.items, ...founderDecisionItems];
   const validatedNextSteps = validateNextStepItems(proposedNextSteps);
+  const outcomeSummaryText =
+    input.outcomeSummaryText !== undefined
+      ? input.outcomeSummaryText
+      : extractOutcomeSummaryText(input.businessArtifact?.payload);
   const event: TaskCompletionEvent = {
-    id: input.createId?.("task_completion_event") ?? `task_completion_event_${Date.now()}`,
+    id: input.createId?.("task_completion_event") ?? createDefaultId("task_completion_event"),
     companyId: input.task.companyId,
     taskId: input.task.id,
     departmentId: input.task.departmentId,
@@ -25,6 +51,7 @@ export function recordTaskCompletionEvent(input: {
     businessArtifactId: input.businessArtifact?.id ?? null,
     outcome: input.outcome,
     acceptanceProvenance: input.acceptanceProvenance ?? null,
+    ...(outcomeSummaryText ? { outcomeSummaryText } : {}),
     dependencyImpact: mergeNextStepErrors(input.dependencyImpact ?? {}, [...proposal.errors, ...validatedNextSteps.errors]),
     nextStepItems: validatedNextSteps.items,
     visionGaps: input.visionGaps ?? [],
@@ -33,6 +60,67 @@ export function recordTaskCompletionEvent(input: {
 
   input.repositories.appendTaskCompletionEvent(event);
   return event;
+}
+
+/**
+ * Read the Task Outcome Summary the completing agent wrote into the Business Artifact payload
+ * (`outcome_summary` / `outcomeSummary`). Business Artifact parsing already rejects a `deliverable`
+ * or `final_report` that omits it, so a missing value here means a non-deliverable outcome (blocker,
+ * needs-replan) that carries no summary.
+ */
+export function extractOutcomeSummaryText(payload: unknown): LocalizedText | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  const value = payload.outcome_summary ?? payload.outcomeSummary;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return localizedTextFromString(value.trim());
+  }
+  if (isRecord(value)) {
+    const parsed = localizedTextSchema.safeParse(value);
+    if (parsed.success) {
+      return parsed.data;
+    }
+  }
+  return null;
+}
+
+/**
+ * Turn each kept `open_decisions` declaration into a `founder_decision` Next Step Item on the Task
+ * Completion Event. The decision detail (`decisionKind`, ordered options with trade-offs and a
+ * recommended flag, `rationale`) and the blocked downstream task ids ride on the item's
+ * `dependencyImpact.founderDecision`, which is where the `FounderDecision` projection reads them —
+ * mirroring how `human_action` items carry their confirmation detail. Nesting them keeps the blocked
+ * ids out of the generic dependency-impact scan, so a gated decision does not by itself raise a
+ * cross-department CEO Attention rollup (that surface is wired to Founder Decisions separately).
+ */
+function buildFounderDecisionItems(
+  declarations: FounderDecisionDeclaration[],
+  businessArtifact: BusinessArtifact | null | undefined,
+  task: Task,
+  blockedTaskIds: string[],
+): NextStepItem[] {
+  if (!businessArtifact) {
+    return [];
+  }
+  return declarations.map((declaration) => ({
+    type: "founder_decision",
+    label: `Founder decision: ${declaration.decisionKind.replace(/_/g, " ")}`,
+    ownerDepartmentId: task.departmentId,
+    relatedTaskId: task.id,
+    relatedBusinessArtifactId: businessArtifact.id,
+    dependencyImpact: {
+      founderDecision: {
+        decisionKind: declaration.decisionKind,
+        options: declaration.options,
+        rationale: declaration.rationale,
+        blockedTaskIds,
+      },
+    },
+    severity: "strategic",
+    priority: null,
+    evidenceRequirements: [],
+  }));
 }
 
 function extractNextStepItems(payload: unknown): { items: unknown[]; errors: string[] } {

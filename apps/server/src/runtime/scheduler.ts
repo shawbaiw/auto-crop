@@ -18,17 +18,20 @@ import {
   taskAttemptCount,
   terminateAsRetryExhausted as terminateTaskAsRetryExhausted,
 } from "./boundedRecovery";
-import { acceptTaskBusinessArtifact } from "./businessAcceptance";
+import { acceptDeliverableAutomatically } from "./businessAcceptance";
 import {
   captureBusinessArtifact,
+  isReviewableBusinessArtifact,
   readEnvironmentBlockerClaim,
   verifyEnvironmentBlockerClaim,
 } from "./businessArtifact";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
+import { parseOpenDecisions } from "./founderDecision";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { buildProofContractInstructions } from "./proofContract";
+import { reconcileReviewTasksForAutomaticAcceptance } from "./reviewReconciliation";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
@@ -92,6 +95,20 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
       now,
       createId,
     });
+    // One-time migration pass (ADR 0017 §Migration): on the first tick after this company gets the
+    // deterministic model, accept the `review` tasks it would have accepted. A per-company marker
+    // makes every later call a no-op; any newly-queued downstream is picked up by
+    // `fetchQueuedTasks` in this same tick.
+    const reconciledReview = reconcileReviewTasksForAutomaticAcceptance({
+      repositories: input.repositories,
+      companyId: company.id,
+      now,
+      createId,
+      requestSchedulerWake: () => undefined,
+    });
+    for (const event of reconciledReview.events) {
+      emitTaskEvent(input, event);
+    }
   }
 
   const queuedTasks = input.repositories.fetchQueuedTasks(Math.max(input.maxTasks * 5, 20));
@@ -100,11 +117,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
   for (const task of queuedTasks) {
     if (dispatches.length >= input.maxTasks) {
       break;
-    }
-
-    const assessmentDecision = assessDepartmentTask(input, task);
-    if (assessmentDecision === "deferred") {
-      continue;
     }
 
     const dependencyDecision = resolveDependencyReadiness(input.repositories, task);
@@ -134,6 +146,11 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
     if (dependencyDecision.kind === "blocked") {
       blockTaskForDependency(input, task, dependencyDecision.dependency, dependencyDecision.reason, dependencyDecision.note);
       result.blocked.push(task.id);
+      continue;
+    }
+
+    const assessmentDecision = assessDepartmentTask(input, task);
+    if (assessmentDecision === "deferred") {
       continue;
     }
 
@@ -527,24 +544,50 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
           const automaticAcceptance = evaluateAutomaticAcceptance({ task, artifact: businessArtifact });
           if (automaticAcceptance.kind === "accept") {
-            const accepted = acceptTaskBusinessArtifact({
+            // A deliverable that would otherwise auto-accept but declares one or more kept Founder
+            // Decisions is not accepted and is not routed to manual CEO review: the choice is the
+            // founder's to make. Record the Task Completion Event (carrying the founder_decision
+            // items and the Task Outcome Summary) and stop. Downstream dependency readiness keeps
+            // blocking on the non-accepted upstream. A risk-pattern hit takes precedence — it lands
+            // in the `requires_review` branch below before this check runs.
+            const founderDecisions = parseOpenDecisions(businessArtifact.payload).kept;
+            if (founderDecisions.length > 0) {
+              input.repositories.updateTaskStatus(task.id, "review");
+              recordTaskCompletionEvent({
+                repositories: input.repositories,
+                task,
+                businessArtifact,
+                outcome: "awaiting_founder_decision",
+                founderDecisions,
+                founderDecisionBlockedTaskIds: input.repositories
+                  .listDependencyConsumers(task.id)
+                  .map((consumer) => consumer.id),
+                now,
+                createId,
+              });
+              appendTaskProgressEvent(input, {
+                task,
+                step: "awaiting_review",
+                status: "current",
+                label: "Awaiting founder decision",
+                subjectTaskId: task.id,
+              });
+              emitParentTaskAggregationEvents(input, task);
+              result.completed.push(task.id);
+              return;
+            }
+
+            const accepted = acceptDeliverableAutomatically({
               repositories: input.repositories,
               task,
               artifact: businessArtifact,
-              acceptanceProvenance: "automatic_acceptance",
-              eventType: "automatic_acceptance",
               eventMessage: `Automatic Acceptance accepted task: ${task.title}.`,
-              keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
-              dependencyCascade: { maxDepth: 2 },
               requestSchedulerWake: () => undefined,
               now,
               createId,
             });
-            emitTaskEvent(input, accepted.event);
-            for (const update of accepted.dependencyCascade?.updatedTasks ?? []) {
-              if (update.event) {
-                emitTaskEvent(input, update.event);
-              }
+            for (const event of accepted.events) {
+              emitTaskEvent(input, event);
             }
             appendTaskProgressEvent(input, {
               task,
@@ -674,6 +717,7 @@ function isLargeDepartmentTask(task: Task): boolean {
 
 function createDepartmentSubtasks(input: RunSchedulerOnceInput, parentTask: Task): Task[] {
   const createId = input.createId ?? defaultCreateId;
+  const inheritedDependencies = input.repositories.listTaskDependencies(parentTask.id);
   const subtaskBlueprints = [
     {
       title: `Define executable slice for ${parentTask.title}`,
@@ -721,6 +765,14 @@ function createDepartmentSubtasks(input: RunSchedulerOnceInput, parentTask: Task
       source: "department",
     };
     input.repositories.createTask(subtask);
+    for (const dependency of inheritedDependencies) {
+      input.repositories.createTaskDependency({
+        taskId: subtask.id,
+        dependsOnTaskId: dependency.dependsOnTaskId,
+        handoffContract: dependency.handoffContract,
+        handoffContractText: dependency.handoffContractText,
+      });
+    }
     input.repositories.createTaskDependency({
       taskId: parentTask.id,
       dependsOnTaskId: subtask.id,
@@ -1116,7 +1168,7 @@ function buildAgentPrompt(task: Task, handoffs: TaskHandoff[]): string {
         artifact_role: "implementation",
         artifact_subtype: "prototype_implementation",
         task_type: "task-specific-type",
-        payload: {},
+        payload: { outcome_summary: "..." },
         lineage: {},
       },
       null,
@@ -1126,6 +1178,40 @@ function buildAgentPrompt(task: Task, handoffs: TaskHandoff[]): string {
     "Choose artifact_role from: findings, plan, spec, implementation, validation, launch, report, none.",
     "Put use-case-specific names such as keyword_research, mvp_brief, or seo_launch_plan in artifact_subtype, not in artifact_kind or artifact_role.",
     "Use payload for the task-specific structured result and lineage for the upstream objective chain you used.",
+    "",
+    "## Task Outcome Summary",
+    "",
+    "Every `deliverable` and `final_report` payload must include an `outcome_summary` field: a plain-language",
+    "string (or a `{ \"en\": \"...\", \"zh\": \"...\" }` object) the founder reads instead of your raw output. State, in order:",
+    "1. The conclusion you reached.",
+    "2. What that conclusion means for the objective or vision this task serves.",
+    "3. What gap still remains toward the vision (in prose) — completing the task is not the same as reaching the goal.",
+    "Add a fourth part only when you are leaving a strategic choice that is the founder's to make: list the",
+    "viable options with their trade-offs and say which one you recommend.",
+    "Write business judgement, not process notes; a missing `outcome_summary` fails validation.",
+    "",
+    "## Open Decisions",
+    "",
+    "If you make a choice on a strategic business decision whose first value is the founder's to set —",
+    "one of: target_market, product_direction, mvp_type, pricing_model, launch_target — do NOT let your",
+    "pick stand as direction. Declare it in a `payload.open_decisions` array so the runtime routes it to",
+    "the founder. Each entry:",
+    JSON.stringify(
+      {
+        decisionKind: "pricing_model",
+        options: [
+          { label: "Flat monthly fee", tradeoffs: "Predictable revenue; leaves heavy users underpriced." },
+          { label: "Usage-based", tradeoffs: "Scales with value delivered; harder for buyers to forecast." },
+        ],
+        recommendation: "Flat monthly fee",
+        rationale: "Early buyers want a predictable bill and the usage spread is still narrow.",
+      },
+      null,
+      2,
+    ),
+    "`decisionKind` must be one of the five kinds above (any other choice is your own call and is ignored).",
+    "Give more than one option, each with its trade-offs; name the recommended option and give your rationale.",
+    "A choice on one of these kinds is the founder's to make, not yours.",
   ];
   const proofInstructions = buildProofContractInstructions(task);
 
@@ -1156,15 +1242,6 @@ function buildAgentPrompt(task: Task, handoffs: TaskHandoff[]): string {
       ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
     ]),
   ].join("\n");
-}
-
-function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolean {
-  return (
-    artifact.isCurrent &&
-    artifact.validationStatus === "valid" &&
-    artifact.reviewStatus === "unreviewed" &&
-    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
-  );
 }
 
 function businessArtifactFailureReason(artifact: BusinessArtifact | null): SchedulerFailureReason {
