@@ -8,6 +8,7 @@ import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
+import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { acquireTaskLock, releaseTaskLock } from "./locks";
 import { createHandoffPackage, createProofCollector } from "./proof";
 import { runSchedulerOnce, type SchedulerEvent } from "./scheduler";
@@ -88,7 +89,7 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
-  it("claims queued tasks, dispatches mock agents, writes logs, appends proof, and moves tasks to review", async () => {
+  it("claims queued tasks, dispatches mock agents, writes logs, appends proof, and auto-accepts valid deliverables", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low"),
       createTaskRecord("task_2", "queued", "low"),
@@ -120,8 +121,8 @@ describe("runSchedulerOnce", () => {
 
     expect(result.started).toEqual(["task_1", "task_2"]);
     expect(result.completed).toEqual(["task_1", "task_2"]);
-    expect(repositories.getTask("task_1")?.status).toBe("review");
-    expect(repositories.getTask("task_2")?.status).toBe("review");
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    expect(repositories.getTask("task_2")?.status).toBe("complete");
     expect(repositories.listProofsForTask("task_1")).toHaveLength(1);
     expect(existsSync(join(projectRoot, ".auto-crop", "companies", "company_1", "logs", "task_1.log"))).toBe(
       true,
@@ -140,14 +141,14 @@ describe("runSchedulerOnce", () => {
       requestedTimeoutMs: 600_000,
       effectiveTimeoutMs: 600_000,
     }));
-    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_review:task_1");
+    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("automatic_acceptance:task_1");
 
     client.close();
   });
 
-  it("automatically accepts low-risk internal artifacts through the shared business acceptance path", async () => {
-    const producer = createTaskRecord("task_1", "queued", "low");
-    const consumer = createTaskRecord("task_2", "blocked", "low");
+  it("automatically accepts a valid unmarked deliverable on a medium-risk task through the shared business acceptance path", async () => {
+    const producer = createTaskRecord("task_1", "queued", "medium");
+    const consumer = createTaskRecord("task_2", "blocked", "medium");
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
     repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
     repositories.updateTaskExecutionSummary(consumer.id, {
@@ -174,7 +175,7 @@ describe("runSchedulerOnce", () => {
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: ({ task }) => {
-        writeAutoAcceptBusinessArtifact(task);
+        writeValidBusinessArtifact(task);
         return [createProofForTask(task)];
       },
       emit: (event) => events.push(event),
@@ -202,15 +203,15 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
-  it("keeps public, medium-risk, and high-risk artifacts in review even when they opt into automatic acceptance", async () => {
-    const publicTask = {
+  it("routes risk-pattern deliverables to manual review (still hand-approvable) but auto-accepts the rest regardless of task riskLevel", async () => {
+    const sensitiveTask = {
       ...createTaskRecord("task_1", "queued", "low"),
-      title: "Publish public launch page",
-      description: "Publish the launch page publicly.",
+      title: "Prepare public launch page",
+      description: "Draft the plan to launch the marketing site publicly.",
     };
     const mediumTask = createTaskRecord("task_2", "queued", "medium");
     const highTask = createTaskRecord("task_3", "queued", "high");
-    const { projectRoot, repositories, client } = createSchedulerFixture([publicTask, mediumTask, highTask]);
+    const { projectRoot, repositories, client } = createSchedulerFixture([sensitiveTask, mediumTask, highTask]);
     const events: SchedulerEventRecord[] = [];
 
     await runSchedulerOnce({
@@ -221,7 +222,7 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
-          output: "proof: created opt-in artifact",
+          output: "proof: created artifact",
         }),
       ],
       workerId: "worker_a",
@@ -230,30 +231,62 @@ describe("runSchedulerOnce", () => {
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: ({ task }) => {
-        writeAutoAcceptBusinessArtifact(task);
+        writeValidBusinessArtifact(task);
         return [createProofForTask(task)];
       },
       emit: (event) => events.push(event),
     });
 
     expect(repositories.getTask("task_1")?.status).toBe("review");
-    expect(repositories.getTask("task_2")?.status).toBe("review");
-    expect(repositories.getTask("task_3")?.status).toBe("review");
-    expect(repositories.listTaskCompletionEventsForCompany("company_1")).toEqual([]);
-    expect(events.map((event) => `${event.type}:${event.taskId}`)).not.toContain("automatic_acceptance:task_1");
-    expect(events.map((event) => `${event.type}:${event.taskId}`)).toEqual(expect.arrayContaining([
-      "task_review:task_1",
-      "task_review:task_2",
-      "task_review:task_3",
+    expect(repositories.getTask("task_2")?.status).toBe("complete");
+    expect(repositories.getTask("task_3")?.status).toBe("complete");
+    expect(
+      repositories
+        .listTaskCompletionEventsForCompany("company_1")
+        .map((event) => `${event.taskId}:${event.outcome}:${event.acceptanceProvenance}`),
+    ).toEqual(expect.arrayContaining([
+      "task_2:accepted:automatic_acceptance",
+      "task_3:accepted:automatic_acceptance",
     ]));
+    const eventKeys = events.map((event) => `${event.type}:${event.taskId}`);
+    expect(eventKeys).toContain("task_review:task_1");
+    expect(eventKeys).not.toContain("automatic_acceptance:task_1");
+    expect(eventKeys).toContain("automatic_acceptance:task_2");
+    expect(eventKeys).toContain("automatic_acceptance:task_3");
+
+    // A risk-pattern-caught deliverable is still approvable by hand through the shared
+    // business acceptance seam, exactly as the CEO review route does today.
+    const caughtArtifact = repositories.getCurrentBusinessArtifactForTask("task_1");
+    expect(caughtArtifact).toMatchObject({ reviewStatus: "unreviewed", validationStatus: "valid" });
+    const manual = acceptTaskBusinessArtifact({
+      repositories,
+      task: repositories.getTask("task_1")!,
+      artifact: caughtArtifact!,
+      acceptanceProvenance: "manual_ceo_review",
+      eventType: "ceo_review_decision",
+      eventMessage: "CEO Office approved task: Task task_1.",
+      keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
+      dependencyCascade: { maxDepth: 2 },
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: (prefix) => `manual_${prefix}`,
+    });
+    expect(manual.task.status).toBe("complete");
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    expect(repositories.getCurrentBusinessArtifactForTask("task_1")?.reviewStatus).toBe("accepted");
+    expect(
+      repositories
+        .listTaskCompletionEventsForCompany("company_1")
+        .some((event) => event.taskId === "task_1" && event.acceptanceProvenance === "manual_ceo_review"),
+    ).toBe(true);
 
     client.close();
   });
 
   it("blocks completed tasks that have proof but no reviewable business artifact", async () => {
-    const { projectRoot, repositories, client } = createSchedulerFixture([
-      createTaskRecord("task_1", "queued", "low"),
-    ]);
+    const producer = createTaskRecord("task_1", "queued", "low");
+    const consumer = createTaskRecord("task_2", "queued", "low");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
+    repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
 
     const result = await runSchedulerOnce({
       projectRoot,
@@ -296,7 +329,7 @@ describe("runSchedulerOnce", () => {
       validationStatus: "invalid_schema",
       reviewStatus: "not_reviewable",
     });
-    expect(repositories.listTaskCompletionEventsForCompany("company_1")).toEqual([
+    expect(repositories.listTaskCompletionEventsForCompany("company_1")).toContainEqual(
       expect.objectContaining({
         taskId: "task_1",
         departmentId: "department_1",
@@ -304,7 +337,9 @@ describe("runSchedulerOnce", () => {
         outcome: "failed_to_review",
         createdAt: "2026-08-17T00:00:00.000Z",
       }),
-    ]);
+    );
+    // The blocked outcome records a Task Completion Event but does not unlock the downstream consumer.
+    expect(repositories.getTask("task_2")?.status).toBe("blocked");
 
     client.close();
   });
@@ -767,7 +802,7 @@ describe("runSchedulerOnce", () => {
     expect(result.failed).toEqual([]);
     expect(result.completed).toEqual(["task_1"]);
     expect(repositories.getTask("task_1")).toMatchObject({
-      status: "review",
+      status: "complete",
       latestExecutionProfileName: "medium",
       latestRequestedTimeoutMs: 300_000,
       latestEffectiveTimeoutMs: 300_000,
@@ -1254,7 +1289,7 @@ describe("runSchedulerOnce", () => {
     expect(result.completed).toEqual([consumer.id]);
     expect(adapterWorkspacePath).toBe(producerWorkspace);
     expect(repositories.getTask(consumer.id)).toMatchObject({
-      status: "review",
+      status: "complete",
       artifactWorkspacePath: producerWorkspace,
     });
     expect(proof).toEqual([
@@ -1267,7 +1302,7 @@ describe("runSchedulerOnce", () => {
     expect(artifact).toMatchObject({
       taskId: consumer.id,
       artifactKind: "deliverable",
-      reviewStatus: "unreviewed",
+      reviewStatus: "accepted",
       validationStatus: "valid",
     });
 
@@ -1381,7 +1416,7 @@ describe("runSchedulerOnce", () => {
     expect(timeoutCalls).toEqual([300_000, 600_000]);
     expect(result.completed).toEqual(["task_1"]);
     expect(repositories.getTask("task_1")).toMatchObject({
-      status: "review",
+      status: "complete",
       latestExecutionProfileName: "long",
       latestRequestedTimeoutMs: 600_000,
       latestEffectiveTimeoutMs: 600_000,
@@ -1391,9 +1426,10 @@ describe("runSchedulerOnce", () => {
   });
 
   it("marks long timed-out tasks as needs_replan instead of retrying forever", async () => {
-    const { projectRoot, repositories, client } = createSchedulerFixture([
-      createTaskRecord("task_1", "queued", "low", "landing-page-file"),
-    ]);
+    const producer = createTaskRecord("task_1", "queued", "low", "landing-page-file");
+    const consumer = createTaskRecord("task_2", "queued", "low");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
+    repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
     const events: SchedulerEventRecord[] = [];
 
     const result = await runSchedulerOnce({
@@ -1439,6 +1475,8 @@ describe("runSchedulerOnce", () => {
         createdAt: "2026-08-17T00:00:00.000Z",
       }),
     ]);
+    // The needs_replan outcome does not unlock ordinary downstream dependencies.
+    expect(repositories.getTask("task_2")?.status).toBe("queued");
 
     client.close();
   });
@@ -1670,7 +1708,7 @@ describe("runSchedulerOnce", () => {
 
     expect(result.completed).toEqual(["follow_up_task_1"]);
     expect(workspacePath).toBe(".auto-crop/workspaces/task_1");
-    expect(repositories.getTask("follow_up_task_1")?.status).toBe("review");
+    expect(repositories.getTask("follow_up_task_1")?.status).toBe("complete");
 
     client.close();
   });
@@ -1711,7 +1749,7 @@ describe("runSchedulerOnce", () => {
     expect(result.failed).toEqual(["task_1"]);
     expect(result.completed).toEqual(["task_2"]);
     expect(repositories.getTask("task_1")?.status).toBe("failed");
-    expect(repositories.getTask("task_2")?.status).toBe("review");
+    expect(repositories.getTask("task_2")?.status).toBe("complete");
     expect(repositories.listTaskLocks()).toEqual([]);
     expect(events).toContainEqual(expect.objectContaining({
       type: "task_failed",
@@ -2080,30 +2118,6 @@ function writeValidBusinessArtifact(task: Task): void {
         evidence: ["mock proof"],
         risks: [],
         next_steps: ["CEO review"],
-      },
-      lineage: { task_id: task.id },
-    }),
-    "utf8",
-  );
-}
-
-function writeAutoAcceptBusinessArtifact(task: Task): void {
-  if (!task.workspacePath) {
-    throw new Error(`Task ${task.id} has no workspace path`);
-  }
-
-  mkdirSync(join(task.workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(task.workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
-      artifact_kind: "deliverable",
-      artifact_role: "implementation",
-      artifact_subtype: "internal_handoff",
-      task_type: "internal.handoff",
-      payload: {
-        acceptance: { mode: "automatic", scope: "internal" },
-        summary: "Internal handoff is complete.",
-        risks: [],
       },
       lineage: { task_id: task.id },
     }),

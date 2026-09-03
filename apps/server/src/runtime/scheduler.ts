@@ -21,6 +21,7 @@ import {
 import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import {
   captureBusinessArtifact,
+  isReviewableBusinessArtifact,
   readEnvironmentBlockerClaim,
   verifyEnvironmentBlockerClaim,
 } from "./businessArtifact";
@@ -1165,15 +1166,6 @@ function buildAgentPrompt(task: Task, handoffs: TaskHandoff[]): string {
       ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
     ]),
   ].join("\n");
-}
-
-function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolean {
-  return (
-    artifact.isCurrent &&
-    artifact.validationStatus === "valid" &&
-    artifact.reviewStatus === "unreviewed" &&
-    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
-  );
 }
 
 function businessArtifactFailureReason(artifact: BusinessArtifact | null): SchedulerFailureReason {

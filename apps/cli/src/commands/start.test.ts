@@ -172,8 +172,9 @@ describe("startAutoCrop", () => {
       scheduler.requestWake("dependency_cascade_queued");
 
       await waitFor(() => events.some((event) => event.type === "task_started" && event.taskId === "task_1"));
+      await waitFor(() => repositories.getTask("task_1")?.status === "complete");
       expect(logs).toContain("Scheduler wake requested: dependency_cascade_queued");
-      expect(repositories.getTask("task_1")?.status).toBe("review");
+      expect(repositories.getTask("task_1")?.status).toBe("complete");
     } finally {
       scheduler.stop();
       client.close();

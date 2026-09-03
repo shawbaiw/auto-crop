@@ -347,6 +347,20 @@ function resolveEnvironmentBlockerCapability(artifact: EnvironmentBlockerShape):
 }
 
 /**
+ * True when a Business Artifact is a current, valid, still-unreviewed deliverable — the shape that
+ * can go to CEO Office (manual review or Automatic Acceptance). Blockers, superseded or invalid
+ * artifacts, and already-reviewed ones are not reviewable.
+ */
+export function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolean {
+  return (
+    artifact.isCurrent &&
+    artifact.validationStatus === "valid" &&
+    artifact.reviewStatus === "unreviewed" &&
+    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
+  );
+}
+
+/**
  * True when a blocker artifact carries an Environment-Blocked claim the runtime may independently
  * check — either the explicit `blocker_class`/`capability` contract or the natural screenshot-capture
  * blocker shape. See {@link resolveEnvironmentBlockerCapability}.
