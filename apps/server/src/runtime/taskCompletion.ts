@@ -1,5 +1,6 @@
 import { nextStepItemSeveritySchema, nextStepItemTypeSchema, type BusinessArtifact, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { createDefaultId } from "./ids";
 
 export function recordTaskCompletionEvent(input: {
   repositories: ReturnType<typeof createRepositories>;
@@ -17,7 +18,7 @@ export function recordTaskCompletionEvent(input: {
   const proposedNextSteps = proposal.items;
   const validatedNextSteps = validateNextStepItems(proposedNextSteps);
   const event: TaskCompletionEvent = {
-    id: input.createId?.("task_completion_event") ?? `task_completion_event_${Date.now()}`,
+    id: input.createId?.("task_completion_event") ?? createDefaultId("task_completion_event"),
     companyId: input.task.companyId,
     taskId: input.task.id,
     departmentId: input.task.departmentId,

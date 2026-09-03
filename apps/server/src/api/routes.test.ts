@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BusinessArtifact, Proof, Task, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter, AgentRunRequest } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
@@ -15,6 +15,7 @@ import { createApiServer, type SchedulerWakeReason } from "./routes";
 const createdDirs: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of createdDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -249,6 +250,30 @@ describe("API routes", () => {
     releaseAgent();
     await waitForCompanyStatus(fixture, body.company.id, "draft");
     expect(fixture.repositories.listTasksForCompany(body.company.id).length).toBeGreaterThan(0);
+
+    await fixture.close();
+  });
+
+  it("uses collision-resistant default ids for async company creation events", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_788_400_651_315);
+    const fixture = await startFixtureServer({ useDefaultCreateId: true });
+
+    const created = await postCreatingCompany(fixture, "default-id-key-1");
+    await waitForCompanyStatus(fixture, created.company.id, "draft");
+
+    expect(fixture.repositories.listCreationAttemptsForCompany(created.company.id)).toEqual([
+      expect.objectContaining({ status: "complete", failureMessage: null }),
+    ]);
+    const creationEvents = fixture.repositories.listCompanyEventsForCompany(created.company.id);
+    expect(creationEvents.map((event) => event.type)).toEqual(expect.arrayContaining([
+      "company_creation_accepted",
+      "company_creation_agent_started",
+      "company_creation_blueprint_parsed",
+      "company_creation_records_created",
+      "company_creation_completed",
+    ]));
+    expect(creationEvents).toHaveLength(5);
+    expect(new Set(creationEvents.map((event) => event.id)).size).toBe(creationEvents.length);
 
     await fixture.close();
   });
@@ -2198,6 +2223,7 @@ async function startFixtureServer(options: {
   ceoAgent?: AgentAdapter;
   plannerOutput?: string;
   schedulerWakeRequests?: SchedulerWakeReason[];
+  useDefaultCreateId?: boolean;
 } = {}) {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-api-"));
   createdDirs.push(projectRoot);
@@ -2223,14 +2249,16 @@ async function startFixtureServer(options: {
         capabilities: ["code", "frontend", "test"],
         output: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
       }));
-  const server = createApiServer({
+  const serverOptions = {
     projectRoot,
     repositories,
     agents: [codex],
     now: options.now ?? (() => new Date("2026-08-17T00:00:00.000Z")),
-    createId: createSequentialIdFactory(),
-    requestSchedulerWake: (reason) => options.schedulerWakeRequests?.push(reason),
-  });
+    requestSchedulerWake: (reason: SchedulerWakeReason) => options.schedulerWakeRequests?.push(reason),
+  };
+  const server = createApiServer(options.useDefaultCreateId
+    ? serverOptions
+    : { ...serverOptions, createId: createSequentialIdFactory() });
 
   await new Promise<void>((resolve) => server.httpServer.listen(0, resolve));
   const address = server.httpServer.address();

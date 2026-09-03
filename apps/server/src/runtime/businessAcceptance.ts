@@ -8,6 +8,7 @@ import type {
 } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { propagateDependencyCascade, type DependencyCascadeResult } from "./dependencyCascade";
+import { createDefaultId } from "./ids";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 
 export type BusinessAcceptanceResult = {
@@ -47,7 +48,7 @@ export function acceptTaskBusinessArtifact(input: {
   }
 
   const event: TaskEvent = {
-    id: input.createId?.("task_event") ?? `task_event_${Date.now()}`,
+    id: input.createId?.("task_event") ?? createDefaultId("task_event"),
     companyId: input.task.companyId,
     taskId: input.task.id,
     type: input.eventType,

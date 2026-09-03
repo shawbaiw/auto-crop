@@ -32,6 +32,7 @@ import { generateCompanyBlueprint, writeCompanyBlueprintRecords } from "../runti
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
 import { projectCeoAttention } from "../runtime/ceoAttention";
+import { createDefaultId } from "../runtime/ids";
 import {
   ceoReturnProgressDetailText,
   ceoReturnProgressLabelText,
@@ -787,7 +788,7 @@ function reconcileStaleCompanyCreation(
     .some((event) => event.type === "company_creation_failed" && event.message === failureMessage);
   if (!alreadyRecorded) {
     repositories.appendCompanyEvent({
-      id: options?.createId?.("company_event") ?? `company_event_${Date.now()}`,
+      id: options?.createId?.("company_event") ?? createDefaultId("company_event"),
       companyId: company.id,
       type: "company_creation_failed",
       message: failureMessage,
@@ -1404,7 +1405,7 @@ function createCeoReviewDecision(input: {
   }
 
   const decision: CeoReviewDecision = {
-    id: input.createId?.("ceo_review_decision") ?? `ceo_review_decision_${Date.now()}`,
+    id: input.createId?.("ceo_review_decision") ?? createDefaultId("ceo_review_decision"),
     companyId: task.companyId,
     taskId: task.id,
     departmentId: task.departmentId,
@@ -1454,7 +1455,7 @@ function createCeoReviewDecision(input: {
   input.repositories.updateTaskStatus(task.id, "queued");
 
   const event: TaskEvent = {
-    id: input.createId?.("task_event") ?? `task_event_${Date.now()}`,
+    id: input.createId?.("task_event") ?? createDefaultId("task_event"),
     companyId: task.companyId,
     taskId: task.id,
     type: "ceo_review_decision",
@@ -1478,7 +1479,7 @@ function createCeoReviewDecision(input: {
 
   let progressEvent: TaskProgressEvent | undefined;
   progressEvent = {
-    id: input.createId?.("task_progress") ?? `task_progress_${Date.now()}`,
+    id: input.createId?.("task_progress") ?? createDefaultId("task_progress"),
     companyId: task.companyId,
     departmentId: task.departmentId,
     parentTaskId: task.parentTaskId ?? task.id,
@@ -1548,7 +1549,7 @@ function formatCeoReturnReason(reason: CeoReviewReturnReason): string {
 }
 
 function createRouteId(options: ApiServerOptions, prefix: string): string {
-  return options.createId?.(prefix) ?? `${prefix}_${Date.now()}`;
+  return options.createId?.(prefix) ?? createDefaultId(prefix);
 }
 
 function summarizeCompany(company: Company) {
@@ -1993,5 +1994,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function defaultCreateId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  return createDefaultId(prefix);
 }
