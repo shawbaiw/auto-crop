@@ -1482,6 +1482,12 @@ describe("API routes", () => {
     expect(completion?.acceptanceProvenance).toBe("founder_decision");
     expect(completion?.nextStepItems.some((item) => item.type === "founder_decision")).toBe(false);
 
+    expect(
+      seed.fixture.repositories
+        .listTaskEventsForCompany(seed.companyId)
+        .some((event) => event.type === "founder_decision" && event.taskId === seed.sourceTask.id),
+    ).toBe(true);
+
     await seed.fixture.close();
   });
 

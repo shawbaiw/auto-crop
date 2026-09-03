@@ -544,6 +544,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       events.addEventListener("task_log", listener);
       events.addEventListener("task_started", listener);
       events.addEventListener("task_review", listener);
+      events.addEventListener("automatic_acceptance", listener);
+      events.addEventListener("ceo_review_decision", listener);
+      events.addEventListener("founder_decision", listener);
       events.addEventListener("task_failed", listener);
       events.addEventListener("task_blocked", listener);
       events.addEventListener("task_warning", listener);

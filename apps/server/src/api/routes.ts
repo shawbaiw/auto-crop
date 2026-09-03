@@ -1831,7 +1831,7 @@ function pickFounderDecisionOption(context: FounderDecisionContext, chosenOption
     task,
     artifact: acceptedArtifact,
     acceptanceProvenance: "founder_decision",
-    eventType: "ceo_review_decision",
+    eventType: "founder_decision",
     eventMessage: `Founder decision accepted task: ${task.title}.`,
     keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
     dependencyCascade: { maxDepth: 2 },

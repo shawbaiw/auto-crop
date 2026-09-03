@@ -46,6 +46,7 @@ export const taskEventTypeSchema = z.enum([
   "task_review",
   "automatic_acceptance",
   "ceo_review_decision",
+  "founder_decision",
   "proof_recovered",
   "task_failed",
   "task_blocked",

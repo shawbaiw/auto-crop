@@ -9,11 +9,13 @@ import {
   type CompanyEventSummary,
   type CompanyListItem,
   type CreateCompanyResponse,
+  type FounderDecisionSummary,
   type HumanActionSummary,
   type ProofSummary,
   type ReplanProposalSummary,
   type ReviewSummary,
   type ServerEvent,
+  type TaskCompletionEventSummary,
   type TaskProgressEventSummary,
   type TaskSummary,
   type TaskUpdateBatchSummary,
@@ -62,6 +64,8 @@ export default function App({ apiClient }: AppProps) {
   const [events, setEvents] = useState<ServerEvent[]>([]);
   const [creationEvents, setCreationEvents] = useState<CompanyEventSummary[]>([]);
   const [taskProgressEvents, setTaskProgressEvents] = useState<TaskProgressEventSummary[]>([]);
+  const [taskCompletionEvents, setTaskCompletionEvents] = useState<TaskCompletionEventSummary[]>([]);
+  const [founderDecisions, setFounderDecisions] = useState<FounderDecisionSummary[]>([]);
   const [ceoIntakes, setCeoIntakes] = useState<CeoIntakeSummary[]>([]);
   const [proof, setProof] = useState<ProofSummary[]>([]);
   const [businessArtifacts, setBusinessArtifacts] = useState<BusinessArtifactSummary[]>([]);
@@ -153,6 +157,8 @@ export default function App({ apiClient }: AppProps) {
     setEvents(response.activity ?? []);
     setCreationEvents(response.creationEvents ?? []);
     setTaskProgressEvents(response.taskProgressEvents ?? []);
+    setTaskCompletionEvents(response.taskCompletionEvents ?? []);
+    setFounderDecisions(response.founderDecisions ?? []);
     setCeoIntakes(response.ceoIntakes ?? []);
     setReplanProposals(response.replanProposals ?? []);
     setHumanActions(response.humanActions ?? []);
@@ -318,6 +324,8 @@ export default function App({ apiClient }: AppProps) {
     setEvents([]);
     setCreationEvents([]);
     setTaskProgressEvents([]);
+    setTaskCompletionEvents([]);
+    setFounderDecisions([]);
     setCeoIntakes([]);
     setDashboardFocusTarget(null);
     try {
@@ -574,6 +582,25 @@ export default function App({ apiClient }: AppProps) {
     return response;
   }
 
+  async function handleResolveFounderDecision(input: Parameters<ApiClient["resolveFounderDecision"]>[0]) {
+    const response = await client.resolveFounderDecision(input);
+    setFounderDecisions((current) =>
+      current.map((decision) => (decision.id === response.founderDecision.id ? response.founderDecision : decision)),
+    );
+    setBlueprint((current) => updateBlueprintTask(current, response.task));
+    if (response.event) {
+      setEvents((current) => [...current.slice(-49), response.event!]);
+    }
+    if (response.progressEvent) {
+      setTaskProgressEvents((current) => [...current, response.progressEvent!]);
+    }
+    if (response.businessArtifacts) {
+      setBusinessArtifacts((current) => upsertBusinessArtifacts(current, response.businessArtifacts ?? []));
+    }
+    applyTaskUpdateBatchResponse(response.dependencyCascade, "Dependency cascade warning");
+    return response;
+  }
+
   function applyTaskUpdateBatchResponse(batch: TaskUpdateBatchSummary | undefined, warningLabel: string) {
     if (!batch) {
       return;
@@ -606,6 +633,8 @@ export default function App({ apiClient }: AppProps) {
     setReviews([]);
     setEvents([]);
     setTaskProgressEvents([]);
+    setTaskCompletionEvents([]);
+    setFounderDecisions([]);
     setCeoIntakes([]);
     setReplanProposals([]);
     setHumanActions([]);
@@ -763,11 +792,15 @@ export default function App({ apiClient }: AppProps) {
         onRecoverTask={handleRecoverTask}
         onCreateCeoIntake={handleCreateCeoIntake}
         onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
+        onResolveFounderDecision={handleResolveFounderDecision}
         onConfirmHumanAction={handleConfirmHumanAction}
         proof={proof}
         businessArtifacts={businessArtifacts}
         ceoAttentionRollups={ceoAttentionRollups}
+        founderDecisions={founderDecisions}
         humanActions={humanActions}
+        keyResults={blueprint.keyResults ?? []}
+        taskCompletionEvents={taskCompletionEvents}
         visionGaps={visionGaps}
         waitStates={waitStates}
         selectedCeoAgentId={selectedAgentId}

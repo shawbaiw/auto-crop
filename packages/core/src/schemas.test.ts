@@ -215,6 +215,8 @@ describe("runtime status schemas", () => {
 
   it("accepts coordination task events", () => {
     expect(taskEventTypeSchema.safeParse("automatic_acceptance").success).toBe(true);
+    expect(taskEventTypeSchema.safeParse("ceo_review_decision").success).toBe(true);
+    expect(taskEventTypeSchema.safeParse("founder_decision").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("dependency_waiting").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("dependency_ready").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("task_retrying").success).toBe(true);

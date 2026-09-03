@@ -8,9 +8,11 @@ import type {
   ApiClient,
   BusinessArtifactSummary,
   CeoAttentionRollupSummary,
+  FounderDecisionSummary,
   HumanActionSummary,
   ReplanProposalSummary,
   ServerEvent,
+  TaskCompletionEventSummary,
   VisionGapSummary,
   WaitStateSummary,
 } from "./api/client";
@@ -2369,6 +2371,127 @@ describe("Dashboard App", () => {
       restoreStorage();
     }
   });
+
+  it("leads CEO Office with an Outcomes view grouped by objective and pins Founder Decisions", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createOutcomesCompanyResponse());
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    const outcomes = within(ceoReport).getByRole("region", { name: "Outcomes" });
+    const overview = within(ceoReport).getByRole("region", { name: "Executive Overview" });
+    expect(Boolean(outcomes.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+
+    const objectiveGroup = within(outcomes).getByRole("region", { name: "Validate first wedge" });
+    expect(objectiveGroup).toHaveTextContent("Two SEO keyword clusters are viable");
+    expect(objectiveGroup).toHaveTextContent("Unblocks downstream work (1)");
+
+    const pinned = within(outcomes).getByRole("region", { name: "Decisions waiting on you" });
+    expect(pinned).toHaveTextContent("Find SEO keyword opportunity");
+    expect(pinned).toHaveTextContent("Target market");
+    expect(pinned).toHaveTextContent("Research surfaced two viable segments");
+    expect(pinned).toHaveTextContent("SMB marketing teams");
+    expect(pinned).toHaveTextContent("Enterprise RevOps");
+    expect(within(pinned).getByText("Recommended")).toBeInTheDocument();
+  });
+
+  it("resolves a Founder Decision by picking an option, which accepts the deliverable", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createOutcomesCompanyResponse());
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const outcomes = screen.getByRole("region", { name: "Outcomes" });
+    await user.click(within(outcomes).getByRole("button", { name: "Pick this option: SMB marketing teams" }));
+
+    expect(api.resolveFounderDecision).toHaveBeenCalledWith({
+      founderDecisionId: "task_completion_event_1_founder_decision_1",
+      chosenOption: "SMB marketing teams",
+    });
+    expect(await screen.findByText("Option picked. The deliverable is accepted.")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Decisions waiting on you" })).not.toBeInTheDocument();
+  });
+
+  it("returns a Founder Decision to the department with a reason", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createOutcomesCompanyResponse());
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const pinned = screen.getByRole("region", { name: "Decisions waiting on you" });
+    await user.click(within(pinned).getByRole("button", { name: "Reject all and return to department" }));
+    expect(within(pinned).getByRole("alert")).toHaveTextContent("Choose why this is being returned.");
+
+    await user.selectOptions(within(pinned).getByLabelText("Return reason"), "wrong_direction");
+    await user.type(within(pinned).getByLabelText("Note to the department"), "Bring options with a clearer wedge.");
+    await user.click(within(pinned).getByRole("button", { name: "Reject all and return to department" }));
+
+    expect(api.resolveFounderDecision).toHaveBeenCalledWith({
+      founderDecisionId: "task_completion_event_1_founder_decision_1",
+      action: "return",
+      returnReason: "wrong_direction",
+      note: "Bring options with a clearer wedge.",
+    });
+    expect(await screen.findByText("Returned to the department for better options.")).toBeInTheDocument();
+  });
+
+  it("shows a waiting-on-decision state in the CEO Task Dependency Graph and keeps the queues reachable", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createOutcomesCompanyResponse());
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    const graph = within(ceoReport).getByRole("region", { name: "CEO Task Dependency Graph" });
+    expect(within(graph).getByRole("button", { name: /Prepare SEO launch Waiting on your decision/ })).toBeInTheDocument();
+
+    const outcomes = within(ceoReport).getByRole("region", { name: "Outcomes" });
+    const pending = within(ceoReport).getByRole("region", { name: "CEO Pending" });
+    expect(Boolean(outcomes.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(within(ceoReport).getByRole("region", { name: "CEO Blueprint Summary" })).toBeInTheDocument();
+  });
+
+  it("renders acceptance events as business language in the agent activity log", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    await waitFor(() => expect(api.lastEventHandler).toBeDefined());
+    act(() => {
+      api.lastEventHandler?.({
+        type: "automatic_acceptance",
+        taskId: "task_1",
+        message: "Automatic Acceptance accepted task: Create landing page.",
+      });
+      api.lastEventHandler?.({
+        type: "founder_decision",
+        taskId: "task_1",
+        message: "Founder decision accepted task: Create landing page.",
+      });
+    });
+
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+
+    expect(await screen.findByRole("heading", { name: "Agent Activity" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Accepted automatically · Create landing page — Automatic Acceptance accepted task: Create landing page."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Founder decision · Create landing page — Founder decision accepted task: Create landing page."),
+    ).toBeInTheDocument();
+  });
 });
 
 async function fillReadyToCreate(user: ReturnType<typeof userEvent.setup>) {
@@ -2837,6 +2960,97 @@ function createDependencyGraphCompanyResponse(): Awaited<ReturnType<ApiClient["c
       },
     ],
     taskProgressEvents: [],
+  };
+}
+
+function createFounderDecisionSummary(overrides: Partial<FounderDecisionSummary> = {}): FounderDecisionSummary {
+  return {
+    id: "task_completion_event_1_founder_decision_1",
+    companyId: "company_1",
+    sourceTaskCompletionEventId: "task_completion_event_1",
+    taskId: "task_1",
+    departmentId: "department_research",
+    decisionKind: "target_market",
+    options: [
+      { label: "SMB marketing teams", tradeoffs: "Fast to reach, lower contract value.", recommended: true },
+      { label: "Enterprise RevOps", tradeoffs: "Higher value, long sales cycle.", recommended: false },
+    ],
+    rationale: "Research surfaced two viable segments; the first customer profile is the founder's call.",
+    status: "pending",
+    resolvedOption: null,
+    resolvedAt: null,
+    blockedTaskIds: ["task_2"],
+    createdAt: "2026-08-17T00:02:00.000Z",
+    ...overrides,
+  };
+}
+
+function createTaskCompletionEventSummary(
+  overrides: Partial<TaskCompletionEventSummary> = {},
+): TaskCompletionEventSummary {
+  return {
+    id: "task_completion_event_1",
+    companyId: "company_1",
+    taskId: "task_1",
+    departmentId: "department_research",
+    keyResultId: "key_result_1",
+    businessArtifactId: "business_artifact_1",
+    outcome: "accepted",
+    acceptanceProvenance: "automatic_acceptance",
+    outcomeSummaryText: {
+      en: "Two SEO keyword clusters are viable; the recommended one has the least competition. This clears the discovery milestone; the gap is a validated pricing conversion path.",
+    },
+    dependencyImpact: { updatedTasks: [{ taskId: "task_2", status: "queued" }], errors: [] },
+    nextStepItems: [],
+    visionGaps: [],
+    createdAt: "2026-08-17T00:02:00.000Z",
+    ...overrides,
+  };
+}
+
+function createOutcomesCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
+  const created = createCompanyResponse();
+  return {
+    ...created,
+    departments: [
+      { id: "department_research", name: "Research", responsibility: "Find viable market proof.", leadAgentId: "codex" },
+      { id: "department_growth", name: "Growth", responsibility: "Prepare launch channels.", leadAgentId: "codex" },
+    ],
+    objectives: [
+      { id: "objective_1", title: "Validate first wedge", priority: 1 },
+      { id: "objective_2", title: "Prove a repeatable launch", priority: 2 },
+    ],
+    keyResults: [
+      {
+        id: "key_result_1",
+        objectiveId: "objective_1",
+        title: "Pick a first customer segment",
+        metricName: "segment_selected",
+        targetValue: "1",
+        currentValue: "0",
+        status: "on_track",
+      },
+    ],
+    tasks: [
+      {
+        ...created.tasks[0],
+        id: "task_1",
+        title: "Find SEO keyword opportunity",
+        status: "review",
+        departmentId: "department_research",
+      },
+      {
+        ...created.tasks[0],
+        id: "task_2",
+        title: "Prepare SEO launch",
+        status: "waiting_dependency",
+        departmentId: "department_growth",
+        dependsOnTaskIds: ["task_1"],
+      },
+    ],
+    taskProgressEvents: [],
+    taskCompletionEvents: [createTaskCompletionEventSummary()],
+    founderDecisions: [createFounderDecisionSummary()],
   };
 }
 
