@@ -733,9 +733,10 @@ function buildCompanyState(
     now: options?.now,
     createId: options?.createId,
   });
-  // One-time, idempotent migration pass (ADR 0017 §Migration): accept `review` tasks the
-  // deterministic model would have accepted. The events it writes are read back below with the
-  // rest of company state; a downstream task it unblocks wakes the scheduler.
+  // One-time migration pass (ADR 0017 §Migration): the first company-state read after this company
+  // gets the deterministic model accepts the `review` tasks it would have accepted; a per-company
+  // marker makes every later read a no-op. Its events are read back below with the rest of company
+  // state; a downstream task it unblocks wakes the scheduler.
   reconcileReviewTasksForAutomaticAcceptance({
     repositories,
     companyId: currentCompany.id,

@@ -67,6 +67,61 @@ describe("reconcileReviewTasksForAutomaticAcceptance", () => {
     expect(repositories.listTaskEventsForCompany("company_1")).toEqual(eventsAfterFirst);
   });
 
+  it("runs once per company: a qualifying review task that appears after the first pass is left alone", () => {
+    const { repositories } = createFixture([createTaskRecord("task_1", "review")]);
+    repositories.createBusinessArtifact(
+      createArtifactRecord("business_artifact_1", "task_1", { summary: "Prototype implementation complete." }),
+    );
+    reconcileReviewTasksForAutomaticAcceptance({
+      repositories,
+      companyId: "company_1",
+      now: NOW,
+      createId: createSequentialIdFactory(),
+    });
+    expect(repositories.hasReviewReconciliationRun("company_1")).toBe(true);
+
+    // A brand-new deliverable lands in review after the migration pass already ran.
+    repositories.createTask(createTaskRecord("task_2", "review"));
+    repositories.appendProof(createProofRecord("task_2"));
+    repositories.createBusinessArtifact(
+      createArtifactRecord("business_artifact_2", "task_2", { summary: "Second prototype complete." }),
+    );
+
+    const second = reconcileReviewTasksForAutomaticAcceptance({
+      repositories,
+      companyId: "company_1",
+      now: NOW,
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(second.acceptedTaskIds).toEqual([]);
+    expect(repositories.getTask("task_2")?.status).toBe("review");
+  });
+
+  it("skips a review task with no current reviewable artifact and still marks the company done", () => {
+    const { repositories } = createFixture([
+      createTaskRecord("task_1", "review"),
+      createTaskRecord("task_2", "review"),
+    ]);
+    // task_1 has no Business Artifact at all; task_2 has one that is already superseded.
+    repositories.createBusinessArtifact(
+      createArtifactRecord("business_artifact_2", "task_2", { summary: "done" }, { isCurrent: false }),
+    );
+
+    const result = reconcileReviewTasksForAutomaticAcceptance({
+      repositories,
+      companyId: "company_1",
+      now: NOW,
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.acceptedTaskIds).toEqual([]);
+    expect(repositories.getTask("task_1")?.status).toBe("review");
+    expect(repositories.getTask("task_2")?.status).toBe("review");
+    expect(repositories.listTaskCompletionEventsForCompany("company_1")).toEqual([]);
+    expect(repositories.hasReviewReconciliationRun("company_1")).toBe(true);
+  });
+
   it("leaves a risk-pattern-caught review task in place", () => {
     const { repositories } = createFixture([
       { ...createTaskRecord("task_1", "review"), description: "Deploy the service to production once signed off." },

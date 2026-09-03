@@ -940,6 +940,23 @@ export function createRepositories(database: DatabaseClient) {
         .run(taskAttemptsResetKey(taskId), at);
     },
 
+    hasReviewReconciliationRun(companyId: string): boolean {
+      const row = database
+        .prepare("SELECT value FROM runtime_state WHERE key = ?")
+        .get(reviewReconciliationKey(companyId)) as { value: string } | undefined;
+      return row !== undefined;
+    },
+
+    markReviewReconciliationRun(companyId: string, at: string): void {
+      database
+        .prepare(
+          `INSERT INTO runtime_state (key, value)
+           VALUES (?, ?)
+           ON CONFLICT(key) DO NOTHING`,
+        )
+        .run(reviewReconciliationKey(companyId), at);
+    },
+
     listRunningAgentRuns(companyId: string): AgentRun[] {
       const rows = database
         .prepare(
@@ -1567,6 +1584,11 @@ function mapTaskDependency(row: TaskDependencyRow): TaskDependency {
 
 function taskAttemptsResetKey(taskId: string): string {
   return `task_attempts_reset:${taskId}`;
+}
+
+function reviewReconciliationKey(companyId: string): string {
+  // Bump the version suffix to force a re-run when the deterministic acceptance conditions change.
+  return `review_reconciliation_v1:${companyId}`;
 }
 
 function stringifyLocalizedText(text: LocalizedText | null | undefined): string | null {

@@ -95,9 +95,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
       now,
       createId,
     });
-    // One-time, idempotent migration pass (ADR 0017 §Migration): accept `review` tasks the
-    // deterministic model would have accepted. A no-op once every such task is `complete`; any
-    // newly-queued downstream is picked up by `fetchQueuedTasks` in this same tick.
+    // One-time migration pass (ADR 0017 §Migration): on the first tick after this company gets the
+    // deterministic model, accept the `review` tasks it would have accepted. A per-company marker
+    // makes every later call a no-op; any newly-queued downstream is picked up by
+    // `fetchQueuedTasks` in this same tick.
     const reconciledReview = reconcileReviewTasksForAutomaticAcceptance({
       repositories: input.repositories,
       companyId: company.id,

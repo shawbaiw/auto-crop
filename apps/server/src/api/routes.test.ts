@@ -976,28 +976,54 @@ describe("API routes", () => {
     await fixture.close();
   });
 
-  it("reconciles a pre-existing review task into a company-state acceptance (ADR 0017 migration)", async () => {
+  it("reconciles a pre-existing review task on the first company-state read (ADR 0017 migration)", async () => {
+    // A company that predates the deterministic model: seeded straight into the DB, so it carries
+    // no `review_reconciliation_v1` marker the way an API-created company does.
     const fixture = await startFixtureServer();
-    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
-      companyName: "Pricing Page Studio",
+    fixture.repositories.createCompany({
+      id: "company_1",
+      name: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       selectedCeoAgentId: "codex",
-      permissionMode: "balanced",
-      assets: [],
+      playbookId: "ai-saas",
+      status: "active",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
     });
-    const task = fixture.repositories.fetchQueuedTasks(1)[0];
-    expect(task).toBeDefined();
-    fixture.repositories.updateTaskStatus(task!.id, "review");
+    fixture.repositories.createDepartment({
+      id: "department_1",
+      companyId: "company_1",
+      name: "Engineering",
+      responsibility: "Build and validate the product.",
+      leadAgentId: "codex",
+      memoryPath: ".auto-crop/companies/company_1/departments/engineering/Memory.md",
+    });
+    const strandedTask: Task = {
+      id: "task_1",
+      companyId: "company_1",
+      departmentId: "department_1",
+      keyResultId: null,
+      position: 0,
+      title: "Draft the MVP brief",
+      description: "Produce a concise MVP brief for the team.",
+      assigneeAgentId: "codex",
+      requiredCapabilities: ["research"],
+      proofSchemaId: "test-output",
+      workspacePath: null,
+      status: "review",
+      riskLevel: "medium",
+    };
+    fixture.repositories.createTask(strandedTask);
     fixture.repositories.appendProof({
       id: "proof_1",
-      taskId: task!.id,
+      taskId: "task_1",
       type: "file",
       uri: "proof.md",
       summary: "Proof exists.",
       verifiedAt: null,
     } satisfies Proof);
     fixture.repositories.createBusinessArtifact({
-      ...createBusinessArtifactRecord("business_artifact_1", task!.id, "proof_1"),
+      ...createBusinessArtifactRecord("business_artifact_1", "task_1", "proof_1"),
       payload: { result: "The prototype implementation is complete and passes its checks." },
     });
 
@@ -1007,19 +1033,19 @@ describe("API routes", () => {
       taskCompletionEvents: Array<{ taskId: string; outcome: string; acceptanceProvenance: string | null; outcomeSummaryText?: unknown }>;
     };
 
-    const state = await getJson<StateShape>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
-    expect(state.tasks).toContainEqual(expect.objectContaining({ id: task!.id, status: "complete" }));
+    const state = await getJson<StateShape>(`${fixture.baseUrl}/api/companies/company_1/state`);
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: "task_1", status: "complete" }));
     expect(state.businessArtifacts).toContainEqual(
       expect.objectContaining({ id: "business_artifact_1", reviewStatus: "accepted" }),
     );
-    const completion = state.taskCompletionEvents.find((event) => event.taskId === task!.id);
+    const completion = state.taskCompletionEvents.find((event) => event.taskId === "task_1");
     expect(completion).toMatchObject({ outcome: "accepted", acceptanceProvenance: "automatic_acceptance" });
     // No Task Outcome Summary is synthesized for a reconciled acceptance.
     expect(completion?.outcomeSummaryText ?? null).toBeNull();
 
-    // Idempotent: a second read accepts nothing further and adds no completion event.
-    const again = await getJson<StateShape>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
-    expect(again.taskCompletionEvents.filter((event) => event.taskId === task!.id)).toHaveLength(1);
+    // The pass ran once: a second read adds no further completion event.
+    const again = await getJson<StateShape>(`${fixture.baseUrl}/api/companies/company_1/state`);
+    expect(again.taskCompletionEvents.filter((event) => event.taskId === "task_1")).toHaveLength(1);
 
     await fixture.close();
   });
