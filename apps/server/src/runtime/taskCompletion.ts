@@ -1,5 +1,6 @@
 import { localizedTextFromString, localizedTextSchema, nextStepItemSeveritySchema, nextStepItemTypeSchema, type BusinessArtifact, type LocalizedText, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { parseOpenDecisions, type FounderDecisionDeclaration } from "./founderDecision";
 import { createDefaultId } from "./ids";
 
 export function recordTaskCompletionEvent(input: {
@@ -10,6 +11,18 @@ export function recordTaskCompletionEvent(input: {
   businessArtifact?: BusinessArtifact | null;
   /** Overrides the summary read from the Business Artifact payload (e.g. migration reconciliation passes null). */
   outcomeSummaryText?: LocalizedText | null;
+  /**
+   * The kept `open_decisions` declarations for this task. Pass to reuse an already-parsed result;
+   * omitted, they are re-read from `businessArtifact.payload`. Each becomes a `founder_decision`
+   * Next Step Item.
+   */
+  founderDecisions?: FounderDecisionDeclaration[];
+  /**
+   * Direct downstream consumer task ids blocked while a Founder Decision on this task is unresolved.
+   * Recorded on each synthesized `founder_decision` Next Step Item so the projection can show which
+   * work is waiting on the founder.
+   */
+  founderDecisionBlockedTaskIds?: string[];
   dependencyImpact?: unknown;
   nextStepItems?: unknown[];
   visionGaps?: unknown[];
@@ -17,7 +30,13 @@ export function recordTaskCompletionEvent(input: {
   createId?: (prefix: string) => string;
 }): TaskCompletionEvent {
   const proposal = input.nextStepItems ? { items: input.nextStepItems, errors: [] } : extractNextStepItems(input.businessArtifact?.payload);
-  const proposedNextSteps = proposal.items;
+  const founderDecisionItems = buildFounderDecisionItems(
+    input.founderDecisions ?? parseOpenDecisions(input.businessArtifact?.payload).kept,
+    input.businessArtifact,
+    input.task,
+    input.founderDecisionBlockedTaskIds ?? [],
+  );
+  const proposedNextSteps = [...proposal.items, ...founderDecisionItems];
   const validatedNextSteps = validateNextStepItems(proposedNextSteps);
   const outcomeSummaryText =
     input.outcomeSummaryText !== undefined
@@ -64,6 +83,44 @@ export function extractOutcomeSummaryText(payload: unknown): LocalizedText | nul
     }
   }
   return null;
+}
+
+/**
+ * Turn each kept `open_decisions` declaration into a `founder_decision` Next Step Item on the Task
+ * Completion Event. The decision detail (`decisionKind`, ordered options with trade-offs and a
+ * recommended flag, `rationale`) and the blocked downstream task ids ride on the item's
+ * `dependencyImpact.founderDecision`, which is where the `FounderDecision` projection reads them —
+ * mirroring how `human_action` items carry their confirmation detail. Nesting them keeps the blocked
+ * ids out of the generic dependency-impact scan, so a gated decision does not by itself raise a
+ * cross-department CEO Attention rollup (that surface is wired to Founder Decisions separately).
+ */
+function buildFounderDecisionItems(
+  declarations: FounderDecisionDeclaration[],
+  businessArtifact: BusinessArtifact | null | undefined,
+  task: Task,
+  blockedTaskIds: string[],
+): NextStepItem[] {
+  if (!businessArtifact) {
+    return [];
+  }
+  return declarations.map((declaration) => ({
+    type: "founder_decision",
+    label: `Founder decision: ${declaration.decisionKind.replace(/_/g, " ")}`,
+    ownerDepartmentId: task.departmentId,
+    relatedTaskId: task.id,
+    relatedBusinessArtifactId: businessArtifact.id,
+    dependencyImpact: {
+      founderDecision: {
+        decisionKind: declaration.decisionKind,
+        options: declaration.options,
+        rationale: declaration.rationale,
+        blockedTaskIds,
+      },
+    },
+    severity: "strategic",
+    priority: null,
+    evidenceRequirements: [],
+  }));
 }
 
 function extractNextStepItems(payload: unknown): { items: unknown[]; errors: string[] } {

@@ -26,6 +26,7 @@ import {
   verifyEnvironmentBlockerClaim,
 } from "./businessArtifact";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
+import { parseOpenDecisions } from "./founderDecision";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
@@ -528,6 +529,39 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
           const automaticAcceptance = evaluateAutomaticAcceptance({ task, artifact: businessArtifact });
           if (automaticAcceptance.kind === "accept") {
+            // A deliverable that would otherwise auto-accept but declares one or more kept Founder
+            // Decisions is not accepted and is not routed to manual CEO review: the choice is the
+            // founder's to make. Record the Task Completion Event (carrying the founder_decision
+            // items and the Task Outcome Summary) and stop. Downstream dependency readiness keeps
+            // blocking on the non-accepted upstream. A risk-pattern hit takes precedence — it lands
+            // in the `requires_review` branch below before this check runs.
+            const founderDecisions = parseOpenDecisions(businessArtifact.payload).kept;
+            if (founderDecisions.length > 0) {
+              input.repositories.updateTaskStatus(task.id, "review");
+              recordTaskCompletionEvent({
+                repositories: input.repositories,
+                task,
+                businessArtifact,
+                outcome: "awaiting_founder_decision",
+                founderDecisions,
+                founderDecisionBlockedTaskIds: input.repositories
+                  .listDependencyConsumers(task.id)
+                  .map((consumer) => consumer.id),
+                now,
+                createId,
+              });
+              appendTaskProgressEvent(input, {
+                task,
+                step: "awaiting_review",
+                status: "current",
+                label: "Awaiting founder decision",
+                subjectTaskId: task.id,
+              });
+              emitParentTaskAggregationEvents(input, task);
+              result.completed.push(task.id);
+              return;
+            }
+
             const accepted = acceptTaskBusinessArtifact({
               repositories: input.repositories,
               task,
@@ -1147,6 +1181,29 @@ function buildAgentPrompt(task: Task, handoffs: TaskHandoff[]): string {
     "Add a fourth part only when you are leaving a strategic choice that is the founder's to make: list the",
     "viable options with their trade-offs and say which one you recommend.",
     "Write business judgement, not process notes; a missing `outcome_summary` fails validation.",
+    "",
+    "## Open Decisions",
+    "",
+    "If you make a choice on a strategic business decision whose first value is the founder's to set —",
+    "one of: target_market, product_direction, mvp_type, pricing_model, launch_target — do NOT let your",
+    "pick stand as direction. Declare it in a `payload.open_decisions` array so the runtime routes it to",
+    "the founder. Each entry:",
+    JSON.stringify(
+      {
+        decisionKind: "pricing_model",
+        options: [
+          { label: "Flat monthly fee", tradeoffs: "Predictable revenue; leaves heavy users underpriced." },
+          { label: "Usage-based", tradeoffs: "Scales with value delivered; harder for buyers to forecast." },
+        ],
+        recommendation: "Flat monthly fee",
+        rationale: "Early buyers want a predictable bill and the usage spread is still narrow.",
+      },
+      null,
+      2,
+    ),
+    "`decisionKind` must be one of the five kinds above (any other choice is your own call and is ignored).",
+    "Give more than one option, each with its trade-offs; name the recommended option and give your rationale.",
+    "A choice on one of these kinds is the founder's to make, not yours.",
   ];
   const proofInstructions = buildProofContractInstructions(task);
 

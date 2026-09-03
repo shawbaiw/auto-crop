@@ -129,7 +129,12 @@ export type TaskProgressStep =
   | "blocked"
   | "needs_ceo_reassignment";
 export type TaskProgressStatus = "complete" | "current" | "waiting" | "blocked";
-export type TaskCompletionOutcome = "accepted" | "blocked" | "failed_to_review" | "needs_replan";
+export type TaskCompletionOutcome =
+  | "accepted"
+  | "blocked"
+  | "failed_to_review"
+  | "needs_replan"
+  | "awaiting_founder_decision";
 export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance";
 export type NextStepItemType =
   | "automatic_downstream_task"
@@ -137,7 +142,20 @@ export type NextStepItemType =
   | "ceo_decision"
   | "wait_state"
   | "downstream_handoff"
-  | "vision_gap";
+  | "vision_gap"
+  | "founder_decision";
+/**
+ * The fixed, playbook-neutral set of business decisions whose first value is the founder's to set.
+ * A completing agent declares an open choice against one of these in `open_decisions`; the runtime
+ * turns it into a Founder Decision. A choice outside this set is the agent's own call. Extended only
+ * by code change, never by runtime configuration.
+ */
+export type StrategicDecisionKind =
+  | "target_market"
+  | "product_direction"
+  | "mvp_type"
+  | "pricing_model"
+  | "launch_target";
 export type NextStepItemSeverity = "informational" | "blocking" | "strategic";
 export type NextStepItem = {
   type: NextStepItemType;
@@ -187,6 +205,38 @@ export type HumanAction = {
   verificationErrors: string[];
   createdAt: string;
 };
+export type FounderDecisionStatus = "pending" | "resolved" | "returned";
+export type FounderDecisionOption = {
+  /** The display label the agent gave this option; also how `recommendation` and a resolved pick refer to it. */
+  label: string;
+  /** The option's trade-offs, in the agent's words. */
+  tradeoffs: string;
+  /** True for the single option the completing agent recommended. */
+  recommended: boolean;
+};
+/**
+ * A choice reserved for the human founder that a completed task's deliverable surfaces: several
+ * viable options for a Strategic Decision Kind that has no fixed value yet. Projected from a
+ * `founder_decision` Next Step Item on a Task Completion Event, mirroring the {@link HumanAction}
+ * projection. The runtime and CEO Agent must not resolve it. Resolution (pick / return) is a later
+ * concern; until then `status` is always `pending` and `resolvedOption` / `resolvedAt` are null.
+ */
+export type FounderDecision = {
+  id: string;
+  companyId: string;
+  sourceTaskCompletionEventId: string;
+  taskId: string;
+  departmentId: string;
+  decisionKind: StrategicDecisionKind;
+  options: FounderDecisionOption[];
+  rationale: string;
+  status: FounderDecisionStatus;
+  resolvedOption: string | null;
+  resolvedAt: string | null;
+  blockedTaskIds: string[];
+  createdAt: string;
+};
+
 export type HumanActionConfirmation = {
   humanActionId: string;
   companyId: string;

@@ -3,6 +3,8 @@ import type {
   CeoAttentionRollupGroup,
   CeoAttentionRollupReason,
   Company,
+  FounderDecision,
+  FounderDecisionOption,
   HumanAction,
   HumanActionConfirmation,
   KeyResult,
@@ -14,6 +16,7 @@ import type {
   VisionGap,
   WaitState,
 } from "@auto-crop/core";
+import { strategicDecisionKindSchema } from "@auto-crop/core";
 
 type AttentionCandidate = {
   event: TaskCompletionEvent;
@@ -39,7 +42,13 @@ export function projectCeoAttention(input: {
   tasks: Task[];
   taskCompletionEvents: TaskCompletionEvent[];
   taskDependencies: TaskDependency[];
-}): { visionGaps: VisionGap[]; humanActions: HumanAction[]; waitStates: WaitState[]; ceoAttentionRollups: CeoAttentionRollup[] } {
+}): {
+  visionGaps: VisionGap[];
+  humanActions: HumanAction[];
+  waitStates: WaitState[];
+  founderDecisions: FounderDecision[];
+  ceoAttentionRollups: CeoAttentionRollup[];
+} {
   const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
   const keyResultsById = new Map(input.keyResults.map((keyResult) => [keyResult.id, keyResult]));
   const downstreamTaskIdsByTaskId = mapDownstreamTaskIds(input.taskDependencies);
@@ -48,6 +57,7 @@ export function projectCeoAttention(input: {
   const confirmationsByActionId = new Map((input.humanActionConfirmations ?? []).map((confirmation) => [confirmation.humanActionId, confirmation]));
   const humanActions = input.taskCompletionEvents.flatMap((event) => collectHumanActions(event, confirmationsByActionId));
   const waitStates = input.taskCompletionEvents.flatMap((event) => collectWaitStates(event, now));
+  const founderDecisions = input.taskCompletionEvents.flatMap(collectFounderDecisions);
   const candidates = input.taskCompletionEvents.flatMap((event) =>
     createAttentionCandidates({
       company: input.company,
@@ -66,8 +76,72 @@ export function projectCeoAttention(input: {
     visionGaps,
     humanActions,
     waitStates,
+    founderDecisions,
     ceoAttentionRollups: rollUpAttentionCandidates(input.company, candidates),
   };
+}
+
+/**
+ * Project each `founder_decision` Next Step Item on a Task Completion Event into a first-class
+ * {@link FounderDecision}, mirroring {@link collectHumanActions}. Resolution (pick / return) is a
+ * later concern, so every projected decision is `pending` with no resolved option or timestamp.
+ */
+function collectFounderDecisions(event: TaskCompletionEvent): FounderDecision[] {
+  return event.nextStepItems.flatMap((item, index) => {
+    if (item.type !== "founder_decision") {
+      return [];
+    }
+
+    const bag = isRecord(item.dependencyImpact) ? item.dependencyImpact : {};
+    const detail = isRecord(bag.founderDecision) ? bag.founderDecision : {};
+    const decisionKind = strategicDecisionKindSchema.safeParse(detail.decisionKind);
+    if (!decisionKind.success) {
+      return [];
+    }
+
+    const options = parseFounderDecisionOptions(detail.options);
+    if (options.length < 2) {
+      return [];
+    }
+
+    const blockedTaskIds = extractStringArray(detail.blockedTaskIds).filter((taskId) => taskId !== event.taskId);
+    const fallbackTaskIds = item.relatedTaskId && item.relatedTaskId !== event.taskId ? [item.relatedTaskId] : [];
+
+    return [
+      {
+        id: `${event.id}_founder_decision_${index + 1}`,
+        companyId: event.companyId,
+        sourceTaskCompletionEventId: event.id,
+        taskId: event.taskId,
+        departmentId: item.ownerDepartmentId ?? event.departmentId,
+        decisionKind: decisionKind.data,
+        options,
+        rationale: optionalString(detail.rationale) ?? "",
+        status: "pending" as const,
+        resolvedOption: null,
+        resolvedAt: null,
+        blockedTaskIds: unique([...blockedTaskIds, ...fallbackTaskIds]),
+        createdAt: event.createdAt,
+      },
+    ];
+  });
+}
+
+function parseFounderDecisionOptions(value: unknown): FounderDecisionOption[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((option) => {
+    if (!isRecord(option)) {
+      return [];
+    }
+    const label = optionalString(option.label);
+    const tradeoffs = optionalString(option.tradeoffs ?? option.trade_offs);
+    if (!label || !tradeoffs) {
+      return [];
+    }
+    return [{ label, tradeoffs, recommended: option.recommended === true }];
+  });
 }
 
 function createAttentionCandidates(input: {
@@ -114,7 +188,9 @@ function createAttentionCandidates(input: {
   if (downstreamDepartmentIds.length > 0) {
     reasons.push("cross_department_impact");
   }
-  if (input.event.outcome !== "accepted") {
+  if (input.event.outcome !== "accepted" && input.event.outcome !== "awaiting_founder_decision") {
+    // A deliverable parked on an unresolved Founder Decision is not an exception outcome. Its CEO
+    // Attention surface is the Founder Decision itself, wired in separately.
     reasons.push("exception_outcome");
   }
 

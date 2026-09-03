@@ -285,6 +285,158 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("does not auto-accept or route to manual review a deliverable that declares a Founder Decision", async () => {
+    const producer = createTaskRecord("task_1", "queued", "medium");
+    const consumer = createTaskRecord("task_2", "blocked", "medium");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer, consumer]);
+    repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: producer.id });
+    const events: SchedulerEventRecord[] = [];
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "proof: created artifact" }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => {
+        writeBusinessArtifactWithOpenDecisions(task, [
+          {
+            decisionKind: "pricing_model",
+            options: [
+              { label: "Flat monthly fee", tradeoffs: "Predictable revenue; underprices heavy users." },
+              { label: "Usage-based", tradeoffs: "Scales with value delivered; harder for buyers to forecast." },
+            ],
+            recommendation: "Flat monthly fee",
+            rationale: "Early buyers want a predictable bill and the usage spread is still narrow.",
+          },
+        ]);
+        return [createProofForTask(task)];
+      },
+      emit: (event) => events.push(event),
+    });
+
+    // Not auto-accepted, not routed to manual review.
+    expect(repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
+      reviewStatus: "unreviewed",
+      validationStatus: "valid",
+    });
+    const eventKeys = events.map((event) => `${event.type}:${event.taskId}`);
+    expect(eventKeys).not.toContain("automatic_acceptance:task_1");
+    expect(eventKeys).not.toContain("task_review:task_1");
+
+    // Downstream stays blocked on the non-accepted upstream.
+    expect(repositories.getTask("task_2")?.status).toBe("blocked");
+
+    // The Task Completion Event carries the founder_decision Next Step Item and the Task Outcome Summary.
+    const [completion] = repositories.listTaskCompletionEventsForCompany("company_1");
+    expect(completion?.taskId).toBe("task_1");
+    expect(completion?.outcome).toBe("awaiting_founder_decision");
+    expect(completion?.outcomeSummaryText).toEqual(
+      expect.objectContaining({ en: expect.stringContaining("pricing") }),
+    );
+    const founderItem = completion?.nextStepItems.find((item) => item.type === "founder_decision");
+    expect(founderItem).toBeDefined();
+    const detail = (founderItem?.dependencyImpact as { founderDecision: { decisionKind: string; blockedTaskIds: string[] } })
+      .founderDecision;
+    expect(detail.decisionKind).toBe("pricing_model");
+    expect(detail.blockedTaskIds).toEqual(["task_2"]);
+
+    client.close();
+  });
+
+  it("routes a founder-decision deliverable to manual review when its text also trips a risk pattern", async () => {
+    const producer = {
+      ...createTaskRecord("task_1", "queued", "medium"),
+      title: "Prepare public launch pricing",
+      description: "Draft the plan to launch the pricing page publicly.",
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer]);
+    const events: SchedulerEventRecord[] = [];
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "proof: created artifact" }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => {
+        writeBusinessArtifactWithOpenDecisions(task, [
+          {
+            decisionKind: "pricing_model",
+            options: [
+              { label: "Flat monthly fee", tradeoffs: "Predictable revenue; underprices heavy users." },
+              { label: "Usage-based", tradeoffs: "Scales with value delivered; harder for buyers to forecast." },
+            ],
+            recommendation: "Flat monthly fee",
+            rationale: "Early buyers want a predictable bill.",
+          },
+        ]);
+        return [createProofForTask(task)];
+      },
+      emit: (event) => events.push(event),
+    });
+
+    // The risk-pattern hit wins: it goes to manual review, not the founder-decision surface.
+    expect(repositories.getTask("task_1")?.status).toBe("review");
+    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("task_review:task_1");
+    const completions = repositories.listTaskCompletionEventsForCompany("company_1");
+    expect(completions.some((event) => event.outcome === "awaiting_founder_decision")).toBe(false);
+
+    client.close();
+  });
+
+  it("auto-accepts a deliverable whose only open_decisions entry has an unknown decisionKind", async () => {
+    const producer = createTaskRecord("task_1", "queued", "medium");
+    const { projectRoot, repositories, client } = createSchedulerFixture([producer]);
+    const events: SchedulerEventRecord[] = [];
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "proof: created artifact" }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => {
+        writeBusinessArtifactWithOpenDecisions(task, [
+          {
+            decisionKind: "brand_name",
+            options: [
+              { label: "ResumeSpark", tradeoffs: "Memorable; trademark risk." },
+              { label: "BulletCraft", tradeoffs: "Descriptive; less distinctive." },
+            ],
+            recommendation: "ResumeSpark",
+            rationale: "Punchier for early word of mouth.",
+          },
+        ]);
+        return [createProofForTask(task)];
+      },
+      emit: (event) => events.push(event),
+    });
+
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    expect(repositories.getCurrentBusinessArtifactForTask("task_1")?.reviewStatus).toBe("accepted");
+    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("automatic_acceptance:task_1");
+    const [completion] = repositories.listTaskCompletionEventsForCompany("company_1");
+    expect(completion?.nextStepItems.some((item) => item.type === "founder_decision")).toBe(false);
+
+    client.close();
+  });
+
   it("blocks completed tasks that have proof but no reviewable business artifact", async () => {
     const producer = createTaskRecord("task_1", "queued", "low");
     const consumer = createTaskRecord("task_2", "queued", "low");
@@ -2127,6 +2279,31 @@ function writeValidBusinessArtifact(task: Task): void {
         evidence: ["mock proof"],
         risks: [],
         next_steps: ["CEO review"],
+      },
+      lineage: { task_id: task.id },
+    }),
+    "utf8",
+  );
+}
+
+function writeBusinessArtifactWithOpenDecisions(task: Task, openDecisions: unknown[]): void {
+  if (!task.workspacePath) {
+    throw new Error(`Task ${task.id} has no workspace path`);
+  }
+
+  mkdirSync(join(task.workspacePath, ".auto-crop"), { recursive: true });
+  writeFileSync(
+    join(task.workspacePath, ".auto-crop", "business-artifact.json"),
+    JSON.stringify({
+      artifact_kind: "deliverable",
+      artifact_role: "spec",
+      artifact_subtype: "mvp_brief",
+      task_type: "product_planning",
+      payload: {
+        summary: "Mock brief completed.",
+        outcome_summary:
+          "The brief settles on a pricing wedge and leaves the pricing model open. It gives Growth a number to test; the remaining gap is willingness-to-pay evidence.",
+        open_decisions: openDecisions,
       },
       lineage: { task_id: task.id },
     }),

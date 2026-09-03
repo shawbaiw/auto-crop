@@ -729,6 +729,7 @@ function buildCompanyState(
     visionGaps: ceoAttention.visionGaps,
     humanActions: ceoAttention.humanActions,
     waitStates: ceoAttention.waitStates,
+    founderDecisions: ceoAttention.founderDecisions,
     ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
     founderReport: summarizeFounderReport(
       currentCompany,

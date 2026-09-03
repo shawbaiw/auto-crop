@@ -75,7 +75,13 @@ export const taskProgressStepSchema = z.enum([
 ]);
 
 export const taskProgressStatusSchema = z.enum(["complete", "current", "waiting", "blocked"]);
-export const taskCompletionOutcomeSchema = z.enum(["accepted", "blocked", "failed_to_review", "needs_replan"]);
+export const taskCompletionOutcomeSchema = z.enum([
+  "accepted",
+  "blocked",
+  "failed_to_review",
+  "needs_replan",
+  "awaiting_founder_decision",
+]);
 export const nextStepItemTypeSchema = z.enum([
   "automatic_downstream_task",
   "human_action",
@@ -83,8 +89,17 @@ export const nextStepItemTypeSchema = z.enum([
   "wait_state",
   "downstream_handoff",
   "vision_gap",
+  "founder_decision",
 ]);
 export const nextStepItemSeveritySchema = z.enum(["informational", "blocking", "strategic"]);
+
+export const strategicDecisionKindSchema = z.enum([
+  "target_market",
+  "product_direction",
+  "mvp_type",
+  "pricing_model",
+  "launch_target",
+]);
 
 export const ceoIntakeStatusSchema = z.enum([
   "received",

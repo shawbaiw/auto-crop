@@ -1241,6 +1241,96 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("serializes projected Founder Decisions with their options, recommendation, status, and blocked task ids", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const departments = fixture.repositories.listDepartments(created.company.id);
+    const ownerDepartment = departments[0]!;
+    const sourceTask = createIsolatedTask(templateTask, "founder_decision_source", "Draft the MVP brief", "review", 260);
+    const downstreamTask = createIsolatedTask(templateTask, "founder_decision_downstream", "Build the pricing page", "blocked", 261);
+    sourceTask.departmentId = ownerDepartment.id;
+    fixture.repositories.createTask(sourceTask);
+    fixture.repositories.createTask(downstreamTask);
+    fixture.repositories.createTaskDependency({ taskId: downstreamTask.id, dependsOnTaskId: sourceTask.id });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_founder_decision",
+      companyId: created.company.id,
+      taskId: sourceTask.id,
+      departmentId: sourceTask.departmentId,
+      keyResultId: sourceTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      outcomeSummaryText: { en: "The brief leaves the pricing model open." },
+      dependencyImpact: {},
+      nextStepItems: [
+        {
+          type: "founder_decision",
+          label: "Founder decision: pricing model",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: sourceTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: {
+            founderDecision: {
+              decisionKind: "pricing_model",
+              options: [
+                { label: "Flat monthly fee", tradeoffs: "Predictable revenue; underprices heavy users.", recommended: true },
+                { label: "Usage-based", tradeoffs: "Scales with value; harder to forecast.", recommended: false },
+              ],
+              rationale: "Early buyers want a predictable bill.",
+              blockedTaskIds: [downstreamTask.id],
+            },
+          },
+          severity: "strategic",
+          priority: null,
+          evidenceRequirements: [],
+        },
+      ],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    const state = await getJson<{
+      founderDecisions: Array<{
+        id: string;
+        taskId: string;
+        departmentId: string;
+        decisionKind: string;
+        options: Array<{ label: string; tradeoffs: string; recommended: boolean }>;
+        rationale: string;
+        status: string;
+        resolvedOption: string | null;
+        resolvedAt: string | null;
+        blockedTaskIds: string[];
+      }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(state.founderDecisions).toEqual([
+      expect.objectContaining({
+        taskId: sourceTask.id,
+        departmentId: ownerDepartment.id,
+        decisionKind: "pricing_model",
+        options: [
+          { label: "Flat monthly fee", tradeoffs: "Predictable revenue; underprices heavy users.", recommended: true },
+          { label: "Usage-based", tradeoffs: "Scales with value; harder to forecast.", recommended: false },
+        ],
+        rationale: "Early buyers want a predictable bill.",
+        status: "pending",
+        resolvedOption: null,
+        resolvedAt: null,
+        blockedTaskIds: [downstreamTask.id],
+      }),
+    ]);
+
+    await fixture.close();
+  });
+
   it("routes Wait States into timed check-ins without treating them as failures", async () => {
     const schedulerWakeRequests: SchedulerWakeReason[] = [];
     let now = new Date("2026-08-17T00:00:00.000Z");

@@ -606,6 +606,94 @@ describe("captureBusinessArtifact", () => {
 
     expect(artifact.validationStatus).toBe("valid");
   });
+
+  it("drops an open_decisions entry on an unknown decisionKind and keeps the deliverable valid", () => {
+    const artifact = captureDeliverableWithPayload({
+      outcome_summary:
+        "The brief names a resume bullet generator as the wedge. It sets Product's direction; the remaining gap is live-volume validation.",
+      open_decisions: [
+        {
+          decisionKind: "brand_name",
+          options: [
+            { label: "ResumeSpark", tradeoffs: "Memorable; trademark risk." },
+            { label: "BulletCraft", tradeoffs: "Descriptive; less distinctive." },
+          ],
+          recommendation: "ResumeSpark",
+          rationale: "Punchier for early word of mouth.",
+        },
+      ],
+    });
+
+    expect(artifact.validationStatus).toBe("valid");
+    expect(artifact.validationErrors).toEqual([]);
+  });
+
+  it("fails structural validation for a malformed open_decisions entry on a known decisionKind", () => {
+    const artifact = captureDeliverableWithPayload({
+      outcome_summary:
+        "The brief settles pricing. It gives Growth a number to test; the remaining gap is willingness-to-pay evidence.",
+      open_decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [{ label: "Flat monthly fee", tradeoffs: "Predictable; underprices heavy users." }],
+          recommendation: "Flat monthly fee",
+          rationale: "Buyers want a predictable bill.",
+        },
+      ],
+    });
+
+    expect(artifact.validationStatus).toBe("invalid_schema");
+    expect(artifact.validationErrors).toContain(
+      "payload.open_decisions[0].options: Expected more than one option, each with a label and its trade-offs.",
+    );
+  });
+
+  it("keeps a well-formed open_decisions entry on a known decisionKind", () => {
+    const artifact = captureDeliverableWithPayload({
+      outcome_summary:
+        "The brief settles pricing. It gives Growth a number to test; the remaining gap is willingness-to-pay evidence.",
+      open_decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat monthly fee", tradeoffs: "Predictable; underprices heavy users." },
+            { label: "Usage-based", tradeoffs: "Scales with value; harder to forecast." },
+          ],
+          recommendation: "Flat monthly fee",
+          rationale: "Buyers want a predictable bill and usage spread is still narrow.",
+        },
+      ],
+    });
+
+    expect(artifact.validationStatus).toBe("valid");
+    expect(artifact.validationErrors).toEqual([]);
+  });
+
+  function captureDeliverableWithPayload(payload: Record<string, unknown>) {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "deliverable",
+        artifact_role: "spec",
+        artifact_subtype: "mvp_brief",
+        task_type: "product_planning",
+        payload,
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    return captureBusinessArtifact({
+      task: { ...createTaskRecord(), proofSchemaId: "generic-proof" },
+      proofs: [createProofRecord()],
+      workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+  }
 });
 
 function createTaskRecord(): Task {

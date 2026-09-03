@@ -1,4 +1,4 @@
-import type { CeoAttentionRollup, HumanAction, NextStepItem, VisionGap, WaitState } from "@auto-crop/core";
+import type { CeoAttentionRollup, FounderDecision, HumanAction, NextStepItem, VisionGap, WaitState } from "@auto-crop/core";
 
 export type AgentSummary = {
   id: string;
@@ -138,7 +138,7 @@ export type TaskCompletionEventSummary = {
   departmentId: string;
   keyResultId: string | null;
   businessArtifactId: string | null;
-  outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan";
+  outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan" | "awaiting_founder_decision";
   acceptanceProvenance: "manual_ceo_review" | "automatic_acceptance" | null;
   outcomeSummaryText?: LocalizedText | null;
   dependencyImpact: unknown;
@@ -156,6 +156,7 @@ export type CompanyEventSummary = {
 export type VisionGapSummary = VisionGap;
 export type HumanActionSummary = HumanAction;
 export type WaitStateSummary = WaitState;
+export type FounderDecisionSummary = FounderDecision;
 export type CeoAttentionRollupSummary = CeoAttentionRollup;
 
 export type ProofSummary = {
@@ -381,6 +382,7 @@ export type CreateCompanyResponse = {
   visionGaps?: VisionGapSummary[];
   humanActions?: HumanActionSummary[];
   waitStates?: WaitStateSummary[];
+  founderDecisions?: FounderDecisionSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];
@@ -415,6 +417,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   visionGaps?: VisionGapSummary[];
   humanActions?: HumanActionSummary[];
   waitStates?: WaitStateSummary[];
+  founderDecisions?: FounderDecisionSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoIntakes?: CeoIntakeSummary[];
   ceoReviewDecisions?: CeoReviewDecisionSummary[];

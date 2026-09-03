@@ -9,6 +9,7 @@ import {
   type Proof,
   type Task,
 } from "@auto-crop/core";
+import { parseOpenDecisions } from "./founderDecision";
 
 const BUSINESS_ARTIFACT_PATH = join(".auto-crop", "business-artifact.json");
 const BUSINESS_ARTIFACT_KINDS = new Set<BusinessArtifactKind>([
@@ -257,6 +258,9 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
     if (outcomeSummaryError) {
       errors.push(outcomeSummaryError);
     }
+    // An `open_decisions` entry on an unknown decisionKind is dropped silently; a malformed entry on a
+    // known decisionKind is a structural failure like any other required-field failure.
+    errors.push(...parseOpenDecisions(json.payload).errors);
   }
   if (sourceProofId !== undefined && typeof sourceProofId !== "string") {
     errors.push("sourceProofId/source_proof_id: Expected a string.");

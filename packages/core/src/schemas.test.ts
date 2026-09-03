@@ -4,7 +4,10 @@ import {
   ceoResponseSchema,
   companyBlueprintSchema,
   localizedTextSchema,
+  nextStepItemTypeSchema,
   parseCeoResponse,
+  strategicDecisionKindSchema,
+  taskCompletionOutcomeSchema,
   taskEventTypeSchema,
   taskSchema,
   taskStatusSchema,
@@ -216,6 +219,21 @@ describe("runtime status schemas", () => {
     expect(taskEventTypeSchema.safeParse("task_retrying").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("task_needs_replan").success).toBe(true);
     expect(taskEventTypeSchema.safeParse("deliverable_missing").success).toBe(true);
+  });
+
+  it("accepts the founder_decision next step item type", () => {
+    expect(nextStepItemTypeSchema.safeParse("founder_decision").success).toBe(true);
+  });
+
+  it("accepts the awaiting_founder_decision task completion outcome", () => {
+    expect(taskCompletionOutcomeSchema.safeParse("awaiting_founder_decision").success).toBe(true);
+  });
+
+  it("accepts every Strategic Decision Kind and rejects choices outside the fixed set", () => {
+    for (const kind of ["target_market", "product_direction", "mvp_type", "pricing_model", "launch_target"]) {
+      expect(strategicDecisionKindSchema.safeParse(kind).success).toBe(true);
+    }
+    expect(strategicDecisionKindSchema.safeParse("brand_name").success).toBe(false);
   });
 });
 
