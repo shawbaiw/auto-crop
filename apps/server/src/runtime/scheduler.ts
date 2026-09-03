@@ -18,7 +18,7 @@ import {
   taskAttemptCount,
   terminateAsRetryExhausted as terminateTaskAsRetryExhausted,
 } from "./boundedRecovery";
-import { acceptTaskBusinessArtifact } from "./businessAcceptance";
+import { acceptDeliverableAutomatically } from "./businessAcceptance";
 import {
   captureBusinessArtifact,
   isReviewableBusinessArtifact,
@@ -577,24 +577,17 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               return;
             }
 
-            const accepted = acceptTaskBusinessArtifact({
+            const accepted = acceptDeliverableAutomatically({
               repositories: input.repositories,
               task,
               artifact: businessArtifact,
-              acceptanceProvenance: "automatic_acceptance",
-              eventType: "automatic_acceptance",
               eventMessage: `Automatic Acceptance accepted task: ${task.title}.`,
-              keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
-              dependencyCascade: { maxDepth: 2 },
               requestSchedulerWake: () => undefined,
               now,
               createId,
             });
-            emitTaskEvent(input, accepted.event);
-            for (const update of accepted.dependencyCascade?.updatedTasks ?? []) {
-              if (update.event) {
-                emitTaskEvent(input, update.event);
-              }
+            for (const event of accepted.events) {
+              emitTaskEvent(input, event);
             }
             appendTaskProgressEvent(input, {
               task,

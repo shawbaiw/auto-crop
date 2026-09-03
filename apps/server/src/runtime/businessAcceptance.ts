@@ -118,3 +118,44 @@ export function acceptTaskBusinessArtifact(input: {
     },
   };
 }
+
+/**
+ * Accept a deliverable on the Automatic Acceptance path: {@link acceptTaskBusinessArtifact} with
+ * provenance and event type `automatic_acceptance`, the key result marked met, and a bounded
+ * dependency cascade. Shared by the scheduler's completion branch and the ADR 0017 migration
+ * reconciliation so the two cannot drift. Returns the acceptance result plus its acceptance event
+ * and every cascade event, flattened in order, ready to emit or collect.
+ */
+export function acceptDeliverableAutomatically(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  task: Task;
+  artifact: BusinessArtifact;
+  eventMessage: string;
+  /** `undefined` reads the Task Outcome Summary from the payload; `null` records none (reconciliation). */
+  outcomeSummaryText?: LocalizedText | null;
+  requestSchedulerWake?: () => void;
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+}): { acceptance: BusinessAcceptanceResult; events: TaskEvent[] } {
+  const acceptance = acceptTaskBusinessArtifact({
+    repositories: input.repositories,
+    task: input.task,
+    artifact: input.artifact,
+    acceptanceProvenance: "automatic_acceptance",
+    eventType: "automatic_acceptance",
+    eventMessage: input.eventMessage,
+    ...(input.outcomeSummaryText !== undefined ? { outcomeSummaryText: input.outcomeSummaryText } : {}),
+    keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
+    dependencyCascade: { maxDepth: 2 },
+    requestSchedulerWake: input.requestSchedulerWake,
+    now: input.now,
+    createId: input.createId,
+  });
+  const events: TaskEvent[] = [
+    acceptance.event,
+    ...(acceptance.dependencyCascade?.updatedTasks ?? []).flatMap((update) =>
+      update.event ? [update.event] : [],
+    ),
+  ];
+  return { acceptance, events };
+}

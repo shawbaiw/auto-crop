@@ -1,7 +1,7 @@
 import type { TaskEvent } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { evaluateAutomaticAcceptance } from "./automaticAcceptance";
-import { acceptTaskBusinessArtifact } from "./businessAcceptance";
+import { acceptDeliverableAutomatically } from "./businessAcceptance";
 import { parseOpenDecisions } from "./founderDecision";
 
 export type ReconcileReviewTasksInput = {
@@ -65,28 +65,19 @@ export function reconcileReviewTasksForAutomaticAcceptance(
       continue;
     }
 
-    const accepted = acceptTaskBusinessArtifact({
+    const accepted = acceptDeliverableAutomatically({
       repositories: input.repositories,
       task,
       artifact: artifact!,
-      acceptanceProvenance: "automatic_acceptance",
-      eventType: "automatic_acceptance",
       eventMessage: `Automatic Acceptance reconciled task: ${task.title}.`,
       outcomeSummaryText: null,
-      keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
-      dependencyCascade: { maxDepth: 2 },
       requestSchedulerWake: input.requestSchedulerWake,
       now: input.now,
       createId: input.createId,
     });
 
     acceptedTaskIds.push(task.id);
-    events.push(accepted.event);
-    for (const update of accepted.dependencyCascade?.updatedTasks ?? []) {
-      if (update.event) {
-        events.push(update.event);
-      }
-    }
+    events.push(...accepted.events);
   }
 
   input.repositories.markReviewReconciliationRun(
