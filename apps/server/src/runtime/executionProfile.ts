@@ -50,6 +50,13 @@ export function resolveRetryTimeout(
   return retryProfile ? resolveEffectiveTimeoutForProfile(retryProfile, env) : null;
 }
 
+export function resolveEffectiveTimeoutForProfileName(
+  profileName: TaskExecutionProfileName,
+  env: NodeJS.ProcessEnv = process.env,
+): EffectiveTimeoutResolution {
+  return resolveEffectiveTimeoutForProfile(profileByName(profileName), env);
+}
+
 function resolveEffectiveTimeoutForProfile(
   executionProfile: TaskExecutionProfile,
   env: NodeJS.ProcessEnv,
@@ -106,6 +113,17 @@ function profileFromCapabilities(requiredCapabilities: string[]): TaskExecutionP
   }
 
   return mediumProfile;
+}
+
+function profileByName(profileName: TaskExecutionProfileName): TaskExecutionProfile {
+  switch (profileName) {
+    case "short":
+      return shortProfile;
+    case "medium":
+      return mediumProfile;
+    case "long":
+      return longProfile;
+  }
 }
 
 function nextExecutionProfile(profileName: TaskExecutionProfileName): TaskExecutionProfile | null {

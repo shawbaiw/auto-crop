@@ -61,6 +61,7 @@ describe("createCompany", () => {
     expect(result.promptPath).toBe(join(projectRoot, ".auto-crop", "companies", "company_1", "ceo-prompt.md"));
     expect(request).toMatchObject({
       taskId: "company_1_ceo_blueprint",
+      timeoutMs: 600_000,
       workspacePath: join(projectRoot, ".auto-crop", "companies", "company_1"),
       metadata: {
         playbookId: "ai-saas",

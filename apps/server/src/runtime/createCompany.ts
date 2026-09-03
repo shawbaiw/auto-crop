@@ -16,6 +16,7 @@ import type { PolicyMode } from "../policies/policy";
 import { defaultAgentSessionManager, type AgentSessionManager } from "./agentSessions";
 import { buildCeoPrompt } from "./ceoPrompt";
 import { parseCeoOutput, type ProofSchemaNormalization } from "./ceoParser";
+import { resolveEffectiveTimeoutForProfileName } from "./executionProfile";
 import { receivedCeoTaskText } from "./localizedRuntimeText";
 import { resolveAgentSessionPolicy } from "./sessionPolicy";
 import { createCompanyWorkspace, createDepartmentWorkspace, createTaskWorkspace } from "./workspace";
@@ -147,6 +148,7 @@ export async function generateCompanyBlueprint(input: GenerateCompanyBlueprintIn
       playbookId: playbook.id,
       permissionMode: input.permissionMode,
     },
+    timeoutMs: resolveEffectiveTimeoutForProfileName("long").effectiveTimeoutMs,
   };
   const sessionPolicy = resolveAgentSessionPolicy({
     companyId: input.companyId,
