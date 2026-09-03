@@ -976,6 +976,54 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("reconciles a pre-existing review task into a company-state acceptance (ADR 0017 migration)", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = fixture.repositories.fetchQueuedTasks(1)[0];
+    expect(task).toBeDefined();
+    fixture.repositories.updateTaskStatus(task!.id, "review");
+    fixture.repositories.appendProof({
+      id: "proof_1",
+      taskId: task!.id,
+      type: "file",
+      uri: "proof.md",
+      summary: "Proof exists.",
+      verifiedAt: null,
+    } satisfies Proof);
+    fixture.repositories.createBusinessArtifact({
+      ...createBusinessArtifactRecord("business_artifact_1", task!.id, "proof_1"),
+      payload: { result: "The prototype implementation is complete and passes its checks." },
+    });
+
+    type StateShape = {
+      tasks: Array<{ id: string; status: string }>;
+      businessArtifacts: Array<{ id: string; reviewStatus: string }>;
+      taskCompletionEvents: Array<{ taskId: string; outcome: string; acceptanceProvenance: string | null; outcomeSummaryText?: unknown }>;
+    };
+
+    const state = await getJson<StateShape>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: task!.id, status: "complete" }));
+    expect(state.businessArtifacts).toContainEqual(
+      expect.objectContaining({ id: "business_artifact_1", reviewStatus: "accepted" }),
+    );
+    const completion = state.taskCompletionEvents.find((event) => event.taskId === task!.id);
+    expect(completion).toMatchObject({ outcome: "accepted", acceptanceProvenance: "automatic_acceptance" });
+    // No Task Outcome Summary is synthesized for a reconciled acceptance.
+    expect(completion?.outcomeSummaryText ?? null).toBeNull();
+
+    // Idempotent: a second read accepts nothing further and adds no completion event.
+    const again = await getJson<StateShape>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    expect(again.taskCompletionEvents.filter((event) => event.taskId === task!.id)).toHaveLength(1);
+
+    await fixture.close();
+  });
+
   it("reports malformed structured next-step containers without using freeform next-step prose", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {

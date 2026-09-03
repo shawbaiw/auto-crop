@@ -31,6 +31,7 @@ import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } f
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { buildProofContractInstructions } from "./proofContract";
+import { reconcileReviewTasksForAutomaticAcceptance } from "./reviewReconciliation";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
@@ -94,6 +95,19 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
       now,
       createId,
     });
+    // One-time, idempotent migration pass (ADR 0017 §Migration): accept `review` tasks the
+    // deterministic model would have accepted. A no-op once every such task is `complete`; any
+    // newly-queued downstream is picked up by `fetchQueuedTasks` in this same tick.
+    const reconciledReview = reconcileReviewTasksForAutomaticAcceptance({
+      repositories: input.repositories,
+      companyId: company.id,
+      now,
+      createId,
+      requestSchedulerWake: () => undefined,
+    });
+    for (const event of reconciledReview.events) {
+      emitTaskEvent(input, event);
+    }
   }
 
   const queuedTasks = input.repositories.fetchQueuedTasks(Math.max(input.maxTasks * 5, 20));

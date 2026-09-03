@@ -1,6 +1,7 @@
 import type {
   BusinessArtifact,
   KeyResult,
+  LocalizedText,
   Task,
   TaskAcceptanceProvenance,
   TaskEvent,
@@ -31,6 +32,12 @@ export function acceptTaskBusinessArtifact(input: {
    * Items even if a stale `open_decisions` entry lingers in the payload.
    */
   founderDecisions?: FounderDecisionDeclaration[];
+  /**
+   * Passed straight to {@link recordTaskCompletionEvent}: `undefined` reads the Task Outcome Summary
+   * from the artifact payload, an explicit `null` records none. The migration reconciliation passes
+   * `null` so a reconciled acceptance fabricates no summary.
+   */
+  outcomeSummaryText?: LocalizedText | null;
   keyResultProgress?: {
     currentValue: string;
     status: KeyResult["status"];
@@ -90,6 +97,7 @@ export function acceptTaskBusinessArtifact(input: {
     outcome: "accepted",
     acceptanceProvenance: input.acceptanceProvenance,
     ...(input.founderDecisions ? { founderDecisions: input.founderDecisions } : {}),
+    ...(input.outcomeSummaryText !== undefined ? { outcomeSummaryText: input.outcomeSummaryText } : {}),
     dependencyImpact: {
       updatedTasks: dependencyCascade?.updatedTasks.map((update) => ({
         taskId: update.task.id,

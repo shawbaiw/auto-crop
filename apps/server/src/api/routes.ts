@@ -41,6 +41,7 @@ import {
 } from "../runtime/localizedRuntimeText";
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
+import { reconcileReviewTasksForAutomaticAcceptance } from "../runtime/reviewReconciliation";
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
 import { refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
@@ -731,6 +732,16 @@ function buildCompanyState(
     companyId: currentCompany.id,
     now: options?.now,
     createId: options?.createId,
+  });
+  // One-time, idempotent migration pass (ADR 0017 §Migration): accept `review` tasks the
+  // deterministic model would have accepted. The events it writes are read back below with the
+  // rest of company state; a downstream task it unblocks wakes the scheduler.
+  reconcileReviewTasksForAutomaticAcceptance({
+    repositories,
+    companyId: currentCompany.id,
+    now: options?.now,
+    createId: options?.createId,
+    requestSchedulerWake: () => options?.requestSchedulerWake?.("dependency_cascade_queued"),
   });
   let tasks = repositories.listTasksForCompany(currentCompany.id);
   const keyResults = repositories.listKeyResults(currentCompany.id);

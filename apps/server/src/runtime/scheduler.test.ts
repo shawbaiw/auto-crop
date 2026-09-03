@@ -437,6 +437,47 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("reconciles a pre-existing review task the deterministic model would accept (ADR 0017 migration)", async () => {
+    const stranded = createTaskRecord("task_1", "review", "medium");
+    const { projectRoot, repositories, client } = createSchedulerFixture([stranded]);
+    const proof = createProofForTask(stranded);
+    repositories.appendProof(proof);
+    repositories.createBusinessArtifact({
+      ...createBusinessArtifactRecord("business_artifact_1", stranded.id, proof.id),
+      artifactRole: "implementation",
+      artifactSubtype: "prototype_implementation",
+      artifactType: "implementation_summary",
+      taskType: "engineering.prototype_implementation",
+      payload: { summary: "Prototype implementation complete." },
+      reviewStatus: "unreviewed",
+    });
+    const events: SchedulerEventRecord[] = [];
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "" }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-09-03T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    expect(repositories.getCurrentBusinessArtifactForTask("task_1")?.reviewStatus).toBe("accepted");
+    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("automatic_acceptance:task_1");
+    const [completion] = repositories.listTaskCompletionEventsForCompany("company_1");
+    expect(completion).toMatchObject({ taskId: "task_1", outcome: "accepted", acceptanceProvenance: "automatic_acceptance" });
+    expect(completion).not.toHaveProperty("outcomeSummaryText");
+
+    client.close();
+  });
+
   it("blocks completed tasks that have proof but no reviewable business artifact", async () => {
     const producer = createTaskRecord("task_1", "queued", "low");
     const consumer = createTaskRecord("task_2", "queued", "low");
