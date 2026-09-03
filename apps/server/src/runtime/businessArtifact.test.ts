@@ -31,7 +31,11 @@ describe("captureBusinessArtifact", () => {
         artifact_subtype: "mvp_brief",
         task_type: "product_planning",
         source_proof_id: "proof_1",
-        payload: { selected_keyword: "pricing page generator" },
+        payload: {
+          selected_keyword: "pricing page generator",
+          outcome_summary:
+            "The MVP brief settles on a pricing page generator. This gives Product a concrete wedge to build; the remaining gap is validating demand with real founders.",
+        },
         lineage: { founder_vision: "Build an AI SaaS that creates pricing pages." },
       }),
       "utf8",
@@ -460,6 +464,8 @@ describe("captureBusinessArtifact", () => {
         taskType: "keyword_opportunity_research",
         payload: {
           summary: "Resume bullet point generator is the best first opportunity.",
+          outcome_summary:
+            "Research points to a resume bullet point generator as the strongest first opportunity. It sets the direction for the objective; the remaining gap is confirming live search volume before building.",
           recommendation: "Build a focused resume bullet point generator.",
           evidence: ["High intent", "Weak direct competition"],
           risks: ["Validate live volume before building"],
@@ -538,6 +544,67 @@ describe("captureBusinessArtifact", () => {
       reviewStatus: "not_reviewable",
     });
     expect(artifact.validationErrors).toContain("artifactType: Unknown legacy artifact type and artifact role could not be inferred.");
+  });
+
+  it("fails structural validation when a deliverable omits the Task Outcome Summary", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "deliverable",
+        artifact_role: "spec",
+        artifact_subtype: "mvp_brief",
+        task_type: "product_planning",
+        payload: { selected_keyword: "pricing page generator" },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    const artifact = captureBusinessArtifact({
+      task: { ...createTaskRecord(), proofSchemaId: "generic-proof" },
+      proofs: [createProofRecord()],
+      workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact.validationStatus).toBe("invalid_schema");
+    expect(artifact.validationErrors).toContain(
+      "payload.outcome_summary: Required for deliverable and final_report artifacts (non-empty string or { en, zh }).",
+    );
+  });
+
+  it("accepts a localized-object Task Outcome Summary on a final_report", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "final_report",
+        artifact_role: "report",
+        artifact_subtype: "final_founder_report",
+        task_type: "founder_report",
+        payload: {
+          outcome_summary: { en: "The launch path is proven.", zh: "发布路径已验证。" },
+        },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    const artifact = captureBusinessArtifact({
+      task: { ...createTaskRecord(), proofSchemaId: "generic-proof" },
+      proofs: [createProofRecord()],
+      workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact.validationStatus).toBe("valid");
   });
 });
 

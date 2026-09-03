@@ -1126,7 +1126,7 @@ function buildAgentPrompt(task: Task, handoffs: TaskHandoff[]): string {
         artifact_role: "implementation",
         artifact_subtype: "prototype_implementation",
         task_type: "task-specific-type",
-        payload: {},
+        payload: { outcome_summary: "..." },
         lineage: {},
       },
       null,
@@ -1136,6 +1136,17 @@ function buildAgentPrompt(task: Task, handoffs: TaskHandoff[]): string {
     "Choose artifact_role from: findings, plan, spec, implementation, validation, launch, report, none.",
     "Put use-case-specific names such as keyword_research, mvp_brief, or seo_launch_plan in artifact_subtype, not in artifact_kind or artifact_role.",
     "Use payload for the task-specific structured result and lineage for the upstream objective chain you used.",
+    "",
+    "## Task Outcome Summary",
+    "",
+    "Every `deliverable` and `final_report` payload must include an `outcome_summary` field: a plain-language",
+    "string (or a `{ \"en\": \"...\", \"zh\": \"...\" }` object) the founder reads instead of your raw output. State, in order:",
+    "1. The conclusion you reached.",
+    "2. What that conclusion means for the objective or vision this task serves.",
+    "3. What gap still remains toward the vision (in prose) — completing the task is not the same as reaching the goal.",
+    "Add a fourth part only when you are leaving a strategic choice that is the founder's to make: list the",
+    "viable options with their trade-offs and say which one you recommend.",
+    "Write business judgement, not process notes; a missing `outcome_summary` fails validation.",
   ];
   const proofInstructions = buildProofContractInstructions(task);
 

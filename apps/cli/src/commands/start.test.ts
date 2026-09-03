@@ -142,6 +142,8 @@ describe("startAutoCrop", () => {
                 task_type: "test.scheduler_wake",
                 payload: {
                   summary: "Scheduler wake task completed.",
+                  outcome_summary:
+                    "The wake-requested task is complete and validated. It keeps the objective on schedule; the remaining gap is CEO review before downstream work proceeds.",
                   recommendation: "Review the wake-requested task.",
                   evidence: ["proof: wake-requested scheduler tick"],
                   risks: [],

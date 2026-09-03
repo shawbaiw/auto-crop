@@ -194,6 +194,9 @@ describe("runSchedulerOnce", () => {
         taskId: "task_1",
         outcome: "accepted",
         acceptanceProvenance: "automatic_acceptance",
+        outcomeSummaryText: expect.objectContaining({
+          en: expect.stringContaining("prototype implementation is complete"),
+        }),
       }),
     ]);
     expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("automatic_acceptance:task_1");
@@ -1258,7 +1261,11 @@ describe("runSchedulerOnce", () => {
                 artifact_role: "implementation",
                 artifact_subtype: "prototype_implementation",
                 task_type: "engineering.implementation_changes",
-                payload: { summary: "Recorded implementation diff." },
+                payload: {
+                  summary: "Recorded implementation diff.",
+                  outcome_summary:
+                    "The implementation changes are recorded as a diff. This completes the build step for the objective; the remaining gap is review and downstream integration.",
+                },
                 lineage: { upstream_task_id: producer.id },
               }),
               "utf8",
@@ -2114,6 +2121,8 @@ function writeValidBusinessArtifact(task: Task): void {
       task_type: "engineering.prototype_implementation",
       payload: {
         summary: "Mock implementation completed.",
+        outcome_summary:
+          "The prototype implementation is complete and passes its mock proof. It advances the objective's build milestone; the remaining gap is validation with real users before launch.",
         recommendation: "Review the completed mock proof.",
         evidence: ["mock proof"],
         risks: [],

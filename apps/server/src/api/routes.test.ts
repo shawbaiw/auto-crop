@@ -1070,6 +1070,7 @@ describe("API routes", () => {
       keyResultId: ordinaryTask.keyResultId,
       businessArtifactId: null,
       outcome: "accepted",
+      outcomeSummaryText: { en: "Ordinary work is done and on-plan.", zh: "常规工作已完成，符合计划。" },
       dependencyImpact: {},
       nextStepItems: [],
       visionGaps: [],
@@ -1185,7 +1186,7 @@ describe("API routes", () => {
     });
 
     const state = await getJson<{
-      taskCompletionEvents: Array<{ id: string }>;
+      taskCompletionEvents: Array<{ id: string; outcomeSummaryText: { en?: string; zh?: string } | null }>;
       visionGaps: Array<{ label: string; severity: string; sourceTaskCompletionEventId: string }>;
       ceoAttentionRollups: Array<{
         sourceTaskCompletionEventIds: string[];
@@ -1203,7 +1204,15 @@ describe("API routes", () => {
       }>;
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
 
-    expect(state.taskCompletionEvents).toContainEqual(expect.objectContaining({ id: "task_completion_event_ordinary" }));
+    expect(state.taskCompletionEvents).toContainEqual(
+      expect.objectContaining({
+        id: "task_completion_event_ordinary",
+        outcomeSummaryText: { en: "Ordinary work is done and on-plan.", zh: "常规工作已完成，符合计划。" },
+      }),
+    );
+    expect(
+      state.taskCompletionEvents.find((event) => event.id === "task_completion_event_wait")?.outcomeSummaryText,
+    ).toBeNull();
     expect(state.visionGaps).toEqual([
       expect.objectContaining({ label: "More customer interviews would improve confidence.", severity: "informational" }),
       expect.objectContaining({ label: "Deployment is still missing before launch.", severity: "blocking" }),
@@ -2471,7 +2480,10 @@ function writeValidBusinessArtifactFile(workspacePath: string, taskId: string): 
       artifactRole: "implementation",
       artifactSubtype: "prototype_implementation",
       taskType: "engineering.prototype_implementation",
-      payload: { result: `Recovered artifact for ${taskId}.` },
+      payload: {
+        result: `Recovered artifact for ${taskId}.`,
+        outcome_summary: `Recovered deliverable for ${taskId} is complete and ready for review. It keeps the objective on track; the remaining gap is downstream integration.`,
+      },
       lineage: {
         founderVision: "Build an AI SaaS that creates pricing pages.",
         taskId,

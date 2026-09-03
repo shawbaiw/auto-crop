@@ -140,6 +140,7 @@ export type TaskCompletionEventSummary = {
   businessArtifactId: string | null;
   outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan";
   acceptanceProvenance: "manual_ceo_review" | "automatic_acceptance" | null;
+  outcomeSummaryText?: LocalizedText | null;
   dependencyImpact: unknown;
   nextStepItems: NextStepItemSummary[];
   visionGaps: unknown[];

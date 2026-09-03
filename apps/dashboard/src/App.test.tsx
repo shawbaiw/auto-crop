@@ -923,6 +923,19 @@ describe("Dashboard App", () => {
     expect(within(taskReview).getByText("Deliverable / Implementation / Prototype Implementation")).toBeInTheDocument();
     expect(within(taskReview).getByText("Valid / Unreviewed")).toBeInTheDocument();
 
+    // The panel leads with the Task Outcome Summary conclusion.
+    const outcomeSummary = within(taskReview).getByText(/The prototype works end to end/);
+    expect(within(taskReview).getByRole("heading", { name: "Task Outcome Summary" })).toBeInTheDocument();
+
+    // Proof, artifact classification, and validation status are demoted into a collapsed section.
+    const evidenceSection = within(taskReview).getByText("Evidence & validation").closest("details");
+    expect(evidenceSection).not.toBeNull();
+    expect(evidenceSection).not.toHaveAttribute("open");
+    expect(evidenceSection).toContainElement(within(taskReview).getByText("Deliverable / Implementation / Prototype Implementation"));
+    expect(evidenceSection).toContainElement(within(taskReview).getByText("Valid / Unreviewed"));
+    expect(evidenceSection).not.toContainElement(outcomeSummary);
+    expect(outcomeSummary.compareDocumentPosition(evidenceSection!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
     const approveButton = within(taskReview).getByRole("button", { name: "Approve, mark complete" });
     const returnButton = within(taskReview).getByRole("button", { name: "Return to department" });
     await user.click(approveButton);
@@ -2540,7 +2553,11 @@ function createBusinessArtifactSummary(
     artifactSubtype: "prototype_implementation",
     artifactType: "implementation_summary",
     taskType: "test_task",
-    payload: { result: "Prototype validates locally." },
+    payload: {
+      result: "Prototype validates locally.",
+      outcome_summary:
+        "The prototype works end to end and is ready to show users. It clears the build milestone; the remaining gap is real-user validation before launch.",
+    },
     lineage: { founder_vision: "Build an AI SaaS that creates pricing pages." },
     validationStatus: "valid",
     validationErrors: [],

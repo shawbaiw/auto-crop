@@ -384,6 +384,13 @@ export type TaskCompletionEvent = {
   businessArtifactId: string | null;
   outcome: TaskCompletionOutcome;
   acceptanceProvenance?: TaskAcceptanceProvenance | null;
+  /**
+   * The completing agent's plain-language Task Outcome Summary: the conclusion reached, what it means
+   * for the objective served, and what gap remains. Null for completion paths that carry no summary
+   * (blocked / needs-replan outcomes, migration-reconciled acceptances). Distinct from the Task
+   * Execution Summary, which is failure facts.
+   */
+  outcomeSummaryText?: LocalizedText | null;
   dependencyImpact: unknown;
   nextStepItems: NextStepItem[];
   visionGaps: unknown[];

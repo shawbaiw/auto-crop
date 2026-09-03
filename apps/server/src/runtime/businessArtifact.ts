@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-  BusinessArtifact,
-  BusinessArtifactKind,
-  BusinessArtifactRole,
-  BusinessArtifactType,
-  Proof,
-  Task,
+import {
+  localizedTextSchema,
+  type BusinessArtifact,
+  type BusinessArtifactKind,
+  type BusinessArtifactRole,
+  type BusinessArtifactType,
+  type Proof,
+  type Task,
 } from "@auto-crop/core";
 
 const BUSINESS_ARTIFACT_PATH = join(".auto-crop", "business-artifact.json");
@@ -248,6 +249,15 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
   if (!("lineage" in json)) {
     errors.push("lineage: Required.");
   }
+  if (
+    classification &&
+    (classification.artifactKind === "deliverable" || classification.artifactKind === "final_report")
+  ) {
+    const outcomeSummaryError = outcomeSummaryFieldError(json.payload);
+    if (outcomeSummaryError) {
+      errors.push(outcomeSummaryError);
+    }
+  }
   if (sourceProofId !== undefined && typeof sourceProofId !== "string") {
     errors.push("sourceProofId/source_proof_id: Expected a string.");
   }
@@ -271,6 +281,31 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
       lineage: json.lineage,
     },
   };
+}
+
+/**
+ * A `deliverable` / `final_report` must carry the completing agent's Task Outcome Summary in
+ * `payload.outcome_summary` (or `outcomeSummary`) — a non-empty string or a `{ en, zh }` localized
+ * object. A missing or malformed field is a structural validation failure like any other missing
+ * required field; the runtime does not judge the summary's meaning. Returns the error string, or null
+ * when the field is present and well-shaped.
+ */
+function outcomeSummaryFieldError(payload: unknown): string | null {
+  const required = "payload.outcome_summary: Required for deliverable and final_report artifacts (non-empty string or { en, zh }).";
+  if (!isRecord(payload)) {
+    return required;
+  }
+  const value = payload.outcome_summary ?? payload.outcomeSummary;
+  if (value === undefined || value === null) {
+    return required;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0 ? null : required;
+  }
+  if (isRecord(value)) {
+    return localizedTextSchema.safeParse(value).success ? null : required;
+  }
+  return required;
 }
 
 function normalizeParsedArtifactForCapturedProof(

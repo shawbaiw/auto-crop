@@ -741,11 +741,30 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.ceo-task-review-detail__grid > section {
+.ceo-task-review-detail__grid > section,
+.ceo-task-review-detail__grid > details {
   border: 1px solid color-mix(in srgb, var(--border) 56%, var(--surface));
   display: grid;
   gap: 8px;
   padding: 8px;
+}
+
+.ceo-task-review-detail__outcome {
+  border: var(--border-px) solid var(--accent-secondary);
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+.ceo-task-review-detail__outcome-text {
+  white-space: pre-wrap;
+}
+
+.ceo-task-review-detail__evidence > summary {
+  cursor: pointer;
+  color: var(--accent-secondary);
+  font-size: 0.74rem;
+  text-transform: uppercase;
 }
 
 .ceo-task-review-detail h4 {

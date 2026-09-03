@@ -1,4 +1,4 @@
-import { nextStepItemSeveritySchema, nextStepItemTypeSchema, type BusinessArtifact, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
+import { localizedTextFromString, localizedTextSchema, nextStepItemSeveritySchema, nextStepItemTypeSchema, type BusinessArtifact, type LocalizedText, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { createDefaultId } from "./ids";
 
@@ -8,6 +8,8 @@ export function recordTaskCompletionEvent(input: {
   outcome: TaskCompletionOutcome;
   acceptanceProvenance?: TaskAcceptanceProvenance | null;
   businessArtifact?: BusinessArtifact | null;
+  /** Overrides the summary read from the Business Artifact payload (e.g. migration reconciliation passes null). */
+  outcomeSummaryText?: LocalizedText | null;
   dependencyImpact?: unknown;
   nextStepItems?: unknown[];
   visionGaps?: unknown[];
@@ -17,6 +19,10 @@ export function recordTaskCompletionEvent(input: {
   const proposal = input.nextStepItems ? { items: input.nextStepItems, errors: [] } : extractNextStepItems(input.businessArtifact?.payload);
   const proposedNextSteps = proposal.items;
   const validatedNextSteps = validateNextStepItems(proposedNextSteps);
+  const outcomeSummaryText =
+    input.outcomeSummaryText !== undefined
+      ? input.outcomeSummaryText
+      : extractOutcomeSummaryText(input.businessArtifact?.payload);
   const event: TaskCompletionEvent = {
     id: input.createId?.("task_completion_event") ?? createDefaultId("task_completion_event"),
     companyId: input.task.companyId,
@@ -26,6 +32,7 @@ export function recordTaskCompletionEvent(input: {
     businessArtifactId: input.businessArtifact?.id ?? null,
     outcome: input.outcome,
     acceptanceProvenance: input.acceptanceProvenance ?? null,
+    ...(outcomeSummaryText ? { outcomeSummaryText } : {}),
     dependencyImpact: mergeNextStepErrors(input.dependencyImpact ?? {}, [...proposal.errors, ...validatedNextSteps.errors]),
     nextStepItems: validatedNextSteps.items,
     visionGaps: input.visionGaps ?? [],
@@ -34,6 +41,29 @@ export function recordTaskCompletionEvent(input: {
 
   input.repositories.appendTaskCompletionEvent(event);
   return event;
+}
+
+/**
+ * Read the Task Outcome Summary the completing agent wrote into the Business Artifact payload
+ * (`outcome_summary` / `outcomeSummary`). Business Artifact parsing already rejects a `deliverable`
+ * or `final_report` that omits it, so a missing value here means a non-deliverable outcome (blocker,
+ * needs-replan) that carries no summary.
+ */
+export function extractOutcomeSummaryText(payload: unknown): LocalizedText | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  const value = payload.outcome_summary ?? payload.outcomeSummary;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return localizedTextFromString(value.trim());
+  }
+  if (isRecord(value)) {
+    const parsed = localizedTextSchema.safeParse(value);
+    if (parsed.success) {
+      return parsed.data;
+    }
+  }
+  return null;
 }
 
 function extractNextStepItems(payload: unknown): { items: unknown[]; errors: string[] } {

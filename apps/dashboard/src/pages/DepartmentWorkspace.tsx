@@ -16,6 +16,7 @@ import { useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
   BusinessArtifactSummary,
+  LocalizedText,
   CeoAttentionRollupSummary,
   CeoReviewDecisionResponse,
   CeoReviewReturnReason,
@@ -558,6 +559,7 @@ function CeoTaskReviewDetail({
     currentArtifact.reviewStatus === "unreviewed" &&
     (currentArtifact.artifactKind === "deliverable" || currentArtifact.artifactKind === "final_report");
   const canApprove = hasProof && hasValidArtifact;
+  const outcomeSummary = readOutcomeSummary(currentArtifact?.payload);
 
   const handleApprove = async () => {
     if (!canApprove || submittingAction) {
@@ -607,13 +609,26 @@ function CeoTaskReviewDetail({
       <p className={canApprove ? "system-message" : "warning-message"}>
         {canApprove ? t("department.ceoReviewCanPass") : t("department.ceoReviewMissingProof")}
       </p>
+      <section className="ceo-task-review-detail__outcome">
+        <h4>{t("department.ceoReviewOutcomeSummary")}</h4>
+        {outcomeSummary ? (
+          <p className="ceo-task-review-detail__outcome-text">
+            {typeof outcomeSummary === "string"
+              ? outcomeSummary
+              : resolveLocalizedValue(outcomeSummary, language, outcomeSummary.en ?? "")}
+          </p>
+        ) : (
+          <p className="muted">{t("department.ceoReviewNoOutcomeSummary")}</p>
+        )}
+      </section>
       <div className="ceo-task-review-detail__grid">
         <section>
           <h4>{t("department.ceoReviewTaskContent")}</h4>
           <p>{taskTitle(item.task, language)}</p>
           {item.task.description ? <p className="muted">{taskDescription(item.task, language)}</p> : null}
         </section>
-        <section>
+        <details className="ceo-task-review-detail__evidence">
+          <summary>{t("department.ceoReviewEvidenceValidation")}</summary>
           <h4>{t("department.ceoReviewDepartmentSubmission")}</h4>
           {proofs.length === 0 ? <p className="muted">{t("department.ceoReviewNoProof")}</p> : null}
           {proofs.map((proof) => (
@@ -630,7 +645,7 @@ function CeoTaskReviewDetail({
           ) : (
             <p className="muted">{t("dashboard.noBusinessArtifacts")}</p>
           )}
-        </section>
+        </details>
         <section>
           <h4>{t("department.ceoReviewRunStatus")}</h4>
           <VideotexKeyValue
@@ -697,6 +712,24 @@ function CeoTaskReviewDetail({
       </div>
     </section>
   );
+}
+
+function readOutcomeSummary(payload: unknown): LocalizedText | string | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const value = record.outcome_summary ?? record.outcomeSummary;
+  if (typeof value === "string") {
+    return value.trim().length > 0 ? value.trim() : null;
+  }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const candidate = value as Record<string, unknown>;
+    if (typeof candidate.en === "string" || typeof candidate.zh === "string") {
+      return candidate as LocalizedText;
+    }
+  }
+  return null;
 }
 
 function ceoReturnReasonOptions(t: ReturnType<typeof useLanguage>["t"]): Array<{ value: CeoReviewReturnReason; label: string }> {

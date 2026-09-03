@@ -1953,7 +1953,10 @@ function summarizeTaskProgressEvent(event: TaskProgressEvent) {
 }
 
 function summarizeTaskCompletionEvent(event: TaskCompletionEvent) {
-  return event;
+  return {
+    ...event,
+    outcomeSummaryText: event.outcomeSummaryText ?? null,
+  };
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {

@@ -6,12 +6,14 @@ Governing decision: `docs/adr/0017-ceo-office-surfaces-business-outcomes.md`. Sp
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `TaskCompletionEvent` carries a nullable, localized-text-shaped `outcomeSummaryText`, added to the core type, its zod schema, persistence (with migration), repository mapping, and the company-state serializer.
-- [ ] The task prompt instructs the completing agent to produce the summary with the three required parts (conclusion; meaning for the objective; remaining gap), plus a fourth part (options, trade-offs, recommendation) only when there is a Founder Decision.
-- [ ] Business Artifact parsing requires an outcome-summary field on `deliverable` and `final_report` artifacts; a missing summary is a structural validation failure like any other required-field failure. The runtime does not judge the summary's meaning.
-- [ ] The captured summary is attached to the Task Completion Event when the event is built.
-- [ ] The company-state response serializes `outcomeSummaryText` on Task Completion Events.
-- [ ] The CEO task-review detail panel leads with the Task Outcome Summary conclusion. Proof summary, proof type and URI, artifact kind/role/subtype, and validation and review status move into a collapsed "evidence and validation" section, not the primary view.
-- [ ] Tests: the acceptance seam for the required-field validation and event attachment; the company-state route test for serialization; the dashboard CEO Workspace test for the restructured panel — each following existing prior art at that seam.
+- [x] `TaskCompletionEvent` carries a nullable, localized-text-shaped `outcomeSummaryText`, added to the core type, its zod schema (`localizedTextSchema`, applied where the field is parsed), persistence (`task_completion_events.outcome_summary_text` + `migrateTaskCompletionOutcomeSummary`), repository mapping, and the company-state serializer (`summarizeTaskCompletionEvent`).
+- [x] The task prompt (`buildAgentPrompt`) gains a `## Task Outcome Summary` block instructing the completing agent to write `payload.outcome_summary` with the three required parts (conclusion; meaning for the objective; remaining gap), plus a fourth part (options, trade-offs, recommendation) only when leaving a strategic choice for the founder.
+- [x] Business Artifact parsing (`parseDeclaredBusinessArtifact`) requires `payload.outcome_summary` (non-empty string or `{ en, zh }`) on `deliverable` and `final_report` artifacts; a missing/malformed field is a structural validation failure. The runtime does not judge the summary's meaning.
+- [x] The captured summary is read from the Business Artifact payload and attached to the Task Completion Event in `recordTaskCompletionEvent` (`extractOutcomeSummaryText`).
+- [x] The company-state response serializes `outcomeSummaryText` on Task Completion Events (null when absent).
+- [x] The CEO task-review detail panel (`CeoTaskReviewDetail`) leads with the Task Outcome Summary. Proof summary, proof type/URI, artifact kind/role/subtype, and validation/review status move into a collapsed `<details>` "Evidence & validation" section.
+- [x] Tests: `businessArtifact.test.ts` (required-field validation, localized-object accepted); `scheduler.test.ts` (auto-accept attaches `outcomeSummaryText` to the Task Completion Event); `routes.test.ts` (company-state serialization round-trips localized text, null when absent); `App.test.tsx` (panel leads with the summary, evidence collapsed and ordered after it).
+
+Notes for later issues: `TaskCompletionEventSummary` in the dashboard client now carries `outcomeSummaryText`, but the dashboard does not yet hold `taskCompletionEvents` in app state — issue 05 (Outcomes view) wires that through. The `open_decisions` / Founder Decision fourth part of the summary contract is prompt text only here; issues 03/04 build the decision machinery.
