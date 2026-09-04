@@ -5,6 +5,7 @@ import type { createRepositories } from "../db/repositories";
 import type {
   AgentFailureReason,
   BusinessArtifact,
+  Company,
   Proof,
   Task,
   TaskEvent,
@@ -25,7 +26,11 @@ import {
   readEnvironmentBlockerClaim,
   verifyEnvironmentBlockerClaim,
 } from "./businessArtifact";
+import type { AgentSessionManager } from "./agentSessions";
+import { projectCeoAttention } from "./ceoAttention";
+import { classifyFinalFounderReport, isCompanyQuiescent } from "./companyQuiescence";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
+import { generateFinalFounderReport } from "./finalFounderReport";
 import { parseOpenDecisions } from "./founderDecision";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
@@ -64,6 +69,9 @@ export type RunSchedulerOnceInput = {
   proofCollector: (input: { task: Task; stdout: string; stderr: string; logPath: string }) => Proof[];
   /** Injectable fetch used to independently verify Environment-Blocked Blocker claims. Defaults to global fetch. */
   environmentBlockerFetch?: typeof fetch;
+  /** Injectable session manager for the CEO Agent run that authors a Final Founder Report. */
+  agentSessionManager?: AgentSessionManager;
+  agentSessionEnv?: Record<string, string | undefined>;
   emit: (event: SchedulerEvent) => void;
 };
 
@@ -643,7 +651,99 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
   await Promise.all(dispatches);
 
+  // Task state for every company has settled for this tick. Sweep for Company Quiescence and, on the
+  // first quiescent tick with no existing report, author a Final Founder Report.
+  for (const company of input.repositories.listCompanies()) {
+    await maybeGenerateFinalFounderReport(input, company, now, createId);
+  }
+
   return result;
+}
+
+async function maybeGenerateFinalFounderReport(
+  input: RunSchedulerOnceInput,
+  company: Company,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): Promise<void> {
+  const repositories = input.repositories;
+  // Only a running company with real work can be quiescent. A `creating` / `creation_failed` /
+  // `draft` / `paused` company is not "done", it just is not going yet.
+  if (company.status !== "active") {
+    return;
+  }
+  if (repositories.getCurrentFinalFounderReport(company.id)) {
+    return;
+  }
+
+  const tasks = repositories.listTasksForCompany(company.id);
+  if (tasks.length === 0) {
+    return;
+  }
+  const keyResults = repositories.listKeyResults(company.id);
+  const taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
+  const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(company.id);
+
+  const attention = projectCeoAttention({
+    company,
+    keyResults,
+    tasks,
+    taskCompletionEvents,
+    taskDependencies,
+    humanActionConfirmations: repositories.listHumanActionConfirmationsForCompany(company.id),
+    founderDecisionResolutions: repositories.listFounderDecisionResolutionsForCompany(company.id),
+    now,
+  });
+
+  const quiescent = isCompanyQuiescent({
+    tasks,
+    waitStates: attention.waitStates,
+    humanActions: attention.humanActions,
+    founderDecisions: attention.founderDecisions,
+    now,
+  });
+  if (!quiescent) {
+    return;
+  }
+
+  const ceoAgent = input.adapters.find((adapter) => adapter.id === company.selectedCeoAgentId);
+  if (!ceoAgent) {
+    return;
+  }
+
+  const classification = classifyFinalFounderReport({
+    keyResults,
+    waitStates: attention.waitStates,
+    humanActions: attention.humanActions,
+    founderDecisions: attention.founderDecisions,
+  });
+
+  try {
+    await generateFinalFounderReport({
+      projectRoot: input.projectRoot,
+      repositories,
+      company,
+      classification,
+      ceoAgent,
+      tasks,
+      departments: repositories.listDepartments(company.id),
+      objectives: repositories.listObjectives(company.id),
+      keyResults,
+      taskCompletionEvents,
+      businessArtifacts: repositories.listBusinessArtifactsForCompany(company.id),
+      visionGaps: attention.visionGaps,
+      waitStates: attention.waitStates,
+      humanActions: attention.humanActions,
+      founderDecisions: attention.founderDecisions,
+      agentSessionManager: input.agentSessionManager,
+      agentSessionEnv: input.agentSessionEnv,
+      now,
+      createId,
+    });
+  } catch {
+    // Ticket 01 generates synchronously and best-effort: a failed authoring run leaves no report and
+    // the next quiescent tick retries. The retry ceiling and deterministic fallback land in ticket 02.
+  }
 }
 
 function assessDepartmentTask(input: RunSchedulerOnceInput, task: Task): "ready" | "deferred" {

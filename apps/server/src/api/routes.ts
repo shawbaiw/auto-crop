@@ -8,6 +8,7 @@ import type {
   Company,
   CompanyEvent,
   Department,
+  FinalFounderReport,
   FounderDecision,
   HumanAction,
   HumanActionConfirmation,
@@ -823,6 +824,7 @@ function buildCompanyState(
     waitStates: ceoAttention.waitStates,
     founderDecisions: ceoAttention.founderDecisions,
     ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
+    finalFounderReport: summarizeFinalFounderReport(repositories.getCurrentFinalFounderReport(currentCompany.id)),
     founderReport: summarizeFounderReport(
       currentCompany,
       tasks,
@@ -2280,6 +2282,18 @@ function summarizeFounderReport(
       ...blockedTasks.map((task) => task.dependencyNote ?? task.latestFailureMessage ?? `Resolve ${task.title}.`),
       ...waitStates.map(formatWaitStateNextStep),
     ],
+  };
+}
+
+function summarizeFinalFounderReport(report: FinalFounderReport | null) {
+  if (!report) {
+    return null;
+  }
+  return {
+    id: report.id,
+    classification: report.classification,
+    generatedBy: report.generatedBy,
+    sections: report.sections,
   };
 }
 

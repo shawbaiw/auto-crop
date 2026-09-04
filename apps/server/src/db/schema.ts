@@ -261,6 +261,18 @@ export function migrate(database: DatabaseClient): void {
       resolved_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS founder_reports (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      classification TEXT NOT NULL,
+      sections TEXT NOT NULL,
+      generated_by TEXT NOT NULL,
+      is_current INTEGER NOT NULL,
+      supersedes_report_id TEXT REFERENCES founder_reports(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS approvals (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -325,6 +337,8 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS ceo_review_decisions_task_created_idx ON ceo_review_decisions(task_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS business_artifacts_task_current_idx ON business_artifacts(task_id, is_current)");
   database.exec("CREATE INDEX IF NOT EXISTS business_artifacts_company_created_idx ON business_artifacts(company_id, created_at, id)");
+  database.exec("CREATE INDEX IF NOT EXISTS founder_reports_company_current_idx ON founder_reports(company_id, is_current)");
+  database.exec("CREATE INDEX IF NOT EXISTS founder_reports_company_created_idx ON founder_reports(company_id, created_at, id)");
 }
 
 function migrateCompanyCreationFields(database: DatabaseClient): void {

@@ -24,6 +24,7 @@ import type {
   CeoIntakeStatus,
   CompanySummary,
   DepartmentSummary,
+  FinalFounderReportSummary,
   FounderDecisionResolutionResponse,
   FounderDecisionSummary,
   HumanActionSummary,
@@ -70,6 +71,7 @@ export type DepartmentWorkspaceProps = {
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
+  finalFounderReport?: FinalFounderReportSummary | null;
   founderDecisions?: FounderDecisionSummary[];
   humanActions?: HumanActionSummary[];
   keyResults?: KeyResultSummary[];
@@ -115,6 +117,7 @@ export function DepartmentWorkspace({
   proof = [],
   businessArtifacts = [],
   ceoAttentionRollups = [],
+  finalFounderReport = null,
   founderDecisions = [],
   humanActions = [],
   keyResults = [],
@@ -214,6 +217,7 @@ export function DepartmentWorkspace({
                   objectives={objectives}
                   keyResults={keyResults}
                   ceoAttentionRollups={ceoAttentionRollups}
+                  finalFounderReport={finalFounderReport}
                   founderDecisions={founderDecisions}
                   taskCompletionEvents={taskCompletionEvents}
                   onDraftChange={setCeoIntakeDraft}
@@ -296,6 +300,7 @@ function departmentIcon(departmentName: string): ReactNode {
 
 function CeoIntakeWorkspace({
   ceoAttentionRollups,
+  finalFounderReport,
   departments,
   draft,
   founderDecisions,
@@ -318,6 +323,7 @@ function CeoIntakeWorkspace({
   waitStates,
 }: {
   ceoAttentionRollups: CeoAttentionRollupSummary[];
+  finalFounderReport: FinalFounderReportSummary | null;
   departments: DepartmentSummary[];
   draft: string;
   founderDecisions: FounderDecisionSummary[];
@@ -360,6 +366,7 @@ function CeoIntakeWorkspace({
 
   return (
     <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
+      <FinalFounderReportPanel report={finalFounderReport} />
       <CeoOutcomesView
         departmentsById={departmentsById}
         founderDecisions={founderDecisions}
@@ -533,6 +540,67 @@ function formatDecisionKind(kind: string, t: ReturnType<typeof useLanguage>["t"]
     default:
       return formatCodeLabel(kind);
   }
+}
+
+const FINAL_REPORT_CLASSIFICATION_KEY = {
+  achieved: "department.finalReportClassificationAchieved",
+  stalled: "department.finalReportClassificationStalled",
+  waiting: "department.finalReportClassificationWaiting",
+} as const;
+
+const FINAL_REPORT_CLASSIFICATION_TONE = {
+  achieved: "signal",
+  stalled: "danger",
+  waiting: "default",
+} as const;
+
+/**
+ * The Final Founder Report, pinned above the Outcomes view when an `isCurrent` report exists. Shows
+ * the classification prominently, then the six localized-text sections, using existing retro
+ * primitives. Localized text renders in the active Interface Locale.
+ */
+function FinalFounderReportPanel({ report }: { report: FinalFounderReportSummary | null }) {
+  const { language, t } = useLanguage();
+
+  if (!report) {
+    return null;
+  }
+
+  const sections = report.sections;
+  const line = (text: LocalizedText): string => resolveLocalizedValue(text, language, text.en ?? "");
+
+  return (
+    <RetroPanel
+      className="ceo-final-founder-report"
+      icon={<ClipboardCheck size={18} aria-hidden="true" />}
+      title={t("department.finalFounderReport")}
+      aria-label={t("department.finalFounderReport")}
+    >
+      <p className="ceo-final-founder-report__classification">
+        <RetroBadge tone={FINAL_REPORT_CLASSIFICATION_TONE[report.classification]}>
+          {t(FINAL_REPORT_CLASSIFICATION_KEY[report.classification])}
+        </RetroBadge>
+      </p>
+      <VideotexKeyValue
+        items={[
+          { label: t("department.finalReportVision"), value: line(sections.vision) },
+          { label: t("department.finalReportActualResult"), value: line(sections.actualResult) },
+          { label: t("department.finalReportGoalFit"), value: line(sections.goalFit) },
+          { label: t("department.finalReportRemainingGaps"), value: line(sections.remainingGaps) },
+          { label: t("department.finalReportNextStep"), value: line(sections.recommendedNextStep) },
+        ]}
+      />
+      <section
+        className="ceo-final-founder-report__departments"
+        aria-label={t("department.finalReportDepartmentContributions")}
+      >
+        <h3>{t("department.finalReportDepartmentContributions")}</h3>
+        {sections.departmentContributions.map((contribution, index) => (
+          <p key={index}>{line(contribution)}</p>
+        ))}
+      </section>
+    </RetroPanel>
+  );
 }
 
 function CeoOutcomesView({

@@ -10,6 +10,7 @@ import type {
   Company,
   CreationAttempt,
   Department,
+  FinalFounderReport,
   FounderDecisionResolution,
   HumanActionConfirmation,
   KeyResult,
@@ -843,6 +844,52 @@ export function createRepositories(database: DatabaseClient) {
         .run(JSON.stringify(payload), updatedAt, id);
     },
 
+    createFinalFounderReport(report: FinalFounderReport): void {
+      if (report.isCurrent) {
+        database
+          .prepare("UPDATE founder_reports SET is_current = 0 WHERE company_id = ?")
+          .run(report.companyId);
+      }
+
+      database
+        .prepare(
+          `INSERT INTO founder_reports (
+            id, company_id, classification, sections, generated_by, is_current,
+            supersedes_report_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          report.id,
+          report.companyId,
+          report.classification,
+          JSON.stringify(report.sections),
+          report.generatedBy,
+          report.isCurrent ? 1 : 0,
+          report.supersedesReportId,
+          report.createdAt,
+          report.updatedAt,
+        );
+    },
+
+    getCurrentFinalFounderReport(companyId: string): FinalFounderReport | null {
+      const row = database
+        .prepare(
+          `SELECT * FROM founder_reports
+           WHERE company_id = ? AND is_current = 1
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+        )
+        .get(companyId);
+      return row ? mapFinalFounderReport(row as FinalFounderReportRow) : null;
+    },
+
+    listFinalFounderReportsForCompany(companyId: string): FinalFounderReport[] {
+      const rows = database
+        .prepare("SELECT * FROM founder_reports WHERE company_id = ? ORDER BY created_at ASC, id ASC")
+        .all(companyId);
+      return rows.map((row) => mapFinalFounderReport(row as FinalFounderReportRow));
+    },
+
     createApproval(approval: Approval): void {
       database
         .prepare(
@@ -1502,6 +1549,32 @@ function mapProof(row: ProofRow): Proof {
     summary: row.summary,
     ...(row.summary_text ? { summaryText: parseLocalizedText(row.summary_text) } : {}),
     verifiedAt: row.verified_at,
+  };
+}
+
+type FinalFounderReportRow = {
+  id: string;
+  company_id: string;
+  classification: FinalFounderReport["classification"];
+  sections: string;
+  generated_by: FinalFounderReport["generatedBy"];
+  is_current: number;
+  supersedes_report_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapFinalFounderReport(row: FinalFounderReportRow): FinalFounderReport {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    classification: row.classification,
+    sections: JSON.parse(row.sections) as FinalFounderReport["sections"],
+    generatedBy: row.generated_by,
+    isCurrent: row.is_current === 1,
+    supersedesReportId: row.supersedes_report_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

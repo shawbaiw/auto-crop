@@ -388,6 +388,36 @@ describe("Dashboard App", () => {
     expect(within(reviewDetail).getByRole("button", { name: "Return to department" })).toBeInTheDocument();
   });
 
+  it("pins the Final Founder Report above the Outcomes view with its classification and sections", async () => {
+    const api = createMockApiClient();
+    const response = createFinalFounderReportCompanyResponse();
+    api.createCompany = vi.fn(async () => response);
+    api.getCompanyState = vi.fn(async () => ({
+      ...response,
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: response.replanProposals ?? [],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    const panel = within(ceoReport).getByRole("region", { name: "Final Founder Report" });
+    const outcomes = within(ceoReport).getByRole("region", { name: "Outcomes" });
+
+    expect(Boolean(panel.compareDocumentPosition(outcomes) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+
+    expect(within(panel).getByText("Waiting on you")).toBeInTheDocument();
+    expect(within(panel).getByText("Restated vision for the founder.")).toBeInTheDocument();
+    expect(within(panel).getByText("A proof-backed prototype shipped.")).toBeInTheDocument();
+    expect(within(panel).getByText("Engineering built and validated the prototype.")).toBeInTheDocument();
+    expect(within(panel).getByText("Monitor the search-indexing Wait State until 2026-08-27.")).toBeInTheDocument();
+  });
+
   it("creates a durable CEO intake from the CEO Workspace", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -3051,6 +3081,31 @@ function createOutcomesCompanyResponse(): Awaited<ReturnType<ApiClient["createCo
     taskProgressEvents: [],
     taskCompletionEvents: [createTaskCompletionEventSummary()],
     founderDecisions: [createFounderDecisionSummary()],
+  };
+}
+
+function createFinalFounderReportCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
+  const created = createCompanyResponse();
+  return {
+    ...created,
+    finalFounderReport: {
+      id: "founder_report_1",
+      classification: "waiting",
+      generatedBy: "ceo_agent",
+      sections: {
+        vision: { en: "Restated vision for the founder.", zh: "为创始人复述愿景。" },
+        actualResult: { en: "A proof-backed prototype shipped.", zh: "交付了有证据支撑的原型。" },
+        departmentContributions: [
+          { en: "Engineering built and validated the prototype.", zh: "工程部构建并验证了原型。" },
+        ],
+        goalFit: { en: "Partial fit against the key results.", zh: "与关键结果部分契合。" },
+        remainingGaps: { en: "User validation is still open.", zh: "用户验证仍待完成。" },
+        recommendedNextStep: {
+          en: "Monitor the search-indexing Wait State until 2026-08-27.",
+          zh: "在 2026-08-27 之前关注搜索索引等待状态。",
+        },
+      },
+    },
   };
 }
 

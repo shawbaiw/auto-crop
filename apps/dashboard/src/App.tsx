@@ -797,6 +797,7 @@ export default function App({ apiClient }: AppProps) {
         proof={proof}
         businessArtifacts={businessArtifacts}
         ceoAttentionRollups={ceoAttentionRollups}
+        finalFounderReport={blueprint.finalFounderReport ?? null}
         founderDecisions={founderDecisions}
         humanActions={humanActions}
         keyResults={blueprint.keyResults ?? []}

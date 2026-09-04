@@ -837,6 +837,62 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("serializes the isCurrent Final Founder Report in company state", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+
+    const sections = {
+      vision: { en: "Restated vision", zh: "复述愿景" },
+      actualResult: { en: "A prototype shipped", zh: "交付了原型" },
+      departmentContributions: [{ en: "Engineering built it", zh: "工程部构建" }],
+      goalFit: { en: "Partial fit against the key results", zh: "与关键结果部分契合" },
+      remainingGaps: { en: "User validation still open", zh: "用户验证仍待完成" },
+      recommendedNextStep: { en: "Run a five-user test", zh: "进行五人测试" },
+    };
+    fixture.repositories.createFinalFounderReport({
+      id: "founder_report_1",
+      companyId: created.company.id,
+      classification: "waiting",
+      sections,
+      generatedBy: "ceo_agent",
+      isCurrent: true,
+      supersedesReportId: null,
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    const state = await getJson<{
+      finalFounderReport: {
+        id: string;
+        classification: string;
+        generatedBy: string;
+        sections: Record<string, { en?: string; zh?: string } | Array<{ en?: string; zh?: string }>>;
+      } | null;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(state.finalFounderReport).not.toBeNull();
+    expect(state.finalFounderReport).toMatchObject({
+      id: "founder_report_1",
+      classification: "waiting",
+      generatedBy: "ceo_agent",
+    });
+    expect(Object.keys(state.finalFounderReport!.sections).sort()).toEqual(
+      ["actualResult", "departmentContributions", "goalFit", "recommendedNextStep", "remainingGaps", "vision"],
+    );
+    expect((state.finalFounderReport!.sections.vision as { en: string }).en).toBe("Restated vision");
+    expect((state.finalFounderReport!.sections.departmentContributions as Array<{ en: string }>)[0]?.en).toBe(
+      "Engineering built it",
+    );
+
+    await fixture.close();
+  });
+
   it("records CEO review decisions and applies approve or return effects", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {

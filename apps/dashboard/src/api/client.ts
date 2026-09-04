@@ -1,4 +1,15 @@
-import type { CeoAttentionRollup, FounderDecision, HumanAction, NextStepItem, VisionGap, WaitState } from "@auto-crop/core";
+import type {
+  CeoAttentionRollup,
+  FinalFounderReportClassification,
+  FinalFounderReportGeneratedBy,
+  FounderDecision,
+  HumanAction,
+  NextStepItem,
+  VisionGap,
+  WaitState,
+} from "@auto-crop/core";
+
+export type { FinalFounderReportClassification } from "@auto-crop/core";
 
 export type AgentSummary = {
   id: string;
@@ -189,6 +200,20 @@ export type BusinessArtifactSummary = {
   updatedAt: string;
 };
 
+export type FinalFounderReportSummary = {
+  id: string;
+  classification: FinalFounderReportClassification;
+  generatedBy: FinalFounderReportGeneratedBy;
+  sections: {
+    vision: LocalizedText;
+    actualResult: LocalizedText;
+    departmentContributions: LocalizedText[];
+    goalFit: LocalizedText;
+    remainingGaps: LocalizedText;
+    recommendedNextStep: LocalizedText;
+  };
+};
+
 export type FounderReportSummary = {
   founderVision: string;
   actualOutputs: Array<{
@@ -374,6 +399,7 @@ export type CreateCompanyResponse = {
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   founderReport?: FounderReportSummary;
+  finalFounderReport?: FinalFounderReportSummary | null;
   reviews?: ReviewSummary[];
   activity?: ServerEvent[];
   creationEvents?: CompanyEventSummary[];
@@ -419,6 +445,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   proof: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   founderReport?: FounderReportSummary;
+  finalFounderReport?: FinalFounderReportSummary | null;
   reviews: ReviewSummary[];
   activity: ServerEvent[];
   replanProposals: ReplanProposalSummary[];
