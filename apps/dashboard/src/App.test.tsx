@@ -418,6 +418,39 @@ describe("Dashboard App", () => {
     expect(within(panel).getByText("Monitor the search-indexing Wait State until 2026-08-27.")).toBeInTheDocument();
   });
 
+  it("renders a deterministic_fallback report in the pinned panel identically to a ceo_agent one", async () => {
+    const api = createMockApiClient();
+    const base = createFinalFounderReportCompanyResponse();
+    const response = {
+      ...base,
+      finalFounderReport: { ...base.finalFounderReport!, generatedBy: "deterministic_fallback" as const },
+    };
+    api.createCompany = vi.fn(async () => response);
+    api.getCompanyState = vi.fn(async () => ({
+      ...response,
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: response.replanProposals ?? [],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    const panel = within(ceoReport).getByRole("region", { name: "Final Founder Report" });
+    const outcomes = within(ceoReport).getByRole("region", { name: "Outcomes" });
+
+    expect(Boolean(panel.compareDocumentPosition(outcomes) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(within(panel).getByText("Waiting on you")).toBeInTheDocument();
+    expect(within(panel).getByText("Restated vision for the founder.")).toBeInTheDocument();
+    expect(within(panel).getByText("A proof-backed prototype shipped.")).toBeInTheDocument();
+    expect(within(panel).getByText("Engineering built and validated the prototype.")).toBeInTheDocument();
+    expect(within(panel).getByText("Monitor the search-indexing Wait State until 2026-08-27.")).toBeInTheDocument();
+  });
+
   it("creates a durable CEO intake from the CEO Workspace", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();

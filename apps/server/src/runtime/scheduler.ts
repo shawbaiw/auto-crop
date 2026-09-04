@@ -731,6 +731,7 @@ async function maybeGenerateFinalFounderReport(
       keyResults,
       taskCompletionEvents,
       businessArtifacts: repositories.listBusinessArtifactsForCompany(company.id),
+      taskDependencies,
       visionGaps: attention.visionGaps,
       waitStates: attention.waitStates,
       humanActions: attention.humanActions,
@@ -741,8 +742,9 @@ async function maybeGenerateFinalFounderReport(
       createId,
     });
   } catch {
-    // Ticket 01 generates synchronously and best-effort: a failed authoring run leaves no report and
-    // the next quiescent tick retries. The retry ceiling and deterministic fallback land in ticket 02.
+    // `generateFinalFounderReport` retries the authoring run to a ceiling and falls back to a
+    // deterministic report on exhaustion, so it persists a report on any agent outcome. This guard
+    // only covers an unexpected failure (e.g. the DB write); the next quiescent tick retries.
   }
 }
 

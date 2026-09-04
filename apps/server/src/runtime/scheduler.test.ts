@@ -2245,11 +2245,12 @@ describe("Final Founder Report on Company Quiescence", () => {
     projectRoot: string;
     repositories: ReturnType<typeof createRepositories>;
     now?: string;
+    ceoAdapter?: AgentAdapter;
   }) {
     return runSchedulerOnce({
       projectRoot: input.projectRoot,
       repositories: input.repositories,
-      adapters: [workerAdapter(), finalReportCeoAdapter()],
+      adapters: [workerAdapter(), input.ceoAdapter ?? finalReportCeoAdapter()],
       workerId: "worker_a",
       maxTasks: 1,
       now: () => new Date(input.now ?? NOW),
@@ -2434,6 +2435,42 @@ describe("Final Founder Report on Company Quiescence", () => {
     await runReportSweep({ projectRoot, repositories });
 
     expect(repositories.listFinalFounderReportsForCompany("company_1")).toHaveLength(1);
+
+    client.close();
+  });
+
+  it("assembles a deterministic fallback report when the CEO adapter fails every attempt", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "complete", "low"),
+    ]);
+
+    await runReportSweep({
+      projectRoot,
+      repositories,
+      ceoAdapter: createMockAgentAdapter({
+        id: "codex",
+        name: "Codex",
+        capabilities: ["code", "frontend", "test"],
+        status: "failed",
+      }),
+    });
+
+    const report = repositories.getCurrentFinalFounderReport("company_1");
+    expect(report).not.toBeNull();
+    expect(report).toMatchObject({ generatedBy: "deterministic_fallback", isCurrent: true });
+    // Keyed to the same runtime-computed classification the authored report would carry.
+    expect(report?.classification).toBe("stalled");
+    // Every factual section is populated from `summarizeFounderReport` projection data.
+    expect(report?.sections.vision.en).toContain("Build an AI SaaS");
+    expect(report?.sections.vision.zh).toContain("Build an AI SaaS");
+    expect(report?.sections.departmentContributions.length).toBeGreaterThan(0);
+    expect(report?.sections.departmentContributions[0]?.en).toContain("Engineering");
+    // Synthesis sections are filled from templates, in both locales.
+    expect(report?.sections.actualResult.en).toMatch(/task/i);
+    expect(report?.sections.actualResult.zh).toBeTruthy();
+    expect(report?.sections.goalFit.en).toContain("key results");
+    expect(report?.sections.remainingGaps.en).toBeTruthy();
+    expect(report?.sections.recommendedNextStep.en).toBeTruthy();
 
     client.close();
   });
