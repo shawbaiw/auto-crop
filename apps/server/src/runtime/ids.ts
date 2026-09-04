@@ -1,3 +1,5 @@
+import { createId } from "@auto-crop/core";
+
 export function createDefaultId(prefix: string): string {
-  return `${prefix}_${crypto.randomUUID()}`;
+  return createId(prefix);
 }

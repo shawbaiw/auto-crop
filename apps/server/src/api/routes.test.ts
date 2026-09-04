@@ -278,6 +278,33 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("keeps a company draft when only the final creation event write fails", async () => {
+    const logs: string[] = [];
+    const fixture = await startFixtureServer({
+      failCompanyEventTypes: new Set(["company_creation_completed"]),
+      log: (line) => logs.push(line),
+    });
+
+    const created = await postCreatingCompany(fixture, "final-event-failure-key-1");
+    await waitForCreationAttemptStatus(fixture, created.company.id, "complete");
+
+    expect(fixture.repositories.getCompany(created.company.id)).toMatchObject({ status: "draft" });
+    expect(fixture.repositories.listCreationAttemptsForCompany(created.company.id)).toEqual([
+      expect.objectContaining({ status: "complete", failureMessage: null }),
+    ]);
+    expect(fixture.repositories.listTasksForCompany(created.company.id).length).toBeGreaterThan(0);
+    expect(fixture.repositories.listCompanyEventsForCompany(created.company.id).map((event) => event.type)).toEqual([
+      "company_creation_accepted",
+      "company_creation_agent_started",
+      "company_creation_blueprint_parsed",
+      "company_creation_records_created",
+    ]);
+    expect(logs).toContain("Company Creation completed but completion event could not be recorded: simulated completed event insert failure");
+    expect(logs).toContain("Company Creation completed after non-critical finalization error: simulated completed event insert failure");
+
+    await fixture.close();
+  });
+
   it("marks failed creation as retryable and retries on the same company", async () => {
     const fixture = await startFixtureServer({
       ceoAgent: createFlakyCreationAgent(),
@@ -2637,12 +2664,21 @@ async function startFixtureServer(options: {
   plannerOutput?: string;
   schedulerWakeRequests?: SchedulerWakeReason[];
   useDefaultCreateId?: boolean;
+  failCompanyEventTypes?: Set<string>;
+  log?: (line: string) => void;
 } = {}) {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-api-"));
   createdDirs.push(projectRoot);
   const client = createDatabaseClient(":memory:");
   migrate(client);
   const repositories = createRepositories(client);
+  const appendCompanyEvent = repositories.appendCompanyEvent.bind(repositories);
+  repositories.appendCompanyEvent = (event) => {
+    if (options.failCompanyEventTypes?.has(event.type)) {
+      throw new Error("simulated completed event insert failure");
+    }
+    appendCompanyEvent(event);
+  };
   const blueprint = aiSaasPlaybook.createBlueprint({
     companyName: "Pricing Page Studio",
     founderVision: "Build an AI SaaS that creates pricing pages.",
@@ -2666,6 +2702,7 @@ async function startFixtureServer(options: {
     projectRoot,
     repositories,
     agents: [codex],
+    log: options.log,
     now: options.now ?? (() => new Date("2026-08-17T00:00:00.000Z")),
     requestSchedulerWake: (reason: SchedulerWakeReason) => options.schedulerWakeRequests?.push(reason),
   };
@@ -2790,6 +2827,20 @@ async function waitForCompanyStatus(
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`Company ${companyId} did not reach ${status}.`);
+}
+
+async function waitForCreationAttemptStatus(
+  fixture: Awaited<ReturnType<typeof startFixtureServer>>,
+  companyId: string,
+  status: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (fixture.repositories.listCreationAttemptsForCompany(companyId).some((creationAttempt) => creationAttempt.status === status)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Company ${companyId} did not get a ${status} creation attempt.`);
 }
 
 function createRoutedAgent(options: {

@@ -112,6 +112,59 @@ describe("startAutoCrop", () => {
     }
   });
 
+  it("uses collision-resistant ids for companies created through CLI startup", async () => {
+    const projectRoot = createTempProjectRoot();
+    const blueprint = aiSaasPlaybook.createBlueprint({
+      companyName: "Vision Studio",
+      founderVision: "Build an AI SaaS that turns founder visions into launch plans.",
+      preferredEngineeringAgentId: "codex",
+      preferredStrategyAgentId: "codex",
+    });
+    const agent = createMockAgentAdapter({
+      id: "codex",
+      name: "Codex",
+      capabilities: ["code", "frontend", "test", "writing", "research", "growth"],
+      output: ["## Human CEO Brief", "Validate.", "```json", JSON.stringify({ brief: "Validate.", blueprint }), "```"].join("\n"),
+    });
+
+    const started = await startAutoCrop({
+      projectRoot,
+      host: "127.0.0.1",
+      port: 0,
+      agents: [agent],
+      schedulerIntervalMs: 60_000,
+      log: () => undefined,
+    });
+
+    try {
+      const created = await postJson<{
+        company: { id: string; status: string };
+      }>(`${started.url}/api/companies`, {
+        companyName: "Vision Studio",
+        founderVision: "Build an AI SaaS that turns founder visions into launch plans.",
+        selectedCeoAgentId: "codex",
+        permissionMode: "balanced",
+        assets: [],
+      });
+      const state = await waitForCompanyState(started.url, created.company.id, "draft");
+      const database = createDatabaseClient(join(projectRoot, ".auto-crop", "state.sqlite"));
+      try {
+        const repositories = createRepositories(database);
+        const creationEvents = repositories.listCompanyEventsForCompany(created.company.id);
+
+        expect(state.company.id).toMatch(/^company_[0-9a-f-]{36}$/);
+        expect(state.company.id).not.toMatch(/^company_\d+$/);
+        expect(creationEvents).toHaveLength(5);
+        expect(new Set(creationEvents.map((event) => event.id)).size).toBe(creationEvents.length);
+        expect(creationEvents.every((event) => /^company_event_[0-9a-f-]{36}$/.test(event.id))).toBe(true);
+      } finally {
+        database.close();
+      }
+    } finally {
+      await started.close();
+    }
+  });
+
   it("runs wake-requested queued tasks without waiting for the scheduler interval", async () => {
     const projectRoot = createTempProjectRoot();
     const logs: string[] = [];
@@ -190,10 +243,51 @@ function createTempProjectRoot(): string {
   return dir;
 }
 
-async function waitFor(check: () => boolean): Promise<void> {
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed with ${response.status}: ${await response.text()}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function waitForCompanyState(
+  baseUrl: string,
+  companyId: string,
+  status: string,
+): Promise<{
+  company: { id: string; status: string };
+  creationEvents: Array<{ type: string }>;
+}> {
+  let latestState:
+    | {
+        company: { id: string; status: string };
+        creationEvents: Array<{ type: string }>;
+      }
+    | undefined;
+
+  await waitFor(async () => {
+    const response = await fetch(`${baseUrl}/api/companies/${companyId}/state`);
+    if (!response.ok) {
+      return false;
+    }
+    latestState = (await response.json()) as typeof latestState;
+    return latestState?.company.status === status;
+  });
+
+  return latestState!;
+}
+
+async function waitFor(check: () => boolean | Promise<boolean>): Promise<void> {
   const startedAt = Date.now();
 
-  while (!check()) {
+  while (!(await check())) {
     if (Date.now() - startedAt > 2_000) {
       throw new Error("Timed out waiting for condition.");
     }

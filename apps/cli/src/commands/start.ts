@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
+import { createId } from "@auto-crop/core";
 import {
   aiSaasPlaybook,
   createApiServer,
@@ -54,6 +55,7 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
     repositories,
     agents,
     log,
+    createId,
     requestSchedulerWake: (reason) => scheduler?.requestWake(reason),
   });
   scheduler = startSchedulerLoop({
@@ -62,6 +64,7 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
     log,
     projectRoot: options.projectRoot,
     repositories,
+    createId,
     publish: (event) => apiServer.events.publish(event),
   });
 
@@ -97,6 +100,7 @@ export function startSchedulerLoop(input: {
   projectRoot: string;
   publish: Parameters<typeof runSchedulerOnce>[0]["emit"];
   repositories: ReturnType<typeof createRepositories>;
+  createId?: (prefix: string) => string;
 }) {
   const workerId = `cli-worker-${process.pid}`;
   const proofCollector = createProofCollector({ proofSchemas: aiSaasPlaybook.proofSchemas });
@@ -121,6 +125,7 @@ export function startSchedulerLoop(input: {
         maxTasks: 1,
         approvalRequired: () => getDefaultPolicy().decisions.run_safe_command === "ask",
         proofCollector,
+        createId: input.createId,
         emit: (event) => {
           input.log(`Scheduler ${event.type}: ${event.taskId} ${event.message}`);
           input.publish(event);

@@ -26,6 +26,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@auto-crop/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@auto-crop/server':
         specifier: workspace:*
         version: link:../server

@@ -909,6 +909,8 @@ async function completeCompanyCreation(input: {
   selectedCeoAgent: AgentAdapter;
 }): Promise<void> {
   const { options, events, companyId, attemptId, creationInput, selectedCeoAgent } = input;
+  let recordsWritten = false;
+  let blueprintPromptPath: string | null = null;
 
   try {
     const startedEvent = createCompanyEvent(
@@ -931,6 +933,7 @@ async function completeCompanyCreation(input: {
       permissionMode: creationInput.permissionMode,
       assets: creationInput.assets,
     });
+    blueprintPromptPath = blueprintResult.promptPath;
     options.repositories.updateCreationAttempt(attemptId, {
       status: "running",
       finishedAt: null,
@@ -967,6 +970,7 @@ async function completeCompanyCreation(input: {
       createId: options.createId,
       proofSchemaNormalizations: blueprintResult.proofSchemaNormalizations,
     });
+    recordsWritten = true;
 
     const recordsEvent = createCompanyEvent(
       options,
@@ -995,6 +999,37 @@ async function completeCompanyCreation(input: {
   } catch (error) {
     const timestamp = (options.now ?? (() => new Date()))().toISOString();
     const message = `Company Creation failed: ${(error as Error).message}`;
+    if (recordsWritten) {
+      options.repositories.updateCompanyStatus(companyId, "draft", timestamp);
+      options.repositories.updateCreationAttempt(input.attemptId, {
+        status: "complete",
+        finishedAt: timestamp,
+        promptPath: blueprintPromptPath,
+        failureMessage: null,
+      });
+      const alreadyCompleted = options.repositories
+        .listCompanyEventsForCompany(companyId)
+        .some((event) => event.type === "company_creation_completed");
+      if (!alreadyCompleted) {
+        const completedEvent: CompanyEvent = {
+          id: createDefaultId("company_event"),
+          companyId,
+          type: "company_creation_completed",
+          message: "Company Creation completed.",
+          messageText: localizedTextFromString("Company Creation completed."),
+          createdAt: timestamp,
+          status: "draft",
+        };
+        try {
+          options.repositories.appendCompanyEvent(completedEvent);
+          events.publish(summarizeCompanyEvent(completedEvent));
+        } catch (eventError) {
+          options.log?.(`Company Creation completed but completion event could not be recorded: ${(eventError as Error).message}`);
+        }
+      }
+      options.log?.(`Company Creation completed after non-critical finalization error: ${(error as Error).message}`);
+      return;
+    }
     options.repositories.updateCompanyStatus(companyId, "creation_failed", timestamp);
     options.repositories.updateCreationAttempt(input.attemptId, {
       status: "failed",
