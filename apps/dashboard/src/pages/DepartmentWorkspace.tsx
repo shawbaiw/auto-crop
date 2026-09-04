@@ -72,6 +72,7 @@ export type DepartmentWorkspaceProps = {
   businessArtifacts?: BusinessArtifactSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
   finalFounderReport?: FinalFounderReportSummary | null;
+  finalFounderReportPreparing?: boolean;
   founderDecisions?: FounderDecisionSummary[];
   humanActions?: HumanActionSummary[];
   keyResults?: KeyResultSummary[];
@@ -118,6 +119,7 @@ export function DepartmentWorkspace({
   businessArtifacts = [],
   ceoAttentionRollups = [],
   finalFounderReport = null,
+  finalFounderReportPreparing = false,
   founderDecisions = [],
   humanActions = [],
   keyResults = [],
@@ -218,6 +220,7 @@ export function DepartmentWorkspace({
                   keyResults={keyResults}
                   ceoAttentionRollups={ceoAttentionRollups}
                   finalFounderReport={finalFounderReport}
+                  finalFounderReportPreparing={finalFounderReportPreparing}
                   founderDecisions={founderDecisions}
                   taskCompletionEvents={taskCompletionEvents}
                   onDraftChange={setCeoIntakeDraft}
@@ -301,6 +304,7 @@ function departmentIcon(departmentName: string): ReactNode {
 function CeoIntakeWorkspace({
   ceoAttentionRollups,
   finalFounderReport,
+  finalFounderReportPreparing,
   departments,
   draft,
   founderDecisions,
@@ -324,6 +328,7 @@ function CeoIntakeWorkspace({
 }: {
   ceoAttentionRollups: CeoAttentionRollupSummary[];
   finalFounderReport: FinalFounderReportSummary | null;
+  finalFounderReportPreparing: boolean;
   departments: DepartmentSummary[];
   draft: string;
   founderDecisions: FounderDecisionSummary[];
@@ -366,7 +371,7 @@ function CeoIntakeWorkspace({
 
   return (
     <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
-      <FinalFounderReportPanel report={finalFounderReport} />
+      <FinalFounderReportPanel report={finalFounderReport} preparing={finalFounderReportPreparing} />
       <CeoOutcomesView
         departmentsById={departmentsById}
         founderDecisions={founderDecisions}
@@ -559,11 +564,29 @@ const FINAL_REPORT_CLASSIFICATION_TONE = {
  * the classification prominently, then the six localized-text sections, using existing retro
  * primitives. Localized text renders in the active Interface Locale.
  */
-function FinalFounderReportPanel({ report }: { report: FinalFounderReportSummary | null }) {
+function FinalFounderReportPanel({
+  report,
+  preparing = false,
+}: {
+  report: FinalFounderReportSummary | null;
+  preparing?: boolean;
+}) {
   const { language, t } = useLanguage();
 
   if (!report) {
-    return null;
+    if (!preparing) {
+      return null;
+    }
+    return (
+      <RetroPanel
+        className="ceo-final-founder-report ceo-final-founder-report--preparing"
+        icon={<ClipboardCheck size={18} aria-hidden="true" />}
+        title={t("department.finalFounderReport")}
+        aria-label={t("department.finalFounderReport")}
+      >
+        <p className="ceo-final-founder-report__preparing muted">{t("department.finalReportPreparing")}</p>
+      </RetroPanel>
+    );
   }
 
   const sections = report.sections;

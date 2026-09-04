@@ -148,6 +148,19 @@ export const finalFounderReportSchema = z.object({
   updatedAt: nonEmptyString,
 });
 
+export const finalFounderReportJobStatusSchema = z.enum(["preparing", "complete", "failed"]);
+
+/** The tracked async job that authors a Final Founder Report off the scheduler tick. */
+export const finalFounderReportJobSchema = z.object({
+  id: nonEmptyString,
+  companyId: nonEmptyString,
+  status: finalFounderReportJobStatusSchema,
+  createdAt: nonEmptyString,
+  updatedAt: nonEmptyString,
+  finishedAt: nonEmptyString.nullable(),
+  failureMessage: z.string().nullable(),
+});
+
 export type FinalFounderReportOutput = z.infer<typeof finalFounderReportOutputSchema>;
 
 export function parseFinalFounderReportOutput(output: string): FinalFounderReportOutput {

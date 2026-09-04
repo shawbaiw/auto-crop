@@ -451,6 +451,73 @@ describe("Dashboard App", () => {
     expect(within(panel).getByText("Monitor the search-indexing Wait State until 2026-08-27.")).toBeInTheDocument();
   });
 
+  it("shows the report-preparing state in the pinned panel from the indicator", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    const preparing = {
+      ...created,
+      finalFounderReport: null,
+      finalFounderReportPreparing: true,
+    };
+    api.createCompany = vi.fn(async () => preparing);
+    api.getCompanyState = vi.fn(async () => ({
+      ...preparing,
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: preparing.replanProposals ?? [],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    const panel = within(ceoReport).getByRole("region", { name: "Final Founder Report" });
+    const outcomes = within(ceoReport).getByRole("region", { name: "Outcomes" });
+
+    expect(Boolean(panel.compareDocumentPosition(outcomes) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(
+      within(panel).getByText("Your closing report is being prepared. It will appear here when it is ready."),
+    ).toBeInTheDocument();
+    expect(within(panel).queryByText("Waiting on you")).not.toBeInTheDocument();
+  });
+
+  it("refetches Company State Snapshot on a company_report_ready event", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    const preparing = { ...created, finalFounderReport: null, finalFounderReportPreparing: true };
+    api.createCompany = vi.fn(async () => preparing);
+    const ready = createFinalFounderReportCompanyResponse();
+    api.getCompanyState = vi.fn(async () => ({
+      ...ready,
+      finalFounderReportPreparing: false,
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: ready.replanProposals ?? [],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    act(() => {
+      api.lastEventHandler?.({
+        type: "company_report_ready",
+        companyId: "company_1",
+        message: "Final Founder Report ready.",
+      });
+    });
+
+    await waitFor(() => expect(api.getCompanyState).toHaveBeenCalledWith("company_1"));
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    const panel = within(ceoReport).getByRole("region", { name: "Final Founder Report" });
+    expect(await within(panel).findByText("Restated vision for the founder.")).toBeInTheDocument();
+  });
+
   it("creates a durable CEO intake from the CEO Workspace", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();

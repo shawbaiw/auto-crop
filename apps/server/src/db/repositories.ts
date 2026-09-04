@@ -11,6 +11,7 @@ import type {
   CreationAttempt,
   Department,
   FinalFounderReport,
+  FinalFounderReportJob,
   FounderDecisionResolution,
   HumanActionConfirmation,
   KeyResult,
@@ -890,6 +891,61 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapFinalFounderReport(row as FinalFounderReportRow));
     },
 
+    createFinalFounderReportJob(job: FinalFounderReportJob): void {
+      database
+        .prepare(
+          `INSERT INTO founder_report_jobs (
+            id, company_id, status, created_at, updated_at, finished_at, failure_message
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          job.id,
+          job.companyId,
+          job.status,
+          job.createdAt,
+          job.updatedAt,
+          job.finishedAt,
+          job.failureMessage,
+        );
+    },
+
+    /** The company's in-flight (`preparing`) report job, if any — the "report preparing" indicator. */
+    getActiveFinalFounderReportJob(companyId: string): FinalFounderReportJob | null {
+      const row = database
+        .prepare(
+          `SELECT * FROM founder_report_jobs
+           WHERE company_id = ? AND status = 'preparing'
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+        )
+        .get(companyId);
+      return row ? mapFinalFounderReportJob(row as FinalFounderReportJobRow) : null;
+    },
+
+    /** Every `preparing` report job across companies, oldest first — the job runner's work queue. */
+    listPendingFinalFounderReportJobs(): FinalFounderReportJob[] {
+      const rows = database
+        .prepare("SELECT * FROM founder_report_jobs WHERE status = 'preparing' ORDER BY created_at ASC, id ASC")
+        .all();
+      return rows.map((row) => mapFinalFounderReportJob(row as FinalFounderReportJobRow));
+    },
+
+    /** Move a job to a terminal state (`complete` / `failed`); `timestamp` is its finish time. */
+    updateFinalFounderReportJobStatus(
+      id: string,
+      status: Exclude<FinalFounderReportJob["status"], "preparing">,
+      timestamp: string,
+      failureMessage: string | null = null,
+    ): void {
+      database
+        .prepare(
+          `UPDATE founder_report_jobs
+           SET status = ?, updated_at = ?, finished_at = ?, failure_message = ?
+           WHERE id = ?`,
+        )
+        .run(status, timestamp, timestamp, failureMessage, id);
+    },
+
     createApproval(approval: Approval): void {
       database
         .prepare(
@@ -1575,6 +1631,28 @@ function mapFinalFounderReport(row: FinalFounderReportRow): FinalFounderReport {
     supersedesReportId: row.supersedes_report_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+type FinalFounderReportJobRow = {
+  id: string;
+  company_id: string;
+  status: FinalFounderReportJob["status"];
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+  failure_message: string | null;
+};
+
+function mapFinalFounderReportJob(row: FinalFounderReportJobRow): FinalFounderReportJob {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at,
+    failureMessage: row.failure_message,
   };
 }
 

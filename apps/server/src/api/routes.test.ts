@@ -893,6 +893,64 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("exposes the report-preparing indicator during the generation gap and clears it once the report exists", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+
+    fixture.repositories.createFinalFounderReportJob({
+      id: "founder_report_job_1",
+      companyId: created.company.id,
+      status: "preparing",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      finishedAt: null,
+      failureMessage: null,
+    });
+
+    const stateUrl = `${fixture.baseUrl}/api/companies/${created.company.id}/state`;
+    type State = { finalFounderReportPreparing: boolean; finalFounderReport: { id: string } | null };
+
+    const preparing = await getJson<State>(stateUrl);
+    expect(preparing.finalFounderReportPreparing).toBe(true);
+    expect(preparing.finalFounderReport).toBeNull();
+
+    fixture.repositories.updateFinalFounderReportJobStatus(
+      "founder_report_job_1",
+      "complete",
+      "2026-08-17T00:05:00.000Z",
+    );
+    fixture.repositories.createFinalFounderReport({
+      id: "founder_report_1",
+      companyId: created.company.id,
+      classification: "waiting",
+      sections: {
+        vision: { en: "Restated vision", zh: "复述愿景" },
+        actualResult: { en: "A prototype shipped", zh: "交付了原型" },
+        departmentContributions: [{ en: "Engineering built it", zh: "工程部构建" }],
+        goalFit: { en: "Partial fit", zh: "部分契合" },
+        remainingGaps: { en: "User validation still open", zh: "用户验证仍待完成" },
+        recommendedNextStep: { en: "Run a five-user test", zh: "进行五人测试" },
+      },
+      generatedBy: "ceo_agent",
+      isCurrent: true,
+      supersedesReportId: null,
+      createdAt: "2026-08-17T00:05:00.000Z",
+      updatedAt: "2026-08-17T00:05:00.000Z",
+    });
+
+    const ready = await getJson<State>(stateUrl);
+    expect(ready.finalFounderReportPreparing).toBe(false);
+    expect(ready.finalFounderReport?.id).toBe("founder_report_1");
+
+    await fixture.close();
+  });
+
   it("records CEO review decisions and applies approve or return effects", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {

@@ -400,6 +400,7 @@ export type CreateCompanyResponse = {
   businessArtifacts?: BusinessArtifactSummary[];
   founderReport?: FounderReportSummary;
   finalFounderReport?: FinalFounderReportSummary | null;
+  finalFounderReportPreparing?: boolean;
   reviews?: ReviewSummary[];
   activity?: ServerEvent[];
   creationEvents?: CompanyEventSummary[];
@@ -446,6 +447,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   businessArtifacts?: BusinessArtifactSummary[];
   founderReport?: FounderReportSummary;
   finalFounderReport?: FinalFounderReportSummary | null;
+  finalFounderReportPreparing?: boolean;
   reviews: ReviewSummary[];
   activity: ServerEvent[];
   replanProposals: ReplanProposalSummary[];
@@ -588,6 +590,7 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       events.addEventListener("company_creation_agent_started", listener);
       events.addEventListener("company_creation_completed", listener);
       events.addEventListener("company_creation_failed", listener);
+      events.addEventListener("company_report_ready", listener);
       return () => events.close();
     },
   };

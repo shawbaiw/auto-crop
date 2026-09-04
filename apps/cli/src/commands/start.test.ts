@@ -168,7 +168,7 @@ describe("startAutoCrop", () => {
   it("runs wake-requested queued tasks without waiting for the scheduler interval", async () => {
     const projectRoot = createTempProjectRoot();
     const logs: string[] = [];
-    const events: Array<{ type: string; taskId: string }> = [];
+    const events: Array<{ type: string; taskId?: string }> = [];
     const client = createDatabaseClient(":memory:");
     migrate(client);
     const repositories = createRepositories(client);

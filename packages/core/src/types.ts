@@ -235,6 +235,26 @@ export type FinalFounderReport = {
   updatedAt: string;
 };
 
+/** Lifecycle of a {@link FinalFounderReportJob}. */
+export type FinalFounderReportJobStatus = "preparing" | "complete" | "failed";
+
+/**
+ * A tracked async unit of work that authors a {@link FinalFounderReport}, modelled on an Agent Run.
+ * The scheduler tick that detects Company Quiescence enqueues one (`preparing`) and returns without
+ * running the CEO Agent; a later tick runs the authoring job off the enqueuing tick's path and marks
+ * it `complete` (or `failed`, which the next quiescent tick retries). While a `preparing` job exists
+ * the Company State Snapshot reports a "report preparing" indicator.
+ */
+export type FinalFounderReportJob = {
+  id: string;
+  companyId: string;
+  status: FinalFounderReportJobStatus;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  failureMessage: string | null;
+};
+
 export type HumanActionStatus = "pending" | "confirmed";
 export type HumanAction = {
   id: string;

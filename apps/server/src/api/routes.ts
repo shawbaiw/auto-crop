@@ -829,6 +829,8 @@ function buildCompanyState(
     founderDecisions: ceoAttention.founderDecisions,
     ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
     finalFounderReport: summarizeFinalFounderReport(repositories.getCurrentFinalFounderReport(currentCompany.id)),
+    // "Report preparing" indicator: a tracked generation job is in flight but no report exists yet.
+    finalFounderReportPreparing: repositories.getActiveFinalFounderReportJob(currentCompany.id) !== null,
     founderReport: summarizeFounderReport(
       currentCompany,
       tasks,

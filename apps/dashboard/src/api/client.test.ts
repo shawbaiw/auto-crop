@@ -47,6 +47,43 @@ describe("createApiClient", () => {
     });
   });
 
+  it("registers a company_report_ready listener and forwards the event to the handler", () => {
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    class FakeEventSource {
+      url: string;
+      constructor(url: string) {
+        this.url = url;
+      }
+      addEventListener(type: string, listener: (event: MessageEvent) => void) {
+        listeners.set(type, listener);
+      }
+      close() {}
+    }
+    vi.stubGlobal("EventSource", FakeEventSource);
+
+    const handler = vi.fn();
+    const client = createApiClient("http://127.0.0.1:8787");
+    client.subscribeEvents("company_1", handler);
+
+    expect(listeners.has("company_report_ready")).toBe(true);
+
+    listeners.get("company_report_ready")?.(
+      new MessageEvent("company_report_ready", {
+        data: JSON.stringify({
+          type: "company_report_ready",
+          companyId: "company_1",
+          message: "Final Founder Report ready.",
+        }),
+      }),
+    );
+
+    expect(handler).toHaveBeenCalledWith({
+      type: "company_report_ready",
+      companyId: "company_1",
+      message: "Final Founder Report ready.",
+    });
+  });
+
   it("times out company loading requests instead of leaving the picker loading forever", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(

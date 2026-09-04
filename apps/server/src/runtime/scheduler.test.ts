@@ -21,7 +21,7 @@ import { migrate } from "../db/schema";
 import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { acquireTaskLock, releaseTaskLock } from "./locks";
 import { createHandoffPackage, createProofCollector } from "./proof";
-import { runSchedulerOnce, type SchedulerEvent } from "./scheduler";
+import { runFinalFounderReportJobs, runSchedulerOnce, type SchedulerEvent } from "./scheduler";
 
 const createdDirs: string[] = [];
 
@@ -2241,13 +2241,14 @@ describe("Final Founder Report on Company Quiescence", () => {
     });
   }
 
-  function runReportSweep(input: {
+  function reportSweepOptions(input: {
     projectRoot: string;
     repositories: ReturnType<typeof createRepositories>;
     now?: string;
     ceoAdapter?: AgentAdapter;
   }) {
-    return runSchedulerOnce({
+    const emitted: SchedulerEvent[] = [];
+    const options = {
       projectRoot: input.projectRoot,
       repositories: input.repositories,
       adapters: [workerAdapter(), input.ceoAdapter ?? finalReportCeoAdapter()],
@@ -2256,12 +2257,28 @@ describe("Final Founder Report on Company Quiescence", () => {
       now: () => new Date(input.now ?? NOW),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => {
+      proofCollector: ({ task }: { task: Task }) => {
         writeValidBusinessArtifact(task);
         return [createProofForTask(task)];
       },
-      emit: () => undefined,
-    });
+      emit: (event: SchedulerEvent) => {
+        emitted.push(event);
+      },
+    };
+    return { options, emitted };
+  }
+
+  /** One full report cycle: the tick that dispatches tasks and enqueues the job, then the job run. */
+  async function runReportSweep(input: {
+    projectRoot: string;
+    repositories: ReturnType<typeof createRepositories>;
+    now?: string;
+    ceoAdapter?: AgentAdapter;
+  }): Promise<{ emitted: SchedulerEvent[] }> {
+    const { options, emitted } = reportSweepOptions(input);
+    await runSchedulerOnce(options);
+    await runFinalFounderReportJobs(options);
+    return { emitted };
   }
 
   function seedWaitStateCompletion(
@@ -2301,7 +2318,7 @@ describe("Final Founder Report on Company Quiescence", () => {
       createTaskRecord("task_1", "queued", "low"),
     ]);
 
-    await runReportSweep({ projectRoot, repositories });
+    const { emitted } = await runReportSweep({ projectRoot, repositories });
 
     expect(repositories.getTask("task_1")?.status).toBe("complete");
     const report = repositories.getCurrentFinalFounderReport("company_1");
@@ -2310,6 +2327,37 @@ describe("Final Founder Report on Company Quiescence", () => {
     expect(report?.sections.vision.en).toBe("Restated vision.");
     expect(report?.sections.departmentContributions).toHaveLength(1);
     expect(report?.sections.recommendedNextStep.zh).toBe("进行五人测试。");
+    // The finished job is closed and a `company_report_ready` event is published for the company.
+    expect(repositories.getActiveFinalFounderReportJob("company_1")).toBeNull();
+    expect(emitted).toContainEqual(
+      expect.objectContaining({ type: "company_report_ready", companyId: "company_1" }),
+    );
+
+    client.close();
+  });
+
+  it("enqueues a tracked generation job and does not run the CEO Agent on the enqueuing tick", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+    const { options, emitted } = reportSweepOptions({ projectRoot, repositories });
+
+    await runSchedulerOnce(options);
+
+    // The tick settled the task and enqueued a job, but did not block on the CEO Agent run.
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    expect(repositories.getActiveFinalFounderReportJob("company_1")).not.toBeNull();
+    expect(repositories.getCurrentFinalFounderReport("company_1")).toBeNull();
+    expect(emitted.some((event) => event.type === "company_report_ready")).toBe(false);
+
+    // The job runner authors the report off the tick and announces it.
+    await runFinalFounderReportJobs(options);
+
+    expect(repositories.getCurrentFinalFounderReport("company_1")).toMatchObject({ isCurrent: true });
+    expect(repositories.getActiveFinalFounderReportJob("company_1")).toBeNull();
+    expect(emitted).toContainEqual(
+      expect.objectContaining({ type: "company_report_ready", companyId: "company_1" }),
+    );
 
     client.close();
   });
