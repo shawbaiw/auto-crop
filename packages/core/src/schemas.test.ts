@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   agentFailureReasonSchema,
+  ceoAttentionRollupReasonSchema,
   ceoResponseSchema,
   companyBlueprintSchema,
+  finalFounderReportClassificationSchema,
+  finalFounderReportPayloadSchema,
+  finalFounderReportSchema,
   localizedTextSchema,
   nextStepItemTypeSchema,
   parseCeoResponse,
+  parseFinalFounderReportOutput,
   strategicDecisionKindSchema,
   taskAcceptanceProvenanceSchema,
   taskCompletionOutcomeSchema,
@@ -239,11 +244,97 @@ describe("runtime status schemas", () => {
     expect(taskAcceptanceProvenanceSchema.safeParse("ceo_review").success).toBe(false);
   });
 
+  it("accepts goal_stage_change as a CeoAttentionRollupReason and rejects an unknown reason", () => {
+    for (const reason of [
+      "vision_gap",
+      "ceo_decision",
+      "human_action",
+      "wait_state",
+      "cross_department_impact",
+      "exception_outcome",
+      "founder_decision",
+      "goal_stage_change",
+    ]) {
+      expect(ceoAttentionRollupReasonSchema.safeParse(reason).success).toBe(true);
+    }
+    expect(ceoAttentionRollupReasonSchema.safeParse("objective_complete").success).toBe(false);
+  });
+
   it("accepts every Strategic Decision Kind and rejects choices outside the fixed set", () => {
     for (const kind of ["target_market", "product_direction", "mvp_type", "pricing_model", "launch_target"]) {
       expect(strategicDecisionKindSchema.safeParse(kind).success).toBe(true);
     }
     expect(strategicDecisionKindSchema.safeParse("brand_name").success).toBe(false);
+  });
+});
+
+describe("Final Founder Report schema", () => {
+  const validSections = {
+    vision: { en: "Restated vision", zh: "复述愿景" },
+    actualResult: { en: "What was produced", zh: "实际产出" },
+    departmentContributions: [{ en: "Engineering shipped the prototype", zh: "工程部交付原型" }],
+    goalFit: { en: "Partial fit against the key results", zh: "与关键结果部分契合" },
+    remainingGaps: { en: "User validation still open", zh: "用户验证仍待完成" },
+    recommendedNextStep: { en: "Run a five-user test", zh: "进行五人测试" },
+  };
+
+  it("parses each classification value and rejects an unknown one", () => {
+    for (const classification of ["achieved", "stalled", "waiting"]) {
+      expect(finalFounderReportClassificationSchema.safeParse(classification).success).toBe(true);
+    }
+    expect(finalFounderReportClassificationSchema.safeParse("waiting_on_you").success).toBe(false);
+  });
+
+  it("parses a well-formed report payload with classification, six sections, and generatedBy", () => {
+    const result = finalFounderReportPayloadSchema.safeParse({
+      classification: "waiting",
+      generatedBy: "ceo_agent",
+      sections: validSections,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a payload missing a required section", () => {
+    const { remainingGaps: _omitted, ...withoutRemainingGaps } = validSections;
+    const result = finalFounderReportPayloadSchema.safeParse({
+      classification: "achieved",
+      generatedBy: "deterministic_fallback",
+      sections: withoutRemainingGaps,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("parses a full persisted record and rejects one missing a section", () => {
+    const record = {
+      id: "founder_report_1",
+      companyId: "company_1",
+      classification: "stalled" as const,
+      sections: validSections,
+      generatedBy: "ceo_agent" as const,
+      isCurrent: true,
+      supersedesReportId: null,
+      createdAt: "2026-09-04T00:00:00.000Z",
+      updatedAt: "2026-09-04T00:00:00.000Z",
+    };
+    expect(finalFounderReportSchema.safeParse(record).success).toBe(true);
+
+    const { goalFit: _dropped, ...withoutGoalFit } = validSections;
+    expect(finalFounderReportSchema.safeParse({ ...record, sections: withoutGoalFit }).success).toBe(false);
+  });
+
+  it("parses a fenced JSON report authored by the CEO Agent", () => {
+    const parsed = parseFinalFounderReportOutput(
+      ["The company is done.", "", "```json", JSON.stringify({ classification: "achieved", sections: validSections }), "```"].join("\n"),
+    );
+
+    expect(parsed.classification).toBe("achieved");
+    expect(parsed.sections.departmentContributions).toHaveLength(1);
+  });
+
+  it("throws when the CEO Agent output has no fenced JSON block", () => {
+    expect(() => parseFinalFounderReportOutput("No JSON here.")).toThrow(/strict JSON/i);
   });
 });
 

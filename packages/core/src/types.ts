@@ -190,7 +190,78 @@ export type CeoAttentionRollupReason =
   | "wait_state"
   | "cross_department_impact"
   | "exception_outcome"
-  | "founder_decision";
+  | "founder_decision"
+  /**
+   * An Objective Stage Change: the last task rolling up to an objective has reached a terminal
+   * state, so the runtime condenses that objective's Task Outcome Summaries and key-result status
+   * into one `informational` achievement rollup. No agent call. Kept in sync with
+   * `ceoAttentionRollupReasonSchema`.
+   */
+  | "goal_stage_change";
+/**
+ * The outcome classification carried on a {@link FinalFounderReport}. A fixed core enum so the
+ * dashboard and the report generator share one vocabulary:
+ * - `achieved` — the key results are met.
+ * - `stalled` — one or more tasks are terminally blocked with no path forward and the goals are unmet.
+ * - `waiting` — the only open items are Wait States beyond the near horizon, Human Actions, or
+ *   Founder Decisions.
+ */
+export type FinalFounderReportClassification = "achieved" | "stalled" | "waiting";
+
+/** How a {@link FinalFounderReport}'s prose was produced. */
+export type FinalFounderReportGeneratedBy = "ceo_agent" | "deterministic_fallback";
+
+/**
+ * The six localized-text sections of a {@link FinalFounderReport}. `departmentContributions` is a
+ * list (one entry per contributing department); the rest are single prose blocks.
+ */
+export type FinalFounderReportSections = {
+  vision: LocalizedText;
+  actualResult: LocalizedText;
+  departmentContributions: LocalizedText[];
+  goalFit: LocalizedText;
+  remainingGaps: LocalizedText;
+  recommendedNextStep: LocalizedText;
+};
+
+/**
+ * The CEO-Agent-authored, company-keyed closing report produced when a company reaches Company
+ * Quiescence. It is its own persisted record, not a {@link BusinessArtifact} (a Business Artifact is
+ * task-bound; a report has no task). Versioned by `isCurrent`: quiescence reached again after new
+ * work has run supersedes the previous report (`supersedesReportId` points back at it).
+ */
+export type FinalFounderReport = {
+  id: string;
+  companyId: string;
+  classification: FinalFounderReportClassification;
+  sections: FinalFounderReportSections;
+  generatedBy: FinalFounderReportGeneratedBy;
+  isCurrent: boolean;
+  supersedesReportId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Lifecycle of a {@link FinalFounderReportJob}. */
+export type FinalFounderReportJobStatus = "preparing" | "complete" | "failed";
+
+/**
+ * A tracked async unit of work that authors a {@link FinalFounderReport}, modelled on an Agent Run.
+ * The scheduler tick that detects Company Quiescence enqueues one (`preparing`) and returns without
+ * running the CEO Agent; a later tick runs the authoring job off the enqueuing tick's path and marks
+ * it `complete` (or `failed`, which the next quiescent tick retries). While a `preparing` job exists
+ * the Company State Snapshot reports a "report preparing" indicator.
+ */
+export type FinalFounderReportJob = {
+  id: string;
+  companyId: string;
+  status: FinalFounderReportJobStatus;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  failureMessage: string | null;
+};
+
 export type HumanActionStatus = "pending" | "confirmed";
 export type HumanAction = {
   id: string;

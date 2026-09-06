@@ -1,4 +1,15 @@
-import type { CeoAttentionRollup, FounderDecision, HumanAction, NextStepItem, VisionGap, WaitState } from "@auto-crop/core";
+import type {
+  CeoAttentionRollup,
+  FinalFounderReportClassification,
+  FinalFounderReportGeneratedBy,
+  FounderDecision,
+  HumanAction,
+  NextStepItem,
+  VisionGap,
+  WaitState,
+} from "@auto-crop/core";
+
+export type { FinalFounderReportClassification } from "@auto-crop/core";
 
 export type AgentSummary = {
   id: string;
@@ -189,6 +200,22 @@ export type BusinessArtifactSummary = {
   updatedAt: string;
 };
 
+export type FinalFounderReportSummary = {
+  id: string;
+  classification: FinalFounderReportClassification;
+  generatedBy: FinalFounderReportGeneratedBy;
+  sections: {
+    vision: LocalizedText;
+    actualResult: LocalizedText;
+    departmentContributions: LocalizedText[];
+    goalFit: LocalizedText;
+    remainingGaps: LocalizedText;
+    recommendedNextStep: LocalizedText;
+  };
+  supersedesReportId?: string | null;
+  createdAt?: string;
+};
+
 export type FounderReportSummary = {
   founderVision: string;
   actualOutputs: Array<{
@@ -374,6 +401,9 @@ export type CreateCompanyResponse = {
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   founderReport?: FounderReportSummary;
+  finalFounderReport?: FinalFounderReportSummary | null;
+  finalFounderReportPreparing?: boolean;
+  supersededFinalFounderReports?: FinalFounderReportSummary[];
   reviews?: ReviewSummary[];
   activity?: ServerEvent[];
   creationEvents?: CompanyEventSummary[];
@@ -419,6 +449,9 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   proof: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   founderReport?: FounderReportSummary;
+  finalFounderReport?: FinalFounderReportSummary | null;
+  finalFounderReportPreparing?: boolean;
+  supersededFinalFounderReports?: FinalFounderReportSummary[];
   reviews: ReviewSummary[];
   activity: ServerEvent[];
   replanProposals: ReplanProposalSummary[];
@@ -561,6 +594,7 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       events.addEventListener("company_creation_agent_started", listener);
       events.addEventListener("company_creation_completed", listener);
       events.addEventListener("company_creation_failed", listener);
+      events.addEventListener("company_report_ready", listener);
       return () => events.close();
     },
   };

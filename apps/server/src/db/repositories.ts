@@ -10,6 +10,8 @@ import type {
   Company,
   CreationAttempt,
   Department,
+  FinalFounderReport,
+  FinalFounderReportJob,
   FounderDecisionResolution,
   HumanActionConfirmation,
   KeyResult,
@@ -843,6 +845,107 @@ export function createRepositories(database: DatabaseClient) {
         .run(JSON.stringify(payload), updatedAt, id);
     },
 
+    createFinalFounderReport(report: FinalFounderReport): void {
+      if (report.isCurrent) {
+        database
+          .prepare("UPDATE founder_reports SET is_current = 0 WHERE company_id = ?")
+          .run(report.companyId);
+      }
+
+      database
+        .prepare(
+          `INSERT INTO founder_reports (
+            id, company_id, classification, sections, generated_by, is_current,
+            supersedes_report_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          report.id,
+          report.companyId,
+          report.classification,
+          JSON.stringify(report.sections),
+          report.generatedBy,
+          report.isCurrent ? 1 : 0,
+          report.supersedesReportId,
+          report.createdAt,
+          report.updatedAt,
+        );
+    },
+
+    getCurrentFinalFounderReport(companyId: string): FinalFounderReport | null {
+      const row = database
+        .prepare(
+          `SELECT * FROM founder_reports
+           WHERE company_id = ? AND is_current = 1
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+        )
+        .get(companyId);
+      return row ? mapFinalFounderReport(row as FinalFounderReportRow) : null;
+    },
+
+    listFinalFounderReportsForCompany(companyId: string): FinalFounderReport[] {
+      const rows = database
+        .prepare("SELECT * FROM founder_reports WHERE company_id = ? ORDER BY created_at ASC, id ASC")
+        .all(companyId);
+      return rows.map((row) => mapFinalFounderReport(row as FinalFounderReportRow));
+    },
+
+    createFinalFounderReportJob(job: FinalFounderReportJob): void {
+      database
+        .prepare(
+          `INSERT INTO founder_report_jobs (
+            id, company_id, status, created_at, updated_at, finished_at, failure_message
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          job.id,
+          job.companyId,
+          job.status,
+          job.createdAt,
+          job.updatedAt,
+          job.finishedAt,
+          job.failureMessage,
+        );
+    },
+
+    /** The company's in-flight (`preparing`) report job, if any — the "report preparing" indicator. */
+    getActiveFinalFounderReportJob(companyId: string): FinalFounderReportJob | null {
+      const row = database
+        .prepare(
+          `SELECT * FROM founder_report_jobs
+           WHERE company_id = ? AND status = 'preparing'
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+        )
+        .get(companyId);
+      return row ? mapFinalFounderReportJob(row as FinalFounderReportJobRow) : null;
+    },
+
+    /** Every `preparing` report job across companies, oldest first — the job runner's work queue. */
+    listPendingFinalFounderReportJobs(): FinalFounderReportJob[] {
+      const rows = database
+        .prepare("SELECT * FROM founder_report_jobs WHERE status = 'preparing' ORDER BY created_at ASC, id ASC")
+        .all();
+      return rows.map((row) => mapFinalFounderReportJob(row as FinalFounderReportJobRow));
+    },
+
+    /** Move a job to a terminal state (`complete` / `failed`); `timestamp` is its finish time. */
+    updateFinalFounderReportJobStatus(
+      id: string,
+      status: Exclude<FinalFounderReportJob["status"], "preparing">,
+      timestamp: string,
+      failureMessage: string | null = null,
+    ): void {
+      database
+        .prepare(
+          `UPDATE founder_report_jobs
+           SET status = ?, updated_at = ?, finished_at = ?, failure_message = ?
+           WHERE id = ?`,
+        )
+        .run(status, timestamp, timestamp, failureMessage, id);
+    },
+
     createApproval(approval: Approval): void {
       database
         .prepare(
@@ -955,6 +1058,23 @@ export function createRepositories(database: DatabaseClient) {
            ON CONFLICT(key) DO NOTHING`,
         )
         .run(reviewReconciliationKey(companyId), at);
+    },
+
+    hasFinalFounderReportUpgradeRun(companyId: string): boolean {
+      const row = database
+        .prepare("SELECT value FROM runtime_state WHERE key = ?")
+        .get(finalFounderReportUpgradeKey(companyId)) as { value: string } | undefined;
+      return row !== undefined;
+    },
+
+    markFinalFounderReportUpgradeRun(companyId: string, at: string): void {
+      database
+        .prepare(
+          `INSERT INTO runtime_state (key, value)
+           VALUES (?, ?)
+           ON CONFLICT(key) DO NOTHING`,
+        )
+        .run(finalFounderReportUpgradeKey(companyId), at);
     },
 
     listRunningAgentRuns(companyId: string): AgentRun[] {
@@ -1505,6 +1625,54 @@ function mapProof(row: ProofRow): Proof {
   };
 }
 
+type FinalFounderReportRow = {
+  id: string;
+  company_id: string;
+  classification: FinalFounderReport["classification"];
+  sections: string;
+  generated_by: FinalFounderReport["generatedBy"];
+  is_current: number;
+  supersedes_report_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapFinalFounderReport(row: FinalFounderReportRow): FinalFounderReport {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    classification: row.classification,
+    sections: JSON.parse(row.sections) as FinalFounderReport["sections"],
+    generatedBy: row.generated_by,
+    isCurrent: row.is_current === 1,
+    supersedesReportId: row.supersedes_report_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+type FinalFounderReportJobRow = {
+  id: string;
+  company_id: string;
+  status: FinalFounderReportJob["status"];
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+  failure_message: string | null;
+};
+
+function mapFinalFounderReportJob(row: FinalFounderReportJobRow): FinalFounderReportJob {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at,
+    failureMessage: row.failure_message,
+  };
+}
+
 function mapBusinessArtifact(row: BusinessArtifactRow): BusinessArtifact {
   return {
     id: row.id,
@@ -1589,6 +1757,11 @@ function taskAttemptsResetKey(taskId: string): string {
 function reviewReconciliationKey(companyId: string): string {
   // Bump the version suffix to force a re-run when the deterministic acceptance conditions change.
   return `review_reconciliation_v1:${companyId}`;
+}
+
+function finalFounderReportUpgradeKey(companyId: string): string {
+  // Marks that the one-time Final Founder Report upgrade pass (ADR 0018) has examined this company.
+  return `final_founder_report_upgrade_v1:${companyId}`;
 }
 
 function stringifyLocalizedText(text: LocalizedText | null | undefined): string | null {

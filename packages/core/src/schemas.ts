@@ -107,6 +107,94 @@ export const strategicDecisionKindSchema = z.enum([
   "launch_target",
 ]);
 
+/**
+ * The reasons a CEO Attention Rollup can carry. Kept in sync with the `CeoAttentionRollupReason`
+ * core type; `goal_stage_change` is the runtime-assembled Objective Stage Change achievement.
+ */
+export const ceoAttentionRollupReasonSchema = z.enum([
+  "vision_gap",
+  "ceo_decision",
+  "human_action",
+  "wait_state",
+  "cross_department_impact",
+  "exception_outcome",
+  "founder_decision",
+  "goal_stage_change",
+]);
+
+export const finalFounderReportClassificationSchema = z.enum(["achieved", "stalled", "waiting"]);
+
+export const finalFounderReportGeneratedBySchema = z.enum(["ceo_agent", "deterministic_fallback"]);
+
+/**
+ * The six localized-text sections of a Final Founder Report. `departmentContributions` is a list
+ * (one entry per contributing department); the rest are single prose blocks.
+ */
+export const finalFounderReportSectionsSchema = z.object({
+  vision: localizedTextSchema,
+  actualResult: localizedTextSchema,
+  departmentContributions: z.array(localizedTextSchema),
+  goalFit: localizedTextSchema,
+  remainingGaps: localizedTextSchema,
+  recommendedNextStep: localizedTextSchema,
+});
+
+/** The structured payload the CEO Agent returns in a fenced JSON block when authoring a report. */
+export const finalFounderReportOutputSchema = z.object({
+  classification: finalFounderReportClassificationSchema,
+  sections: finalFounderReportSectionsSchema,
+});
+
+/** The full Final Founder Report payload once the runtime has stamped how it was generated. */
+export const finalFounderReportPayloadSchema = finalFounderReportOutputSchema.extend({
+  generatedBy: finalFounderReportGeneratedBySchema,
+});
+
+/** The persisted, company-keyed Final Founder Report record. */
+export const finalFounderReportSchema = z.object({
+  id: nonEmptyString,
+  companyId: nonEmptyString,
+  classification: finalFounderReportClassificationSchema,
+  sections: finalFounderReportSectionsSchema,
+  generatedBy: finalFounderReportGeneratedBySchema,
+  isCurrent: z.boolean(),
+  supersedesReportId: nonEmptyString.nullable(),
+  createdAt: nonEmptyString,
+  updatedAt: nonEmptyString,
+});
+
+export const finalFounderReportJobStatusSchema = z.enum(["preparing", "complete", "failed"]);
+
+/** The tracked async job that authors a Final Founder Report off the scheduler tick. */
+export const finalFounderReportJobSchema = z.object({
+  id: nonEmptyString,
+  companyId: nonEmptyString,
+  status: finalFounderReportJobStatusSchema,
+  createdAt: nonEmptyString,
+  updatedAt: nonEmptyString,
+  finishedAt: nonEmptyString.nullable(),
+  failureMessage: z.string().nullable(),
+});
+
+export type FinalFounderReportOutput = z.infer<typeof finalFounderReportOutputSchema>;
+
+export function parseFinalFounderReportOutput(output: string): FinalFounderReportOutput {
+  const jsonSource = output.match(/```json\s*([\s\S]*?)\s*```/i)?.[1] ?? null;
+
+  if (!jsonSource) {
+    throw new Error("Final Founder Report output must include strict JSON in a fenced json block.");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonSource);
+  } catch (error) {
+    throw new Error(`Final Founder Report strict JSON is invalid: ${(error as Error).message}`);
+  }
+
+  return finalFounderReportOutputSchema.parse(parsed);
+}
+
 export const ceoIntakeStatusSchema = z.enum([
   "received",
   "assessing",

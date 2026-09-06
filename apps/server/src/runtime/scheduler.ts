@@ -5,6 +5,7 @@ import type { createRepositories } from "../db/repositories";
 import type {
   AgentFailureReason,
   BusinessArtifact,
+  Company,
   Proof,
   Task,
   TaskEvent,
@@ -25,7 +26,11 @@ import {
   readEnvironmentBlockerClaim,
   verifyEnvironmentBlockerClaim,
 } from "./businessArtifact";
+import type { AgentSessionManager } from "./agentSessions";
+import { projectCeoAttention } from "./ceoAttention";
+import { classifyFinalFounderReport, isCompanyQuiescent } from "./companyQuiescence";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
+import { generateFinalFounderReport, hasWorkCompletedSinceReport } from "./finalFounderReport";
 import { parseOpenDecisions } from "./founderDecision";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
@@ -39,8 +44,9 @@ import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./works
 export type SchedulerFailureReason = AgentFailureReason;
 
 export type SchedulerEvent = {
-  type: TaskEvent["type"];
-  taskId: string;
+  type: TaskEvent["type"] | "company_report_ready";
+  taskId?: string;
+  companyId?: string;
   message: string;
   failureReason?: SchedulerFailureReason;
   failureMessage?: string;
@@ -64,6 +70,9 @@ export type RunSchedulerOnceInput = {
   proofCollector: (input: { task: Task; stdout: string; stderr: string; logPath: string }) => Proof[];
   /** Injectable fetch used to independently verify Environment-Blocked Blocker claims. Defaults to global fetch. */
   environmentBlockerFetch?: typeof fetch;
+  /** Injectable session manager for the CEO Agent run that authors a Final Founder Report. */
+  agentSessionManager?: AgentSessionManager;
+  agentSessionEnv?: Record<string, string | undefined>;
   emit: (event: SchedulerEvent) => void;
 };
 
@@ -109,6 +118,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
     for (const event of reconciledReview.events) {
       emitTaskEvent(input, event);
     }
+    // One-time upgrade pass (ADR 0018 §Upgrade regeneration): a company that finished before this
+    // feature shipped gets its closing report enqueued once. Also per-company-marked; `runFinal
+    // FounderReportJobs` (a later tick) authors it off this path.
+    reconcileFinalFounderReportUpgrade(input, company, now, createId);
   }
 
   const queuedTasks = input.repositories.fetchQueuedTasks(Math.max(input.maxTasks * 5, 20));
@@ -643,7 +656,279 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
   await Promise.all(dispatches);
 
+  // Task state for every company has settled for this tick. Sweep for Company Quiescence and, on the
+  // first quiescent tick with no existing report and no in-flight job, enqueue a tracked async
+  // generation job. The tick does not run the CEO Agent — `runFinalFounderReportJobs` (a later tick,
+  // fire-and-forget from the scheduler loop) authors the report off this tick's path.
+  for (const company of input.repositories.listCompanies()) {
+    maybeEnqueueFinalFounderReportJob(input, company, now, createId);
+  }
+
   return result;
+}
+
+/** Inputs for {@link runFinalFounderReportJobs} — the report-authoring half of the scheduler. */
+export type RunFinalFounderReportJobsInput = Pick<
+  RunSchedulerOnceInput,
+  | "projectRoot"
+  | "repositories"
+  | "adapters"
+  | "now"
+  | "createId"
+  | "agentSessionManager"
+  | "agentSessionEnv"
+  | "emit"
+>;
+
+type FinalFounderReportContext = {
+  quiescent: boolean;
+  /** Build the full authoring input. Only called once the company is confirmed quiescent. */
+  buildGenerateInput: () => Parameters<typeof generateFinalFounderReport>[0];
+};
+
+/**
+ * Decide whether the company is quiescent and, if so, how to author its Final Founder Report. Shared
+ * by the enqueue check on the scheduler tick and the job runner, so both see the same derivation.
+ * Returns `null` when a report can never be authored for this company right now (not `active`, no
+ * tasks, or no CEO Agent adapter available). The heavy repository reads for the authoring input are
+ * deferred to `buildGenerateInput` so the common not-quiescent sweep stays cheap.
+ */
+function gatherFinalFounderReportContext(
+  input: RunFinalFounderReportJobsInput,
+  company: Company,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): FinalFounderReportContext | null {
+  const repositories = input.repositories;
+  // Only a running company with real work can be quiescent. A `creating` / `creation_failed` /
+  // `draft` / `paused` company is not "done", it just is not going yet.
+  if (company.status !== "active") {
+    return null;
+  }
+
+  const tasks = repositories.listTasksForCompany(company.id);
+  if (tasks.length === 0) {
+    return null;
+  }
+  const ceoAgent = input.adapters.find((adapter) => adapter.id === company.selectedCeoAgentId);
+  if (!ceoAgent) {
+    // The company's selected CEO Agent adapter is not registered with this runtime. Neither the
+    // authored run nor the deterministic fallback can execute without it, so no job is enqueued and
+    // no "preparing" indicator shows. In practice the scheduler loop always carries the same adapter
+    // set the company was created against, so this is a misconfiguration guard, not a normal path.
+    return null;
+  }
+
+  const keyResults = repositories.listKeyResults(company.id);
+  const taskDependencies = repositories.listTaskDependenciesForCompany(company.id);
+  const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(company.id);
+
+  const attention = projectCeoAttention({
+    company,
+    keyResults,
+    tasks,
+    taskCompletionEvents,
+    taskDependencies,
+    humanActionConfirmations: repositories.listHumanActionConfirmationsForCompany(company.id),
+    founderDecisionResolutions: repositories.listFounderDecisionResolutionsForCompany(company.id),
+    now,
+  });
+
+  const quiescent = isCompanyQuiescent({
+    tasks,
+    waitStates: attention.waitStates,
+    humanActions: attention.humanActions,
+    founderDecisions: attention.founderDecisions,
+    now,
+  });
+
+  return {
+    quiescent,
+    buildGenerateInput: () => ({
+      projectRoot: input.projectRoot,
+      repositories,
+      company,
+      classification: classifyFinalFounderReport({
+        keyResults,
+        waitStates: attention.waitStates,
+        humanActions: attention.humanActions,
+        founderDecisions: attention.founderDecisions,
+      }),
+      ceoAgent,
+      tasks,
+      departments: repositories.listDepartments(company.id),
+      objectives: repositories.listObjectives(company.id),
+      keyResults,
+      taskCompletionEvents,
+      businessArtifacts: repositories.listBusinessArtifactsForCompany(company.id),
+      taskDependencies,
+      visionGaps: attention.visionGaps,
+      waitStates: attention.waitStates,
+      humanActions: attention.humanActions,
+      founderDecisions: attention.founderDecisions,
+      agentSessionManager: input.agentSessionManager,
+      agentSessionEnv: input.agentSessionEnv,
+      now,
+      createId,
+    }),
+  };
+}
+
+/**
+ * Does the company's standing `isCurrent` Final Founder Report still cover everything, so a fresh one
+ * would be redundant? True when a report exists and no Task Completion Event post-dates it — a
+ * repeated quiescent tick or a bare Wait State check-in. Non-Wait-State work completing since the
+ * report is what releases this, so the next report supersedes the standing one. Shared by the enqueue
+ * check and the job runner so both gate on the same rule.
+ */
+function standingReportCoversCompany(
+  repositories: ReturnType<typeof createRepositories>,
+  companyId: string,
+): boolean {
+  const currentReport = repositories.getCurrentFinalFounderReport(companyId);
+  return (
+    currentReport !== null &&
+    !hasWorkCompletedSinceReport(
+      repositories.listTaskCompletionEventsForCompany(companyId),
+      currentReport,
+    )
+  );
+}
+
+/**
+ * One-time upgrade pass (ADR 0018 §Upgrade regeneration), run on the scheduler tick alongside the
+ * ADR 0017 review reconciliation. A company that finished before the Final Founder Report shipped —
+ * quiescent, every task `complete`, no report — gets exactly one report generation job enqueued
+ * here. `runFinalFounderReportJobs` then authors it from the accepted Business Artifacts that already
+ * exist, falling back deterministically if the CEO Agent run fails. No task is re-run and no per-task
+ * Task Outcome Summary is synthesized for old work. A per-company marker in `runtime_state` makes
+ * every later tick a no-op.
+ *
+ * Companies with a non-`complete` task are left to `maybeEnqueueFinalFounderReportJob`, which gives
+ * them a normal report on their next quiescent tick; companies that already have a report (or an
+ * in-flight job) are left alone. Safe to run more than once before the marker is set — the standing
+ * report / job checks stop a duplicate.
+ */
+export function reconcileFinalFounderReportUpgrade(
+  input: RunSchedulerOnceInput,
+  company: Company,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): void {
+  const repositories = input.repositories;
+  if (repositories.hasFinalFounderReportUpgradeRun(company.id)) {
+    return;
+  }
+
+  const tasks = repositories.listTasksForCompany(company.id);
+  const everyTaskComplete = tasks.length > 0 && tasks.every((task) => task.status === "complete");
+  const alreadyReported =
+    repositories.getCurrentFinalFounderReport(company.id) !== null ||
+    repositories.getActiveFinalFounderReportJob(company.id) !== null;
+
+  if (everyTaskComplete && !alreadyReported) {
+    const context = gatherFinalFounderReportContext(input, company, now, createId);
+    if (context?.quiescent) {
+      const timestamp = now().toISOString();
+      repositories.createFinalFounderReportJob({
+        id: createId("founder_report_job"),
+        companyId: company.id,
+        status: "preparing",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        finishedAt: null,
+        failureMessage: null,
+      });
+    }
+  }
+
+  repositories.markFinalFounderReportUpgradeRun(company.id, now().toISOString());
+}
+
+function maybeEnqueueFinalFounderReportJob(
+  input: RunSchedulerOnceInput,
+  company: Company,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): void {
+  const repositories = input.repositories;
+  if (standingReportCoversCompany(repositories, company.id)) {
+    return;
+  }
+  if (repositories.getActiveFinalFounderReportJob(company.id)) {
+    return;
+  }
+
+  const context = gatherFinalFounderReportContext(input, company, now, createId);
+  if (!context || !context.quiescent) {
+    return;
+  }
+
+  const timestamp = now().toISOString();
+  repositories.createFinalFounderReportJob({
+    id: createId("founder_report_job"),
+    companyId: company.id,
+    status: "preparing",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    finishedAt: null,
+    failureMessage: null,
+  });
+}
+
+/**
+ * Author the Final Founder Report for every `preparing` job. Runs the CEO Agent authoring path
+ * (`generateFinalFounderReport`, which retries to a ceiling then falls back to a deterministic
+ * report) off the scheduler tick that enqueued the job, then marks the job `complete` and publishes
+ * a `company_report_ready` event so the dashboard refetches. A job whose company is no longer
+ * quiescent, or an unexpected failure, marks the job `failed`; the next quiescent tick re-enqueues.
+ */
+export async function runFinalFounderReportJobs(input: RunFinalFounderReportJobsInput): Promise<void> {
+  const now = input.now ?? (() => new Date());
+  const createId = input.createId ?? defaultCreateId;
+  const repositories = input.repositories;
+
+  for (const job of repositories.listPendingFinalFounderReportJobs()) {
+    const company = repositories.getCompany(job.companyId);
+
+    if (company && standingReportCoversCompany(repositories, company.id)) {
+      // A report already stands and nothing has completed since (two jobs raced, or one was enqueued
+      // twice). Close this one without regenerating. When work has completed the job falls through
+      // and `generateFinalFounderReport` supersedes the standing report.
+      repositories.updateFinalFounderReportJobStatus(job.id, "complete", now().toISOString());
+      continue;
+    }
+
+    const context = company ? gatherFinalFounderReportContext(input, company, now, createId) : null;
+    if (!context || !context.quiescent) {
+      repositories.updateFinalFounderReportJobStatus(
+        job.id,
+        "failed",
+        now().toISOString(),
+        "Company was no longer quiescent when the report job ran.",
+      );
+      continue;
+    }
+
+    try {
+      await generateFinalFounderReport(context.buildGenerateInput());
+      repositories.updateFinalFounderReportJobStatus(job.id, "complete", now().toISOString());
+      input.emit({
+        type: "company_report_ready",
+        companyId: job.companyId,
+        message: "Final Founder Report ready.",
+      });
+    } catch (error) {
+      // `generateFinalFounderReport` persists a report on any agent outcome (retry then deterministic
+      // fallback), so this only fires on an unexpected failure such as the DB write.
+      repositories.updateFinalFounderReportJobStatus(
+        job.id,
+        "failed",
+        now().toISOString(),
+        (error as Error).message,
+      );
+    }
+  }
 }
 
 function assessDepartmentTask(input: RunSchedulerOnceInput, task: Task): "ready" | "deferred" {

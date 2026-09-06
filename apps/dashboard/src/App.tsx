@@ -797,6 +797,8 @@ export default function App({ apiClient }: AppProps) {
         proof={proof}
         businessArtifacts={businessArtifacts}
         ceoAttentionRollups={ceoAttentionRollups}
+        finalFounderReport={blueprint.finalFounderReport ?? null}
+        finalFounderReportPreparing={blueprint.finalFounderReportPreparing ?? false}
         founderDecisions={founderDecisions}
         humanActions={humanActions}
         keyResults={blueprint.keyResults ?? []}
@@ -1113,7 +1115,12 @@ function taskStatusFromEvent(eventType: string) {
 }
 
 function shouldReloadCompanyStateAfterEvent(event: ServerEvent) {
-  return event.type === "task_review" || event.type === "company_creation_completed" || event.type === "company_creation_failed";
+  return (
+    event.type === "task_review" ||
+    event.type === "company_creation_completed" ||
+    event.type === "company_creation_failed" ||
+    event.type === "company_report_ready"
+  );
 }
 
 function viewAfterReloadEvent(event: ServerEvent, currentView: AppView, companyStatus: string): AppView {

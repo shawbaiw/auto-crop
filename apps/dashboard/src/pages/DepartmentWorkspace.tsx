@@ -12,7 +12,7 @@ import {
   RefreshCcw,
   Send,
 } from "lucide-react";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
   BusinessArtifactSummary,
@@ -24,6 +24,7 @@ import type {
   CeoIntakeStatus,
   CompanySummary,
   DepartmentSummary,
+  FinalFounderReportSummary,
   FounderDecisionResolutionResponse,
   FounderDecisionSummary,
   HumanActionSummary,
@@ -38,6 +39,8 @@ import type {
   VisionGapSummary,
   WaitStateSummary,
 } from "../api/client";
+import { UnseenBadge } from "../ui/ceoOutcomes/UnseenBadge";
+import { isUnseenSince, readOutcomesLastSeen, writeOutcomesLastSeen } from "../ui/ceoOutcomes/lastSeen";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { HumanActionPanel } from "../ui/humanActions/HumanActionPanel";
 import { useLanguage } from "../ui/language";
@@ -70,6 +73,8 @@ export type DepartmentWorkspaceProps = {
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
+  finalFounderReport?: FinalFounderReportSummary | null;
+  finalFounderReportPreparing?: boolean;
   founderDecisions?: FounderDecisionSummary[];
   humanActions?: HumanActionSummary[];
   keyResults?: KeyResultSummary[];
@@ -115,6 +120,8 @@ export function DepartmentWorkspace({
   proof = [],
   businessArtifacts = [],
   ceoAttentionRollups = [],
+  finalFounderReport = null,
+  finalFounderReportPreparing = false,
   founderDecisions = [],
   humanActions = [],
   keyResults = [],
@@ -208,12 +215,15 @@ export function DepartmentWorkspace({
                   ]}
                 />
                 <CeoIntakeWorkspace
+                  companyId={company.id}
                   draft={ceoIntakeDraft}
                   departments={departments}
                   intakes={ceoIntakes}
                   objectives={objectives}
                   keyResults={keyResults}
                   ceoAttentionRollups={ceoAttentionRollups}
+                  finalFounderReport={finalFounderReport}
+                  finalFounderReportPreparing={finalFounderReportPreparing}
                   founderDecisions={founderDecisions}
                   taskCompletionEvents={taskCompletionEvents}
                   onDraftChange={setCeoIntakeDraft}
@@ -296,6 +306,9 @@ function departmentIcon(departmentName: string): ReactNode {
 
 function CeoIntakeWorkspace({
   ceoAttentionRollups,
+  companyId,
+  finalFounderReport,
+  finalFounderReportPreparing,
   departments,
   draft,
   founderDecisions,
@@ -318,6 +331,9 @@ function CeoIntakeWorkspace({
   waitStates,
 }: {
   ceoAttentionRollups: CeoAttentionRollupSummary[];
+  companyId: string;
+  finalFounderReport: FinalFounderReportSummary | null;
+  finalFounderReportPreparing: boolean;
   departments: DepartmentSummary[];
   draft: string;
   founderDecisions: FounderDecisionSummary[];
@@ -342,6 +358,14 @@ function CeoIntakeWorkspace({
   const { language, t } = useLanguage();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  // The founder's last visit to CEO Office, read once per company before this render's writes so the
+  // "what's new" comparison is stable while the view is open; the visit is then recorded for next
+  // time. Storage failures degrade to `null` — nothing is marked new.
+  const [outcomesLastSeen, setOutcomesLastSeen] = useState<string | null>(null);
+  useEffect(() => {
+    setOutcomesLastSeen(readOutcomesLastSeen(companyId));
+    writeOutcomesLastSeen(companyId, new Date().toISOString());
+  }, [companyId]);
   const selectedPendingItem = pendingItems.find((item) => item.task.id === selectedTaskId) ?? null;
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const departmentsById = useMemo(() => new Map(departments.map((department) => [department.id, department])), [departments]);
@@ -360,18 +384,25 @@ function CeoIntakeWorkspace({
 
   return (
     <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
+      <FinalFounderReportPanel
+        report={finalFounderReport}
+        preparing={finalFounderReportPreparing}
+        outcomesLastSeen={outcomesLastSeen}
+      />
       <CeoOutcomesView
         departmentsById={departmentsById}
         founderDecisions={founderDecisions}
         keyResults={keyResults}
         objectives={objectives}
         onResolveFounderDecision={onResolveFounderDecision}
+        outcomesLastSeen={outcomesLastSeen}
         taskCompletionEvents={taskCompletionEvents}
         tasksById={tasksById}
       />
       <CeoExecutiveOverview
         ceoAttentionRollups={ceoAttentionRollups}
         companyTaskCount={tasks.length}
+        outcomesLastSeen={outcomesLastSeen}
         departmentsById={departmentsById}
         humanActions={humanActions}
         objectives={objectives}
@@ -535,12 +566,95 @@ function formatDecisionKind(kind: string, t: ReturnType<typeof useLanguage>["t"]
   }
 }
 
+const FINAL_REPORT_CLASSIFICATION_KEY = {
+  achieved: "department.finalReportClassificationAchieved",
+  stalled: "department.finalReportClassificationStalled",
+  waiting: "department.finalReportClassificationWaiting",
+} as const;
+
+const FINAL_REPORT_CLASSIFICATION_TONE = {
+  achieved: "signal",
+  stalled: "danger",
+  waiting: "default",
+} as const;
+
+/**
+ * The Final Founder Report, pinned above the Outcomes view when an `isCurrent` report exists. Shows
+ * the classification prominently, then the six localized-text sections, using existing retro
+ * primitives. Localized text renders in the active Interface Locale.
+ */
+function FinalFounderReportPanel({
+  report,
+  preparing = false,
+  outcomesLastSeen = null,
+}: {
+  report: FinalFounderReportSummary | null;
+  preparing?: boolean;
+  outcomesLastSeen?: string | null;
+}) {
+  const { language, t } = useLanguage();
+
+  if (!report) {
+    if (!preparing) {
+      return null;
+    }
+    return (
+      <RetroPanel
+        className="ceo-final-founder-report ceo-final-founder-report--preparing"
+        icon={<ClipboardCheck size={18} aria-hidden="true" />}
+        title={t("department.finalFounderReport")}
+        aria-label={t("department.finalFounderReport")}
+      >
+        <p className="ceo-final-founder-report__preparing muted">{t("department.finalReportPreparing")}</p>
+      </RetroPanel>
+    );
+  }
+
+  const sections = report.sections;
+  const line = (text: LocalizedText): string => resolveLocalizedValue(text, language, text.en ?? "");
+
+  return (
+    <RetroPanel
+      className="ceo-final-founder-report"
+      icon={<ClipboardCheck size={18} aria-hidden="true" />}
+      title={t("department.finalFounderReport")}
+      aria-label={t("department.finalFounderReport")}
+    >
+      <p className="ceo-final-founder-report__classification">
+        <RetroBadge tone={FINAL_REPORT_CLASSIFICATION_TONE[report.classification]}>
+          {t(FINAL_REPORT_CLASSIFICATION_KEY[report.classification])}
+        </RetroBadge>
+        <UnseenBadge createdAt={report.createdAt} lastSeen={outcomesLastSeen} />
+      </p>
+      <VideotexKeyValue
+        items={[
+          { label: t("department.finalReportVision"), value: line(sections.vision) },
+          { label: t("department.finalReportActualResult"), value: line(sections.actualResult) },
+          { label: t("department.finalReportGoalFit"), value: line(sections.goalFit) },
+          { label: t("department.finalReportRemainingGaps"), value: line(sections.remainingGaps) },
+          { label: t("department.finalReportNextStep"), value: line(sections.recommendedNextStep) },
+        ]}
+      />
+      <section
+        className="ceo-final-founder-report__departments"
+        aria-label={t("department.finalReportDepartmentContributions")}
+      >
+        <h3>{t("department.finalReportDepartmentContributions")}</h3>
+        {sections.departmentContributions.map((contribution, index) => (
+          <p key={index}>{line(contribution)}</p>
+        ))}
+      </section>
+    </RetroPanel>
+  );
+}
+
 function CeoOutcomesView({
   departmentsById,
   founderDecisions,
   keyResults,
   objectives,
   onResolveFounderDecision,
+  outcomesLastSeen,
   taskCompletionEvents,
   tasksById,
 }: {
@@ -549,21 +663,31 @@ function CeoOutcomesView({
   keyResults: KeyResultSummary[];
   objectives: ObjectiveSummary[];
   onResolveFounderDecision?: DepartmentWorkspaceProps["onResolveFounderDecision"];
+  outcomesLastSeen: string | null;
   taskCompletionEvents: TaskCompletionEventSummary[];
   tasksById: Map<string, TaskSummary>;
 }) {
   const { language, t } = useLanguage();
   const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
   const pendingDecisions = founderDecisions.filter((decision) => decision.status === "pending");
-  const outcomeEvents = [...taskCompletionEvents]
+  const outcomeEventsWithSummary = [...taskCompletionEvents]
     .filter(hasOutcomeSummary)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, RECENT_OUTCOME_LIMIT);
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const outcomeEvents = outcomeEventsWithSummary.slice(0, RECENT_OUTCOME_LIMIT);
   const groups = groupOutcomesByObjective(outcomeEvents, keyResults, objectives, t("department.outcomesUngrouped"), language);
+  // Count every unseen outcome, not just the recent slice that renders below — the marker is a
+  // "there is new activity" cue. A null last-seen never marks anything new (first visits stay quiet).
+  const newOutcomeCount = outcomeEventsWithSummary.filter((event) =>
+    isUnseenSince(event.createdAt, outcomesLastSeen),
+  ).length;
 
   const taskLabel = (taskId: string): string => {
     const task = tasksById.get(taskId);
     return task ? taskTitle(task, language) : taskId;
+  };
+  const taskBrief = (taskId: string): string => {
+    const task = tasksById.get(taskId);
+    return task ? taskDescription(task, language) : "";
   };
   const departmentLabel = (departmentId: string): string => {
     const department = departmentsById.get(departmentId);
@@ -574,6 +698,13 @@ function CeoOutcomesView({
     <section className="ceo-outcomes-view" aria-label={t("department.ceoOutcomes")}>
       <h3>{t("department.ceoOutcomes")}</h3>
       <p className="muted">{t("department.ceoOutcomesNote")}</p>
+      {newOutcomeCount > 0 ? (
+        <p className="ceo-outcomes-view__new-marker">
+          <RetroBadge tone="signal">
+            {t("department.ceoOutcomesNewMarker").replace("{count}", String(newOutcomeCount))}
+          </RetroBadge>
+        </p>
+      ) : null}
       {decisionMessage ? <p className="system-message">{decisionMessage}</p> : null}
 
       {pendingDecisions.length > 0 ? (
@@ -596,15 +727,24 @@ function CeoOutcomesView({
       {groups.map((group) => (
         <section className="ceo-outcomes-view__group" aria-label={group.label} key={group.key}>
           <h4>{group.label}</h4>
-          {group.events.map((event) => (
-            <article className="ceo-outcome" key={event.id}>
-              <h5>{taskLabel(event.taskId)}</h5>
-              <p className="ceo-outcome__summary">
-                {resolveLocalizedValue(event.outcomeSummaryText, language, event.outcomeSummaryText?.en ?? "")}
-              </p>
-              <p className="muted">{outcomeDependencyImpact(event, t)}</p>
-            </article>
-          ))}
+          {group.events.map((event) => {
+            const brief = taskBrief(event.taskId);
+            return (
+              <article className="ceo-outcome" key={event.id}>
+                <h5>{taskLabel(event.taskId)}</h5>
+                {brief ? (
+                  <p className="ceo-outcome__brief muted">
+                    <span className="ceo-outcome__brief-label">{t("department.outcomeBriefLabel")}</span>{" "}
+                    {brief}
+                  </p>
+                ) : null}
+                <p className="ceo-outcome__summary">
+                  {resolveLocalizedValue(event.outcomeSummaryText, language, event.outcomeSummaryText?.en ?? "")}
+                </p>
+                <p className="muted">{outcomeDependencyImpact(event, t)}</p>
+              </article>
+            );
+          })}
         </section>
       ))}
     </section>
@@ -741,6 +881,7 @@ function CeoExecutiveOverview({
   departmentsById,
   humanActions,
   objectives,
+  outcomesLastSeen,
   tasksById,
   visionGaps,
   waitStates,
@@ -750,6 +891,7 @@ function CeoExecutiveOverview({
   departmentsById: Map<string, DepartmentSummary>;
   humanActions: HumanActionSummary[];
   objectives: ObjectiveSummary[];
+  outcomesLastSeen: string | null;
   tasksById: Map<string, TaskSummary>;
   visionGaps: VisionGapSummary[];
   waitStates: WaitStateSummary[];
@@ -772,23 +914,43 @@ function CeoExecutiveOverview({
       <section className="ceo-attention-rollups" aria-label={t("department.attentionRollups")}>
         <h4>{t("department.attentionRollups")}</h4>
         {ceoAttentionRollups.length === 0 ? <p className="muted">{t("department.noAttentionRollups")}</p> : null}
-        {ceoAttentionRollups.map((rollup) => (
-          <article className="ceo-attention-rollup" key={rollup.id}>
-            <div>
-              <p>{formatRollupOwner(rollup.ownerDepartmentId, departmentsById)}</p>
-              <h5>{rollup.title}</h5>
-              <p className="muted">{rollup.summary}</p>
-            </div>
-            <VideotexKeyValue
-              items={[
-                { label: t("department.rollupSeverity"), value: rollup.severity },
-                { label: t("department.downstreamImpact"), value: formatDepartments(rollup.downstreamDepartmentIds, departmentsById, t("department.none")) },
-                { label: t("department.currentBlocker"), value: rollup.currentBlocker ?? t("department.none") },
-                { label: t("department.recommendedNextAction"), value: rollup.recommendedNextAction },
-              ]}
-            />
-          </article>
-        ))}
+        {ceoAttentionRollups.map((rollup) => {
+          // An Objective Stage Change is an achievement, not an alarm — styled apart from the
+          // exception rollups and led by an achievement badge rather than the owning department.
+          const isObjectiveStageChange = rollup.reasons.includes("goal_stage_change");
+          return (
+            <article
+              className={`ceo-attention-rollup${isObjectiveStageChange ? " ceo-attention-rollup--achievement" : ""}`}
+              key={rollup.id}
+            >
+              <div>
+                {isObjectiveStageChange ? (
+                  <p>
+                    <RetroBadge tone="signal">{t("department.objectiveStageChange")}</RetroBadge>
+                    <UnseenBadge createdAt={rollup.createdAt} lastSeen={outcomesLastSeen} />
+                  </p>
+                ) : (
+                  <p>{formatRollupOwner(rollup.ownerDepartmentId, departmentsById)}</p>
+                )}
+                <h5>{rollup.title}</h5>
+                <p className="muted">{rollup.summary}</p>
+              </div>
+              <VideotexKeyValue
+                items={[
+                  // An achievement rollup carries no severity / blocker / downstream impact.
+                  ...(isObjectiveStageChange
+                    ? []
+                    : [
+                        { label: t("department.rollupSeverity"), value: rollup.severity },
+                        { label: t("department.downstreamImpact"), value: formatDepartments(rollup.downstreamDepartmentIds, departmentsById, t("department.none")) },
+                        { label: t("department.currentBlocker"), value: rollup.currentBlocker ?? t("department.none") },
+                      ]),
+                  { label: t("department.recommendedNextAction"), value: rollup.recommendedNextAction },
+                ]}
+              />
+            </article>
+          );
+        })}
       </section>
       <VideotexLog
         emptyMessage={t("department.noCriticalChains")}

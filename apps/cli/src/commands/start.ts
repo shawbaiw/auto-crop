@@ -12,8 +12,10 @@ import {
   createRepositories,
   getDefaultPolicy,
   migrate,
+  runFinalFounderReportJobs,
   runSchedulerOnce,
   type AgentAdapter,
+  type SchedulerEvent,
   type SchedulerWakeReason,
 } from "@auto-crop/server";
 
@@ -108,6 +110,30 @@ export function startSchedulerLoop(input: {
   let stopped = false;
   let wakePending = false;
   let wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  let reportJobsRunning = false;
+
+  function emit(event: SchedulerEvent) {
+    input.log(`Scheduler ${event.type}: ${event.taskId ?? event.companyId ?? ""} ${event.message}`);
+    input.publish(event);
+  }
+
+  function drainFinalFounderReportJobs() {
+    if (reportJobsRunning || stopped) {
+      return;
+    }
+    reportJobsRunning = true;
+    void runFinalFounderReportJobs({
+      projectRoot: input.projectRoot,
+      repositories: input.repositories,
+      adapters: input.agents,
+      createId: input.createId,
+      emit,
+    })
+      .catch((error) => input.log(`Final Founder Report job failed: ${(error as Error).message}`))
+      .finally(() => {
+        reportJobsRunning = false;
+      });
+  }
 
   async function tick() {
     if (running || stopped) {
@@ -126,10 +152,7 @@ export function startSchedulerLoop(input: {
         approvalRequired: () => getDefaultPolicy().decisions.run_safe_command === "ask",
         proofCollector,
         createId: input.createId,
-        emit: (event) => {
-          input.log(`Scheduler ${event.type}: ${event.taskId} ${event.message}`);
-          input.publish(event);
-        },
+        emit,
       });
 
       if (result.started.length > 0 || result.completed.length > 0 || result.failed.length > 0 || result.blocked.length > 0) {
@@ -141,6 +164,9 @@ export function startSchedulerLoop(input: {
       input.log(`Scheduler failed: ${(error as Error).message}`);
     } finally {
       running = false;
+      // Author any enqueued Final Founder Report off the tick's path so a slow CEO Agent run never
+      // stalls task dispatch; a guard keeps at most one job runner in flight.
+      drainFinalFounderReportJobs();
       if (wakePending && !stopped) {
         scheduleWakeTick();
       }

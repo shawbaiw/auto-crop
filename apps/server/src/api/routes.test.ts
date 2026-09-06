@@ -837,6 +837,176 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("serializes the isCurrent Final Founder Report in company state", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+
+    const sections = {
+      vision: { en: "Restated vision", zh: "复述愿景" },
+      actualResult: { en: "A prototype shipped", zh: "交付了原型" },
+      departmentContributions: [{ en: "Engineering built it", zh: "工程部构建" }],
+      goalFit: { en: "Partial fit against the key results", zh: "与关键结果部分契合" },
+      remainingGaps: { en: "User validation still open", zh: "用户验证仍待完成" },
+      recommendedNextStep: { en: "Run a five-user test", zh: "进行五人测试" },
+    };
+    fixture.repositories.createFinalFounderReport({
+      id: "founder_report_1",
+      companyId: created.company.id,
+      classification: "waiting",
+      sections,
+      generatedBy: "ceo_agent",
+      isCurrent: true,
+      supersedesReportId: null,
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    const state = await getJson<{
+      finalFounderReport: {
+        id: string;
+        classification: string;
+        generatedBy: string;
+        sections: Record<string, { en?: string; zh?: string } | Array<{ en?: string; zh?: string }>>;
+      } | null;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(state.finalFounderReport).not.toBeNull();
+    expect(state.finalFounderReport).toMatchObject({
+      id: "founder_report_1",
+      classification: "waiting",
+      generatedBy: "ceo_agent",
+    });
+    expect(Object.keys(state.finalFounderReport!.sections).sort()).toEqual(
+      ["actualResult", "departmentContributions", "goalFit", "recommendedNextStep", "remainingGaps", "vision"],
+    );
+    expect((state.finalFounderReport!.sections.vision as { en: string }).en).toBe("Restated vision");
+    expect((state.finalFounderReport!.sections.departmentContributions as Array<{ en: string }>)[0]?.en).toBe(
+      "Engineering built it",
+    );
+
+    await fixture.close();
+  });
+
+  it("exposes the report-preparing indicator during the generation gap and clears it once the report exists", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+
+    fixture.repositories.createFinalFounderReportJob({
+      id: "founder_report_job_1",
+      companyId: created.company.id,
+      status: "preparing",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      finishedAt: null,
+      failureMessage: null,
+    });
+
+    const stateUrl = `${fixture.baseUrl}/api/companies/${created.company.id}/state`;
+    type State = { finalFounderReportPreparing: boolean; finalFounderReport: { id: string } | null };
+
+    const preparing = await getJson<State>(stateUrl);
+    expect(preparing.finalFounderReportPreparing).toBe(true);
+    expect(preparing.finalFounderReport).toBeNull();
+
+    fixture.repositories.updateFinalFounderReportJobStatus(
+      "founder_report_job_1",
+      "complete",
+      "2026-08-17T00:05:00.000Z",
+    );
+    fixture.repositories.createFinalFounderReport({
+      id: "founder_report_1",
+      companyId: created.company.id,
+      classification: "waiting",
+      sections: {
+        vision: { en: "Restated vision", zh: "复述愿景" },
+        actualResult: { en: "A prototype shipped", zh: "交付了原型" },
+        departmentContributions: [{ en: "Engineering built it", zh: "工程部构建" }],
+        goalFit: { en: "Partial fit", zh: "部分契合" },
+        remainingGaps: { en: "User validation still open", zh: "用户验证仍待完成" },
+        recommendedNextStep: { en: "Run a five-user test", zh: "进行五人测试" },
+      },
+      generatedBy: "ceo_agent",
+      isCurrent: true,
+      supersedesReportId: null,
+      createdAt: "2026-08-17T00:05:00.000Z",
+      updatedAt: "2026-08-17T00:05:00.000Z",
+    });
+
+    const ready = await getJson<State>(stateUrl);
+    expect(ready.finalFounderReportPreparing).toBe(false);
+    expect(ready.finalFounderReport?.id).toBe("founder_report_1");
+
+    await fixture.close();
+  });
+
+  it("serves the superseding report and keeps the prior report in the non-current list", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+
+    const sections = {
+      vision: { en: "Restated vision", zh: "复述愿景" },
+      actualResult: { en: "A prototype shipped", zh: "交付了原型" },
+      departmentContributions: [{ en: "Engineering built it", zh: "工程部构建" }],
+      goalFit: { en: "Partial fit", zh: "部分契合" },
+      remainingGaps: { en: "User validation still open", zh: "用户验证仍待完成" },
+      recommendedNextStep: { en: "Run a five-user test", zh: "进行五人测试" },
+    };
+    fixture.repositories.createFinalFounderReport({
+      id: "founder_report_1",
+      companyId: created.company.id,
+      classification: "waiting",
+      sections,
+      generatedBy: "ceo_agent",
+      isCurrent: true,
+      supersedesReportId: null,
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    });
+    // A later cycle after post-report work: the second report supersedes the first.
+    fixture.repositories.createFinalFounderReport({
+      id: "founder_report_2",
+      companyId: created.company.id,
+      classification: "achieved",
+      sections,
+      generatedBy: "ceo_agent",
+      isCurrent: true,
+      supersedesReportId: "founder_report_1",
+      createdAt: "2026-08-20T00:00:00.000Z",
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    });
+
+    const state = await getJson<{
+      finalFounderReport: { id: string; classification: string; supersedesReportId: string | null } | null;
+      supersededFinalFounderReports: Array<{ id: string; classification: string }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(state.finalFounderReport?.id).toBe("founder_report_2");
+    expect(state.finalFounderReport?.classification).toBe("achieved");
+    expect(state.finalFounderReport?.supersedesReportId).toBe("founder_report_1");
+    expect(state.supersededFinalFounderReports.map((report) => report.id)).toEqual(["founder_report_1"]);
+    expect(state.supersededFinalFounderReports[0]?.classification).toBe("waiting");
+
+    await fixture.close();
+  });
+
   it("records CEO review decisions and applies approve or return effects", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
@@ -1338,6 +1508,201 @@ describe("API routes", () => {
         ],
       }),
     ]);
+
+    await fixture.close();
+  });
+
+  it("omits cross_department_impact rollups for accepted settled work once the company is quiescent", async () => {
+    const fixture = await startFixtureServer();
+    const created = await createCompanyForApi(fixture);
+    // Every task is complete — the company has no forward move left — and the accepted source task's
+    // sole cross-department downstream task is complete too.
+    await seedCrossDepartmentCompletion(fixture, created.company.id, { downstreamStatus: "complete", prefix: "quiescent_cross" });
+
+    const state = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(state.ceoAttentionRollups.some((rollup) => rollup.reasons.includes("cross_department_impact"))).toBe(false);
+
+    await fixture.close();
+  });
+
+  it("keeps cross_department_impact rollups for a quiescent company whose downstream work is blocked", async () => {
+    const fixture = await startFixtureServer();
+    const created = await createCompanyForApi(fixture);
+    // The company is quiescent (a blocked task has no forward move), but a blocked cross-department
+    // downstream task is a genuinely unsettled signal — not mechanical noise.
+    const { downstreamDepartment } = await seedCrossDepartmentCompletion(fixture, created.company.id, {
+      downstreamStatus: "blocked",
+      prefix: "blocked_cross",
+    });
+
+    const state = await getJson<{
+      ceoAttentionRollups: Array<{ reasons: string[]; downstreamDepartmentIds: string[] }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    const crossDepartmentRollup = state.ceoAttentionRollups.find((rollup) =>
+      rollup.reasons.includes("cross_department_impact"),
+    );
+    expect(crossDepartmentRollup).toBeDefined();
+    expect(crossDepartmentRollup!.downstreamDepartmentIds).toContain(downstreamDepartment.id);
+
+    await fixture.close();
+  });
+
+  it("still raises cross_department_impact rollups while a running company's downstream work is in flight", async () => {
+    const fixture = await startFixtureServer();
+    const created = await createCompanyForApi(fixture);
+    // A queued downstream task keeps the company non-quiescent — suppression never applies.
+    const { downstreamDepartment } = await seedCrossDepartmentCompletion(fixture, created.company.id, {
+      downstreamStatus: "queued",
+      prefix: "running_cross",
+    });
+
+    const state = await getJson<{
+      ceoAttentionRollups: Array<{ reasons: string[]; downstreamDepartmentIds: string[] }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    const crossDepartmentRollup = state.ceoAttentionRollups.find((rollup) =>
+      rollup.reasons.includes("cross_department_impact"),
+    );
+    expect(crossDepartmentRollup).toBeDefined();
+    expect(crossDepartmentRollup!.downstreamDepartmentIds).toContain(downstreamDepartment.id);
+
+    await fixture.close();
+  });
+
+  it("emits an Objective Stage Change rollup once every task rolling up to the objective is terminal", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const objective = fixture.repositories.listObjectives(created.company.id)[0]!;
+    const keyResults = fixture.repositories.listKeyResults(created.company.id);
+    const tasks = fixture.repositories.listTasksForCompany(created.company.id);
+
+    for (const task of tasks) {
+      fixture.repositories.updateTaskStatus(task.id, "complete");
+    }
+    fixture.repositories.updateKeyResultProgress(keyResults[0]!.id, "local_url", "met");
+    fixture.repositories.updateKeyResultProgress(keyResults[1]!.id, "not_documented", "missed");
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_stage_change_1",
+      companyId: created.company.id,
+      taskId: tasks[0]!.id,
+      departmentId: tasks[0]!.departmentId,
+      keyResultId: tasks[0]!.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      outcomeSummaryText: { en: "Landing page prototype shipped with local proof.", zh: "落地页原型已交付并附本地证明。" },
+      dependencyImpact: {},
+      nextStepItems: [],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:05:00.000Z",
+    });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_stage_change_2",
+      companyId: created.company.id,
+      taskId: tasks[1]!.id,
+      departmentId: tasks[1]!.departmentId,
+      keyResultId: tasks[1]!.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      outcomeSummaryText: { en: "Revenue path draft left open questions on billing.", zh: "收入路径草稿在计费上仍有未决问题。" },
+      dependencyImpact: {},
+      nextStepItems: [],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:06:00.000Z",
+    });
+
+    const state = await getJson<{
+      ceoAttentionRollups: Array<{
+        group: { type: string; objectiveId?: string };
+        severity: string;
+        reasons: string[];
+        affectedTaskIds: string[];
+        recommendedNextAction: string;
+        summary: string;
+        sourceTaskCompletionEventIds: string[];
+      }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    const stageChange = state.ceoAttentionRollups.find((rollup) => rollup.reasons.includes("goal_stage_change"));
+    expect(stageChange).toBeDefined();
+    expect(stageChange).toMatchObject({
+      group: { type: "objective", objectiveId: objective.id },
+      severity: "informational",
+      reasons: ["goal_stage_change"],
+    });
+    expect(stageChange!.affectedTaskIds).toEqual(expect.arrayContaining(tasks.map((task) => task.id)));
+    expect(stageChange!.recommendedNextAction).toContain("Document the first revenue path");
+    expect(stageChange!.summary).toContain("Landing page prototype shipped with local proof.");
+    expect(stageChange!.sourceTaskCompletionEventIds).toEqual(
+      expect.arrayContaining(["task_completion_event_stage_change_1", "task_completion_event_stage_change_2"]),
+    );
+
+    await fixture.close();
+  });
+
+  it("withholds the Objective Stage Change rollup while a child task is still queued or in review", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const tasks = fixture.repositories.listTasksForCompany(created.company.id);
+    for (const task of tasks.slice(2)) {
+      fixture.repositories.updateTaskStatus(task.id, "complete");
+    }
+    // tasks[0] stays queued; tasks[1] sits in review — review is not a terminal state.
+    fixture.repositories.updateTaskStatus(tasks[1]!.id, "review");
+
+    const queuedAndReview = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(queuedAndReview.ceoAttentionRollups.some((rollup) => rollup.reasons.includes("goal_stage_change"))).toBe(false);
+
+    // Clearing the queued task still leaves the review task holding the objective open.
+    fixture.repositories.updateTaskStatus(tasks[0]!.id, "complete");
+    const reviewOnly = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(reviewOnly.ceoAttentionRollups.some((rollup) => rollup.reasons.includes("goal_stage_change"))).toBe(false);
+
+    await fixture.close();
+  });
+
+  it("never counts a keyResult-less task toward an Objective Stage Change", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const tasks = fixture.repositories.listTasksForCompany(created.company.id);
+    for (const task of tasks) {
+      fixture.repositories.updateTaskStatus(task.id, "complete");
+    }
+    const looseTask = {
+      ...createIsolatedTask(templateTask, "loose_no_key_result", "Ad-hoc exploration", "running", 500),
+      keyResultId: null,
+    };
+    fixture.repositories.createTask(looseTask);
+
+    const state = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[]; affectedTaskIds: string[] }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    const stageChange = state.ceoAttentionRollups.find((rollup) => rollup.reasons.includes("goal_stage_change"));
+    expect(stageChange).toBeDefined();
+    expect(stageChange!.affectedTaskIds).not.toContain(looseTask.id);
 
     await fixture.close();
   });
@@ -2898,6 +3263,65 @@ function createIsolatedTask(
     dependencyNote: null,
     artifactWorkspacePath: null,
   };
+}
+
+async function createCompanyForApi(
+  fixture: Awaited<ReturnType<typeof startFixtureServer>>,
+): Promise<{ company: { id: string } }> {
+  return postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    companyName: "Pricing Page Studio",
+    founderVision: "Build an AI SaaS that creates pricing pages.",
+    selectedCeoAgentId: "codex",
+    permissionMode: "balanced",
+    assets: [],
+  });
+}
+
+/**
+ * Finish every seeded task, then add an accepted source task in one department whose Task Completion
+ * Event has a single cross-department downstream task left at `downstreamStatus`. The company is
+ * quiescent unless `downstreamStatus` still leaves a forward move (e.g. `queued`).
+ */
+async function seedCrossDepartmentCompletion(
+  fixture: Awaited<ReturnType<typeof startFixtureServer>>,
+  companyId: string,
+  options: { downstreamStatus: Task["status"]; prefix: string },
+): Promise<{ downstreamDepartment: { id: string }; sourceTask: Task; downstreamTask: Task }> {
+  const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+  const departments = fixture.repositories.listDepartments(companyId);
+  const ownerDepartment = departments[0]!;
+  const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id)!;
+
+  for (const task of fixture.repositories.listTasksForCompany(companyId)) {
+    fixture.repositories.updateTaskStatus(task.id, "complete");
+  }
+
+  const sourceTask = {
+    ...createIsolatedTask(templateTask, `${options.prefix}_source`, "Ship the launch site", "complete", 400),
+    departmentId: ownerDepartment.id,
+  };
+  const downstreamTask = {
+    ...createIsolatedTask(templateTask, `${options.prefix}_downstream`, "Index the launch site", options.downstreamStatus, 401),
+    departmentId: downstreamDepartment.id,
+  };
+  fixture.repositories.createTask(sourceTask);
+  fixture.repositories.createTask(downstreamTask);
+  fixture.repositories.createTaskDependency({ taskId: downstreamTask.id, dependsOnTaskId: sourceTask.id });
+  fixture.repositories.appendTaskCompletionEvent({
+    id: `task_completion_event_${options.prefix}`,
+    companyId,
+    taskId: sourceTask.id,
+    departmentId: sourceTask.departmentId,
+    keyResultId: sourceTask.keyResultId,
+    businessArtifactId: null,
+    outcome: "accepted",
+    dependencyImpact: { blocks: [downstreamTask.id] },
+    nextStepItems: [],
+    visionGaps: [],
+    createdAt: "2026-08-17T00:00:00.000Z",
+  });
+
+  return { downstreamDepartment, sourceTask, downstreamTask };
 }
 
 async function seedAwaitingFounderDecision(options: {
