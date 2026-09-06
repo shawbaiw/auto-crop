@@ -107,6 +107,21 @@ export const strategicDecisionKindSchema = z.enum([
   "launch_target",
 ]);
 
+/**
+ * The reasons a CEO Attention Rollup can carry. Kept in sync with the `CeoAttentionRollupReason`
+ * core type; `goal_stage_change` is the runtime-assembled Objective Stage Change achievement.
+ */
+export const ceoAttentionRollupReasonSchema = z.enum([
+  "vision_gap",
+  "ceo_decision",
+  "human_action",
+  "wait_state",
+  "cross_department_impact",
+  "exception_outcome",
+  "founder_decision",
+  "goal_stage_change",
+]);
+
 export const finalFounderReportClassificationSchema = z.enum(["achieved", "stalled", "waiting"]);
 
 export const finalFounderReportGeneratedBySchema = z.enum(["ceo_agent", "deterministic_fallback"]);

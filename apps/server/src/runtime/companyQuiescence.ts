@@ -23,6 +23,23 @@ const ACTIVE_TASK_STATUSES: ReadonlySet<Task["status"]> = new Set([
   "needs_replan",
 ]);
 
+/**
+ * Task statuses with no forward move at all — the "terminal state" an Objective Stage Change waits
+ * for. `review` and `needs_replan` are deliberately excluded: a task in either still has a next move
+ * (manual review, an open replan).
+ */
+const TERMINAL_TASK_STATUSES: ReadonlySet<Task["status"]> = new Set([
+  "complete",
+  "blocked",
+  "failed",
+  "cancelled",
+]);
+
+/** True when a task has reached a state the runtime will not move it out of on its own. */
+export function isTerminalTaskStatus(status: Task["status"]): boolean {
+  return TERMINAL_TASK_STATUSES.has(status);
+}
+
 export type CompanyQuiescenceInput = {
   tasks: Task[];
   waitStates: WaitState[];

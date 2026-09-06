@@ -388,6 +388,35 @@ describe("Dashboard App", () => {
     expect(within(reviewDetail).getByRole("button", { name: "Return to department" })).toBeInTheDocument();
   });
 
+  it("styles a goal_stage_change rollup as an achievement, distinct from an exception rollup", async () => {
+    const api = createMockApiClient();
+    const response = {
+      ...createCeoOfficeAttentionCompanyResponse(),
+      ceoAttentionRollups: [createCeoAttentionRollupSummary(), createGoalStageChangeRollupSummary()],
+    };
+    api.createCompany = vi.fn(async () => response);
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    const overview = within(screen.getByRole("region", { name: "CEO Intake Report" })).getByRole("region", {
+      name: "Executive Overview",
+    });
+
+    expect(within(overview).getByText("Objective stage change")).toBeInTheDocument();
+    expect(within(overview).getByText("Validate the first AI SaaS wedge")).toBeInTheDocument();
+    expect(within(overview).getByText("Review the missed key result: Document the first revenue path.")).toBeInTheDocument();
+
+    const rollups = document.querySelectorAll(".ceo-attention-rollup");
+    const achievementRollups = document.querySelectorAll(".ceo-attention-rollup--achievement");
+    expect(rollups).toHaveLength(2);
+    expect(achievementRollups).toHaveLength(1);
+    expect(achievementRollups[0]).toHaveTextContent("Validate the first AI SaaS wedge");
+    expect(achievementRollups[0]).not.toHaveTextContent("Launch path blocked on deployment evidence");
+  });
+
   it("pins the Final Founder Report above the Outcomes view with its classification and sections", async () => {
     const api = createMockApiClient();
     const response = createFinalFounderReportCompanyResponse();
@@ -2902,6 +2931,30 @@ function createCeoAttentionRollupSummary(): CeoAttentionRollupSummary {
     relevantFounderDecisions: [],
     sourceTaskCompletionEventIds: ["task_completion_event_1"],
     createdAt: "2026-08-17T00:02:00.000Z",
+  };
+}
+
+function createGoalStageChangeRollupSummary(): CeoAttentionRollupSummary {
+  return {
+    id: "ceo_attention_rollup_goal_stage_change_objective:objective_1",
+    companyId: "company_1",
+    group: { type: "objective", objectiveId: "objective_1" },
+    title: "Validate the first AI SaaS wedge",
+    summary:
+      'Every task under "Validate the first AI SaaS wedge" has reached a terminal state. Key results — Ship a proof-backed landing page prototype: met; Document the first revenue path: missed.',
+    ownerDepartmentId: "department_1",
+    downstreamDepartmentIds: [],
+    affectedTaskIds: ["task_1", "task_2"],
+    currentBlocker: null,
+    recommendedNextAction: "Review the missed key result: Document the first revenue path.",
+    severity: "informational",
+    reasons: ["goal_stage_change"],
+    relevantHumanActions: [],
+    relevantWaitStates: [],
+    relevantVisionGaps: [],
+    relevantFounderDecisions: [],
+    sourceTaskCompletionEventIds: ["task_completion_event_1"],
+    createdAt: "2026-08-17T00:06:00.000Z",
   };
 }
 

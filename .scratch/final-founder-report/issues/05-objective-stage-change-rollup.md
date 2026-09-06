@@ -4,13 +4,13 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Core: add `goal_stage_change` to `CeoAttentionRollupReason` type + `ceoAttentionRollupReasonSchema`.
-- [ ] `projectCeoAttention` emits a `goal_stage_change` rollup for an objective once every task rolling up to it is terminal; grouped by the `objective` rollup group; `recommendedNextAction` derived (name a `missed` key result if any).
-- [ ] Tasks with no `keyResultId` never trigger one; an objective with a still-running task has none.
-- [ ] `buildCompanyState` already serializes `ceoAttentionRollups` — confirm `goal_stage_change` rollups flow through unchanged.
-- [ ] CEO Office renders `goal_stage_change` rollups with achievement styling, distinct from exception rollups, using existing retro primitives.
-- [ ] Tests — Seam 2 (`routes.test.ts`): the response includes a `goal_stage_change` rollup with the owning objective and its affected tasks when the objective is complete, and excludes it when a task still runs; a keyResult-less task does not produce one.
-- [ ] Tests — Seam 3 (`App.test.tsx`): a `goal_stage_change` rollup renders with achievement styling, distinct from an exception rollup.
-- [ ] Tests — Seam 5 (`schemas.test.ts`): `goal_stage_change` parses as a `CeoAttentionRollupReason`; an unknown reason does not.
+- [x] Core: add `goal_stage_change` to `CeoAttentionRollupReason` type + `ceoAttentionRollupReasonSchema`.
+- [x] `projectCeoAttention` emits a `goal_stage_change` rollup for an objective once every task rolling up to it is terminal; grouped by the `objective` rollup group; `recommendedNextAction` derived (name a `missed` key result if any).
+- [x] Tasks with no `keyResultId` never trigger one; an objective with a still-running task has none.
+- [x] `buildCompanyState` already serializes `ceoAttentionRollups` — confirm `goal_stage_change` rollups flow through unchanged.
+- [x] CEO Office renders `goal_stage_change` rollups with achievement styling, distinct from exception rollups, using existing retro primitives.
+- [x] Tests — Seam 2 (`routes.test.ts`): the response includes a `goal_stage_change` rollup with the owning objective and its affected tasks when the objective is complete, and excludes it when a task still runs; a keyResult-less task does not produce one.
+- [x] Tests — Seam 3 (`App.test.tsx`): a `goal_stage_change` rollup renders with achievement styling, distinct from an exception rollup.
+- [x] Tests — Seam 5 (`schemas.test.ts`): `goal_stage_change` parses as a `CeoAttentionRollupReason`; an unknown reason does not.

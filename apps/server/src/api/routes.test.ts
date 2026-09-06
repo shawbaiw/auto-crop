@@ -1512,6 +1512,143 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("emits an Objective Stage Change rollup once every task rolling up to the objective is terminal", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const objective = fixture.repositories.listObjectives(created.company.id)[0]!;
+    const keyResults = fixture.repositories.listKeyResults(created.company.id);
+    const tasks = fixture.repositories.listTasksForCompany(created.company.id);
+
+    for (const task of tasks) {
+      fixture.repositories.updateTaskStatus(task.id, "complete");
+    }
+    fixture.repositories.updateKeyResultProgress(keyResults[0]!.id, "local_url", "met");
+    fixture.repositories.updateKeyResultProgress(keyResults[1]!.id, "not_documented", "missed");
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_stage_change_1",
+      companyId: created.company.id,
+      taskId: tasks[0]!.id,
+      departmentId: tasks[0]!.departmentId,
+      keyResultId: tasks[0]!.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      outcomeSummaryText: { en: "Landing page prototype shipped with local proof.", zh: "落地页原型已交付并附本地证明。" },
+      dependencyImpact: {},
+      nextStepItems: [],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:05:00.000Z",
+    });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_stage_change_2",
+      companyId: created.company.id,
+      taskId: tasks[1]!.id,
+      departmentId: tasks[1]!.departmentId,
+      keyResultId: tasks[1]!.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      outcomeSummaryText: { en: "Revenue path draft left open questions on billing.", zh: "收入路径草稿在计费上仍有未决问题。" },
+      dependencyImpact: {},
+      nextStepItems: [],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:06:00.000Z",
+    });
+
+    const state = await getJson<{
+      ceoAttentionRollups: Array<{
+        group: { type: string; objectiveId?: string };
+        severity: string;
+        reasons: string[];
+        affectedTaskIds: string[];
+        recommendedNextAction: string;
+        summary: string;
+        sourceTaskCompletionEventIds: string[];
+      }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    const stageChange = state.ceoAttentionRollups.find((rollup) => rollup.reasons.includes("goal_stage_change"));
+    expect(stageChange).toBeDefined();
+    expect(stageChange).toMatchObject({
+      group: { type: "objective", objectiveId: objective.id },
+      severity: "informational",
+      reasons: ["goal_stage_change"],
+    });
+    expect(stageChange!.affectedTaskIds).toEqual(expect.arrayContaining(tasks.map((task) => task.id)));
+    expect(stageChange!.recommendedNextAction).toContain("Document the first revenue path");
+    expect(stageChange!.summary).toContain("Landing page prototype shipped with local proof.");
+    expect(stageChange!.sourceTaskCompletionEventIds).toEqual(
+      expect.arrayContaining(["task_completion_event_stage_change_1", "task_completion_event_stage_change_2"]),
+    );
+
+    await fixture.close();
+  });
+
+  it("withholds the Objective Stage Change rollup while a child task is still queued or in review", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const tasks = fixture.repositories.listTasksForCompany(created.company.id);
+    for (const task of tasks.slice(2)) {
+      fixture.repositories.updateTaskStatus(task.id, "complete");
+    }
+    // tasks[0] stays queued; tasks[1] sits in review — review is not a terminal state.
+    fixture.repositories.updateTaskStatus(tasks[1]!.id, "review");
+
+    const queuedAndReview = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(queuedAndReview.ceoAttentionRollups.some((rollup) => rollup.reasons.includes("goal_stage_change"))).toBe(false);
+
+    // Clearing the queued task still leaves the review task holding the objective open.
+    fixture.repositories.updateTaskStatus(tasks[0]!.id, "complete");
+    const reviewOnly = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(reviewOnly.ceoAttentionRollups.some((rollup) => rollup.reasons.includes("goal_stage_change"))).toBe(false);
+
+    await fixture.close();
+  });
+
+  it("never counts a keyResult-less task toward an Objective Stage Change", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const tasks = fixture.repositories.listTasksForCompany(created.company.id);
+    for (const task of tasks) {
+      fixture.repositories.updateTaskStatus(task.id, "complete");
+    }
+    const looseTask = {
+      ...createIsolatedTask(templateTask, "loose_no_key_result", "Ad-hoc exploration", "running", 500),
+      keyResultId: null,
+    };
+    fixture.repositories.createTask(looseTask);
+
+    const state = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[]; affectedTaskIds: string[] }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    const stageChange = state.ceoAttentionRollups.find((rollup) => rollup.reasons.includes("goal_stage_change"));
+    expect(stageChange).toBeDefined();
+    expect(stageChange!.affectedTaskIds).not.toContain(looseTask.id);
+
+    await fixture.close();
+  });
+
   it("serializes projected Founder Decisions with their options, recommendation, status, and blocked task ids", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {

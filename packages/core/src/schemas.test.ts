@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentFailureReasonSchema,
+  ceoAttentionRollupReasonSchema,
   ceoResponseSchema,
   companyBlueprintSchema,
   finalFounderReportClassificationSchema,
@@ -241,6 +242,22 @@ describe("runtime status schemas", () => {
       expect(taskAcceptanceProvenanceSchema.safeParse(provenance).success).toBe(true);
     }
     expect(taskAcceptanceProvenanceSchema.safeParse("ceo_review").success).toBe(false);
+  });
+
+  it("accepts goal_stage_change as a CeoAttentionRollupReason and rejects an unknown reason", () => {
+    for (const reason of [
+      "vision_gap",
+      "ceo_decision",
+      "human_action",
+      "wait_state",
+      "cross_department_impact",
+      "exception_outcome",
+      "founder_decision",
+      "goal_stage_change",
+    ]) {
+      expect(ceoAttentionRollupReasonSchema.safeParse(reason).success).toBe(true);
+    }
+    expect(ceoAttentionRollupReasonSchema.safeParse("objective_complete").success).toBe(false);
   });
 
   it("accepts every Strategic Decision Kind and rejects choices outside the fixed set", () => {

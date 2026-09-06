@@ -651,6 +651,12 @@ h3 {
   text-transform: uppercase;
 }
 
+/* Objective Stage Change: an achievement, held visually apart from the exception rollups. */
+.ceo-attention-rollup--achievement {
+  background: color-mix(in srgb, var(--surface) 82%, var(--accent-secondary));
+  border-color: var(--accent-secondary);
+}
+
 .ceo-pending-queue {
   display: grid;
   gap: 10px;

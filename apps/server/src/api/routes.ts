@@ -751,6 +751,7 @@ function buildCompanyState(
   });
   let tasks = repositories.listTasksForCompany(currentCompany.id);
   const keyResults = repositories.listKeyResults(currentCompany.id);
+  const objectives = repositories.listObjectives(currentCompany.id);
   let taskDependencies = repositories.listTaskDependenciesForCompany(currentCompany.id);
   const departments = repositories.listDepartments(currentCompany.id);
   const businessArtifacts = repositories.listBusinessArtifactsForCompany(currentCompany.id).map(summarizeBusinessArtifact);
@@ -760,6 +761,7 @@ function buildCompanyState(
   let ceoAttention = projectCeoAttention({
     company: currentCompany,
     keyResults,
+    objectives,
     tasks,
     taskCompletionEvents,
     taskDependencies,
@@ -781,6 +783,7 @@ function buildCompanyState(
     ceoAttention = projectCeoAttention({
       company: currentCompany,
       keyResults,
+      objectives,
       tasks,
       taskCompletionEvents,
       taskDependencies,
@@ -805,6 +808,7 @@ function buildCompanyState(
     ceoAttention = projectCeoAttention({
       company: currentCompany,
       keyResults,
+      objectives,
       tasks,
       taskCompletionEvents,
       taskDependencies,
@@ -817,7 +821,7 @@ function buildCompanyState(
   return {
     company: summarizeCompany(currentCompany),
     departments: departments.map(summarizeDepartment),
-    objectives: repositories.listObjectives(currentCompany.id).map(summarizeObjective),
+    objectives: objectives.map(summarizeObjective),
     keyResults,
     tasks: summarizeTasks(tasks, taskDependencies),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),

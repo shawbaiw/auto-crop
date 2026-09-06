@@ -863,23 +863,42 @@ function CeoExecutiveOverview({
       <section className="ceo-attention-rollups" aria-label={t("department.attentionRollups")}>
         <h4>{t("department.attentionRollups")}</h4>
         {ceoAttentionRollups.length === 0 ? <p className="muted">{t("department.noAttentionRollups")}</p> : null}
-        {ceoAttentionRollups.map((rollup) => (
-          <article className="ceo-attention-rollup" key={rollup.id}>
-            <div>
-              <p>{formatRollupOwner(rollup.ownerDepartmentId, departmentsById)}</p>
-              <h5>{rollup.title}</h5>
-              <p className="muted">{rollup.summary}</p>
-            </div>
-            <VideotexKeyValue
-              items={[
-                { label: t("department.rollupSeverity"), value: rollup.severity },
-                { label: t("department.downstreamImpact"), value: formatDepartments(rollup.downstreamDepartmentIds, departmentsById, t("department.none")) },
-                { label: t("department.currentBlocker"), value: rollup.currentBlocker ?? t("department.none") },
-                { label: t("department.recommendedNextAction"), value: rollup.recommendedNextAction },
-              ]}
-            />
-          </article>
-        ))}
+        {ceoAttentionRollups.map((rollup) => {
+          // An Objective Stage Change is an achievement, not an alarm — styled apart from the
+          // exception rollups and led by an achievement badge rather than the owning department.
+          const isObjectiveStageChange = rollup.reasons.includes("goal_stage_change");
+          return (
+            <article
+              className={`ceo-attention-rollup${isObjectiveStageChange ? " ceo-attention-rollup--achievement" : ""}`}
+              key={rollup.id}
+            >
+              <div>
+                {isObjectiveStageChange ? (
+                  <p>
+                    <RetroBadge tone="signal">{t("department.objectiveStageChange")}</RetroBadge>
+                  </p>
+                ) : (
+                  <p>{formatRollupOwner(rollup.ownerDepartmentId, departmentsById)}</p>
+                )}
+                <h5>{rollup.title}</h5>
+                <p className="muted">{rollup.summary}</p>
+              </div>
+              <VideotexKeyValue
+                items={[
+                  // An achievement rollup carries no severity / blocker / downstream impact.
+                  ...(isObjectiveStageChange
+                    ? []
+                    : [
+                        { label: t("department.rollupSeverity"), value: rollup.severity },
+                        { label: t("department.downstreamImpact"), value: formatDepartments(rollup.downstreamDepartmentIds, departmentsById, t("department.none")) },
+                        { label: t("department.currentBlocker"), value: rollup.currentBlocker ?? t("department.none") },
+                      ]),
+                  { label: t("department.recommendedNextAction"), value: rollup.recommendedNextAction },
+                ]}
+              />
+            </article>
+          );
+        })}
       </section>
       <VideotexLog
         emptyMessage={t("department.noCriticalChains")}

@@ -11,13 +11,15 @@ import type {
   KeyResult,
   NextStepItem,
   NextStepItemSeverity,
+  Objective,
   Task,
   TaskCompletionEvent,
   TaskDependency,
   VisionGap,
   WaitState,
 } from "@auto-crop/core";
-import { strategicDecisionKindSchema } from "@auto-crop/core";
+import { resolveLocalizedText, strategicDecisionKindSchema } from "@auto-crop/core";
+import { isTerminalTaskStatus } from "./companyQuiescence";
 
 type AttentionCandidate = {
   event: TaskCompletionEvent;
@@ -41,6 +43,12 @@ export function projectCeoAttention(input: {
   humanActionConfirmations?: HumanActionConfirmation[];
   founderDecisionResolutions?: FounderDecisionResolution[];
   keyResults: KeyResult[];
+  /**
+   * The company's objectives. Only needed to emit `goal_stage_change` (Objective Stage Change)
+   * rollups; callers that read the projection for its Human Actions / Wait States / Founder
+   * Decisions alone may omit it.
+   */
+  objectives?: Objective[];
   now?: () => Date;
   tasks: Task[];
   taskCompletionEvents: TaskCompletionEvent[];
@@ -79,13 +87,133 @@ export function projectCeoAttention(input: {
     }),
   );
 
+  const objectiveStageChanges = collectObjectiveStageChanges({
+    company: input.company,
+    objectives: input.objectives ?? [],
+    keyResults: input.keyResults,
+    tasks: input.tasks,
+    taskCompletionEvents: input.taskCompletionEvents,
+    now,
+  });
+
   return {
     visionGaps,
     humanActions,
     waitStates,
     founderDecisions,
-    ceoAttentionRollups: rollUpAttentionCandidates(input.company, candidates),
+    ceoAttentionRollups: [
+      ...rollUpAttentionCandidates(input.company, candidates),
+      ...objectiveStageChanges,
+    ],
   };
+}
+
+/**
+ * Objective Stage Change: once every task whose `keyResultId` rolls up to an objective has reached a
+ * terminal state, yield one `goal_stage_change` rollup for that objective. Runtime-assembled, no
+ * agent — it condenses the objective's child Task Outcome Summaries and its key-result status. Tasks
+ * with no `keyResultId` never contribute, and an objective with a still-running child task gets
+ * nothing. Grouped by the existing `objective` rollup group but with its own id so it sits alongside
+ * (not on top of) any exception rollup for the same objective. Severity is always `informational`.
+ */
+function collectObjectiveStageChanges(input: {
+  company: Company;
+  objectives: Objective[];
+  keyResults: KeyResult[];
+  tasks: Task[];
+  taskCompletionEvents: TaskCompletionEvent[];
+  now: Date;
+}): CeoAttentionRollup[] {
+  const keyResultsByObjective = new Map<string, KeyResult[]>();
+  for (const keyResult of input.keyResults) {
+    keyResultsByObjective.set(keyResult.objectiveId, [
+      ...(keyResultsByObjective.get(keyResult.objectiveId) ?? []),
+      keyResult,
+    ]);
+  }
+
+  return input.objectives.flatMap((objective) => {
+    const objectiveKeyResults = keyResultsByObjective.get(objective.id) ?? [];
+    if (objectiveKeyResults.length === 0) {
+      return [];
+    }
+
+    const keyResultIds = new Set(objectiveKeyResults.map((keyResult) => keyResult.id));
+    const childTasks = input.tasks.filter(
+      (task) => task.keyResultId !== null && keyResultIds.has(task.keyResultId),
+    );
+    if (childTasks.length === 0) {
+      return [];
+    }
+    if (!childTasks.every((task) => isTerminalTaskStatus(task.status))) {
+      return [];
+    }
+
+    const childTaskIds = new Set(childTasks.map((task) => task.id));
+    const childCompletionEvents = input.taskCompletionEvents
+      .filter((event) => childTaskIds.has(event.taskId))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const outcomeSummaries = childCompletionEvents
+      .map((event) => (event.outcomeSummaryText ? resolveLocalizedText(event.outcomeSummaryText, "en").trim() : ""))
+      .filter((summary) => summary.length > 0);
+    const missedKeyResults = objectiveKeyResults.filter((keyResult) => keyResult.status === "missed");
+    const group = { type: "objective" as const, objectiveId: objective.id };
+
+    return [
+      {
+        id: `ceo_attention_rollup_goal_stage_change_${groupKey(group)}`,
+        companyId: input.company.id,
+        group,
+        title: objective.title,
+        summary: summarizeObjectiveStageChange(objective, objectiveKeyResults, outcomeSummaries),
+        ownerDepartmentId: childTasks[0]!.departmentId,
+        downstreamDepartmentIds: [],
+        affectedTaskIds: [...childTaskIds],
+        currentBlocker: null,
+        recommendedNextAction:
+          missedKeyResults.length > 0
+            ? `Review the missed key result: ${missedKeyResults.map((keyResult) => keyResult.title).join("; ")}.`
+            : `Review the objective outcome: ${objective.title}.`,
+        severity: "informational" as const,
+        reasons: ["goal_stage_change" as const],
+        relevantHumanActions: [],
+        relevantWaitStates: [],
+        relevantVisionGaps: [],
+        relevantFounderDecisions: [],
+        sourceTaskCompletionEventIds: childCompletionEvents.map((event) => event.id),
+        createdAt: childCompletionEvents[childCompletionEvents.length - 1]?.createdAt ?? input.now.toISOString(),
+      },
+    ];
+  });
+}
+
+/** How many child Task Outcome Summaries the condensed rollup summary quotes before eliding the rest. */
+const OBJECTIVE_STAGE_CHANGE_SUMMARY_SAMPLE = 2;
+
+function summarizeObjectiveStageChange(
+  objective: Objective,
+  keyResults: KeyResult[],
+  outcomeSummaries: string[],
+): string {
+  const keyResultLine = keyResults.map((keyResult) => `${keyResult.title}: ${keyResult.status}`).join("; ");
+
+  let outcomeLine = " No task outcome summaries were recorded.";
+  if (outcomeSummaries.length > 0) {
+    // A condensed read: the first sentence of the first couple of summaries, then a count of the rest.
+    const sampled = outcomeSummaries
+      .slice(0, OBJECTIVE_STAGE_CHANGE_SUMMARY_SAMPLE)
+      .map(firstSentence);
+    const remainder = outcomeSummaries.length - sampled.length;
+    const more = remainder > 0 ? ` (+${remainder} more)` : "";
+    outcomeLine = ` ${outcomeSummaries.length} task outcome(s): ${sampled.join(" ")}${more}`;
+  }
+
+  return `Every task under "${objective.title}" has reached a terminal state. Key results — ${keyResultLine}.${outcomeLine}`;
+}
+
+function firstSentence(text: string): string {
+  const match = text.match(/^.*?[.!?](?=\s|$)/);
+  return (match ? match[0] : text).trim();
 }
 
 /**

@@ -190,7 +190,14 @@ export type CeoAttentionRollupReason =
   | "wait_state"
   | "cross_department_impact"
   | "exception_outcome"
-  | "founder_decision";
+  | "founder_decision"
+  /**
+   * An Objective Stage Change: the last task rolling up to an objective has reached a terminal
+   * state, so the runtime condenses that objective's Task Outcome Summaries and key-result status
+   * into one `informational` achievement rollup. No agent call. Kept in sync with
+   * `ceoAttentionRollupReasonSchema`.
+   */
+  | "goal_stage_change";
 /**
  * The outcome classification carried on a {@link FinalFounderReport}. A fixed core enum so the
  * dashboard and the report generator share one vocabulary:
