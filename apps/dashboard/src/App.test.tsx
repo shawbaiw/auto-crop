@@ -2587,6 +2587,187 @@ describe("Dashboard App", () => {
     expect(within(pinned).getByText("Recommended")).toBeInTheDocument();
   });
 
+  it("shows each Outcomes entry's task brief next to its Task Outcome Summary", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createOutcomesNewMarkerResponse());
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const outcomes = screen.getByRole("region", { name: "Outcomes" });
+    const objectiveGroup = within(outcomes).getByRole("region", { name: "Validate first wedge" });
+    expect(within(objectiveGroup).getAllByText("You asked for").length).toBeGreaterThan(0);
+    expect(within(objectiveGroup).getAllByText("Rank for buyer-intent SEO keywords").length).toBeGreaterThan(0);
+    // The 4-part Task Outcome Summary contract is unchanged — the summary still renders alongside.
+    expect(objectiveGroup).toHaveTextContent("Prototype validated against the brief.");
+  });
+
+  it("marks how many outcomes are new since the last visit and clears the marker after a visit", async () => {
+    const restoreStorage = installMockLocalStorage({
+      "auto-crop.ceoOutcomesLastSeen.company_1": "2026-08-17T12:00:00.000Z",
+    });
+    try {
+      const api = createMockApiClient();
+      const response = createOutcomesNewMarkerResponse();
+      api.createCompany = vi.fn(async () => response);
+      api.getCompanyState = vi.fn(async () => ({
+        ...response,
+        proof: [],
+        reviews: [],
+        activity: [],
+        replanProposals: response.replanProposals ?? [],
+      }));
+      const user = userEvent.setup();
+
+      const { unmount } = render(<App apiClient={api} />);
+      await createCompany(user);
+
+      const outcomes = screen.getByRole("region", { name: "Outcomes" });
+      // Two of the three outcomes were created after the stubbed last-seen timestamp.
+      expect(within(outcomes).getByText("2 new outcomes since your last visit")).toBeInTheDocument();
+
+      // Revisiting the company after the visit was recorded clears the marker.
+      unmount();
+      render(<App apiClient={api} />);
+      const outcomesAfter = await screen.findByRole("region", { name: "Outcomes" });
+      expect(
+        within(outcomesAfter).queryByText(/new outcomes since your last visit/),
+      ).not.toBeInTheDocument();
+    } finally {
+      restoreStorage();
+    }
+  });
+
+  it("counts every new outcome in the marker, not just the recent slice that renders", async () => {
+    const restoreStorage = installMockLocalStorage({
+      "auto-crop.ceoOutcomesLastSeen.company_1": "2026-08-16T00:00:00.000Z",
+    });
+    try {
+      const api = createMockApiClient();
+      const base = createOutcomesCompanyResponse();
+      const manyEvents = Array.from({ length: 15 }, (_, index) =>
+        createTaskCompletionEventSummary({
+          id: `tce_${index}`,
+          createdAt: `2026-08-${String(17 + index).padStart(2, "0")}T00:00:00.000Z`,
+          outcomeSummaryText: { en: `Outcome ${index} is complete and reviewed.` },
+        }),
+      );
+      api.createCompany = vi.fn(async () => ({
+        ...base,
+        founderDecisions: [],
+        taskCompletionEvents: manyEvents,
+      }));
+      const user = userEvent.setup();
+
+      render(<App apiClient={api} />);
+      await createCompany(user);
+
+      const outcomes = screen.getByRole("region", { name: "Outcomes" });
+      expect(within(outcomes).getByText("15 new outcomes since your last visit")).toBeInTheDocument();
+    } finally {
+      restoreStorage();
+    }
+  });
+
+  it("shows nothing new and does not throw when localStorage is absent", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+    delete (window as { localStorage?: Storage }).localStorage;
+    try {
+      const api = createMockApiClient();
+      api.createCompany = vi.fn(async () => createOutcomesNewMarkerResponse());
+      const user = userEvent.setup();
+
+      render(<App apiClient={api} />);
+      await createCompany(user);
+
+      const outcomes = screen.getByRole("region", { name: "Outcomes" });
+      expect(
+        within(outcomes).queryByText(/new outcomes since your last visit/),
+      ).not.toBeInTheDocument();
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(window, "localStorage", descriptor);
+      }
+    }
+  });
+
+  it("shows nothing new and does not throw when the last-seen read throws", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+    const values = new Map<string, string>();
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => {
+          if (key.startsWith("auto-crop.ceoOutcomesLastSeen.")) {
+            throw new Error("storage blocked");
+          }
+          return values.get(key) ?? null;
+        }),
+        setItem: vi.fn((key: string, value: string) => {
+          if (key.startsWith("auto-crop.ceoOutcomesLastSeen.")) {
+            throw new Error("storage blocked");
+          }
+          values.set(key, value);
+        }),
+        removeItem: vi.fn((key: string) => values.delete(key)),
+        clear: vi.fn(() => values.clear()),
+      },
+    });
+    try {
+      const api = createMockApiClient();
+      api.createCompany = vi.fn(async () => createOutcomesNewMarkerResponse());
+      const user = userEvent.setup();
+
+      render(<App apiClient={api} />);
+      await createCompany(user);
+
+      const outcomes = screen.getByRole("region", { name: "Outcomes" });
+      expect(
+        within(outcomes).queryByText(/new outcomes since your last visit/),
+      ).not.toBeInTheDocument();
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(window, "localStorage", descriptor);
+      }
+    }
+  });
+
+  it("marks the Final Founder Report banner and objective rollup as new against the last-seen value", async () => {
+    const restoreStorage = installMockLocalStorage({
+      "auto-crop.ceoOutcomesLastSeen.company_1": "2026-08-17T12:00:00.000Z",
+    });
+    try {
+      const api = createMockApiClient();
+      const response = {
+        ...createFinalFounderReportCompanyResponse(),
+        finalFounderReport: {
+          ...createFinalFounderReportCompanyResponse().finalFounderReport!,
+          createdAt: "2026-08-18T00:00:00.000Z",
+        },
+        ceoAttentionRollups: [
+          { ...createGoalStageChangeRollupSummary(), createdAt: "2026-08-18T00:00:00.000Z" },
+        ],
+      };
+      api.createCompany = vi.fn(async () => response);
+      const user = userEvent.setup();
+
+      render(<App apiClient={api} />);
+      await createCompany(user);
+
+      const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+      const panel = within(ceoReport).getByRole("region", { name: "Final Founder Report" });
+      expect(within(panel).getByText("new")).toBeInTheDocument();
+
+      const overview = within(ceoReport).getByRole("region", { name: "Executive Overview" });
+      const achievement = overview.querySelector(".ceo-attention-rollup--achievement");
+      expect(achievement).not.toBeNull();
+      expect(within(achievement as HTMLElement).getByText("new")).toBeInTheDocument();
+    } finally {
+      restoreStorage();
+    }
+  });
+
   it("resolves a Founder Decision by picking an option, which accepts the deliverable", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => createOutcomesCompanyResponse());
@@ -3264,6 +3445,30 @@ function createOutcomesCompanyResponse(): Awaited<ReturnType<ApiClient["createCo
     taskProgressEvents: [],
     taskCompletionEvents: [createTaskCompletionEventSummary()],
     founderDecisions: [createFounderDecisionSummary()],
+  };
+}
+
+function createOutcomesNewMarkerResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
+  const base = createOutcomesCompanyResponse();
+  return {
+    ...base,
+    tasks: base.tasks.map((task) =>
+      task.id === "task_1" ? { ...task, description: "Rank for buyer-intent SEO keywords" } : task,
+    ),
+    founderDecisions: [],
+    taskCompletionEvents: [
+      createTaskCompletionEventSummary({ id: "tce_early", createdAt: "2026-08-17T00:02:00.000Z" }),
+      createTaskCompletionEventSummary({
+        id: "tce_mid",
+        createdAt: "2026-08-18T00:00:00.000Z",
+        outcomeSummaryText: { en: "Launch checklist is complete and reviewed." },
+      }),
+      createTaskCompletionEventSummary({
+        id: "tce_late",
+        createdAt: "2026-08-19T00:00:00.000Z",
+        outcomeSummaryText: { en: "Prototype validated against the brief." },
+      }),
+    ],
   };
 }
 

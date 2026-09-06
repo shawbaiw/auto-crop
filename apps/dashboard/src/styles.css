@@ -732,6 +732,24 @@ h3 {
   text-transform: uppercase;
 }
 
+/* The task brief shown next to a Task Outcome Summary: "you asked for X". */
+.ceo-outcome__brief {
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.ceo-outcome__brief-label {
+  color: var(--accent-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* "N new outcomes since your last visit" — a quiet marker, not an alarm. */
+.ceo-outcomes-view__new-marker {
+  margin: 0;
+}
+
 .ceo-founder-decision__options,
 .ceo-founder-decision__return {
   display: grid;
