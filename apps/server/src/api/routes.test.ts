@@ -951,6 +951,62 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("serves the superseding report and keeps the prior report in the non-current list", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+
+    const sections = {
+      vision: { en: "Restated vision", zh: "复述愿景" },
+      actualResult: { en: "A prototype shipped", zh: "交付了原型" },
+      departmentContributions: [{ en: "Engineering built it", zh: "工程部构建" }],
+      goalFit: { en: "Partial fit", zh: "部分契合" },
+      remainingGaps: { en: "User validation still open", zh: "用户验证仍待完成" },
+      recommendedNextStep: { en: "Run a five-user test", zh: "进行五人测试" },
+    };
+    fixture.repositories.createFinalFounderReport({
+      id: "founder_report_1",
+      companyId: created.company.id,
+      classification: "waiting",
+      sections,
+      generatedBy: "ceo_agent",
+      isCurrent: true,
+      supersedesReportId: null,
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    });
+    // A later cycle after post-report work: the second report supersedes the first.
+    fixture.repositories.createFinalFounderReport({
+      id: "founder_report_2",
+      companyId: created.company.id,
+      classification: "achieved",
+      sections,
+      generatedBy: "ceo_agent",
+      isCurrent: true,
+      supersedesReportId: "founder_report_1",
+      createdAt: "2026-08-20T00:00:00.000Z",
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    });
+
+    const state = await getJson<{
+      finalFounderReport: { id: string; classification: string; supersedesReportId: string | null } | null;
+      supersededFinalFounderReports: Array<{ id: string; classification: string }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+
+    expect(state.finalFounderReport?.id).toBe("founder_report_2");
+    expect(state.finalFounderReport?.classification).toBe("achieved");
+    expect(state.finalFounderReport?.supersedesReportId).toBe("founder_report_1");
+    expect(state.supersededFinalFounderReports.map((report) => report.id)).toEqual(["founder_report_1"]);
+    expect(state.supersededFinalFounderReports[0]?.classification).toBe("waiting");
+
+    await fixture.close();
+  });
+
   it("records CEO review decisions and applies approve or return effects", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {

@@ -212,6 +212,8 @@ export type FinalFounderReportSummary = {
     remainingGaps: LocalizedText;
     recommendedNextStep: LocalizedText;
   };
+  supersedesReportId?: string | null;
+  createdAt?: string;
 };
 
 export type FounderReportSummary = {
@@ -401,6 +403,7 @@ export type CreateCompanyResponse = {
   founderReport?: FounderReportSummary;
   finalFounderReport?: FinalFounderReportSummary | null;
   finalFounderReportPreparing?: boolean;
+  supersededFinalFounderReports?: FinalFounderReportSummary[];
   reviews?: ReviewSummary[];
   activity?: ServerEvent[];
   creationEvents?: CompanyEventSummary[];
@@ -448,6 +451,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   founderReport?: FounderReportSummary;
   finalFounderReport?: FinalFounderReportSummary | null;
   finalFounderReportPreparing?: boolean;
+  supersededFinalFounderReports?: FinalFounderReportSummary[];
   reviews: ReviewSummary[];
   activity: ServerEvent[];
   replanProposals: ReplanProposalSummary[];

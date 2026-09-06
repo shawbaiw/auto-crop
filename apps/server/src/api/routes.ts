@@ -831,6 +831,11 @@ function buildCompanyState(
     finalFounderReport: summarizeFinalFounderReport(repositories.getCurrentFinalFounderReport(currentCompany.id)),
     // "Report preparing" indicator: a tracked generation job is in flight but no report exists yet.
     finalFounderReportPreparing: repositories.getActiveFinalFounderReportJob(currentCompany.id) !== null,
+    // Prior reports a newer one has superseded, oldest first — the founder's report history.
+    supersededFinalFounderReports: repositories
+      .listFinalFounderReportsForCompany(currentCompany.id)
+      .filter((report) => !report.isCurrent)
+      .map(summarizeFinalFounderReport),
     founderReport: summarizeFounderReport(
       currentCompany,
       tasks,
@@ -2198,6 +2203,8 @@ function summarizeFinalFounderReport(report: FinalFounderReport | null) {
     classification: report.classification,
     generatedBy: report.generatedBy,
     sections: report.sections,
+    supersedesReportId: report.supersedesReportId,
+    createdAt: report.createdAt,
   };
 }
 

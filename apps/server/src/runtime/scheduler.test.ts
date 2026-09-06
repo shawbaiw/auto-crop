@@ -2244,7 +2244,8 @@ describe("Final Founder Report on Company Quiescence", () => {
   function reportSweepOptions(input: {
     projectRoot: string;
     repositories: ReturnType<typeof createRepositories>;
-    now?: string;
+    now?: () => Date;
+    createId?: (prefix: string) => string;
     ceoAdapter?: AgentAdapter;
   }) {
     const emitted: SchedulerEvent[] = [];
@@ -2254,8 +2255,8 @@ describe("Final Founder Report on Company Quiescence", () => {
       adapters: [workerAdapter(), input.ceoAdapter ?? finalReportCeoAdapter()],
       workerId: "worker_a",
       maxTasks: 1,
-      now: () => new Date(input.now ?? NOW),
-      createId: createSequentialIdFactory(),
+      now: input.now ?? (() => new Date(NOW)),
+      createId: input.createId ?? createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: ({ task }: { task: Task }) => {
         writeValidBusinessArtifact(task);
@@ -2272,13 +2273,41 @@ describe("Final Founder Report on Company Quiescence", () => {
   async function runReportSweep(input: {
     projectRoot: string;
     repositories: ReturnType<typeof createRepositories>;
-    now?: string;
+    now?: () => Date;
     ceoAdapter?: AgentAdapter;
   }): Promise<{ emitted: SchedulerEvent[] }> {
     const { options, emitted } = reportSweepOptions(input);
     await runSchedulerOnce(options);
     await runFinalFounderReportJobs(options);
     return { emitted };
+  }
+
+  /**
+   * A report driver that keeps one id factory and one mutable clock across cycles, for tests that run
+   * a second cycle after a report already exists (the shared `runReportSweep` makes a fresh id
+   * factory per call, which would collide record ids on the second cycle).
+   */
+  function persistentReportDriver(input: {
+    projectRoot: string;
+    repositories: ReturnType<typeof createRepositories>;
+    ceoAdapter?: AgentAdapter;
+  }) {
+    let clock = NOW;
+    const { options, emitted } = reportSweepOptions({
+      ...input,
+      now: () => new Date(clock),
+      createId: createSequentialIdFactory(),
+    });
+    return {
+      emitted,
+      setClock: (value: string) => {
+        clock = value;
+      },
+      async cycle() {
+        await runSchedulerOnce(options);
+        await runFinalFounderReportJobs(options);
+      },
+    };
   }
 
   function seedWaitStateCompletion(
@@ -2483,6 +2512,59 @@ describe("Final Founder Report on Company Quiescence", () => {
     await runReportSweep({ projectRoot, repositories });
 
     expect(repositories.listFinalFounderReportsForCompany("company_1")).toHaveLength(1);
+
+    client.close();
+  });
+
+  it("supersedes the standing report when new work completes after it and keeps the prior one non-current", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+    const driver = persistentReportDriver({ projectRoot, repositories });
+
+    await driver.cycle();
+    const first = repositories.getCurrentFinalFounderReport("company_1");
+    expect(first).not.toBeNull();
+
+    // Post-report work: a task added and run to completion at a later time.
+    driver.setClock("2026-08-20T00:00:00.000Z");
+    repositories.createTask(createTaskRecord("task_2", "queued", "low"));
+    await driver.cycle();
+
+    const reports = repositories.listFinalFounderReportsForCompany("company_1");
+    expect(reports).toHaveLength(2);
+    const current = repositories.getCurrentFinalFounderReport("company_1");
+    expect(current?.id).not.toBe(first?.id);
+    expect(current?.isCurrent).toBe(true);
+    expect(current?.supersedesReportId).toBe(first?.id);
+    expect(reports.find((report) => report.id === first?.id)?.isCurrent).toBe(false);
+    expect(
+      driver.emitted.filter((event) => event.type === "company_report_ready"),
+    ).toHaveLength(2);
+
+    client.close();
+  });
+
+  it("does not supersede the report on a bare Wait State check-in that changes nothing", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "complete", "low"),
+    ]);
+    seedWaitStateCompletion(repositories, "2026-08-27T00:00:00.000Z");
+    const driver = persistentReportDriver({ projectRoot, repositories });
+
+    await driver.cycle();
+    const first = repositories.getCurrentFinalFounderReport("company_1");
+    expect(first?.classification).toBe("waiting");
+
+    // Later ticks, including one past the Wait State's check-in time: no task is re-queued and
+    // nothing completes, so no Task Completion Event post-dates the report and it still stands.
+    driver.setClock("2026-08-25T00:00:00.000Z");
+    await driver.cycle();
+    driver.setClock("2026-08-28T00:00:00.000Z");
+    await driver.cycle();
+
+    expect(repositories.listFinalFounderReportsForCompany("company_1")).toHaveLength(1);
+    expect(repositories.getCurrentFinalFounderReport("company_1")?.id).toBe(first?.id);
 
     client.close();
   });

@@ -30,7 +30,7 @@ import type { AgentSessionManager } from "./agentSessions";
 import { projectCeoAttention } from "./ceoAttention";
 import { classifyFinalFounderReport, isCompanyQuiescent } from "./companyQuiescence";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
-import { generateFinalFounderReport } from "./finalFounderReport";
+import { generateFinalFounderReport, hasWorkCompletedSinceReport } from "./finalFounderReport";
 import { parseOpenDecisions } from "./founderDecision";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
@@ -770,6 +770,27 @@ function gatherFinalFounderReportContext(
   };
 }
 
+/**
+ * Does the company's standing `isCurrent` Final Founder Report still cover everything, so a fresh one
+ * would be redundant? True when a report exists and no Task Completion Event post-dates it — a
+ * repeated quiescent tick or a bare Wait State check-in. Non-Wait-State work completing since the
+ * report is what releases this, so the next report supersedes the standing one. Shared by the enqueue
+ * check and the job runner so both gate on the same rule.
+ */
+function standingReportCoversCompany(
+  repositories: ReturnType<typeof createRepositories>,
+  companyId: string,
+): boolean {
+  const currentReport = repositories.getCurrentFinalFounderReport(companyId);
+  return (
+    currentReport !== null &&
+    !hasWorkCompletedSinceReport(
+      repositories.listTaskCompletionEventsForCompany(companyId),
+      currentReport,
+    )
+  );
+}
+
 function maybeEnqueueFinalFounderReportJob(
   input: RunSchedulerOnceInput,
   company: Company,
@@ -777,7 +798,7 @@ function maybeEnqueueFinalFounderReportJob(
   createId: (prefix: string) => string,
 ): void {
   const repositories = input.repositories;
-  if (repositories.getCurrentFinalFounderReport(company.id)) {
+  if (standingReportCoversCompany(repositories, company.id)) {
     return;
   }
   if (repositories.getActiveFinalFounderReportJob(company.id)) {
@@ -816,8 +837,10 @@ export async function runFinalFounderReportJobs(input: RunFinalFounderReportJobs
   for (const job of repositories.listPendingFinalFounderReportJobs()) {
     const company = repositories.getCompany(job.companyId);
 
-    if (company && repositories.getCurrentFinalFounderReport(company.id)) {
-      // A report already exists (e.g. two jobs raced, or one was enqueued twice). Close this one.
+    if (company && standingReportCoversCompany(repositories, company.id)) {
+      // A report already stands and nothing has completed since (two jobs raced, or one was enqueued
+      // twice). Close this one without regenerating. When work has completed the job falls through
+      // and `generateFinalFounderReport` supersedes the standing report.
       repositories.updateFinalFounderReportJobStatus(job.id, "complete", now().toISOString());
       continue;
     }

@@ -39,6 +39,24 @@ import { createCompanyWorkspace } from "./workspace";
  */
 export const MAX_FINAL_REPORT_AUTHORING_ATTEMPTS = 3;
 
+/**
+ * Has non-Wait-State work completed since the company's current Final Founder Report was authored?
+ * True when any Task Completion Event post-dates the report — a replan, a recovered task, or (later)
+ * CEO-Intake-driven tasks that ran to completion all record one. A bare Wait State check-in that
+ * re-queues nothing records no completion event, so it does not count as new work and does not
+ * supersede the report. Used by the scheduler to decide whether a quiescent company with a report
+ * already in hand should generate a fresh one.
+ *
+ * Both timestamps are runtime-generated `Date.prototype.toISOString()` values (never agent-supplied,
+ * unlike a Wait State's `nextCheckAt`), so a lexicographic compare orders them correctly.
+ */
+export function hasWorkCompletedSinceReport(
+  taskCompletionEvents: Pick<TaskCompletionEvent, "createdAt">[],
+  currentReport: Pick<FinalFounderReport, "createdAt">,
+): boolean {
+  return taskCompletionEvents.some((event) => event.createdAt > currentReport.createdAt);
+}
+
 export type GenerateFinalFounderReportInput = {
   projectRoot: string;
   repositories: ReturnType<typeof createRepositories>;
@@ -74,8 +92,9 @@ export type GenerateFinalFounderReportInput = {
  * record — `generatedBy: ceo_agent` when the agent authored it, `deterministic_fallback` otherwise —
  * and returns it.
  *
- * Generation is synchronous in the scheduler tick for this ticket; the async job, the "preparing"
- * state, and version supersession land in later tickets.
+ * Generation runs off the scheduler tick as a tracked async job. When the company already has an
+ * `isCurrent` report, this new one supersedes it: `createFinalFounderReport` flips the prior record
+ * non-current and the new record's `supersedesReportId` points back at it, so report history is kept.
  */
 export async function generateFinalFounderReport(
   input: GenerateFinalFounderReportInput,
@@ -83,6 +102,8 @@ export async function generateFinalFounderReport(
   const now = input.now ?? (() => new Date());
   const createId = input.createId ?? createDefaultId;
   const ceiling = Math.max(1, input.maxAuthoringAttempts ?? MAX_FINAL_REPORT_AUTHORING_ATTEMPTS);
+  // Read before the insert: any `isCurrent` report is the one this generation supersedes.
+  const supersededReport = input.repositories.getCurrentFinalFounderReport(input.company.id);
 
   let sections: FinalFounderReportSections | null = null;
   let generatedBy: FinalFounderReport["generatedBy"] = "ceo_agent";
@@ -112,7 +133,7 @@ export async function generateFinalFounderReport(
     sections,
     generatedBy,
     isCurrent: true,
-    supersedesReportId: null,
+    supersedesReportId: supersededReport?.id ?? null,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
