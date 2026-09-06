@@ -1060,6 +1060,23 @@ export function createRepositories(database: DatabaseClient) {
         .run(reviewReconciliationKey(companyId), at);
     },
 
+    hasFinalFounderReportUpgradeRun(companyId: string): boolean {
+      const row = database
+        .prepare("SELECT value FROM runtime_state WHERE key = ?")
+        .get(finalFounderReportUpgradeKey(companyId)) as { value: string } | undefined;
+      return row !== undefined;
+    },
+
+    markFinalFounderReportUpgradeRun(companyId: string, at: string): void {
+      database
+        .prepare(
+          `INSERT INTO runtime_state (key, value)
+           VALUES (?, ?)
+           ON CONFLICT(key) DO NOTHING`,
+        )
+        .run(finalFounderReportUpgradeKey(companyId), at);
+    },
+
     listRunningAgentRuns(companyId: string): AgentRun[] {
       const rows = database
         .prepare(
@@ -1740,6 +1757,11 @@ function taskAttemptsResetKey(taskId: string): string {
 function reviewReconciliationKey(companyId: string): string {
   // Bump the version suffix to force a re-run when the deterministic acceptance conditions change.
   return `review_reconciliation_v1:${companyId}`;
+}
+
+function finalFounderReportUpgradeKey(companyId: string): string {
+  // Marks that the one-time Final Founder Report upgrade pass (ADR 0018) has examined this company.
+  return `final_founder_report_upgrade_v1:${companyId}`;
 }
 
 function stringifyLocalizedText(text: LocalizedText | null | undefined): string | null {
