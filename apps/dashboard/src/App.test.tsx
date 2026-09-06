@@ -417,6 +417,36 @@ describe("Dashboard App", () => {
     expect(achievementRollups[0]).not.toHaveTextContent("Launch path blocked on deployment evidence");
   });
 
+  it("renders no cross-department rollup entries for a quiescent company snapshot", async () => {
+    const api = createMockApiClient();
+    // A quiescent company: its Final Founder Report is in, and the server has already suppressed the
+    // mechanical cross-department rollups — only the objective achievement remains.
+    const response = {
+      ...createCeoOfficeAttentionCompanyResponse(),
+      finalFounderReport: createFinalFounderReportCompanyResponse().finalFounderReport,
+      ceoAttentionRollups: [createGoalStageChangeRollupSummary()],
+    };
+    api.createCompany = vi.fn(async () => response);
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+
+    await createCompany(user);
+
+    const overview = within(screen.getByRole("region", { name: "CEO Intake Report" })).getByRole("region", {
+      name: "Executive Overview",
+    });
+
+    // The objective achievement is the only rollup: no exception entry, and specifically none of the
+    // cross-department rollup the running-company fixture carries.
+    const rollups = document.querySelectorAll(".ceo-attention-rollup");
+    expect(rollups).toHaveLength(1);
+    expect(rollups[0]).toHaveClass("ceo-attention-rollup--achievement");
+    const crossDepartmentRollup = createCeoAttentionRollupSummary();
+    expect(within(overview).queryByText(crossDepartmentRollup.title)).not.toBeInTheDocument();
+    expect(within(overview).queryByText(crossDepartmentRollup.summary)).not.toBeInTheDocument();
+  });
+
   it("pins the Final Founder Report above the Outcomes view with its classification and sections", async () => {
     const api = createMockApiClient();
     const response = createFinalFounderReportCompanyResponse();

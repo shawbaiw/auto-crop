@@ -1512,6 +1512,64 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("omits cross_department_impact rollups for accepted settled work once the company is quiescent", async () => {
+    const fixture = await startFixtureServer();
+    const created = await createCompanyForApi(fixture);
+    // Every task is complete — the company has no forward move left — and the accepted source task's
+    // sole cross-department downstream task is complete too.
+    await seedCrossDepartmentCompletion(fixture, created.company.id, { downstreamStatus: "complete", prefix: "quiescent_cross" });
+
+    const state = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(state.ceoAttentionRollups.some((rollup) => rollup.reasons.includes("cross_department_impact"))).toBe(false);
+
+    await fixture.close();
+  });
+
+  it("keeps cross_department_impact rollups for a quiescent company whose downstream work is blocked", async () => {
+    const fixture = await startFixtureServer();
+    const created = await createCompanyForApi(fixture);
+    // The company is quiescent (a blocked task has no forward move), but a blocked cross-department
+    // downstream task is a genuinely unsettled signal — not mechanical noise.
+    const { downstreamDepartment } = await seedCrossDepartmentCompletion(fixture, created.company.id, {
+      downstreamStatus: "blocked",
+      prefix: "blocked_cross",
+    });
+
+    const state = await getJson<{
+      ceoAttentionRollups: Array<{ reasons: string[]; downstreamDepartmentIds: string[] }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    const crossDepartmentRollup = state.ceoAttentionRollups.find((rollup) =>
+      rollup.reasons.includes("cross_department_impact"),
+    );
+    expect(crossDepartmentRollup).toBeDefined();
+    expect(crossDepartmentRollup!.downstreamDepartmentIds).toContain(downstreamDepartment.id);
+
+    await fixture.close();
+  });
+
+  it("still raises cross_department_impact rollups while a running company's downstream work is in flight", async () => {
+    const fixture = await startFixtureServer();
+    const created = await createCompanyForApi(fixture);
+    // A queued downstream task keeps the company non-quiescent — suppression never applies.
+    const { downstreamDepartment } = await seedCrossDepartmentCompletion(fixture, created.company.id, {
+      downstreamStatus: "queued",
+      prefix: "running_cross",
+    });
+
+    const state = await getJson<{
+      ceoAttentionRollups: Array<{ reasons: string[]; downstreamDepartmentIds: string[] }>;
+    }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    const crossDepartmentRollup = state.ceoAttentionRollups.find((rollup) =>
+      rollup.reasons.includes("cross_department_impact"),
+    );
+    expect(crossDepartmentRollup).toBeDefined();
+    expect(crossDepartmentRollup!.downstreamDepartmentIds).toContain(downstreamDepartment.id);
+
+    await fixture.close();
+  });
+
   it("emits an Objective Stage Change rollup once every task rolling up to the objective is terminal", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
@@ -3205,6 +3263,65 @@ function createIsolatedTask(
     dependencyNote: null,
     artifactWorkspacePath: null,
   };
+}
+
+async function createCompanyForApi(
+  fixture: Awaited<ReturnType<typeof startFixtureServer>>,
+): Promise<{ company: { id: string } }> {
+  return postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    companyName: "Pricing Page Studio",
+    founderVision: "Build an AI SaaS that creates pricing pages.",
+    selectedCeoAgentId: "codex",
+    permissionMode: "balanced",
+    assets: [],
+  });
+}
+
+/**
+ * Finish every seeded task, then add an accepted source task in one department whose Task Completion
+ * Event has a single cross-department downstream task left at `downstreamStatus`. The company is
+ * quiescent unless `downstreamStatus` still leaves a forward move (e.g. `queued`).
+ */
+async function seedCrossDepartmentCompletion(
+  fixture: Awaited<ReturnType<typeof startFixtureServer>>,
+  companyId: string,
+  options: { downstreamStatus: Task["status"]; prefix: string },
+): Promise<{ downstreamDepartment: { id: string }; sourceTask: Task; downstreamTask: Task }> {
+  const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+  const departments = fixture.repositories.listDepartments(companyId);
+  const ownerDepartment = departments[0]!;
+  const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id)!;
+
+  for (const task of fixture.repositories.listTasksForCompany(companyId)) {
+    fixture.repositories.updateTaskStatus(task.id, "complete");
+  }
+
+  const sourceTask = {
+    ...createIsolatedTask(templateTask, `${options.prefix}_source`, "Ship the launch site", "complete", 400),
+    departmentId: ownerDepartment.id,
+  };
+  const downstreamTask = {
+    ...createIsolatedTask(templateTask, `${options.prefix}_downstream`, "Index the launch site", options.downstreamStatus, 401),
+    departmentId: downstreamDepartment.id,
+  };
+  fixture.repositories.createTask(sourceTask);
+  fixture.repositories.createTask(downstreamTask);
+  fixture.repositories.createTaskDependency({ taskId: downstreamTask.id, dependsOnTaskId: sourceTask.id });
+  fixture.repositories.appendTaskCompletionEvent({
+    id: `task_completion_event_${options.prefix}`,
+    companyId,
+    taskId: sourceTask.id,
+    departmentId: sourceTask.departmentId,
+    keyResultId: sourceTask.keyResultId,
+    businessArtifactId: null,
+    outcome: "accepted",
+    dependencyImpact: { blocks: [downstreamTask.id] },
+    nextStepItems: [],
+    visionGaps: [],
+    createdAt: "2026-08-17T00:00:00.000Z",
+  });
+
+  return { downstreamDepartment, sourceTask, downstreamTask };
 }
 
 async function seedAwaitingFounderDecision(options: {

@@ -19,7 +19,7 @@ import type {
   WaitState,
 } from "@auto-crop/core";
 import { resolveLocalizedText, strategicDecisionKindSchema } from "@auto-crop/core";
-import { isTerminalTaskStatus } from "./companyQuiescence";
+import { isCompanyQuiescent, isTerminalTaskStatus } from "./companyQuiescence";
 
 type AttentionCandidate = {
   event: TaskCompletionEvent;
@@ -72,9 +72,20 @@ export function projectCeoAttention(input: {
     (input.founderDecisionResolutions ?? []).map((resolution) => [resolution.founderDecisionId, resolution]),
   );
   const founderDecisions = input.taskCompletionEvents.flatMap((event) => collectFounderDecisions(event, resolutionsById));
+  // Once the company is quiescent, a Task Completion Event for accepted work that is fully settled
+  // downstream produces only mechanical `cross_department_impact` noise — the Final Founder Report
+  // covers it. A running company is unaffected.
+  const companyQuiescent = isCompanyQuiescent({
+    tasks: input.tasks,
+    waitStates,
+    humanActions,
+    founderDecisions,
+    now: () => now,
+  });
   const candidates = input.taskCompletionEvents.flatMap((event) =>
     createAttentionCandidates({
       company: input.company,
+      companyQuiescent,
       event,
       eventVisionGaps: visionGaps.filter((gap) => gap.sourceTaskCompletionEventId === event.id),
       eventHumanActions: humanActions.filter((action) => action.sourceTaskCompletionEventId === event.id),
@@ -302,6 +313,7 @@ function parseFounderDecisionOptions(value: unknown): FounderDecisionOption[] {
 
 function createAttentionCandidates(input: {
   company: Company;
+  companyQuiescent: boolean;
   event: TaskCompletionEvent;
   eventVisionGaps: VisionGap[];
   eventHumanActions: HumanAction[];
@@ -325,11 +337,10 @@ function createAttentionCandidates(input: {
     ...input.event.nextStepItems.map((item) => item.relatedTaskId).filter((taskId): taskId is string => Boolean(taskId)),
     ...pendingFounderDecisions.flatMap((decision) => decision.blockedTaskIds),
   ]);
-  const downstreamDepartmentIds = unique(
-    dependencyTaskIds
-      .map((taskId) => input.tasksById.get(taskId)?.departmentId)
-      .filter((departmentId): departmentId is string => Boolean(departmentId) && departmentId !== input.event.departmentId),
-  );
+  const crossDepartmentDownstreamTasks = dependencyTaskIds
+    .map((taskId) => input.tasksById.get(taskId))
+    .filter((task): task is Task => task !== undefined && task.departmentId !== input.event.departmentId);
+  const downstreamDepartmentIds = unique(crossDepartmentDownstreamTasks.map((task) => task.departmentId));
   const reasons: CeoAttentionRollupReason[] = [];
 
   if (attentionVisionGaps.length > 0) {
@@ -344,7 +355,16 @@ function createAttentionCandidates(input: {
   if (waitStates.length > 0) {
     reasons.push("wait_state");
   }
-  if (downstreamDepartmentIds.length > 0) {
+  // Quiescence suppression (ADR 0018): drop the `cross_department_impact` reason for a Task
+  // Completion Event whose task is accepted and already `complete`, when every cross-department
+  // downstream task is `complete` too. A non-quiescent company, or a genuinely unsettled downstream
+  // task (blocked / failed / still in flight), still surfaces the reason.
+  const suppressCrossDepartmentImpact =
+    input.companyQuiescent &&
+    input.event.outcome === "accepted" &&
+    input.task?.status === "complete" &&
+    crossDepartmentDownstreamTasks.every((task) => task.status === "complete");
+  if (downstreamDepartmentIds.length > 0 && !suppressCrossDepartmentImpact) {
     reasons.push("cross_department_impact");
   }
   if (input.event.outcome !== "accepted" && input.event.outcome !== "awaiting_founder_decision") {

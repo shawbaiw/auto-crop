@@ -4,9 +4,9 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `cross_department_impact` is not raised for accepted, settled work when the company is quiescent.
-- [ ] Running companies, and quiescent companies' genuinely unsettled cross-department items, are unaffected.
-- [ ] Tests — Seam 2 (`routes.test.ts`): a quiescent company's response omits `cross_department_impact` rollups for its accepted tasks; a non-quiescent company with in-flight cross-department work still has them.
-- [ ] Tests — Seam 3 (`App.test.tsx`): a quiescent-company snapshot renders no such rollup entries.
+- [x] `cross_department_impact` is not raised for accepted, settled work when the company is quiescent.
+- [x] Running companies, and quiescent companies' genuinely unsettled cross-department items, are unaffected.
+- [x] Tests — Seam 2 (`routes.test.ts`): a quiescent company's response omits `cross_department_impact` rollups for its accepted tasks; a non-quiescent company with in-flight cross-department work still has them.
+- [x] Tests — Seam 3 (`App.test.tsx`): a quiescent-company snapshot renders no such rollup entries.
