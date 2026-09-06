@@ -4,7 +4,7 @@
 
 **Blocked by:** 03.
 
-**Status:** done
+**Status:** done (landed in 3c380c8)
 
 - [x] Supersession trigger: quiescent + an `isCurrent` report exists + non-Wait-State work has completed since that report was created.
 - [x] A Wait State check-in that re-queues nothing / changes nothing does not count as new work.
