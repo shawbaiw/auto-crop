@@ -1726,6 +1726,7 @@ function resolveFounderDecision(input: {
       taskDependencies: repositories.listTaskDependenciesForCompany(company.id),
       humanActionConfirmations: repositories.listHumanActionConfirmationsForCompany(company.id),
       founderDecisionResolutions: repositories.listFounderDecisionResolutionsForCompany(company.id),
+      includeInactivePendingFounderDecisions: true,
       now: input.now,
     }).founderDecisions;
 

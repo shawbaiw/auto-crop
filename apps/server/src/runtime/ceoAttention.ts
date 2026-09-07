@@ -44,6 +44,12 @@ export function projectCeoAttention(input: {
   founderDecisionResolutions?: FounderDecisionResolution[];
   keyResults: KeyResult[];
   /**
+   * Dashboard state should expose only actionable pending Founder Decisions. Mutation handlers may
+   * include inactive pending decisions so they can return `stale` instead of `not_found` for an old
+   * client action.
+   */
+  includeInactivePendingFounderDecisions?: boolean;
+  /**
    * The company's objectives. Only needed to emit `goal_stage_change` (Objective Stage Change)
    * rollups; callers that read the projection for its Human Actions / Wait States / Founder
    * Decisions alone may omit it.
@@ -71,7 +77,13 @@ export function projectCeoAttention(input: {
   const resolutionsById = new Map(
     (input.founderDecisionResolutions ?? []).map((resolution) => [resolution.founderDecisionId, resolution]),
   );
-  const founderDecisions = input.taskCompletionEvents.flatMap((event) => collectFounderDecisions(event, resolutionsById));
+  const founderDecisions = input.taskCompletionEvents.flatMap((event) =>
+    collectFounderDecisions(event, resolutionsById).filter((decision) =>
+      decision.status !== "pending" ||
+      input.includeInactivePendingFounderDecisions === true ||
+      isActionableFounderDecision(event, tasksById.get(event.taskId)),
+    ),
+  );
   // Once the company is quiescent, a Task Completion Event for accepted work that is fully settled
   // downstream produces only mechanical `cross_department_impact` noise — the Final Founder Report
   // covers it. A running company is unaffected.
@@ -292,6 +304,10 @@ export function collectFounderDecisions(
       },
     ];
   });
+}
+
+function isActionableFounderDecision(event: TaskCompletionEvent, task: Task | undefined): boolean {
+  return task?.status === "review" && event.outcome === "awaiting_founder_decision";
 }
 
 function parseFounderDecisionOptions(value: unknown): FounderDecisionOption[] {

@@ -1732,7 +1732,7 @@ describe("API routes", () => {
       departmentId: sourceTask.departmentId,
       keyResultId: sourceTask.keyResultId,
       businessArtifactId: null,
-      outcome: "accepted",
+      outcome: "awaiting_founder_decision",
       outcomeSummaryText: { en: "The brief leaves the pricing model open." },
       dependencyImpact: {},
       nextStepItems: [
@@ -1946,6 +1946,38 @@ describe("API routes", () => {
       founderDecisionId: seed.decisionId(1),
       chosenOption: "Flat",
     });
+
+    const stale = await fetch(`${seed.fixture.baseUrl}/api/founder-decisions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ founderDecisionId: seed.decisionId(1), chosenOption: "Usage" }),
+    });
+    expect(stale.status).toBe(409);
+
+    await seed.fixture.close();
+  });
+
+  it("does not project Founder Decisions for tasks that are no longer awaiting them", async () => {
+    const seed = await seedAwaitingFounderDecision({
+      decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat", tradeoffs: "Predictable." },
+            { label: "Usage", tradeoffs: "Scales." },
+          ],
+        },
+      ],
+    });
+    seed.fixture.repositories.updateTaskStatus(seed.sourceTask.id, "complete");
+
+    const state = await getJson<{
+      founderDecisions: Array<{ id: string; status: string }>;
+      ceoAttentionRollups: Array<{ reasons: string[] }>;
+    }>(`${seed.fixture.baseUrl}/api/companies/${seed.companyId}/state`);
+
+    expect(state.founderDecisions).toEqual([]);
+    expect(state.ceoAttentionRollups.some((entry) => entry.reasons.includes("founder_decision"))).toBe(false);
 
     const stale = await fetch(`${seed.fixture.baseUrl}/api/founder-decisions`, {
       method: "POST",
