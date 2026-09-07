@@ -162,6 +162,58 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("includes company context in prompts for first tasks without upstream handoffs", async () => {
+    const founderVision =
+      "Find an English SEO opportunity, build a small website or web product, rank it in Google, and validate the full launch-to-indexing loop.";
+    const { projectRoot, repositories, client } = createSchedulerFixture(
+      [createTaskRecord("task_1", "queued", "medium", "research-report")],
+      {
+        name: "matt",
+        founderVision,
+      },
+    );
+    let prompt = "";
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        {
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          detect: async () => true,
+          run: async (request) => {
+            prompt = request.prompt;
+            return {
+              status: "complete",
+              exitCode: 0,
+              stdout: "proof: company context consumed",
+              stderr: "",
+            };
+          },
+        } satisfies AgentAdapter,
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [createProofForTask(task)];
+      },
+      emit: () => undefined,
+    });
+
+    expect(result.completed).toEqual(["task_1"]);
+    expect(prompt).toContain("## Company Context");
+    expect(prompt).toContain("Company Name: matt");
+    expect(prompt).toContain(`Founder Vision: ${founderVision}`);
+
+    client.close();
+  });
+
   it("automatically accepts a valid unmarked deliverable on a medium-risk task through the shared business acceptance path", async () => {
     const producer = createTaskRecord("task_1", "queued", "medium");
     const consumer = createTaskRecord("task_2", "blocked", "medium");
@@ -2735,13 +2787,13 @@ describe("Final Founder Report on Company Quiescence", () => {
   });
 });
 
-function createSchedulerFixture(tasks: Task[]) {
+function createSchedulerFixture(tasks: Task[], companyOverrides: Partial<Company> = {}) {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-scheduler-"));
   createdDirs.push(projectRoot);
   const client = createDatabaseClient(":memory:");
   migrate(client);
   const repositories = createRepositories(client);
-  const company = createCompanyRecord();
+  const company = createCompanyRecord(companyOverrides);
   const department = createDepartmentRecord();
   const objective = createObjectiveRecord();
   const keyResult = createKeyResultRecord();
@@ -2757,7 +2809,7 @@ function createSchedulerFixture(tasks: Task[]) {
   return { projectRoot, repositories, client };
 }
 
-function createCompanyRecord(): Company {
+function createCompanyRecord(overrides: Partial<Company> = {}): Company {
   return {
     id: "company_1",
     name: "Pricing Page Studio",
@@ -2767,6 +2819,7 @@ function createCompanyRecord(): Company {
     status: "active",
     createdAt: "2026-08-17T00:00:00.000Z",
     updatedAt: "2026-08-17T00:00:00.000Z",
+    ...overrides,
   };
 }
 
