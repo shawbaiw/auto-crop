@@ -22,6 +22,7 @@ import type {
   CeoReviewReturnReason,
   CeoIntakeSummary,
   CeoIntakeStatus,
+  CeoOfficeItemSummary,
   CompanySummary,
   DepartmentSummary,
   FinalFounderReportSummary,
@@ -73,6 +74,7 @@ export type DepartmentWorkspaceProps = {
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
   ceoAttentionRollups?: CeoAttentionRollupSummary[];
+  ceoOfficeItems?: CeoOfficeItemSummary[];
   finalFounderReport?: FinalFounderReportSummary | null;
   finalFounderReportPreparing?: boolean;
   founderDecisions?: FounderDecisionSummary[];
@@ -120,6 +122,7 @@ export function DepartmentWorkspace({
   proof = [],
   businessArtifacts = [],
   ceoAttentionRollups = [],
+  ceoOfficeItems = [],
   finalFounderReport = null,
   finalFounderReportPreparing = false,
   founderDecisions = [],
@@ -221,6 +224,7 @@ export function DepartmentWorkspace({
                   intakes={ceoIntakes}
                   objectives={objectives}
                   keyResults={keyResults}
+                  ceoOfficeItems={ceoOfficeItems}
                   ceoAttentionRollups={ceoAttentionRollups}
                   finalFounderReport={finalFounderReport}
                   finalFounderReportPreparing={finalFounderReportPreparing}
@@ -306,6 +310,7 @@ function departmentIcon(departmentName: string): ReactNode {
 
 function CeoIntakeWorkspace({
   ceoAttentionRollups,
+  ceoOfficeItems,
   companyId,
   finalFounderReport,
   finalFounderReportPreparing,
@@ -331,6 +336,7 @@ function CeoIntakeWorkspace({
   waitStates,
 }: {
   ceoAttentionRollups: CeoAttentionRollupSummary[];
+  ceoOfficeItems: CeoOfficeItemSummary[];
   companyId: string;
   finalFounderReport: FinalFounderReportSummary | null;
   finalFounderReportPreparing: boolean;
@@ -389,6 +395,7 @@ function CeoIntakeWorkspace({
         preparing={finalFounderReportPreparing}
         outcomesLastSeen={outcomesLastSeen}
       />
+      <CeoOfficeTimeline departmentsById={departmentsById} items={ceoOfficeItems} outcomesLastSeen={outcomesLastSeen} />
       <CeoOutcomesView
         departmentsById={departmentsById}
         founderDecisions={founderDecisions}
@@ -646,6 +653,126 @@ function FinalFounderReportPanel({
       </section>
     </RetroPanel>
   );
+}
+
+function CeoOfficeTimeline({
+  departmentsById,
+  items,
+  outcomesLastSeen,
+}: {
+  departmentsById: Map<string, DepartmentSummary>;
+  items: CeoOfficeItemSummary[];
+  outcomesLastSeen: string | null;
+}) {
+  const { language, t } = useLanguage();
+  const line = (text: LocalizedText | null | undefined): string => resolveLocalizedValue(text, language, text?.en ?? "");
+  const visibleItems = [...items].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+
+  return (
+    <RetroPanel
+      className="ceo-office-timeline"
+      icon={<ListChecks size={18} aria-hidden="true" />}
+      title={t("department.ceoOfficeTimeline")}
+      aria-label={t("department.ceoOfficeTimeline")}
+    >
+      {visibleItems.length === 0 ? <p className="muted">{t("department.noCeoOfficeTimeline")}</p> : null}
+      {visibleItems.map((item) => {
+        const department = item.departmentId ? departmentsById.get(item.departmentId) : null;
+        return (
+          <article className="ceo-outcome ceo-office-timeline__item" key={item.id}>
+            <div>
+              <p className="ceo-office-timeline__meta">
+                <span>{formatCeoOfficeItemType(item.type, t)}</span>
+                {department ? <span>{departmentName(department, language)}</span> : null}
+                <span>{new Date(item.occurredAt).toLocaleString()}</span>
+                <UnseenBadge createdAt={item.occurredAt} lastSeen={outcomesLastSeen} />
+              </p>
+              <h4>{item.title}</h4>
+            </div>
+            {item.type === "task_brief" ? (
+              <div className="ceo-office-timeline__body">
+                <p>{line(item.data.purpose)}</p>
+                <VideotexKeyValue
+                  items={[
+                    { label: t("department.timelinePurposeSource"), value: formatTaskBriefPurposeSource(item.data.purposeSource, t) },
+                    { label: t("department.timelineFounderVision"), value: item.data.founderVision },
+                    { label: t("department.timelineObjective"), value: line(item.data.objectiveTitle) || t("department.none") },
+                    { label: t("department.timelineKeyResult"), value: line(item.data.keyResultTitle) || t("department.none") },
+                    { label: t("department.timelineMetric"), value: item.data.keyResultMetricName ?? t("department.none") },
+                    { label: t("department.timelineTarget"), value: line(item.data.keyResultTargetValue) || t("department.none") },
+                    { label: t("department.timelineDependencies"), value: formatTimelineDependencies(item.data.dependsOnTaskIds, t("department.none")) },
+                  ]}
+                />
+              </div>
+            ) : null}
+            {item.type === "execution_report" ? (
+              <div className="ceo-office-timeline__body">
+                <p>{line(item.data.conclusion) || line(item.data.summaryFallback) || t("department.noExecutionReport")}</p>
+                <VideotexKeyValue
+                  items={[
+                    { label: t("department.timelineVisionImpact"), value: line(item.data.visionImpact) || t("department.none") },
+                    { label: t("department.timelineRemainingGap"), value: line(item.data.remainingGap) || formatTimelineGaps(item.data.remainingGaps, t("department.none")) },
+                    { label: t("department.timelineRecommendation"), value: line(item.data.recommendation) || formatTimelineNextSteps(item.data.recommendedNextSteps, t("department.none")) },
+                    { label: t("department.timelineBusinessArtifact"), value: item.data.businessArtifactId ?? t("department.none") },
+                  ]}
+                />
+              </div>
+            ) : null}
+          </article>
+        );
+      })}
+    </RetroPanel>
+  );
+}
+
+function formatCeoOfficeItemType(type: CeoOfficeItemSummary["type"], t: ReturnType<typeof useLanguage>["t"]): string {
+  switch (type) {
+    case "task_brief":
+      return t("department.timelineTaskBrief");
+    case "execution_report":
+      return t("department.timelineExecutionReport");
+    case "decision_request":
+      return t("department.timelineDecisionRequest");
+    case "approval_request":
+      return t("department.timelineApprovalRequest");
+    case "decision_resolution":
+      return t("department.timelineDecisionResolution");
+    case "human_action":
+      return t("department.timelineHumanAction");
+    case "wait_state":
+      return t("department.timelineWaitState");
+    case "blocked_issue":
+      return t("department.timelineBlockedIssue");
+    case "stage_change":
+      return t("department.timelineStageChange");
+    case "final_report":
+      return t("department.timelineFinalReport");
+  }
+}
+
+function formatTaskBriefPurposeSource(
+  source: Extract<CeoOfficeItemSummary, { type: "task_brief" }>["data"]["purposeSource"],
+  t: ReturnType<typeof useLanguage>["t"],
+): string {
+  return source === "department_assessment" ? t("department.timelineDepartmentAssessment") : t("department.timelineTaskDefinition");
+}
+
+function formatTimelineGaps(
+  gaps: Extract<CeoOfficeItemSummary, { type: "execution_report" }>["data"]["remainingGaps"],
+  emptyLabel: string,
+): string {
+  return gaps.length === 0 ? emptyLabel : gaps.map((gap) => gap.label).join(" ");
+}
+
+function formatTimelineNextSteps(
+  nextSteps: Extract<CeoOfficeItemSummary, { type: "execution_report" }>["data"]["recommendedNextSteps"],
+  emptyLabel: string,
+): string {
+  return nextSteps.length === 0 ? emptyLabel : nextSteps.map((step) => step.label).join(" ");
+}
+
+function formatTimelineDependencies(dependsOnTaskIds: string[], emptyLabel: string): string {
+  return dependsOnTaskIds.length === 0 ? emptyLabel : dependsOnTaskIds.join(", ");
 }
 
 function CeoOutcomesView({

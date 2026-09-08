@@ -6,10 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] Task Brief items are projected from task definition data, dependency context, objective/key-result context, and department assessment/progress data when available.
-- [ ] Department assessment data is preferred for Task Briefs when present, with task definition fallback when it is absent.
-- [ ] Execution Report items are projected from Task Completion Events and associated Business Artifacts.
-- [ ] Structured Execution Report fields are used when present; Task Outcome Summary prose is used as fallback.
-- [ ] Ordinary Task Briefs and Execution Reports appear in the Timeline but are not marked action-bearing.
-- [ ] Tests prove Task Brief and Execution Report projection works across SEO and multiple non-SEO scenarios.
-
+- [x] Task Brief items are projected from task definition data, dependency context, objective/key-result context, and department assessment/progress data when available.
+- [x] Department assessment data is preferred for Task Briefs when present, with task definition fallback when it is absent.
+- [x] Execution Report items are projected from Task Completion Events and associated Business Artifacts.
+- [x] Structured Execution Report fields are used when present; Task Outcome Summary prose is used as fallback.
+- [x] Ordinary Task Briefs and Execution Reports appear in the Timeline but are not marked action-bearing.
+- [x] Tests prove Task Brief and Execution Report projection works across SEO and multiple non-SEO scenarios.

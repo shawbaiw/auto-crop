@@ -2603,6 +2603,28 @@ describe("Dashboard App", () => {
     expect(objectiveGroup).toHaveTextContent("Prototype validated against the brief.");
   });
 
+  it("shows Task Briefs and Execution Reports in the CEO Office Timeline", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => createOutcomesNewMarkerResponse());
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const timeline = screen.getByRole("region", { name: "Timeline" });
+    expect(timeline).toHaveTextContent("Task Brief");
+    expect(timeline).toHaveTextContent("Execution Report");
+    expect(timeline).toHaveTextContent("Rank for buyer-intent SEO keywords");
+    expect(timeline).toHaveTextContent("Build an AI SaaS that creates pricing pages.");
+    expect(timeline).toHaveTextContent("Pick a first customer segment");
+    expect(timeline).toHaveTextContent("segment_selected");
+    expect(timeline).toHaveTextContent("Prototype validated against the brief.");
+    expect(timeline).toHaveTextContent("Organic traffic validation remains open.");
+    expect(timeline).toHaveTextContent("Prepare the launch page next.");
+    expect(timeline).not.toHaveTextContent("artifactSubtype");
+    expect(timeline).not.toHaveTextContent("/private/workspace");
+  });
+
   it("marks how many outcomes are new since the last visit and clears the marker after a visit", async () => {
     const restoreStorage = installMockLocalStorage({
       "auto-crop.ceoOutcomesLastSeen.company_1": "2026-08-17T12:00:00.000Z",
@@ -3474,6 +3496,57 @@ function createOutcomesNewMarkerResponse(): Awaited<ReturnType<ApiClient["create
         createdAt: "2026-08-19T00:00:00.000Z",
         outcomeSummaryText: { en: "Prototype validated against the brief." },
       }),
+    ],
+    ceoOfficeItems: [
+      {
+        id: "task_brief:task_1",
+        type: "task_brief",
+        companyId: "company_1",
+        sourceId: "task_1",
+        taskId: "task_1",
+        departmentId: "department_research",
+        objectiveId: "objective_1",
+        keyResultId: "key_result_1",
+        occurredAt: "2026-08-17T00:01:00.000Z",
+        title: "Find SEO keyword opportunity",
+        titleText: null,
+        actionBearing: false,
+        data: {
+          purpose: { en: "Rank for buyer-intent SEO keywords" },
+          purposeSource: "task_definition",
+          founderVision: "Build an AI SaaS that creates pricing pages.",
+          objectiveTitle: { en: "Validate first wedge" },
+          keyResultTitle: { en: "Pick a first customer segment" },
+          keyResultMetricName: "segment_selected",
+          keyResultTargetValue: { en: "1" },
+          dependsOnTaskIds: [],
+        },
+      },
+      {
+        id: "execution_report:tce_late",
+        type: "execution_report",
+        companyId: "company_1",
+        sourceId: "tce_late",
+        taskId: "task_1",
+        departmentId: "department_research",
+        objectiveId: "objective_1",
+        keyResultId: "key_result_1",
+        occurredAt: "2026-08-19T00:00:00.000Z",
+        title: "Find SEO keyword opportunity",
+        titleText: null,
+        actionBearing: false,
+        data: {
+          conclusion: { en: "Prototype validated against the brief." },
+          visionImpact: { en: "The SEO wedge supports the founder vision." },
+          remainingGap: { en: "Organic traffic validation remains open." },
+          recommendation: { en: "Prepare the launch page next." },
+          summaryFallback: null,
+          businessArtifactId: "business_artifact_1",
+          remainingGaps: [],
+          recommendedNextSteps: [],
+          outcome: "accepted",
+        },
+      },
     ],
   };
 }

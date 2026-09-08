@@ -1,5 +1,6 @@
 import type {
   CeoAttentionRollup,
+  CEOOfficeItem,
   FinalFounderReportClassification,
   FinalFounderReportGeneratedBy,
   FounderDecision,
@@ -175,6 +176,7 @@ export type HumanActionSummary = HumanAction;
 export type WaitStateSummary = WaitState;
 export type FounderDecisionSummary = FounderDecision;
 export type CeoAttentionRollupSummary = CeoAttentionRollup;
+export type CeoOfficeItemSummary = CEOOfficeItem;
 
 export type ProofSummary = {
   id: string;
@@ -406,6 +408,7 @@ export type CreateCompanyResponse = {
   tasks: TaskSummary[];
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
+  ceoOfficeItems?: CeoOfficeItemSummary[];
   founderReport?: FounderReportSummary;
   finalFounderReport?: FinalFounderReportSummary | null;
   finalFounderReportPreparing?: boolean;
@@ -454,6 +457,7 @@ export type CompanyStateResponse = CreateCompanyResponse & {
   keyResults?: KeyResultSummary[];
   proof: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
+  ceoOfficeItems?: CeoOfficeItemSummary[];
   founderReport?: FounderReportSummary;
   finalFounderReport?: FinalFounderReportSummary | null;
   finalFounderReportPreparing?: boolean;

@@ -25,7 +25,7 @@ import type {
   WaitState,
 } from "@auto-crop/core";
 import type { CompleteLocalizedText, LocalizedText } from "@auto-crop/core";
-import { localizedTextFromString } from "@auto-crop/core";
+import { localizedTextFromString, projectCeoOfficeItems } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories, ReviewRecord } from "../db/repositories";
 import { EventStream } from "../events/sse";
@@ -754,8 +754,10 @@ function buildCompanyState(
   const objectives = repositories.listObjectives(currentCompany.id);
   let taskDependencies = repositories.listTaskDependenciesForCompany(currentCompany.id);
   const departments = repositories.listDepartments(currentCompany.id);
-  const businessArtifacts = repositories.listBusinessArtifactsForCompany(currentCompany.id).map(summarizeBusinessArtifact);
+  const businessArtifactRecords = repositories.listBusinessArtifactsForCompany(currentCompany.id);
+  const businessArtifacts = businessArtifactRecords.map(summarizeBusinessArtifact);
   const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(currentCompany.id);
+  const taskProgressEvents = repositories.listTaskProgressEventsForCompany(currentCompany.id);
   const humanActionConfirmations = repositories.listHumanActionConfirmationsForCompany(currentCompany.id);
   const founderDecisionResolutions = repositories.listFounderDecisionResolutionsForCompany(currentCompany.id);
   let ceoAttention = projectCeoAttention({
@@ -826,6 +828,22 @@ function buildCompanyState(
     tasks: summarizeTasks(tasks, taskDependencies),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
     businessArtifacts,
+    ceoOfficeItems: projectCeoOfficeItems({
+      company: currentCompany,
+      tasks,
+      taskCompletionEvents,
+      taskProgressEvents,
+      taskDependencies,
+      objectives,
+      keyResults,
+      businessArtifacts: businessArtifactRecords,
+      founderDecisions: ceoAttention.founderDecisions,
+      humanActions: ceoAttention.humanActions,
+      waitStates: ceoAttention.waitStates,
+      visionGaps: ceoAttention.visionGaps,
+      ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
+      finalFounderReports: repositories.listFinalFounderReportsForCompany(currentCompany.id),
+    }),
     taskCompletionEvents: taskCompletionEvents.map(summarizeTaskCompletionEvent),
     visionGaps: ceoAttention.visionGaps,
     humanActions: ceoAttention.humanActions,
@@ -856,7 +874,7 @@ function buildCompanyState(
     activity: repositories.listTaskEventsForCompany(currentCompany.id).map(summarizeTaskEvent),
     creationEvents: repositories.listCompanyEventsForCompany(currentCompany.id).map(summarizeCompanyEvent),
     creationAttempts: repositories.listCreationAttemptsForCompany(currentCompany.id),
-    taskProgressEvents: repositories.listTaskProgressEventsForCompany(currentCompany.id).map(summarizeTaskProgressEvent),
+    taskProgressEvents: taskProgressEvents.map(summarizeTaskProgressEvent),
     ceoIntakes: repositories.listCeoIntakesForCompany(currentCompany.id).map(summarizeCeoIntake),
   };
 }

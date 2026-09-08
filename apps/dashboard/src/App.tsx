@@ -6,6 +6,7 @@ import {
   type BusinessArtifactSummary,
   type CeoAttentionRollupSummary,
   type CeoIntakeSummary,
+  type CeoOfficeItemSummary,
   type CompanyEventSummary,
   type CompanyListItem,
   type CreateCompanyResponse,
@@ -797,6 +798,7 @@ export default function App({ apiClient }: AppProps) {
         proof={proof}
         businessArtifacts={businessArtifacts}
         ceoAttentionRollups={ceoAttentionRollups}
+        ceoOfficeItems={(blueprint.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
         finalFounderReport={blueprint.finalFounderReport ?? null}
         finalFounderReportPreparing={blueprint.finalFounderReportPreparing ?? false}
         founderDecisions={founderDecisions}

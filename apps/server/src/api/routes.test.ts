@@ -1122,6 +1122,7 @@ describe("API routes", () => {
       taskProgressEvents: Array<{ label: string; labelText: { en: string; zh: string }; detail?: string; detailText?: { en: string; zh: string } }>;
       businessArtifacts: Array<{ id: string; taskId: string; reviewStatus: string }>;
       founderReport: { actualOutputs: Array<{ taskId: string }>; nextSteps: string[] };
+      ceoOfficeItems: Array<{ id: string; type: string; taskId: string | null; actionBearing: boolean; data: Record<string, unknown> }>;
       taskCompletionEvents: Array<{
         taskId: string;
         departmentId: string;
@@ -1161,6 +1162,37 @@ describe("API routes", () => {
     expect(state.taskCompletionEvents[0]?.dependencyImpact.nextStepValidationErrors).toEqual([
       "nextStepItems[1].label: Expected a non-empty string.",
     ]);
+    expect(state.ceoOfficeItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `task_brief:${approvedTask!.id}`,
+          type: "task_brief",
+          taskId: approvedTask!.id,
+          actionBearing: false,
+          data: expect.objectContaining({
+            purposeSource: "task_definition",
+            founderVision: "Build an AI SaaS that creates pricing pages.",
+          }),
+        }),
+        expect.objectContaining({
+          id: "execution_report:task_completion_event_1",
+          type: "execution_report",
+          taskId: approvedTask!.id,
+          actionBearing: false,
+          data: expect.objectContaining({
+            businessArtifactId: "business_artifact_1",
+            recommendedNextSteps: [
+              expect.objectContaining({
+                label: "Deploy the prototype to a public URL.",
+                type: "human_action",
+              }),
+            ],
+          }),
+        }),
+      ]),
+    );
+    expect(JSON.stringify(state.ceoOfficeItems)).not.toContain("artifactSubtype");
+    expect(JSON.stringify(state.ceoOfficeItems)).not.toContain("workspace");
     expect(state.founderReport.actualOutputs).toContainEqual(expect.objectContaining({ taskId: approvedTask!.id }));
     expect(Array.isArray(state.founderReport.nextSteps)).toBe(true);
     expect(state.taskProgressEvents).toContainEqual(

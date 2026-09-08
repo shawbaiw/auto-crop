@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { projectCeoOfficeItems, type Company, type FounderDecision, type Task, type TaskCompletionEvent, type TaskProgressEvent } from "./index";
+import {
+  projectCeoOfficeItems,
+  type BusinessArtifact,
+  type Company,
+  type FounderDecision,
+  type KeyResult,
+  type Objective,
+  type Task,
+  type TaskCompletionEvent,
+  type TaskProgressEvent,
+} from "./index";
 
 const company: Company = {
   id: "company", name: "Studio", founderVision: "Build a sustainable business",
@@ -126,6 +136,236 @@ describe("projectCeoOfficeItems", () => {
         summaryFallback: null,
       },
     });
+  });
+
+  it("builds Task Briefs from assessment, objective, key-result, dependency, and task definition facts", () => {
+    const objective: Objective = {
+      id: "objective_growth", companyId: company.id, title: "Reach founder-market fit", status: "active", priority: 1,
+    };
+    const keyResult: KeyResult = {
+      id: "kr_pipeline", objectiveId: objective.id, title: "Qualify 20 buyer conversations",
+      metricName: "qualified conversations", targetValue: "20", currentValue: "6", status: "active",
+    };
+    const state = scenario("Interview pilot buyers", "Three segments are ready for outreach");
+    const assessment: TaskProgressEvent = {
+      id: "assessment", companyId: company.id, departmentId: "product", parentTaskId: "task",
+      subjectTaskId: "task", step: "assessment_complete", status: "complete",
+      label: "Assessment complete", labelText: { en: "Buyer interview plan confirmed" },
+      detail: "Original task fallback should not win",
+      detailText: { en: "Validate whether clinic operators have urgent scheduling pain." },
+      createdAt: "2026-09-01T08:45:00Z",
+    };
+
+    const items = projectCeoOfficeItems({
+      ...state,
+      tasks: [{ ...state.tasks[0]!, keyResultId: keyResult.id, description: "Original CEO assignment" }],
+      taskProgressEvents: [state.taskProgressEvents[0]!, assessment],
+      taskDependencies: [
+        { taskId: "task", dependsOnTaskId: "dependency_b" },
+        { taskId: "task", dependsOnTaskId: "dependency_a" },
+        { taskId: "task", dependsOnTaskId: "dependency_a" },
+      ],
+      objectives: [objective],
+      keyResults: [keyResult],
+    });
+
+    expect(items.find((item) => item.type === "task_brief")).toMatchObject({
+      occurredAt: "2026-09-01T08:45:00Z",
+      objectiveId: objective.id,
+      keyResultId: keyResult.id,
+      data: {
+        purpose: { en: "Validate whether clinic operators have urgent scheduling pain." },
+        purposeSource: "department_assessment",
+        founderVision: company.founderVision,
+        objectiveTitle: { en: "Reach founder-market fit" },
+        keyResultTitle: { en: "Qualify 20 buyer conversations" },
+        keyResultMetricName: "qualified conversations",
+        keyResultTargetValue: { en: "20" },
+        dependsOnTaskIds: ["dependency_a", "dependency_b"],
+      },
+    });
+    expect(JSON.stringify(items)).not.toContain("assessment_complete");
+    expect(JSON.stringify(items)).not.toContain("received");
+  });
+
+  it("falls Task Brief purpose back to the task definition when assessment detail is unavailable", () => {
+    const state = scenario("Plan a launch", "Launch plan is ready");
+    const [task] = state.tasks;
+
+    expect(projectCeoOfficeItems({
+      ...state,
+      tasks: [{ ...task!, description: "Define channel, audience, and launch proof." }],
+      taskProgressEvents: [{
+        ...state.taskProgressEvents[0]!,
+        step: "assessment_complete",
+        label: "Assessment complete",
+        detail: null,
+      }],
+    }).find((item) => item.type === "task_brief")).toMatchObject({
+      data: {
+        purpose: { en: "Define channel, audience, and launch proof." },
+        purposeSource: "task_definition",
+      },
+    });
+  });
+
+  it("does not rewrite a pre-execution Task Brief from an assessment recorded after execution", () => {
+    const state = scenario("Plan a launch", "Launch plan is ready");
+    const [task] = state.tasks;
+
+    expect(projectCeoOfficeItems({
+      ...state,
+      tasks: [{ ...task!, description: "Define channel, audience, and launch proof." }],
+      taskProgressEvents: [
+        ...state.taskProgressEvents,
+        {
+          id: "executing",
+          companyId: company.id,
+          departmentId: "product",
+          parentTaskId: "task",
+          subjectTaskId: "task",
+          step: "executing",
+          status: "complete",
+          label: "Executing",
+          detail: null,
+          createdAt: "2026-09-01T09:30:00Z",
+        },
+        {
+          id: "late_assessment",
+          companyId: company.id,
+          departmentId: "product",
+          parentTaskId: "task",
+          subjectTaskId: "task",
+          step: "assessment_complete",
+          status: "complete",
+          label: "Assessment complete",
+          detailText: { en: "Late assessment should not rewrite the brief." },
+          detail: "Late assessment should not rewrite the brief.",
+          createdAt: "2026-09-01T09:45:00Z",
+        },
+      ],
+    }).find((item) => item.type === "task_brief")).toMatchObject({
+      data: {
+        purpose: { en: "Define channel, audience, and launch proof." },
+        purposeSource: "task_definition",
+      },
+    });
+  });
+
+  it("links Execution Reports to their associated Business Artifact without exposing artifact payloads", () => {
+    const state = scenario("Build launch page", "The launch page is ready for review");
+    const artifact: BusinessArtifact = {
+      id: "artifact_launch_page", companyId: company.id, taskId: "task", sourceProofId: "proof_1",
+      artifactKind: "deliverable", artifactRole: "implementation", artifactSubtype: "launch_page",
+      artifactType: "implementation_summary", taskType: "launch_page_build",
+      payload: { private_diagnostics: "/private/workspace/raw-output.json" },
+      lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "unreviewed",
+      isCurrent: true, supersedesArtifactId: null,
+      createdAt: "2026-09-01T09:55:00Z", updatedAt: "2026-09-01T09:55:00Z",
+    };
+
+    const items = projectCeoOfficeItems({
+      ...state,
+      taskCompletionEvents: [{ ...state.taskCompletionEvents[0]!, businessArtifactId: artifact.id }],
+      businessArtifacts: [artifact],
+    });
+
+    expect(items.find((item) => item.type === "execution_report")).toMatchObject({
+      data: {
+        businessArtifactId: artifact.id,
+      },
+    });
+    expect(JSON.stringify(items)).not.toContain("private_diagnostics");
+    expect(JSON.stringify(items)).not.toContain("reviewStatus");
+    expect(JSON.stringify(items)).not.toContain("artifactSubtype");
+  });
+
+  it("does not infer an associated Business Artifact when a legacy completion lacks an artifact id", () => {
+    const state = scenario("Validate onboarding", "Trial users completed onboarding");
+    const artifact: BusinessArtifact = {
+      id: "artifact_validation", companyId: company.id, taskId: "task", sourceProofId: "proof_1",
+      artifactKind: "deliverable", artifactRole: "validation", artifactSubtype: "onboarding_test",
+      artifactType: "validation_result", taskType: "validation.onboarding",
+      payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "accepted",
+      isCurrent: true, supersedesArtifactId: null,
+      createdAt: "2026-09-01T10:00:00Z", updatedAt: "2026-09-01T10:00:00Z",
+    };
+
+    expect(projectCeoOfficeItems({ ...state, businessArtifacts: [artifact] })
+      .find((item) => item.type === "execution_report")).toMatchObject({
+      data: {
+        businessArtifactId: null,
+      },
+    });
+  });
+
+  it("does not expose an artifact id as associated when the referenced artifact belongs to another task", () => {
+    const state = scenario("Validate onboarding", "Trial users completed onboarding");
+    const artifact: BusinessArtifact = {
+      id: "artifact_other_task", companyId: company.id, taskId: "other_task", sourceProofId: "proof_1",
+      artifactKind: "deliverable", artifactRole: "validation", artifactSubtype: "onboarding_test",
+      artifactType: "validation_result", taskType: "validation.onboarding",
+      payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "accepted",
+      isCurrent: true, supersedesArtifactId: null,
+      createdAt: "2026-09-01T10:00:00Z", updatedAt: "2026-09-01T10:00:00Z",
+    };
+
+    expect(projectCeoOfficeItems({
+      ...state,
+      taskCompletionEvents: [{ ...state.taskCompletionEvents[0]!, businessArtifactId: artifact.id }],
+      businessArtifacts: [artifact],
+    }).find((item) => item.type === "execution_report")).toMatchObject({
+      data: {
+        businessArtifactId: null,
+      },
+    });
+  });
+
+  it("carries legacy Execution Report gaps and recommended next steps from completion facts", () => {
+    const state = scenario("Research SEO keywords", "Setup keywords have the fastest path to intent");
+
+    expect(projectCeoOfficeItems({
+      ...state,
+      taskCompletionEvents: [{
+        ...state.taskCompletionEvents[0]!,
+        nextStepItems: [{
+          type: "automatic_downstream_task",
+          label: "Draft the landing page around setup automation.",
+          ownerDepartmentId: "growth",
+          relatedTaskId: "landing_page",
+          relatedBusinessArtifactId: null,
+          dependencyImpact: {},
+          severity: "informational",
+          priority: 1,
+          evidenceRequirements: ["Landing page brief"],
+        }],
+        visionGaps: [{
+          label: "Search volume still needs validation after publishing.",
+          severity: "informational",
+          relatedTaskId: "validation_task",
+          relatedBusinessArtifactId: null,
+        }],
+      }],
+    }).find((item) => item.type === "execution_report")).toMatchObject({
+      data: {
+        summaryFallback: { en: "Setup keywords have the fastest path to intent" },
+        remainingGaps: [{ label: "Search volume still needs validation after publishing.", severity: "informational" }],
+        recommendedNextSteps: [{ label: "Draft the landing page around setup automation.", type: "automatic_downstream_task" }],
+      },
+    });
+  });
+
+  it.each([
+    ["SEO keyword research", "Prioritize long-tail setup keywords"],
+    ["Choose pricing", "Flat pilot pricing is easiest to sell"],
+    ["Define an MVP", "A concierge MVP will test workflow demand"],
+    ["Plan a launch", "Invite pilot customers before broad launch"],
+  ])("projects ordinary Task Brief and Execution Report timeline items for %s", (title, conclusion) => {
+    const items = projectCeoOfficeItems(scenario(title, conclusion));
+    expect(items).toMatchObject([
+      { type: "task_brief", title, actionBearing: false },
+      { type: "execution_report", title, actionBearing: false, data: { summaryFallback: { en: conclusion } } },
+    ]);
   });
 
   it("does not import another company's facts into the timeline", () => {

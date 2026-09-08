@@ -750,6 +750,24 @@ h3 {
   margin: 0;
 }
 
+.ceo-office-timeline__meta {
+  align-items: center;
+  color: var(--accent-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  font-weight: 700;
+  gap: 8px;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.ceo-office-timeline__body {
+  display: grid;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
 .ceo-founder-decision__options,
 .ceo-founder-decision__return {
   display: grid;

@@ -2,7 +2,7 @@ import { localizedTextFromString, type LocalizedText } from "./localizedText";
 import type {
   BusinessArtifact, CeoAttentionRollup, CeoReviewDecision, Company, FinalFounderReport,
   FounderDecision, HumanAction, KeyResult, Objective, Task, TaskCompletionEvent,
-  TaskDependency, TaskEvent, TaskProgressEvent, VisionGap, WaitState,
+  NextStepItem, TaskDependency, TaskEvent, TaskProgressEvent, VisionGap, WaitState,
 } from "./types";
 
 type OfficeItem<Type extends string, Data, ActionBearing extends boolean = boolean> = {
@@ -25,8 +25,12 @@ type OfficeItem<Type extends string, Data, ActionBearing extends boolean = boole
 export type CEOOfficeItem =
   | OfficeItem<"task_brief", {
       purpose: LocalizedText;
-      expectedOutput: string;
+      purposeSource: "department_assessment" | "task_definition";
       founderVision: string;
+      objectiveTitle: LocalizedText | null;
+      keyResultTitle: LocalizedText | null;
+      keyResultMetricName: string | null;
+      keyResultTargetValue: LocalizedText | null;
       dependsOnTaskIds: string[];
     }, false>
   | OfficeItem<"execution_report", {
@@ -36,6 +40,8 @@ export type CEOOfficeItem =
       recommendation: LocalizedText | null;
       summaryFallback: LocalizedText | null;
       businessArtifactId: string | null;
+      remainingGaps: ExecutionReportGapSummary[];
+      recommendedNextSteps: ExecutionReportNextStepSummary[];
       outcome: TaskCompletionEvent["outcome"];
     }, false>
   | OfficeItem<"decision_request", Pick<FounderDecision,
@@ -63,6 +69,16 @@ export type CEOOfficeItem =
       "summary" | "recommendedNextAction" | "affectedTaskIds">, false>
   | OfficeItem<"final_report", Pick<FinalFounderReport,
       "classification" | "sections" | "isCurrent" | "supersedesReportId">, false>;
+
+type ExecutionReportGapSummary = {
+  label: string;
+  severity: string | null;
+  relatedTaskId: string | null;
+  relatedBusinessArtifactId: string | null;
+};
+
+type ExecutionReportNextStepSummary = Pick<NextStepItem,
+  "type" | "label" | "ownerDepartmentId" | "relatedTaskId" | "relatedBusinessArtifactId" | "severity" | "priority">;
 
 /** Existing company facts; optional collections allow older snapshots and incremental projectors. */
 export type CeoOfficeProjectionInput = {
@@ -93,13 +109,20 @@ const timelineOrder: Record<CEOOfficeItem["type"], number> = {
 /**
  * Pure, oldest-first projection. Ties use business order then source-derived ID, never read time.
  * Only timestamped facts enter the timeline; a task definition alone is not an occurred event.
- * Detailed report enrichment and the remaining item projectors are added in tickets 03-05.
+ * The remaining action and milestone item projectors are added in tickets 04-05.
  */
 export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOfficeItem[] {
   const tasks = input.tasks.filter((task) => task.companyId === input.company.id);
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const objectivesById = new Map((input.objectives ?? [])
+    .filter((objective) => objective.companyId === input.company.id)
+    .map((objective) => [objective.id, objective]));
   const keyResultsById = new Map((input.keyResults ?? []).map((result) => [result.id, result]));
   const completions = input.taskCompletionEvents.filter((event) => event.companyId === input.company.id);
+  const progressEvents = (input.taskProgressEvents ?? []).filter((event) => event.companyId === input.company.id);
+  const businessArtifactsById = new Map((input.businessArtifacts ?? [])
+    .filter((artifact) => artifact.companyId === input.company.id)
+    .map((artifact) => [artifact.id, artifact]));
   const items: CEOOfficeItem[] = [];
 
   function context(taskId: string) {
@@ -117,10 +140,10 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
   }
 
   for (const task of tasks) {
+    const taskProgressEvents = progressEvents.filter((event) => (event.subjectTaskId ?? event.parentTaskId) === task.id);
     const timestamps = [
-      ...(input.taskProgressEvents ?? [])
-        .filter((event) => event.companyId === input.company.id &&
-          (event.subjectTaskId ?? event.parentTaskId) === task.id && event.status !== "waiting")
+      ...taskProgressEvents
+        .filter((event) => event.status !== "waiting")
         .map((event) => event.createdAt),
       ...completions.filter((event) => event.taskId === task.id).map((event) => event.createdAt),
     ].filter((timestamp) => Number.isFinite(Date.parse(timestamp)));
@@ -128,13 +151,33 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     const occurredAt = timestamps[0];
     if (!occurredAt) continue;
 
+    const keyResult = task.keyResultId ? keyResultsById.get(task.keyResultId) ?? null : null;
+    const objective = keyResult ? objectivesById.get(keyResult.objectiveId) ?? null : null;
+    const executionStartedAt = taskProgressEvents
+      .filter((event) => event.step === "executing")
+      .map((event) => event.createdAt)
+      .filter((timestamp) => Number.isFinite(Date.parse(timestamp)))
+      .sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
+    const firstCompletionAt = completions
+      .filter((event) => event.taskId === task.id)
+      .map((event) => event.createdAt)
+      .filter((timestamp) => Number.isFinite(Date.parse(timestamp)))
+      .sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
+    const assessmentCutoff = earliestTimestamp([executionStartedAt, firstCompletionAt]);
+    const assessment = latestAssessment(taskProgressEvents, assessmentCutoff);
+    const assessmentPurpose = assessment?.detailText ?? (assessment?.detail ? localizedTextFromString(assessment.detail) : null);
+
     items.push({
       ...context(task.id), id: `task_brief:${task.id}`, type: "task_brief", sourceId: task.id,
       occurredAt, actionBearing: false,
       data: {
-        purpose: task.descriptionText ?? localizedTextFromString(task.description),
-        expectedOutput: task.proofSchemaId,
+        purpose: assessmentPurpose ?? task.descriptionText ?? localizedTextFromString(task.description),
+        purposeSource: assessmentPurpose ? "department_assessment" : "task_definition",
         founderVision: input.company.founderVision,
+        objectiveTitle: objective ? objective.titleText ?? localizedTextFromString(objective.title) : null,
+        keyResultTitle: keyResult ? keyResult.titleText ?? localizedTextFromString(keyResult.title) : null,
+        keyResultMetricName: keyResult?.metricName ?? null,
+        keyResultTargetValue: keyResult ? keyResult.targetValueText ?? localizedTextFromString(keyResult.targetValue) : null,
         dependsOnTaskIds: [...new Set((input.taskDependencies ?? [])
           .filter((dependency) => dependency.taskId === task.id)
           .map((dependency) => dependency.dependsOnTaskId))].sort(),
@@ -144,6 +187,8 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
 
   for (const event of completions) {
     const executionReport = event.executionReport ?? null;
+    const businessArtifact = event.businessArtifactId ? businessArtifactsById.get(event.businessArtifactId) ?? null : null;
+    const associatedBusinessArtifact = businessArtifact?.taskId === event.taskId ? businessArtifact : null;
     items.push({
       ...context(event.taskId), departmentId: event.departmentId,
       id: `execution_report:${event.id}`, type: "execution_report", sourceId: event.id,
@@ -154,7 +199,10 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
         remainingGap: executionReport?.remainingGap ?? null,
         recommendation: executionReport?.recommendation ?? null,
         summaryFallback: executionReport ? null : event.outcomeSummaryText ?? null,
-        businessArtifactId: event.businessArtifactId, outcome: event.outcome,
+        businessArtifactId: associatedBusinessArtifact?.id ?? null,
+        remainingGaps: summarizeVisionGaps(event.visionGaps),
+        recommendedNextSteps: event.nextStepItems.map(summarizeNextStep),
+        outcome: event.outcome,
       },
     });
   }
@@ -178,4 +226,50 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     timelineOrder[a.type] - timelineOrder[b.type] ||
     (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
+}
+
+function latestAssessment(events: TaskProgressEvent[], before: string | null): TaskProgressEvent | null {
+  const [event] = [...events]
+    .filter((candidate) => candidate.step === "assessment_complete")
+    .filter((candidate) => Number.isFinite(Date.parse(candidate.createdAt)))
+    .filter((candidate) => before === null || Date.parse(candidate.createdAt) <= Date.parse(before))
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return event ?? null;
+}
+
+function earliestTimestamp(timestamps: Array<string | null>): string | null {
+  const [timestamp] = timestamps
+    .filter((candidate): candidate is string => candidate !== null && Number.isFinite(Date.parse(candidate)))
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  return timestamp ?? null;
+}
+
+function summarizeNextStep(item: NextStepItem): ExecutionReportNextStepSummary {
+  return {
+    type: item.type,
+    label: item.label,
+    ownerDepartmentId: item.ownerDepartmentId,
+    relatedTaskId: item.relatedTaskId,
+    relatedBusinessArtifactId: item.relatedBusinessArtifactId,
+    severity: item.severity,
+    priority: item.priority,
+  };
+}
+
+function summarizeVisionGaps(gaps: unknown[]): ExecutionReportGapSummary[] {
+  return gaps.flatMap((gap) => {
+    if (!isRecord(gap) || typeof gap.label !== "string") {
+      return [];
+    }
+    return [{
+      label: gap.label,
+      severity: typeof gap.severity === "string" ? gap.severity : null,
+      relatedTaskId: typeof gap.relatedTaskId === "string" ? gap.relatedTaskId : null,
+      relatedBusinessArtifactId: typeof gap.relatedBusinessArtifactId === "string" ? gap.relatedBusinessArtifactId : null,
+    }];
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
