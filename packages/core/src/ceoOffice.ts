@@ -1,8 +1,8 @@
 import { localizedTextFromString, type LocalizedText } from "./localizedText";
 import type {
-  BusinessArtifact, CeoAttentionRollup, CeoReviewDecision, Company, FinalFounderReport,
+  AgentFailureReason, BusinessArtifact, CeoAttentionRollup, CeoReviewDecision, Company, FinalFounderReport,
   FounderDecision, HumanAction, KeyResult, Objective, Task, TaskCompletionEvent,
-  NextStepItem, TaskDependency, TaskEvent, TaskProgressEvent, VisionGap, WaitState,
+  NextStepItem, TaskDependency, TaskEvent, TaskProgressEvent, TaskStatus, VisionGap, WaitState,
 } from "./types";
 
 type OfficeItem<Type extends string, Data, ActionBearing extends boolean = boolean> = {
@@ -109,7 +109,6 @@ const timelineOrder: Record<CEOOfficeItem["type"], number> = {
 /**
  * Pure, oldest-first projection. Ties use business order then source-derived ID, never read time.
  * Only timestamped facts enter the timeline; a task definition alone is not an occurred event.
- * The remaining action and milestone item projectors are added in tickets 04-05.
  */
 export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOfficeItem[] {
   const tasks = input.tasks.filter((task) => task.companyId === input.company.id);
@@ -120,6 +119,7 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
   const keyResultsById = new Map((input.keyResults ?? []).map((result) => [result.id, result]));
   const completions = input.taskCompletionEvents.filter((event) => event.companyId === input.company.id);
   const progressEvents = (input.taskProgressEvents ?? []).filter((event) => event.companyId === input.company.id);
+  const taskEvents = (input.taskEvents ?? []).filter((event) => event.companyId === input.company.id);
   const businessArtifactsById = new Map((input.businessArtifacts ?? [])
     .filter((artifact) => artifact.companyId === input.company.id)
     .map((artifact) => [artifact.id, artifact]));
@@ -221,11 +221,211 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     });
   }
 
+  for (const artifact of businessArtifactsById.values()) {
+    if (!isPendingReviewArtifact(artifact)) continue;
+    items.push({
+      ...context(artifact.taskId),
+      id: `approval_request:${artifact.id}`,
+      type: "approval_request",
+      sourceId: artifact.id,
+      occurredAt: artifact.createdAt,
+      actionBearing: true,
+      data: { businessArtifactId: artifact.id, status: "pending" },
+    });
+  }
+
+  for (const action of input.humanActions ?? []) {
+    if (action.companyId !== input.company.id) continue;
+    items.push({
+      ...context(action.taskId), departmentId: action.departmentId,
+      id: `human_action:${action.id}`, type: "human_action", sourceId: action.id,
+      occurredAt: action.createdAt, actionBearing: action.status === "pending",
+      data: {
+        label: action.label,
+        status: action.status,
+        confirmationRequirements: action.confirmationRequirements,
+        blockedTaskIds: action.blockedTaskIds,
+        verifiedAt: action.verifiedAt,
+      },
+    });
+  }
+
+  for (const waitState of input.waitStates ?? []) {
+    if (waitState.companyId !== input.company.id) continue;
+    items.push({
+      ...context(waitState.taskId), departmentId: waitState.departmentId, keyResultId: waitState.keyResultId,
+      id: `wait_state:${waitState.id}`, type: "wait_state", sourceId: waitState.id,
+      occurredAt: waitState.createdAt, actionBearing: false,
+      data: {
+        reason: waitState.reason,
+        status: waitState.status,
+        nextCheckAt: waitState.nextCheckAt,
+        affectedTaskIds: waitState.affectedTaskIds,
+      },
+    });
+  }
+
+  for (const issue of projectBlockedIssues({
+    company: input.company,
+    tasks,
+    taskEvents,
+    progressEvents,
+    completions,
+    businessArtifacts: [...businessArtifactsById.values()],
+  })) {
+    items.push(issue);
+  }
+
   return items.filter((item) => Number.isFinite(Date.parse(item.occurredAt))).sort((a, b) =>
     Date.parse(a.occurredAt) - Date.parse(b.occurredAt) ||
     timelineOrder[a.type] - timelineOrder[b.type] ||
     (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
+}
+
+/** CEO Pending is the live action subset of CEO Office Items, not a separate queue model. */
+export function deriveCeoPendingItems(items: readonly CEOOfficeItem[]): CEOOfficeItem[] {
+  return items.filter((item) => item.actionBearing);
+}
+
+function isPendingReviewArtifact(artifact: BusinessArtifact): boolean {
+  return (
+    artifact.isCurrent &&
+    artifact.validationStatus === "valid" &&
+    artifact.reviewStatus === "unreviewed" &&
+    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
+  );
+}
+
+const blockedTaskStatuses = new Set<TaskStatus>(["blocked", "needs_replan"]);
+const blockedFailureReasons = new Set<AgentFailureReason>([
+  "retry_exhausted",
+  "missing_deliverable",
+  "needs_replan",
+]);
+
+function projectBlockedIssues(input: {
+  company: Company;
+  tasks: readonly Task[];
+  taskEvents: readonly TaskEvent[];
+  progressEvents: readonly TaskProgressEvent[];
+  completions: readonly TaskCompletionEvent[];
+  businessArtifacts: readonly BusinessArtifact[];
+}): CEOOfficeItem[] {
+  const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
+  const taskIssues = input.tasks.flatMap((task) => {
+    if (!isBlockedIssueTask(task)) {
+      return [];
+    }
+    const source = latestBlockedTaskSource(task, input.taskEvents, input.progressEvents, input.completions);
+    if (!source) {
+      return [];
+    }
+    return [{
+      companyId: input.company.id,
+      taskId: task.id,
+      departmentId: task.departmentId,
+      keyResultId: task.keyResultId,
+      objectiveId: null,
+      title: task.title,
+      titleText: task.titleText ?? null,
+      id: `blocked_issue:${source.sourceId}`,
+      type: "blocked_issue" as const,
+      sourceId: source.sourceId,
+      occurredAt: source.occurredAt,
+      actionBearing: true,
+      data: {
+        reason: source.reason ?? task.latestFailureMessage ?? task.dependencyNote ?? formatBlockedReason(task.latestFailureReason ?? task.status),
+        status: "open" as const,
+        affectedTaskIds: [task.id],
+      },
+    }];
+  });
+
+  const artifactIssues = input.businessArtifacts.flatMap((artifact) => {
+    if (!artifact.isCurrent || artifact.artifactKind !== "blocker") {
+      return [];
+    }
+    const task = tasksById.get(artifact.taskId);
+    return [{
+      companyId: input.company.id,
+      taskId: artifact.taskId,
+      departmentId: task?.departmentId ?? null,
+      keyResultId: task?.keyResultId ?? null,
+      objectiveId: null,
+      title: task?.title ?? "Task",
+      titleText: task?.titleText ?? null,
+      id: `blocked_issue:${artifact.id}`,
+      type: "blocked_issue" as const,
+      sourceId: artifact.id,
+      occurredAt: artifact.createdAt,
+      actionBearing: true,
+      data: {
+        reason: readBlockerReason(artifact.payload) ?? "Blocker Report recorded.",
+        status: "open" as const,
+        affectedTaskIds: [artifact.taskId],
+      },
+    }];
+  });
+
+  return [...taskIssues, ...artifactIssues];
+}
+
+function isBlockedIssueTask(task: Task): boolean {
+  return (
+    blockedTaskStatuses.has(task.status) ||
+    // No narrower persisted enum exists yet; a terminal failed task without a retryable reason is unrecoverable.
+    (task.status === "failed" && !task.latestFailureReason) ||
+    (task.latestFailureReason ? blockedFailureReasons.has(task.latestFailureReason) : false)
+  );
+}
+
+function latestBlockedTaskSource(
+  task: Task,
+  taskEvents: readonly TaskEvent[],
+  progressEvents: readonly TaskProgressEvent[],
+  completions: readonly TaskCompletionEvent[],
+): { sourceId: string; occurredAt: string; reason: string | null } | null {
+  const candidates = [
+    ...taskEvents
+      .filter((event) => event.taskId === task.id)
+      .filter((event) =>
+        event.type === "task_failed" ||
+        event.type === "task_blocked" ||
+        event.type === "task_needs_replan" ||
+        event.type === "deliverable_missing" ||
+        blockedTaskStatuses.has(event.status ?? "queued") ||
+        (event.status === "failed" && event.failureReason === null) ||
+        (event.failureReason ? blockedFailureReasons.has(event.failureReason) : false))
+      .map((event) => ({ sourceId: event.id, occurredAt: event.createdAt, reason: event.failureMessage ?? event.dependencyNote })),
+    ...progressEvents
+      .filter((event) => (event.subjectTaskId ?? event.parentTaskId) === task.id)
+      .filter((event) => event.status === "blocked" || event.step === "blocked" || event.step === "needs_ceo_reassignment")
+      .map((event) => ({ sourceId: event.id, occurredAt: event.createdAt, reason: event.detail })),
+    ...completions
+      .filter((event) => event.taskId === task.id)
+      .filter((event) => event.outcome === "blocked" || event.outcome === "failed_to_review" || event.outcome === "needs_replan")
+      .map((event) => ({ sourceId: event.id, occurredAt: event.createdAt, reason: event.outcomeSummaryText?.en ?? null })),
+  ].filter((candidate) => Number.isFinite(Date.parse(candidate.occurredAt)));
+
+  return candidates.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt) || (a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0))[0] ?? null;
+}
+
+function formatBlockedReason(reason: AgentFailureReason | TaskStatus): string {
+  return reason.replace(/_/g, " ");
+}
+
+function readBlockerReason(payload: unknown): string | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  for (const key of ["reason", "blocker", "summary", "message"]) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return null;
 }
 
 function latestAssessment(events: TaskProgressEvent[], before: string | null): TaskProgressEvent | null {

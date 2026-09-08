@@ -758,6 +758,7 @@ function buildCompanyState(
   const businessArtifacts = businessArtifactRecords.map(summarizeBusinessArtifact);
   const taskCompletionEvents = repositories.listTaskCompletionEventsForCompany(currentCompany.id);
   const taskProgressEvents = repositories.listTaskProgressEventsForCompany(currentCompany.id);
+  const taskEvents = repositories.listTaskEventsForCompany(currentCompany.id);
   const humanActionConfirmations = repositories.listHumanActionConfirmationsForCompany(currentCompany.id);
   const founderDecisionResolutions = repositories.listFounderDecisionResolutionsForCompany(currentCompany.id);
   let ceoAttention = projectCeoAttention({
@@ -833,6 +834,7 @@ function buildCompanyState(
       tasks,
       taskCompletionEvents,
       taskProgressEvents,
+      taskEvents,
       taskDependencies,
       objectives,
       keyResults,

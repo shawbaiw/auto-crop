@@ -519,6 +519,7 @@ export default function App({ apiClient }: AppProps) {
     const response = await client.confirmHumanAction(blueprint.company.id, humanActionId, { evidence });
     setHumanActions((current) => upsertHumanAction(current, response.humanAction));
     setBlueprint((current) => updateBlueprintTasks(current, response.updatedTasks));
+    setBlueprint((current) => clearCeoOfficeItemActionBearing(current, `human_action:${humanActionId}`));
     if (response.events.length > 0) {
       setEvents((current) => [...current.slice(-49), ...response.events]);
     }
@@ -536,6 +537,10 @@ export default function App({ apiClient }: AppProps) {
     }
     if (response.businessArtifacts) {
       setBusinessArtifacts((current) => upsertBusinessArtifacts(current, response.businessArtifacts ?? []));
+      setBlueprint((current) => upsertCeoOfficeItems(
+        current,
+        (response.businessArtifacts ?? []).flatMap((artifact) => createApprovalRequestItemFromArtifact(artifact, response.task)),
+      ));
     }
     applyTaskUpdateBatchResponse(response.parentAggregation, "Parent aggregation warning");
     return response;
@@ -553,6 +558,10 @@ export default function App({ apiClient }: AppProps) {
     }
     if (response.businessArtifacts) {
       setBusinessArtifacts((current) => upsertBusinessArtifacts(current, response.businessArtifacts ?? []));
+      setBlueprint((current) => upsertCeoOfficeItems(
+        current,
+        (response.businessArtifacts ?? []).flatMap((artifact) => createApprovalRequestItemFromArtifact(artifact, response.task)),
+      ));
     }
     applyTaskUpdateBatchResponse(response.parentAggregation, "Parent aggregation warning");
     return response;
@@ -570,6 +579,7 @@ export default function App({ apiClient }: AppProps) {
   async function handleCreateCeoReviewDecision(input: Parameters<ApiClient["createCeoReviewDecision"]>[0]) {
     const response = await client.createCeoReviewDecision(input);
     setBlueprint((current) => updateBlueprintTask(current, response.task));
+    setBlueprint((current) => clearCeoReviewRequestItemsForTask(current, input.taskId));
     if (response.event) {
       setEvents((current) => [...current.slice(-49), response.event!]);
     }
@@ -589,6 +599,7 @@ export default function App({ apiClient }: AppProps) {
       current.map((decision) => (decision.id === response.founderDecision.id ? response.founderDecision : decision)),
     );
     setBlueprint((current) => updateBlueprintTask(current, response.task));
+    setBlueprint((current) => clearCeoOfficeItemActionBearing(current, `decision_request:${input.founderDecisionId}`));
     if (response.event) {
       setEvents((current) => [...current.slice(-49), response.event!]);
     }
@@ -912,6 +923,57 @@ function upsertBusinessArtifacts(
   return result;
 }
 
+function upsertCeoOfficeItems(
+  blueprint: CreateCompanyResponse | null,
+  items: CeoOfficeItemSummary[],
+): CreateCompanyResponse | null {
+  if (!blueprint || items.length === 0) {
+    return blueprint;
+  }
+
+  return {
+    ...blueprint,
+    ceoOfficeItems: items.reduce((current, item) => upsertById(current, item), blueprint.ceoOfficeItems ?? []),
+  };
+}
+
+function createApprovalRequestItemFromArtifact(
+  artifact: BusinessArtifactSummary,
+  task: TaskSummary,
+): CeoOfficeItemSummary[] {
+  if (!isReviewableArtifact(artifact) || artifact.taskId !== task.id) {
+    return [];
+  }
+
+  return [{
+    id: `approval_request:${artifact.id}`,
+    type: "approval_request",
+    companyId: artifact.companyId,
+    sourceId: artifact.id,
+    taskId: task.id,
+    departmentId: task.departmentId,
+    objectiveId: null,
+    keyResultId: null,
+    occurredAt: artifact.createdAt,
+    title: task.title,
+    titleText: task.titleText ?? null,
+    actionBearing: true,
+    data: {
+      businessArtifactId: artifact.id,
+      status: "pending",
+    },
+  }];
+}
+
+function isReviewableArtifact(artifact: BusinessArtifactSummary): boolean {
+  return (
+    artifact.isCurrent &&
+    artifact.validationStatus === "valid" &&
+    artifact.reviewStatus === "unreviewed" &&
+    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
+  );
+}
+
 function upsertReplanProposal(proposals: ReplanProposalSummary[], proposal: ReplanProposalSummary): ReplanProposalSummary[] {
   return upsertById(proposals, proposal);
 }
@@ -958,6 +1020,38 @@ function updateBlueprintTasks(
   nextTasks: TaskSummary[],
 ): CreateCompanyResponse | null {
   return nextTasks.reduce((current, task) => updateBlueprintTask(current, task), blueprint);
+}
+
+function clearCeoOfficeItemActionBearing(
+  blueprint: CreateCompanyResponse | null,
+  itemId: string,
+): CreateCompanyResponse | null {
+  if (!blueprint) {
+    return blueprint;
+  }
+
+  return {
+    ...blueprint,
+    ceoOfficeItems: (blueprint.ceoOfficeItems ?? []).map((item) =>
+      item.id === itemId ? { ...item, actionBearing: false as const } : item,
+    ),
+  };
+}
+
+function clearCeoReviewRequestItemsForTask(
+  blueprint: CreateCompanyResponse | null,
+  taskId: string,
+): CreateCompanyResponse | null {
+  if (!blueprint) {
+    return blueprint;
+  }
+
+  return {
+    ...blueprint,
+    ceoOfficeItems: (blueprint.ceoOfficeItems ?? []).map((item) =>
+      item.type === "approval_request" && item.taskId === taskId ? { ...item, actionBearing: false as const } : item,
+    ),
+  };
 }
 
 function updateBlueprintTasksAfterRecovery(

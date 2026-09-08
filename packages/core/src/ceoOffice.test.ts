@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   projectCeoOfficeItems,
+  type AgentFailureReason,
   type BusinessArtifact,
+  type CEOOfficeItem,
   type Company,
   type FounderDecision,
+  type HumanAction,
   type KeyResult,
   type Objective,
   type Task,
   type TaskCompletionEvent,
+  type TaskEvent,
   type TaskProgressEvent,
+  type TaskStatus,
+  type WaitState,
+  deriveCeoPendingItems,
 } from "./index";
 
 const company: Company = {
@@ -376,5 +383,148 @@ describe("projectCeoOfficeItems", () => {
       taskProgressEvents: state.taskProgressEvents.map((event) => ({ ...event, companyId: "other" })),
       taskCompletionEvents: state.taskCompletionEvents.map((event) => ({ ...event, companyId: "other" })),
     })).toEqual([]);
+  });
+
+  it("projects action-bearing CEO Office items generically across pending sources", () => {
+    const state = scenario("Validate onboarding", "Onboarding evidence is ready");
+    const [task] = state.tasks;
+    const reviewArtifact: BusinessArtifact = {
+      id: "artifact_review", companyId: company.id, taskId: task!.id, sourceProofId: "proof_1",
+      artifactKind: "deliverable", artifactRole: "validation", artifactSubtype: "onboarding_evidence",
+      artifactType: "validation_result", taskType: "validation.onboarding",
+      payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "unreviewed",
+      isCurrent: true, supersedesArtifactId: null,
+      createdAt: "2026-09-01T10:05:00Z", updatedAt: "2026-09-01T10:05:00Z",
+    };
+    const decision: FounderDecision = {
+      id: "decision", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: task!.id,
+      departmentId: "product", decisionKind: "launch_target", rationale: "Pick the first launch audience",
+      options: [{ label: "Clinics", tradeoffs: "More urgent pain", recommended: true }],
+      status: "pending", resolvedOption: null, resolvedAt: null, blockedTaskIds: ["launch"],
+      createdAt: "2026-09-01T10:06:00Z",
+    };
+    const humanAction: HumanAction = {
+      id: "human_action", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: task!.id,
+      departmentId: "product", label: "Connect the analytics account.", blockedTaskIds: ["measure"],
+      confirmationRequirements: ["Account connected screenshot"], evidence: {}, status: "pending",
+      verifiedAt: null, verificationErrors: [], createdAt: "2026-09-01T10:07:00Z",
+    };
+    const waitState: WaitState = {
+      id: "wait_state", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: task!.id,
+      departmentId: "product", keyResultId: null, businessArtifactId: null,
+      label: "Wait for search indexing.", reason: "Search indexing has to settle before validation.",
+      relatedTaskId: null, relatedBusinessArtifactId: null, affectedTaskIds: ["measure"],
+      nextCheckAt: "2026-09-08T10:00:00Z", status: "waiting", severity: "informational",
+      createdAt: "2026-09-01T10:08:00Z",
+    };
+    const blockedTask: Task = {
+      ...task!, id: "blocked_task", title: "Recover missing proof", status: "failed",
+      latestFailureReason: "missing_deliverable", latestFailureMessage: "Expected deliverable was not recorded.",
+    };
+    const blockedEvent: TaskEvent = {
+      id: "blocked_event", companyId: company.id, taskId: blockedTask.id, type: "deliverable_missing",
+      message: "Expected deliverable was not recorded.", messageText: null,
+      createdAt: "2026-09-01T10:09:00Z", status: "failed", failureReason: "missing_deliverable",
+      failureMessage: "Expected deliverable was not recorded.", executionProfileName: null,
+      requestedTimeoutMs: null, effectiveTimeoutMs: null, dependencyNote: null, artifactWorkspacePath: null,
+    };
+
+    const items = projectCeoOfficeItems({
+      ...state,
+      tasks: [task!, blockedTask],
+      businessArtifacts: [reviewArtifact],
+      founderDecisions: [decision],
+      humanActions: [humanAction],
+      waitStates: [waitState],
+      taskEvents: [blockedEvent],
+      taskCompletionEvents: state.taskCompletionEvents,
+    });
+
+    expect(items.map((item) => item.type)).toEqual([
+      "task_brief", "execution_report", "approval_request", "decision_request", "human_action", "wait_state", "blocked_issue",
+    ]);
+    expect(items.filter((item) => item.actionBearing).map((item) => item.type)).toEqual([
+      "approval_request", "decision_request", "human_action", "blocked_issue",
+    ]);
+    expect(items.find((item) => item.type === "wait_state")).toMatchObject({
+      actionBearing: false,
+      data: { reason: "Search indexing has to settle before validation.", status: "waiting" },
+    });
+    expect(items.find((item) => item.type === "blocked_issue")).toMatchObject({
+      taskId: "blocked_task",
+      data: { reason: "Expected deliverable was not recorded.", status: "open", affectedTaskIds: ["blocked_task"] },
+    });
+  });
+
+  it.each([
+    ["blocked", "blocked", null, "task_blocked"],
+    ["retry-exhausted", "failed", "retry_exhausted", "task_failed"],
+    ["missing-deliverable", "failed", "missing_deliverable", "deliverable_missing"],
+    ["needs-replan", "needs_replan", "needs_replan", "task_needs_replan"],
+    ["unrecoverable failure", "failed", null, "task_failed"],
+  ] satisfies Array<[string, TaskStatus, AgentFailureReason | null, TaskEvent["type"]]>)(
+    "projects %s as an action-bearing Blocked Issue",
+    (_label, status, failureReason, eventType) => {
+      const state = scenario("Resolve execution issue", "No ordinary completion report should matter");
+      const [task] = state.tasks;
+      const blockedTask: Task = {
+        ...task!,
+        status,
+        latestFailureReason: failureReason,
+        latestFailureMessage: "The task cannot move forward.",
+      };
+      const blockedEvent: TaskEvent = {
+        id: `blocked_event_${status}_${failureReason ?? "unrecoverable"}`,
+        companyId: company.id,
+        taskId: blockedTask.id,
+        type: eventType,
+        message: "The task cannot move forward.",
+        messageText: null,
+        createdAt: "2026-09-01T10:09:00Z",
+        status,
+        failureReason,
+        failureMessage: "The task cannot move forward.",
+        executionProfileName: null,
+        requestedTimeoutMs: null,
+        effectiveTimeoutMs: null,
+        dependencyNote: null,
+        artifactWorkspacePath: null,
+      };
+
+      expect(projectCeoOfficeItems({
+        ...state,
+        tasks: [blockedTask],
+        taskEvents: [blockedEvent],
+      })).toContainEqual(expect.objectContaining({
+        type: "blocked_issue",
+        actionBearing: true,
+        data: expect.objectContaining({ status: "open", reason: "The task cannot move forward." }),
+      }));
+    },
+  );
+
+  it("derives CEO Pending from action-bearing CEO Office Items only", () => {
+    const base = {
+      companyId: company.id,
+      sourceId: "source",
+      taskId: "task",
+      departmentId: "product",
+      objectiveId: null,
+      keyResultId: null,
+      occurredAt: "2026-09-01T10:00:00Z",
+      title: "Validate onboarding",
+      titleText: null,
+    };
+    const items = [
+      { ...base, id: "task_brief:task", type: "task_brief", actionBearing: false, data: {} },
+      { ...base, id: "execution_report:event", type: "execution_report", actionBearing: false, data: {} },
+      { ...base, id: "decision_request:decision", type: "decision_request", actionBearing: true, data: {} },
+      { ...base, id: "human_action:action", type: "human_action", actionBearing: true, data: {} },
+    ] as CEOOfficeItem[];
+
+    expect(deriveCeoPendingItems(items).map((item) => item.id)).toEqual([
+      "decision_request:decision",
+      "human_action:action",
+    ]);
   });
 });

@@ -8,6 +8,7 @@ import type {
   ApiClient,
   BusinessArtifactSummary,
   CeoAttentionRollupSummary,
+  CeoOfficeItemSummary,
   FounderDecisionSummary,
   HumanActionSummary,
   ReplanProposalSummary,
@@ -388,6 +389,96 @@ describe("Dashboard App", () => {
     expect(within(reviewDetail).getByRole("button", { name: "Return to department" })).toBeInTheDocument();
   });
 
+  it("derives CEO Pending from action-bearing CEO Office Items", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    const ceoOfficeItems: CeoOfficeItemSummary[] = [
+      {
+        id: "execution_report:task_completion_event_1",
+        type: "execution_report",
+        companyId: "company_1",
+        sourceId: "task_completion_event_1",
+        taskId: "task_1",
+        departmentId: "department_1",
+        objectiveId: null,
+        keyResultId: null,
+        occurredAt: "2026-08-17T00:02:00.000Z",
+        title: "Connect analytics account",
+        titleText: null,
+        actionBearing: false,
+        data: {
+          conclusion: { en: "Analytics is ready to connect." },
+          visionImpact: null,
+          remainingGap: null,
+          recommendation: null,
+          summaryFallback: null,
+          businessArtifactId: null,
+          remainingGaps: [],
+          recommendedNextSteps: [],
+          outcome: "accepted",
+        },
+      },
+      {
+        id: "human_action:task_completion_event_1_human_action_1",
+        type: "human_action",
+        companyId: "company_1",
+        sourceId: "task_completion_event_1_human_action_1",
+        taskId: "task_1",
+        departmentId: "department_1",
+        objectiveId: null,
+        keyResultId: null,
+        occurredAt: "2026-08-17T00:03:00.000Z",
+        title: "Connect analytics account",
+        titleText: null,
+        actionBearing: true,
+        data: {
+          label: "Connect the analytics account.",
+          status: "pending",
+          confirmationRequirements: ["Account connected screenshot"],
+          blockedTaskIds: ["task_2"],
+          verifiedAt: null,
+        },
+      },
+      {
+        id: "wait_state:task_completion_event_1_wait_state_1",
+        type: "wait_state",
+        companyId: "company_1",
+        sourceId: "task_completion_event_1_wait_state_1",
+        taskId: "task_1",
+        departmentId: "department_1",
+        objectiveId: null,
+        keyResultId: null,
+        occurredAt: "2026-08-17T00:04:00.000Z",
+        title: "Connect analytics account",
+        titleText: null,
+        actionBearing: false,
+        data: {
+          reason: "Wait for first analytics import.",
+          status: "waiting",
+          nextCheckAt: "2026-08-18T00:00:00.000Z",
+          affectedTaskIds: ["task_2"],
+        },
+      },
+    ];
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        { ...created.tasks[0], title: "Connect analytics account", status: "complete" },
+      ],
+      ceoOfficeItems,
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const pending = within(screen.getByRole("region", { name: "CEO Intake Report" })).getByRole("region", { name: "CEO Pending" });
+    expect(pending).toHaveTextContent("Human Action from Engineering");
+    expect(pending).toHaveTextContent("Connect analytics account");
+    expect(pending).not.toHaveTextContent("Execution Report");
+    expect(pending).not.toHaveTextContent("Wait State");
+  });
+
   it("styles a goal_stage_change rollup as an achievement, distinct from an exception rollup", async () => {
     const api = createMockApiClient();
     const response = {
@@ -665,6 +756,11 @@ describe("Dashboard App", () => {
           },
         ],
         businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
+        ceoOfficeItems: [createApprovalRequestCeoOfficeItem({
+          businessArtifactId: "business_artifact_1",
+          taskId: "task_1",
+          title: "Validate the prototype",
+        })],
       };
     });
     const user = userEvent.setup();
@@ -782,6 +878,11 @@ describe("Dashboard App", () => {
         },
       ],
       businessArtifacts: [createBusinessArtifactSummary("business_artifact_subtask", reviewSubtask.id, "proof_subtask")],
+      ceoOfficeItems: [createApprovalRequestCeoOfficeItem({
+        businessArtifactId: "business_artifact_subtask",
+        taskId: "review_subtask",
+        title: "Execute Provide local prototype access",
+      })],
       taskProgressEvents: [
         ...created.taskProgressEvents!.slice(0, 2).map((event) => ({ ...event, parentTaskId: parentTask.id })),
         {
@@ -849,6 +950,11 @@ describe("Dashboard App", () => {
         },
       ],
       businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
+      ceoOfficeItems: [createApprovalRequestCeoOfficeItem({
+        businessArtifactId: "business_artifact_1",
+        taskId: "task_1",
+        title: "Find the first overseas keyword opportunity",
+      })],
     };
     api.createCompany = vi.fn(async () => ({
       ...created,
@@ -1145,7 +1251,9 @@ describe("Dashboard App", () => {
     });
 
     expect(await screen.findByText("CEO Office approved the task.")).toBeInTheDocument();
-    expect(screen.queryByText("Validate the prototype")).not.toBeInTheDocument();
+    const pendingAfterApproval = screen.getByRole("region", { name: "CEO Pending" });
+    expect(within(pendingAfterApproval).queryByRole("button", { name: "View Task Validate the prototype" })).not.toBeInTheDocument();
+    expect(within(pendingAfterApproval).getByText("No CEO pending items.")).toBeInTheDocument();
   });
 
   it("applies dependency cascade updates returned by CEO approval", async () => {
@@ -1187,6 +1295,11 @@ describe("Dashboard App", () => {
         },
       ],
       businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_4", "proof_1")],
+      ceoOfficeItems: [createApprovalRequestCeoOfficeItem({
+        businessArtifactId: "business_artifact_1",
+        taskId: "task_4",
+        title: "Validate prototype locally",
+      })],
     }));
     api.createCeoReviewDecision = vi.fn(async () => ({
       decision: {
@@ -3257,6 +3370,11 @@ function createCeoOfficeAttentionCompanyResponse(): Awaited<ReturnType<ApiClient
     ],
     businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_4", "proof_1")],
     ceoAttentionRollups: [createCeoAttentionRollupSummary()],
+    ceoOfficeItems: [createApprovalRequestCeoOfficeItem({
+      businessArtifactId: "business_artifact_1",
+      taskId: "task_4",
+      title: "Review gated launch artifact",
+    })],
     humanActions: [createHumanActionSummary()],
     visionGaps: [createVisionGapSummary()],
     waitStates: [createWaitStateSummary()],
@@ -3294,10 +3412,44 @@ function createReviewReadyCompanyResponse(): Awaited<ReturnType<ApiClient["creat
       },
     ],
     businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
+    ceoOfficeItems: [createApprovalRequestCeoOfficeItem({
+      businessArtifactId: "business_artifact_1",
+      taskId: "task_1",
+      title: "Validate the prototype",
+    })],
     founderReport: {
       ...created.founderReport!,
       reviewTaskCount: 1,
       nextSteps: ["Review Validate the prototype."],
+    },
+  };
+}
+
+function createApprovalRequestCeoOfficeItem({
+  businessArtifactId,
+  taskId,
+  title,
+}: {
+  businessArtifactId: string;
+  taskId: string;
+  title: string;
+}): CeoOfficeItemSummary {
+  return {
+    id: `approval_request:${businessArtifactId}`,
+    type: "approval_request",
+    companyId: "company_1",
+    sourceId: businessArtifactId,
+    taskId,
+    departmentId: "department_1",
+    objectiveId: null,
+    keyResultId: null,
+    occurredAt: "2026-08-17T00:02:00.000Z",
+    title,
+    titleText: null,
+    actionBearing: true,
+    data: {
+      businessArtifactId,
+      status: "pending",
     },
   };
 }

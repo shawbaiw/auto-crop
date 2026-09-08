@@ -1,3 +1,4 @@
+import { deriveCeoPendingItems } from "@auto-crop/core";
 import {
   Building2,
   ClipboardCheck,
@@ -144,8 +145,8 @@ export function DepartmentWorkspace({
     [departments, language],
   );
   const ceoPendingItems = useMemo(
-    () => getCeoPendingItems(tasks, businessArtifacts, departmentNamesById),
-    [businessArtifacts, departmentNamesById, tasks],
+    () => getCeoPendingItems(ceoOfficeItems, tasks, departmentNamesById),
+    [ceoOfficeItems, departmentNamesById, tasks],
   );
   const tasksByDepartment = useMemo(() => {
     const grouped = new Map(departments.map((department) => [department.id, [] as TaskSummary[]]));
@@ -256,23 +257,33 @@ export function DepartmentWorkspace({
 
 type CeoPendingItem = {
   departmentName: string;
+  officeItem: CeoOfficeItemSummary | null;
   task: TaskSummary;
-  type: "review";
+  type: "review" | CeoOfficeItemSummary["type"];
 };
 
 function getCeoPendingItems(
+  ceoOfficeItems: CeoOfficeItemSummary[],
   tasks: TaskSummary[],
-  businessArtifacts: BusinessArtifactSummary[],
   departmentNamesById: Map<string, string>,
 ): CeoPendingItem[] {
-  return tasks
-    .filter((task) => task.status === "review")
-    .filter((task) => isReviewableArtifact(currentArtifactForTask(task.id, businessArtifacts)))
-    .map((task) => ({
-      departmentName: departmentNamesById.get(task.departmentId) ?? task.departmentId,
-      task,
-      type: "review" as const,
-    }));
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  return deriveCeoPendingItems(ceoOfficeItems)
+    .flatMap((officeItem) => {
+      if (!officeItem.taskId) {
+        return [];
+      }
+      const task = tasksById.get(officeItem.taskId);
+      if (!task) {
+        return [];
+      }
+      return [{
+        departmentName: officeItem.departmentId ? departmentNamesById.get(officeItem.departmentId) ?? officeItem.departmentId : "",
+        officeItem,
+        task,
+        type: officeItem.type,
+      }];
+    });
 }
 
 function currentArtifactForTask(taskId: string, businessArtifacts: BusinessArtifactSummary[]): BusinessArtifactSummary | null {
@@ -1147,7 +1158,7 @@ function CeoPendingQueue({
       {successMessage ? <p className="system-message">{successMessage}</p> : null}
       {items.length === 0 ? <p className="muted">{t("department.noCeoPending")}</p> : null}
       {items.map((item) => (
-        <article className="ceo-pending-item" key={item.task.id}>
+        <article className="ceo-pending-item" key={item.officeItem?.id ?? item.task.id}>
           <div>
             <p>{formatCeoPendingType(item, t)}</p>
             <h4>{taskTitle(item.task, language)}</h4>
@@ -1413,11 +1424,25 @@ function ceoReturnReasonOptions(t: ReturnType<typeof useLanguage>["t"]): Array<{
 }
 
 function formatCeoPendingType(item: CeoPendingItem, t: ReturnType<typeof useLanguage>["t"]): string {
-  if (item.type === "review") {
-    return `${t("department.ceoPendingReviewRequestFrom")} ${item.departmentName}`;
+  switch (item.type) {
+    case "review":
+    case "approval_request":
+      return `${t("department.ceoPendingReviewRequestFrom")} ${item.departmentName}`;
+    case "decision_request":
+      return `${t("department.ceoPendingDecisionRequestFrom")} ${item.departmentName}`;
+    case "human_action":
+      return `${t("department.ceoPendingHumanActionFrom")} ${item.departmentName}`;
+    case "blocked_issue":
+      return `${t("department.ceoPendingBlockedIssueFrom")} ${item.departmentName}`;
+    case "wait_state":
+      return `${t("department.ceoPendingWaitStateFrom")} ${item.departmentName}`;
+    case "task_brief":
+    case "execution_report":
+    case "decision_resolution":
+    case "stage_change":
+    case "final_report":
+      return item.departmentName;
   }
-
-  return item.departmentName;
 }
 
 function CeoBlueprintSummary({
