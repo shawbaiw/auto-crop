@@ -4,11 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] A shared CEO Office Item contract can represent Task Briefs, Execution Reports, decision requests, approval requests, Decision Resolutions, Human Actions, Wait States, Blocked Issues, stage changes, and final reports.
-- [ ] The projection seam accepts broad company state and returns stable, sorted CEO Office Items without writing a new persisted table.
-- [ ] Items expose stable IDs derived from their source facts.
-- [ ] Items expose whether they are action-bearing so CEO Pending can be derived from the same projection.
-- [ ] Unit tests cover multiple business scenarios, including at least three non-SEO fixtures, and fail if the contract relies on SEO-specific task titles, copy, or artifact subtypes.
-
+- [x] A shared CEO Office Item contract can represent Task Briefs, Execution Reports, decision requests, approval requests, Decision Resolutions, Human Actions, Wait States, Blocked Issues, stage changes, and final reports.
+- [x] The projection seam accepts broad company state and returns stable, sorted CEO Office Items without writing a new persisted table.
+- [x] Items expose stable IDs derived from their source facts.
+- [x] Items expose whether they are action-bearing so CEO Pending can be derived from the same projection.
+- [x] Unit tests cover multiple business scenarios, including at least three non-SEO fixtures, and fail if the contract relies on SEO-specific task titles, copy, or artifact subtypes.
