@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   localizedTextSchema,
+  parseExecutionReportInput,
   type BusinessArtifact,
   type BusinessArtifactKind,
   type BusinessArtifactRole,
@@ -201,6 +202,8 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
   const artifactType = json.artifactType ?? json.artifact_type;
   const taskType = json.taskType ?? json.task_type;
   const sourceProofId = json.sourceProofId ?? json.source_proof_id;
+  const usesStructuredClassification =
+    artifactKind !== undefined || artifactRole !== undefined || artifactSubtype !== undefined;
 
   let classification:
     | {
@@ -211,7 +214,7 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
       }
     | null = null;
 
-  if (artifactKind !== undefined || artifactRole !== undefined || artifactSubtype !== undefined) {
+  if (usesStructuredClassification) {
     if (typeof artifactKind !== "string" || !BUSINESS_ARTIFACT_KINDS.has(artifactKind as BusinessArtifactKind)) {
       errors.push("artifactKind/artifact_kind: Expected a supported business artifact kind.");
     }
@@ -258,6 +261,10 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
     if (outcomeSummaryError) {
       errors.push(outcomeSummaryError);
     }
+    const executionReportError = executionReportFieldError(json.payload, { required: usesStructuredClassification });
+    if (executionReportError) {
+      errors.push(executionReportError);
+    }
     // An `open_decisions` entry on an unknown decisionKind is dropped silently; a malformed entry on a
     // known decisionKind is a structural failure like any other required-field failure.
     errors.push(...parseOpenDecisions(json.payload).errors);
@@ -285,6 +292,21 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
       lineage: json.lineage,
     },
   };
+}
+
+function executionReportFieldError(payload: unknown, options: { required: boolean }): string | null {
+  const required =
+    "payload.execution_report: Required for deliverable and final_report artifacts (conclusion, vision_impact, remaining_gap, recommendation).";
+  if (!isRecord(payload)) {
+    return options.required ? required : null;
+  }
+  const value = payload.execution_report ?? payload.executionReport;
+  if (value === undefined || value === null) {
+    return options.required ? required : null;
+  }
+  return parseExecutionReportInput(value)
+    ? null
+    : "payload.execution_report: Expected conclusion, vision_impact, remaining_gap, and recommendation as non-empty strings or localized text objects.";
 }
 
 /**

@@ -109,6 +109,35 @@ describe("repositories", () => {
     close();
   });
 
+  it("persists structured execution reports on task completion events", () => {
+    const { repos, close } = openTestRepositories();
+    const records = createRecords();
+
+    repos.createCompany(records.company);
+    repos.createDepartment(records.department);
+    repos.createObjective(records.objective);
+    repos.createKeyResult(records.keyResult);
+    repos.createTask(records.task);
+    repos.appendTaskCompletionEvent({
+      ...createTaskCompletionEvent(records.task),
+      executionReport: {
+        conclusion: { en: "The first package should be flat priced." },
+        visionImpact: { en: "This keeps the launch loop simple." },
+        remainingGap: { en: "Payment intent is still untested." },
+        recommendation: { en: "Offer three pilots at the same price." },
+      },
+    });
+
+    expect(repos.listTaskCompletionEventsForCompany(records.company.id)[0]?.executionReport).toEqual({
+      conclusion: { en: "The first package should be flat priced." },
+      visionImpact: { en: "This keeps the launch loop simple." },
+      remainingGap: { en: "Payment intent is still untested." },
+      recommendation: { en: "Offer three pilots at the same price." },
+    });
+
+    close();
+  });
+
   it("persists CEO intakes in chronological order", () => {
     const { repos, close } = openTestRepositories();
     const records = createRecords();

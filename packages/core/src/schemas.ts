@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ExecutionReport } from "./types";
 
 export const nonEmptyString = z.string().trim().min(1);
 
@@ -88,6 +89,26 @@ export const taskAcceptanceProvenanceSchema = z.enum([
   "automatic_acceptance",
   "founder_decision",
 ]);
+export const executionReportSchema = z.object({
+  conclusion: localizedTextSchema,
+  visionImpact: localizedTextSchema,
+  remainingGap: localizedTextSchema,
+  recommendation: localizedTextSchema,
+});
+
+export function parseExecutionReportInput(input: unknown): ExecutionReport | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+  const normalized = {
+    conclusion: normalizeLocalizedReportField(input.conclusion),
+    visionImpact: normalizeLocalizedReportField(input.visionImpact ?? input.vision_impact),
+    remainingGap: normalizeLocalizedReportField(input.remainingGap ?? input.remaining_gap),
+    recommendation: normalizeLocalizedReportField(input.recommendation),
+  };
+  const parsed = executionReportSchema.safeParse(normalized);
+  return parsed.success ? parsed.data : null;
+}
 export const nextStepItemTypeSchema = z.enum([
   "automatic_downstream_task",
   "human_action",
@@ -177,6 +198,17 @@ export const finalFounderReportJobSchema = z.object({
 });
 
 export type FinalFounderReportOutput = z.infer<typeof finalFounderReportOutputSchema>;
+
+function normalizeLocalizedReportField(value: unknown): unknown {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return { en: value.trim() };
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export function parseFinalFounderReportOutput(output: string): FinalFounderReportOutput {
   const jsonSource = output.match(/```json\s*([\s\S]*?)\s*```/i)?.[1] ?? null;

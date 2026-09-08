@@ -137,6 +137,12 @@ export type TaskCompletionOutcome =
   | "needs_replan"
   | "awaiting_founder_decision";
 export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance" | "founder_decision";
+export type ExecutionReport = {
+  conclusion: LocalizedText;
+  visionImpact: LocalizedText;
+  remainingGap: LocalizedText;
+  recommendation: LocalizedText;
+};
 export type NextStepItemType =
   | "automatic_downstream_task"
   | "human_action"
@@ -534,6 +540,11 @@ export type TaskCompletionEvent = {
    * Execution Summary, which is failure facts.
    */
   outcomeSummaryText?: LocalizedText | null;
+  /**
+   * Preferred structured Execution Report for CEO Office. Old completion paths may have only
+   * `outcomeSummaryText`; new deliverables should provide all four sections.
+   */
+  executionReport?: ExecutionReport | null;
   dependencyImpact: unknown;
   nextStepItems: NextStepItem[];
   visionGaps: unknown[];

@@ -1457,7 +1457,16 @@ describe("API routes", () => {
     });
 
     const state = await getJson<{
-      taskCompletionEvents: Array<{ id: string; outcomeSummaryText: { en?: string; zh?: string } | null }>;
+      taskCompletionEvents: Array<{
+        id: string;
+        outcomeSummaryText: { en?: string; zh?: string } | null;
+        executionReport?: {
+          conclusion: { en?: string; zh?: string };
+          visionImpact: { en?: string; zh?: string };
+          remainingGap: { en?: string; zh?: string };
+          recommendation: { en?: string; zh?: string };
+        } | null;
+      }>;
       visionGaps: Array<{ label: string; severity: string; sourceTaskCompletionEventId: string }>;
       ceoAttentionRollups: Array<{
         sourceTaskCompletionEventIds: string[];
@@ -1483,6 +1492,9 @@ describe("API routes", () => {
     );
     expect(
       state.taskCompletionEvents.find((event) => event.id === "task_completion_event_wait")?.outcomeSummaryText,
+    ).toBeNull();
+    expect(
+      state.taskCompletionEvents.find((event) => event.id === "task_completion_event_wait")?.executionReport ?? null,
     ).toBeNull();
     expect(state.visionGaps).toEqual([
       expect.objectContaining({ label: "More customer interviews would improve confidence.", severity: "informational" }),
@@ -3490,6 +3502,12 @@ function writeValidBusinessArtifactFile(workspacePath: string, taskId: string): 
       taskType: "engineering.prototype_implementation",
       payload: {
         result: `Recovered artifact for ${taskId}.`,
+        execution_report: {
+          conclusion: `Recovered deliverable for ${taskId} is complete and ready for review.`,
+          vision_impact: "It keeps the objective on track.",
+          remaining_gap: "Downstream integration remains.",
+          recommendation: "Review the recovered deliverable.",
+        },
         outcome_summary: `Recovered deliverable for ${taskId} is complete and ready for review. It keeps the objective on track; the remaining gap is downstream integration.`,
       },
       lineage: {

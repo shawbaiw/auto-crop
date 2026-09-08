@@ -152,6 +152,12 @@ export type TaskCompletionEventSummary = {
   outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan" | "awaiting_founder_decision";
   acceptanceProvenance: "manual_ceo_review" | "automatic_acceptance" | null;
   outcomeSummaryText?: LocalizedText | null;
+  executionReport?: {
+    conclusion: LocalizedText;
+    visionImpact: LocalizedText;
+    remainingGap: LocalizedText;
+    recommendation: LocalizedText;
+  } | null;
   dependencyImpact: unknown;
   nextStepItems: NextStepItemSummary[];
   visionGaps: unknown[];

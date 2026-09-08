@@ -479,8 +479,8 @@ export function createRepositories(database: DatabaseClient) {
         .prepare(
           `INSERT INTO task_completion_events (
             id, company_id, task_id, department_id, key_result_id, business_artifact_id,
-            outcome, acceptance_provenance, outcome_summary_text, dependency_impact, next_step_items, vision_gaps, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            outcome, acceptance_provenance, outcome_summary_text, execution_report, dependency_impact, next_step_items, vision_gaps, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           event.id,
@@ -492,6 +492,7 @@ export function createRepositories(database: DatabaseClient) {
           event.outcome,
           event.acceptanceProvenance ?? null,
           stringifyLocalizedText(event.outcomeSummaryText),
+          event.executionReport ? JSON.stringify(event.executionReport) : null,
           JSON.stringify(event.dependencyImpact),
           JSON.stringify(event.nextStepItems),
           JSON.stringify(event.visionGaps),
@@ -1447,6 +1448,7 @@ type TaskCompletionEventRow = {
   outcome: TaskCompletionEvent["outcome"];
   acceptance_provenance: TaskCompletionEvent["acceptanceProvenance"];
   outcome_summary_text: string | null;
+  execution_report: string | null;
   dependency_impact: string;
   next_step_items: string;
   vision_gaps: string;
@@ -1824,6 +1826,7 @@ function mapTaskCompletionEvent(row: TaskCompletionEventRow): TaskCompletionEven
     outcome: row.outcome,
     acceptanceProvenance: row.acceptance_provenance ?? null,
     ...(row.outcome_summary_text ? { outcomeSummaryText: parseLocalizedText(row.outcome_summary_text) } : {}),
+    ...(row.execution_report ? { executionReport: JSON.parse(row.execution_report) as TaskCompletionEvent["executionReport"] } : {}),
     dependencyImpact: JSON.parse(row.dependency_impact) as unknown,
     nextStepItems: JSON.parse(row.next_step_items) as TaskCompletionEvent["nextStepItems"],
     visionGaps: JSON.parse(row.vision_gaps) as unknown[],

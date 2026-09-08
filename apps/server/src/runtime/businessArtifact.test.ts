@@ -33,6 +33,12 @@ describe("captureBusinessArtifact", () => {
         source_proof_id: "proof_1",
         payload: {
           selected_keyword: "pricing page generator",
+          execution_report: {
+            conclusion: "The MVP brief settles on a pricing page generator.",
+            vision_impact: "Product has a concrete wedge to build.",
+            remaining_gap: "Demand still needs validation with real founders.",
+            recommendation: "Use the brief as the downstream product direction.",
+          },
           outcome_summary:
             "The MVP brief settles on a pricing page generator. This gives Product a concrete wedge to build; the remaining gap is validating demand with real founders.",
         },
@@ -66,6 +72,112 @@ describe("captureBusinessArtifact", () => {
       validationStatus: "valid",
       reviewStatus: "unreviewed",
     });
+  });
+
+  it("accepts structured Execution Report fields on deliverables", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "deliverable",
+        artifact_role: "findings",
+        artifact_subtype: "pricing_scan",
+        task_type: "research.pricing_scan",
+        payload: {
+          execution_report: {
+            conclusion: "Founders prefer a fixed pilot price.",
+            vision_impact: "The offer can be validated without usage metering.",
+            remaining_gap: "No buyer has yet paid for the package.",
+            recommendation: "Test a flat pilot price with three prospects.",
+          },
+          outcome_summary:
+            "Founders prefer a fixed pilot price. This supports simple validation; the remaining gap is paid demand. Recommend testing it with three prospects.",
+        },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    const artifact = captureBusinessArtifact({
+      task: createTaskRecord(),
+      proofs: [createProofRecord()],
+      workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact.validationStatus).toBe("valid");
+    expect(artifact.payload).toMatchObject({
+      execution_report: {
+        conclusion: "Founders prefer a fixed pilot price.",
+        vision_impact: "The offer can be validated without usage metering.",
+        remaining_gap: "No buyer has yet paid for the package.",
+        recommendation: "Test a flat pilot price with three prospects.",
+      },
+    });
+  });
+
+  it("rejects malformed or missing structured Execution Report fields on new deliverables", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "deliverable",
+        artifact_role: "findings",
+        artifact_subtype: "pricing_scan",
+        task_type: "research.pricing_scan",
+        payload: {
+          execution_report: {
+            conclusion: "Founders prefer a fixed pilot price.",
+            vision_impact: "The offer can be validated without usage metering.",
+          },
+          outcome_summary: "Legacy prose remains present.",
+        },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    const invalid = captureBusinessArtifact({
+      task: createTaskRecord(),
+      proofs: [createProofRecord()],
+      workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+    expect(invalid.validationStatus).toBe("invalid_schema");
+    expect(invalid.validationErrors).toContain(
+      "payload.execution_report: Expected conclusion, vision_impact, remaining_gap, and recommendation as non-empty strings or localized text objects.",
+    );
+
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "deliverable",
+        artifact_role: "findings",
+        artifact_subtype: "pricing_scan",
+        task_type: "research.pricing_scan",
+        payload: { outcome_summary: "Legacy prose remains present." },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    const missingStructuredReport = captureBusinessArtifact({
+      task: createTaskRecord(),
+      proofs: [createProofRecord()],
+      workspacePath,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_2",
+    });
+    expect(missingStructuredReport.validationStatus).toBe("invalid_schema");
+    expect(missingStructuredReport.validationErrors).toContain(
+      "payload.execution_report: Required for deliverable and final_report artifacts (conclusion, vision_impact, remaining_gap, recommendation).",
+    );
   });
 
   it("records an invalid blocker artifact when no artifact file exists", () => {
@@ -589,6 +701,12 @@ describe("captureBusinessArtifact", () => {
         artifact_subtype: "final_founder_report",
         task_type: "founder_report",
         payload: {
+          execution_report: {
+            conclusion: { en: "The launch path is proven.", zh: "发布路径已验证。" },
+            vision_impact: { en: "The company can move from build to launch.", zh: "公司可以从构建进入发布。" },
+            remaining_gap: { en: "Traffic growth is still unproven.", zh: "流量增长仍未验证。" },
+            recommendation: { en: "Begin the launch checklist.", zh: "开始发布清单。" },
+          },
           outcome_summary: { en: "The launch path is proven.", zh: "发布路径已验证。" },
         },
         lineage: {},
@@ -680,7 +798,15 @@ describe("captureBusinessArtifact", () => {
         artifact_role: "spec",
         artifact_subtype: "mvp_brief",
         task_type: "product_planning",
-        payload,
+        payload: {
+          execution_report: {
+            conclusion: "The brief settles the task.",
+            vision_impact: "It gives the objective usable direction.",
+            remaining_gap: "The business still needs downstream validation.",
+            recommendation: "Move to the next dependent step.",
+          },
+          ...payload,
+        },
         lineage: {},
       }),
       "utf8",

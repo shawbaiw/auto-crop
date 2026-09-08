@@ -40,7 +40,7 @@ describe("projectCeoOfficeItems", () => {
       { id: "task_brief:task", type: "task_brief", title, occurredAt: "2026-09-01T09:00:00Z", actionBearing: false },
       { id: "execution_report:completion", type: "execution_report", title,
         occurredAt: "2026-09-01T10:00:00Z", actionBearing: false,
-        data: { conclusion: { en: conclusion, zh: "业务结论" } } },
+        data: { conclusion: null, summaryFallback: { en: conclusion, zh: "业务结论" } } },
     ]);
     expect(items).toHaveLength(2);
     expect(items.filter((item) => item.actionBearing)).toEqual([]);
@@ -99,6 +99,33 @@ describe("projectCeoOfficeItems", () => {
       { type: "task_brief", occurredAt: "2026-09-01T10:00:00Z" },
       { type: "execution_report", occurredAt: "2026-09-01T10:00:00Z" },
     ]);
+  });
+
+  it("prefers structured Execution Report fields and keeps Task Outcome Summary as fallback", () => {
+    const state = scenario("Choose pricing", "Legacy summary remains readable");
+    const [completion] = state.taskCompletionEvents;
+    const items = projectCeoOfficeItems({
+      ...state,
+      taskCompletionEvents: [{
+        ...completion!,
+        executionReport: {
+          conclusion: { en: "Usage-based pricing is premature." },
+          visionImpact: { en: "The business can sell a simpler first package." },
+          remainingGap: { en: "Real buyer willingness to pay is still untested." },
+          recommendation: { en: "Start with a flat pilot price." },
+        },
+      }],
+    });
+
+    expect(items.find((item) => item.type === "execution_report")).toMatchObject({
+      data: {
+        conclusion: { en: "Usage-based pricing is premature." },
+        visionImpact: { en: "The business can sell a simpler first package." },
+        remainingGap: { en: "Real buyer willingness to pay is still untested." },
+        recommendation: { en: "Start with a flat pilot price." },
+        summaryFallback: null,
+      },
+    });
   });
 
   it("does not import another company's facts into the timeline", () => {

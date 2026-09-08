@@ -34,6 +34,7 @@ export type CEOOfficeItem =
       visionImpact: LocalizedText | null;
       remainingGap: LocalizedText | null;
       recommendation: LocalizedText | null;
+      summaryFallback: LocalizedText | null;
       businessArtifactId: string | null;
       outcome: TaskCompletionEvent["outcome"];
     }, false>
@@ -142,13 +143,17 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
   }
 
   for (const event of completions) {
+    const executionReport = event.executionReport ?? null;
     items.push({
       ...context(event.taskId), departmentId: event.departmentId,
       id: `execution_report:${event.id}`, type: "execution_report", sourceId: event.id,
       occurredAt: event.createdAt, actionBearing: false,
       data: {
-        conclusion: event.outcomeSummaryText ?? null,
-        visionImpact: null, remainingGap: null, recommendation: null,
+        conclusion: executionReport?.conclusion ?? null,
+        visionImpact: executionReport?.visionImpact ?? null,
+        remainingGap: executionReport?.remainingGap ?? null,
+        recommendation: executionReport?.recommendation ?? null,
+        summaryFallback: executionReport ? null : event.outcomeSummaryText ?? null,
         businessArtifactId: event.businessArtifactId, outcome: event.outcome,
       },
     });

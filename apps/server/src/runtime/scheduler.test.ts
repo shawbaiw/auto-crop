@@ -1524,6 +1524,12 @@ describe("runSchedulerOnce", () => {
                 task_type: "engineering.implementation_changes",
                 payload: {
                   summary: "Recorded implementation diff.",
+                  execution_report: {
+                    conclusion: "The implementation changes are recorded as a diff.",
+                    vision_impact: "This completes the build step for the objective.",
+                    remaining_gap: "Review and downstream integration remain.",
+                    recommendation: "Use the diff as review proof.",
+                  },
                   outcome_summary:
                     "The implementation changes are recorded as a diff. This completes the build step for the objective; the remaining gap is review and downstream integration.",
                 },
@@ -2907,6 +2913,12 @@ function writeValidBusinessArtifact(task: Task): void {
       task_type: "engineering.prototype_implementation",
       payload: {
         summary: "Mock implementation completed.",
+        execution_report: {
+          conclusion: "The prototype implementation is complete and passes its mock proof.",
+          vision_impact: "It advances the objective's build milestone.",
+          remaining_gap: "Validation with real users before launch remains.",
+          recommendation: "Review the completed mock proof.",
+        },
         outcome_summary:
           "The prototype implementation is complete and passes its mock proof. It advances the objective's build milestone; the remaining gap is validation with real users before launch.",
         recommendation: "Review the completed mock proof.",
@@ -2935,6 +2947,12 @@ function writeBusinessArtifactWithOpenDecisions(task: Task, openDecisions: unkno
       task_type: "product_planning",
       payload: {
         summary: "Mock brief completed.",
+        execution_report: {
+          conclusion: "The brief settles on a pricing wedge and leaves the pricing model open.",
+          vision_impact: "It gives Growth a number to test.",
+          remaining_gap: "Willingness-to-pay evidence remains.",
+          recommendation: "Resolve the founder decision before pricing-dependent work continues.",
+        },
         outcome_summary:
           "The brief settles on a pricing wedge and leaves the pricing model open. It gives Growth a number to test; the remaining gap is willingness-to-pay evidence.",
         open_decisions: openDecisions,

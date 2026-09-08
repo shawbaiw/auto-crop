@@ -1,4 +1,4 @@
-import { localizedTextFromString, localizedTextSchema, nextStepItemSeveritySchema, nextStepItemTypeSchema, type BusinessArtifact, type LocalizedText, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
+import { localizedTextFromString, localizedTextSchema, nextStepItemSeveritySchema, nextStepItemTypeSchema, parseExecutionReportInput, type BusinessArtifact, type ExecutionReport, type LocalizedText, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { parseOpenDecisions, type FounderDecisionDeclaration } from "./founderDecision";
 import { createDefaultId } from "./ids";
@@ -11,6 +11,8 @@ export function recordTaskCompletionEvent(input: {
   businessArtifact?: BusinessArtifact | null;
   /** Overrides the summary read from the Business Artifact payload (e.g. migration reconciliation passes null). */
   outcomeSummaryText?: LocalizedText | null;
+  /** Overrides the structured report read from the Business Artifact payload. */
+  executionReport?: ExecutionReport | null;
   /**
    * The kept `open_decisions` declarations for this task. Pass to reuse an already-parsed result;
    * omitted, they are re-read from `businessArtifact.payload`. Each becomes a `founder_decision`
@@ -42,6 +44,10 @@ export function recordTaskCompletionEvent(input: {
     input.outcomeSummaryText !== undefined
       ? input.outcomeSummaryText
       : extractOutcomeSummaryText(input.businessArtifact?.payload);
+  const executionReport =
+    input.executionReport !== undefined
+      ? input.executionReport
+      : extractExecutionReport(input.businessArtifact?.payload);
   const event: TaskCompletionEvent = {
     id: input.createId?.("task_completion_event") ?? createDefaultId("task_completion_event"),
     companyId: input.task.companyId,
@@ -52,6 +58,7 @@ export function recordTaskCompletionEvent(input: {
     outcome: input.outcome,
     acceptanceProvenance: input.acceptanceProvenance ?? null,
     ...(outcomeSummaryText ? { outcomeSummaryText } : {}),
+    ...(executionReport ? { executionReport } : {}),
     dependencyImpact: mergeNextStepErrors(input.dependencyImpact ?? {}, [...proposal.errors, ...validatedNextSteps.errors]),
     nextStepItems: validatedNextSteps.items,
     visionGaps: input.visionGaps ?? [],
@@ -60,6 +67,14 @@ export function recordTaskCompletionEvent(input: {
 
   input.repositories.appendTaskCompletionEvent(event);
   return event;
+}
+
+export function extractExecutionReport(payload: unknown): ExecutionReport | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  const value = payload.execution_report ?? payload.executionReport;
+  return parseExecutionReportInput(value);
 }
 
 /**

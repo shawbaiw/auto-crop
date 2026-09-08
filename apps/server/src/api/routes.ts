@@ -2280,6 +2280,7 @@ function summarizeTaskCompletionEvent(event: TaskCompletionEvent) {
   return {
     ...event,
     outcomeSummaryText: event.outcomeSummaryText ?? null,
+    executionReport: event.executionReport ?? null,
   };
 }
 

@@ -29,6 +29,9 @@ describe("buildTaskExecutionPrompt", () => {
     expect(prompt).toContain("## Current Task");
     expect(prompt).toContain("Task Title: Find and validate the first keyword opportunity");
     expect(prompt).toContain("Original Proof Schema: research-report");
+    expect(prompt).toContain("## Structured Execution Report");
+    expect(prompt).toContain("`conclusion`, `vision_impact`, `remaining_gap`, and `recommendation`");
+    expect(prompt).toContain("Also include `outcome_summary` for compatibility");
   });
 
   it("keeps accepted upstream business handoffs inside the same execution prompt contract", () => {

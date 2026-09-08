@@ -235,6 +235,7 @@ export function migrate(database: DatabaseClient): void {
       outcome TEXT NOT NULL,
       acceptance_provenance TEXT,
       outcome_summary_text TEXT,
+      execution_report TEXT,
       dependency_impact TEXT NOT NULL,
       next_step_items TEXT NOT NULL,
       vision_gaps TEXT NOT NULL,
@@ -327,6 +328,7 @@ export function migrate(database: DatabaseClient): void {
   migrateBusinessArtifactClassificationFields(database);
   migrateTaskCompletionAcceptanceProvenance(database);
   migrateTaskCompletionOutcomeSummary(database);
+  migrateTaskCompletionExecutionReport(database);
   migrateReplanProposalDiagnostics(database);
   migrateLocalizedBusinessContentFields(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
@@ -417,6 +419,11 @@ function migrateTaskCompletionAcceptanceProvenance(database: DatabaseClient): vo
 function migrateTaskCompletionOutcomeSummary(database: DatabaseClient): void {
   const columns = getColumnNames(database, "task_completion_events");
   addColumnIfMissing(database, columns, "task_completion_events", "outcome_summary_text TEXT");
+}
+
+function migrateTaskCompletionExecutionReport(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "task_completion_events");
+  addColumnIfMissing(database, columns, "task_completion_events", "execution_report TEXT");
 }
 
 function migrateTaskPosition(database: DatabaseClient): void {
