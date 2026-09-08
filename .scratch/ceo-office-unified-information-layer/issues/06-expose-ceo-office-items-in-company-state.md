@@ -4,11 +4,10 @@
 
 **Blocked by:** 03 (Project Task Brief And Execution Report Timeline Items), 04 (Project Action-Bearing CEO Office Items), 05 (Project Stage Changes, Final Reports, And Decision Resolutions)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Company state includes the projected CEO Office Items.
-- [ ] Existing company state fields remain available for backward-compatible UI sections.
-- [ ] Repeated company state reads return stable item IDs and stable ordering.
-- [ ] API tests cover the presence of CEO Office Items and preservation of existing fields.
-- [ ] Tests include at least one company state fixture where ordinary completions appear in the Timeline but not in CEO Pending.
-
+- [x] Company state includes the projected CEO Office Items.
+- [x] Existing company state fields remain available for backward-compatible UI sections.
+- [x] Repeated company state reads return stable item IDs and stable ordering.
+- [x] API tests cover the presence of CEO Office Items and preservation of existing fields.
+- [x] Tests include at least one company state fixture where ordinary completions appear in the Timeline but not in CEO Pending.

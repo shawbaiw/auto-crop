@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BusinessArtifact, Proof, Task, TaskEvent } from "@auto-crop/core";
+import { deriveCeoPendingItems, type BusinessArtifact, type CEOOfficeItem, type Proof, type Task, type TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter, AgentRunRequest } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
@@ -889,6 +889,116 @@ describe("API routes", () => {
     expect((state.finalFounderReport!.sections.departmentContributions as Array<{ en: string }>)[0]?.en).toBe(
       "Engineering built it",
     );
+
+    await fixture.close();
+  });
+
+  it("exposes stable CEO Office Items in company state while preserving legacy CEO Office fields", async () => {
+    const seeded = await seedAwaitingFounderDecision({
+      decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Subscription", tradeoffs: "Recurring revenue.", recommended: true },
+            { label: "One-time", tradeoffs: "Lower buying friction." },
+          ],
+        },
+      ],
+    });
+    const { fixture, companyId, sourceTask } = seeded;
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const ordinaryTask = {
+      ...createIsolatedTask(templateTask, "company_state_ordinary_completion", "Document the onboarding script", "complete", 280),
+      departmentId: sourceTask.departmentId,
+    };
+    fixture.repositories.createTask(ordinaryTask);
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_company_state_ordinary",
+      companyId,
+      taskId: ordinaryTask.id,
+      departmentId: ordinaryTask.departmentId,
+      keyResultId: ordinaryTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      acceptanceProvenance: "automatic_acceptance",
+      outcomeSummaryText: { en: "The onboarding script is documented and ready to reuse." },
+      dependencyImpact: {},
+      nextStepItems: [],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:01:00.000Z",
+    });
+
+    type CompanyStateWithCeoOfficeItems = {
+      ceoOfficeItems: CEOOfficeItem[];
+      taskCompletionEvents: Array<{ id: string; taskId: string; outcome: string }>;
+      founderDecisions: Array<{ id: string; taskId: string; status: string; decisionKind: string }>;
+      humanActions: unknown[];
+      waitStates: unknown[];
+      ceoAttentionRollups: unknown[];
+      finalFounderReport: unknown | null;
+      founderReport: { actualOutputs: unknown[] };
+    };
+    const first = await getJson<CompanyStateWithCeoOfficeItems>(`${fixture.baseUrl}/api/companies/${companyId}/state`);
+    const second = await getJson<CompanyStateWithCeoOfficeItems>(`${fixture.baseUrl}/api/companies/${companyId}/state`);
+
+    expect(first.taskCompletionEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "task_completion_event_company_state_ordinary", taskId: ordinaryTask.id, outcome: "accepted" }),
+        expect.objectContaining({ id: "task_completion_event_fd", taskId: sourceTask.id, outcome: "awaiting_founder_decision" }),
+      ]),
+    );
+    expect(first.founderDecisions).toEqual([
+      expect.objectContaining({ id: seeded.decisionId(1), taskId: sourceTask.id, status: "pending", decisionKind: "pricing_model" }),
+    ]);
+    expect(Array.isArray(first.humanActions)).toBe(true);
+    expect(Array.isArray(first.waitStates)).toBe(true);
+    expect(Array.isArray(first.ceoAttentionRollups)).toBe(true);
+    expect(first.finalFounderReport).toBeNull();
+    expect(Array.isArray(first.founderReport.actualOutputs)).toBe(true);
+
+    expect(first.ceoOfficeItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "execution_report:task_completion_event_company_state_ordinary",
+          type: "execution_report",
+          taskId: ordinaryTask.id,
+          actionBearing: false,
+          data: expect.objectContaining({
+            summaryFallback: { en: "The onboarding script is documented and ready to reuse." },
+            outcome: "accepted",
+          }),
+        }),
+        expect.objectContaining({
+          id: `decision_request:${seeded.decisionId(1)}`,
+          type: "decision_request",
+          taskId: sourceTask.id,
+          actionBearing: true,
+          data: expect.objectContaining({ status: "pending", decisionKind: "pricing_model" }),
+        }),
+      ]),
+    );
+    const relevantTimelineIds = first.ceoOfficeItems
+      .map((item) => item.id)
+      .filter((id) =>
+        [
+          "task_brief:founder_decision_resolve_source",
+          "execution_report:task_completion_event_fd",
+          `decision_request:${seeded.decisionId(1)}`,
+          "task_brief:company_state_ordinary_completion",
+          "execution_report:task_completion_event_company_state_ordinary",
+        ].includes(id),
+      );
+    expect(relevantTimelineIds).toEqual([
+      "task_brief:founder_decision_resolve_source",
+      "execution_report:task_completion_event_fd",
+      `decision_request:${seeded.decisionId(1)}`,
+      "task_brief:company_state_ordinary_completion",
+      "execution_report:task_completion_event_company_state_ordinary",
+    ]);
+    const ceoPendingIds = deriveCeoPendingItems(first.ceoOfficeItems).map((item) => item.id);
+    expect(ceoPendingIds).toContain(`decision_request:${seeded.decisionId(1)}`);
+    expect(ceoPendingIds).not.toContain("execution_report:task_completion_event_company_state_ordinary");
+    expect(second.ceoOfficeItems.map((item) => item.id)).toEqual(first.ceoOfficeItems.map((item) => item.id));
 
     await fixture.close();
   });
