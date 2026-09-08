@@ -677,7 +677,7 @@ function CeoOfficeTimeline({
 }) {
   const { language, t } = useLanguage();
   const line = (text: LocalizedText | null | undefined): string => resolveLocalizedValue(text, language, text?.en ?? "");
-  const visibleItems = [...items].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+  const visibleItems = [...items].sort(compareCeoOfficeTimelineItems);
 
   return (
     <RetroPanel
@@ -729,11 +729,67 @@ function CeoOfficeTimeline({
                 />
               </div>
             ) : null}
+            {item.type === "decision_resolution" ? (
+              <div className="ceo-office-timeline__body">
+                <p>{line(item.data.note) || item.data.chosenOption || item.data.outcome}</p>
+                <VideotexKeyValue
+                  items={[
+                    { label: t("department.timelineResolutionOutcome"), value: item.data.outcome },
+                    { label: t("department.timelineChosenOption"), value: item.data.chosenOption ?? t("department.none") },
+                    { label: t("department.timelineDecisionRequest"), value: item.data.requestItemId },
+                  ]}
+                />
+              </div>
+            ) : null}
+            {item.type === "stage_change" ? (
+              <div className="ceo-office-timeline__body">
+                <p>{line(item.data.summary)}</p>
+                <VideotexKeyValue
+                  items={[
+                    { label: t("department.timelineRecommendation"), value: line(item.data.recommendedNextAction) },
+                    { label: t("department.completedTasks"), value: formatTimelineDependencies(item.data.affectedTaskIds, t("department.none")) },
+                  ]}
+                />
+              </div>
+            ) : null}
+            {item.type === "final_report" ? (
+              <div className="ceo-office-timeline__body">
+                <p>{line(item.data.sections.actualResult)}</p>
+                <VideotexKeyValue
+                  items={[
+                    { label: t("department.finalFounderReport"), value: item.data.isCurrent ? t("department.timelineCurrentReport") : t("department.timelineSupersededReport") },
+                    { label: t("department.finalReportVision"), value: line(item.data.sections.vision) },
+                    { label: t("department.finalReportGoalFit"), value: line(item.data.sections.goalFit) },
+                    { label: t("department.finalReportRemainingGaps"), value: line(item.data.sections.remainingGaps) },
+                    { label: t("department.finalReportNextStep"), value: line(item.data.sections.recommendedNextStep) },
+                  ]}
+                />
+              </div>
+            ) : null}
           </article>
         );
       })}
     </RetroPanel>
   );
+}
+
+const ceoOfficeTimelineOrder: Record<CeoOfficeItemSummary["type"], number> = {
+  task_brief: 0,
+  execution_report: 1,
+  decision_request: 2,
+  approval_request: 3,
+  human_action: 4,
+  wait_state: 5,
+  blocked_issue: 6,
+  decision_resolution: 7,
+  stage_change: 8,
+  final_report: 9,
+};
+
+function compareCeoOfficeTimelineItems(a: CeoOfficeItemSummary, b: CeoOfficeItemSummary): number {
+  return Date.parse(a.occurredAt) - Date.parse(b.occurredAt) ||
+    ceoOfficeTimelineOrder[a.type] - ceoOfficeTimelineOrder[b.type] ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
 function formatCeoOfficeItemType(type: CeoOfficeItemSummary["type"], t: ReturnType<typeof useLanguage>["t"]): string {

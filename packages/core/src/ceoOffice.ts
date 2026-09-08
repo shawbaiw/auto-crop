@@ -1,7 +1,7 @@
 import { localizedTextFromString, type LocalizedText } from "./localizedText";
 import type {
   AgentFailureReason, BusinessArtifact, CeoAttentionRollup, CeoReviewDecision, Company, FinalFounderReport,
-  FounderDecision, HumanAction, KeyResult, Objective, Task, TaskCompletionEvent,
+  FounderDecision, FounderDecisionResolution, HumanAction, KeyResult, Objective, Task, TaskCompletionEvent,
   NextStepItem, TaskDependency, TaskEvent, TaskProgressEvent, TaskStatus, VisionGap, WaitState,
 } from "./types";
 
@@ -65,8 +65,11 @@ export type CEOOfficeItem =
       status: "open" | "resolved";
       affectedTaskIds: string[];
     }>
-  | OfficeItem<"stage_change", Pick<CeoAttentionRollup,
-      "summary" | "recommendedNextAction" | "affectedTaskIds">, false>
+  | OfficeItem<"stage_change", {
+      summary: LocalizedText;
+      recommendedNextAction: LocalizedText;
+      affectedTaskIds: string[];
+    }, false>
   | OfficeItem<"final_report", Pick<FinalFounderReport,
       "classification" | "sections" | "isCurrent" | "supersedesReportId">, false>;
 
@@ -92,6 +95,7 @@ export type CeoOfficeProjectionInput = {
   keyResults?: readonly KeyResult[];
   businessArtifacts?: readonly BusinessArtifact[];
   founderDecisions?: readonly FounderDecision[];
+  founderDecisionResolutions?: readonly FounderDecisionResolution[];
   ceoReviewDecisions?: readonly CeoReviewDecision[];
   humanActions?: readonly HumanAction[];
   waitStates?: readonly WaitState[];
@@ -123,6 +127,9 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
   const businessArtifactsById = new Map((input.businessArtifacts ?? [])
     .filter((artifact) => artifact.companyId === input.company.id)
     .map((artifact) => [artifact.id, artifact]));
+  const founderDecisionResolutionsById = new Map((input.founderDecisionResolutions ?? [])
+    .filter((resolution) => resolution.companyId === input.company.id)
+    .map((resolution) => [resolution.founderDecisionId, resolution]));
   const items: CEOOfficeItem[] = [];
 
   function context(taskId: string) {
@@ -209,14 +216,41 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
 
   for (const decision of input.founderDecisions ?? []) {
     if (decision.companyId !== input.company.id) continue;
+    const resolution = founderDecisionResolutionsById.get(decision.id) ?? null;
+    const status = resolution?.status ?? decision.status;
+    const resolvedOption = resolution ? resolution.chosenOption : decision.resolvedOption;
+    const resolvedAt = resolution?.resolvedAt ?? decision.resolvedAt;
     items.push({
       ...context(decision.taskId), departmentId: decision.departmentId,
       id: `decision_request:${decision.id}`, type: "decision_request", sourceId: decision.id,
-      occurredAt: decision.createdAt, actionBearing: decision.status === "pending",
+      occurredAt: decision.createdAt, actionBearing: status === "pending",
       data: {
         decisionKind: decision.decisionKind, options: decision.options, rationale: decision.rationale,
-        status: decision.status, resolvedOption: decision.resolvedOption, resolvedAt: decision.resolvedAt,
+        status, resolvedOption, resolvedAt,
         blockedTaskIds: decision.blockedTaskIds,
+      },
+    });
+  }
+
+  const founderDecisionsById = new Map((input.founderDecisions ?? [])
+    .filter((decision) => decision.companyId === input.company.id)
+    .map((decision) => [decision.id, decision]));
+  for (const resolution of founderDecisionResolutionsById.values()) {
+    const decision = founderDecisionsById.get(resolution.founderDecisionId) ?? null;
+    const resolutionContext = context(resolution.taskId);
+    items.push({
+      ...resolutionContext,
+      departmentId: decision?.departmentId ?? resolutionContext.departmentId,
+      id: `decision_resolution:${resolution.founderDecisionId}`,
+      type: "decision_resolution",
+      sourceId: resolution.founderDecisionId,
+      occurredAt: resolution.resolvedAt,
+      actionBearing: false,
+      data: {
+        requestItemId: `decision_request:${resolution.founderDecisionId}`,
+        outcome: resolution.status,
+        chosenOption: resolution.chosenOption,
+        note: resolution.note ? localizedTextFromString(resolution.note) : null,
       },
     });
   }
@@ -276,11 +310,58 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     items.push(issue);
   }
 
+  for (const rollup of input.ceoAttentionRollups ?? []) {
+    if (rollup.companyId !== input.company.id || rollup.group.type !== "objective" || !rollup.reasons.includes("goal_stage_change")) {
+      continue;
+    }
+    items.push({
+      ...companyContext(input.company, rollup.id, rollup.title, rollup.createdAt),
+      id: `stage_change:${rollup.id}`,
+      type: "stage_change",
+      objectiveId: rollup.group.objectiveId,
+      data: {
+        summary: localizedTextFromString(rollup.summary),
+        recommendedNextAction: localizedTextFromString(rollup.recommendedNextAction),
+        affectedTaskIds: rollup.affectedTaskIds,
+      },
+    });
+  }
+
+  for (const report of input.finalFounderReports ?? []) {
+    if (report.companyId !== input.company.id) continue;
+    items.push({
+      ...companyContext(input.company, report.id, "Final Founder Report", report.createdAt),
+      id: `final_report:${report.id}`,
+      type: "final_report",
+      data: {
+        classification: report.classification,
+        sections: report.sections,
+        isCurrent: report.isCurrent,
+        supersedesReportId: report.supersedesReportId,
+      },
+    });
+  }
+
   return items.filter((item) => Number.isFinite(Date.parse(item.occurredAt))).sort((a, b) =>
     Date.parse(a.occurredAt) - Date.parse(b.occurredAt) ||
     timelineOrder[a.type] - timelineOrder[b.type] ||
     (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
+}
+
+function companyContext(company: Company, sourceId: string, title: string, occurredAt: string) {
+  return {
+    companyId: company.id,
+    sourceId,
+    taskId: null,
+    departmentId: null,
+    objectiveId: null,
+    keyResultId: null,
+    occurredAt,
+    title,
+    titleText: localizedTextFromString(title),
+    actionBearing: false as const,
+  };
 }
 
 /** CEO Pending is the live action subset of CEO Office Items, not a separate queue model. */

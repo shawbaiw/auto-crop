@@ -3,9 +3,12 @@ import {
   projectCeoOfficeItems,
   type AgentFailureReason,
   type BusinessArtifact,
+  type CeoAttentionRollup,
   type CEOOfficeItem,
   type Company,
+  type FinalFounderReport,
   type FounderDecision,
+  type FounderDecisionResolution,
   type HumanAction,
   type KeyResult,
   type Objective,
@@ -85,6 +88,206 @@ describe("projectCeoOfficeItems", () => {
     expect(resolved.find((item) => item.id === "decision_request:choice")).toMatchObject({
       occurredAt: decision.createdAt, data: { status: "resolved", resolvedOption: "Monthly" },
     });
+  });
+
+  it("projects objective stage changes as objective-level timeline items", () => {
+    const state = scenario("Validate buyer urgency", "Buyer urgency is proven");
+    const objective: Objective = {
+      id: "objective_market_fit", companyId: company.id, title: "Reach founder-market fit", status: "complete", priority: 1,
+    };
+    const keyResult: KeyResult = {
+      id: "kr_urgency", objectiveId: objective.id, title: "Confirm urgent buyer pain",
+      metricName: "validated pains", targetValue: "1", currentValue: "1", status: "met",
+    };
+    const stageChange: CeoAttentionRollup = {
+      id: "rollup_stage_change", companyId: company.id,
+      group: { type: "objective", objectiveId: objective.id },
+      title: "Objective complete",
+      summary: "The objective reached a terminal state after buyer validation.",
+      ownerDepartmentId: "product",
+      downstreamDepartmentIds: ["growth"],
+      affectedTaskIds: ["task"],
+      currentBlocker: null,
+      recommendedNextAction: "Prepare the closing company summary.",
+      severity: "informational",
+      reasons: ["goal_stage_change"],
+      relevantHumanActions: [],
+      relevantWaitStates: [],
+      relevantVisionGaps: [],
+      relevantFounderDecisions: [],
+      sourceTaskCompletionEventIds: ["completion"],
+      createdAt: "2026-09-01T10:30:00Z",
+    };
+
+    expect(projectCeoOfficeItems({
+      ...state,
+      tasks: [{ ...state.tasks[0]!, keyResultId: keyResult.id }],
+      objectives: [objective],
+      keyResults: [keyResult],
+      ceoAttentionRollups: [stageChange],
+    })).toContainEqual(expect.objectContaining({
+      id: "stage_change:rollup_stage_change",
+      type: "stage_change",
+      sourceId: stageChange.id,
+      taskId: null,
+      departmentId: null,
+      objectiveId: objective.id,
+      keyResultId: null,
+      title: "Objective complete",
+      occurredAt: "2026-09-01T10:30:00Z",
+      actionBearing: false,
+      data: {
+        summary: { en: "The objective reached a terminal state after buyer validation.", zh: "The objective reached a terminal state after buyer validation." },
+        recommendedNextAction: { en: "Prepare the closing company summary.", zh: "Prepare the closing company summary." },
+        affectedTaskIds: ["task"],
+      },
+    }));
+  });
+
+  it("projects Final Founder Reports as company-level final report timeline items", () => {
+    const state = scenario("Validate pricing", "Pricing is ready");
+    const report: FinalFounderReport = {
+      id: "final_report_1",
+      companyId: company.id,
+      classification: "achieved",
+      sections: {
+        vision: { en: "Build a sustainable business" },
+        actualResult: { en: "A pilot offer is ready." },
+        departmentContributions: [{ en: "Product validated the offer." }],
+        goalFit: { en: "The key result is complete." },
+        remainingGaps: { en: "No blocking gaps remain." },
+        recommendedNextStep: { en: "Start founder-led sales." },
+      },
+      generatedBy: "ceo_agent",
+      isCurrent: true,
+      supersedesReportId: null,
+      createdAt: "2026-09-01T11:00:00Z",
+      updatedAt: "2026-09-01T11:00:00Z",
+    };
+
+    expect(projectCeoOfficeItems({ ...state, finalFounderReports: [report] })).toContainEqual(expect.objectContaining({
+      id: "final_report:final_report_1",
+      type: "final_report",
+      sourceId: report.id,
+      taskId: null,
+      departmentId: null,
+      objectiveId: null,
+      keyResultId: null,
+      title: "Final Founder Report",
+      occurredAt: "2026-09-01T11:00:00Z",
+      actionBearing: false,
+      data: {
+        classification: "achieved",
+        sections: report.sections,
+        isCurrent: true,
+        supersedesReportId: null,
+      },
+    }));
+  });
+
+  it("updates resolved decision requests and projects Decision Resolution history items", () => {
+    const state = scenario("Choose launch target", "Two audiences are viable");
+    const decision: FounderDecision = {
+      id: "launch_choice", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: "task",
+      departmentId: "growth", decisionKind: "launch_target", rationale: "Choose the first audience",
+      options: [{ label: "Clinics", tradeoffs: "More urgent workflow pain", recommended: true }],
+      status: "pending", resolvedOption: null, resolvedAt: null, blockedTaskIds: ["launch"],
+      createdAt: "2026-09-01T10:00:00Z",
+    };
+    const resolution: FounderDecisionResolution = {
+      founderDecisionId: decision.id,
+      companyId: company.id,
+      taskId: "task",
+      status: "resolved",
+      chosenOption: "Clinics",
+      returnReason: null,
+      note: "Start where urgency is clearest.",
+      resolvedAt: "2026-09-01T11:00:00Z",
+    };
+
+    const items = projectCeoOfficeItems({
+      ...state,
+      founderDecisions: [decision],
+      founderDecisionResolutions: [resolution],
+    });
+
+    expect(items.find((item) => item.id === "decision_request:launch_choice")).toMatchObject({
+      actionBearing: false,
+      occurredAt: "2026-09-01T10:00:00Z",
+      data: {
+        status: "resolved",
+        resolvedOption: "Clinics",
+        resolvedAt: "2026-09-01T11:00:00Z",
+      },
+    });
+    expect(items).toContainEqual(expect.objectContaining({
+      id: "decision_resolution:launch_choice",
+      type: "decision_resolution",
+      sourceId: "launch_choice",
+      taskId: "task",
+      departmentId: "growth",
+      occurredAt: "2026-09-01T11:00:00Z",
+      actionBearing: false,
+      data: expect.objectContaining({
+        requestItemId: "decision_request:launch_choice",
+        outcome: "resolved",
+        chosenOption: "Clinics",
+        note: expect.objectContaining({ en: "Start where urgency is clearest." }),
+      }),
+    }));
+  });
+
+  it("sorts stage changes, final reports, and decision resolutions by instant with deterministic ties", () => {
+    const state = scenario("Choose launch target", "Two audiences are viable");
+    const decision: FounderDecision = {
+      id: "launch_choice", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: "task",
+      departmentId: "growth", decisionKind: "launch_target", rationale: "Choose the first audience",
+      options: [{ label: "Clinics", tradeoffs: "More urgent workflow pain", recommended: true }],
+      status: "pending", resolvedOption: null, resolvedAt: null, blockedTaskIds: ["launch"],
+      createdAt: "2026-09-01T10:00:00Z",
+    };
+    const resolution: FounderDecisionResolution = {
+      founderDecisionId: decision.id, companyId: company.id, taskId: "task", status: "resolved",
+      chosenOption: "Clinics", returnReason: null, note: null, resolvedAt: "2026-09-01T12:00:00+02:00",
+    };
+    const stageChange: CeoAttentionRollup = {
+      id: "rollup_stage_change", companyId: company.id, group: { type: "objective", objectiveId: "objective_1" },
+      title: "Objective complete", summary: "Objective complete.", ownerDepartmentId: "product",
+      downstreamDepartmentIds: [], affectedTaskIds: ["task"], currentBlocker: null,
+      recommendedNextAction: "Write final report.", severity: "informational", reasons: ["goal_stage_change"],
+      relevantHumanActions: [], relevantWaitStates: [], relevantVisionGaps: [], relevantFounderDecisions: [],
+      sourceTaskCompletionEventIds: ["completion"], createdAt: "2026-09-01T10:00:00Z",
+    };
+    const report: FinalFounderReport = {
+      id: "final_report_1", companyId: company.id, classification: "achieved", generatedBy: "deterministic_fallback",
+      sections: {
+        vision: { en: "Vision" },
+        actualResult: { en: "Result" },
+        departmentContributions: [],
+        goalFit: { en: "Fit" },
+        remainingGaps: { en: "None" },
+        recommendedNextStep: { en: "Sell" },
+      },
+      isCurrent: true, supersedesReportId: null,
+      createdAt: "2026-09-01T10:00:00Z", updatedAt: "2026-09-01T10:00:00Z",
+    };
+
+    const items = projectCeoOfficeItems({
+      ...state,
+      founderDecisions: [decision],
+      founderDecisionResolutions: [resolution],
+      ceoAttentionRollups: [stageChange],
+      finalFounderReports: [report],
+    });
+
+    expect(items.map((item) => item.id)).toEqual([
+      "task_brief:task",
+      "execution_report:completion",
+      "decision_request:launch_choice",
+      "decision_resolution:launch_choice",
+      "stage_change:rollup_stage_change",
+      "final_report:final_report_1",
+    ]);
   });
 
   it("keeps chronological order and source identities across shuffled reads without mutating state", () => {

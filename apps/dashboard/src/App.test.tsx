@@ -479,6 +479,103 @@ describe("Dashboard App", () => {
     expect(pending).not.toHaveTextContent("Wait State");
   });
 
+  it("renders stage changes, final reports, and decision resolutions in the CEO Office Timeline", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      ceoOfficeItems: [
+        {
+          id: "stage_change:objective_1",
+          type: "stage_change",
+          companyId: "company_1",
+          sourceId: "rollup_1",
+          taskId: null,
+          departmentId: null,
+          objectiveId: "objective_1",
+          keyResultId: null,
+          occurredAt: "2026-08-17T00:03:00.000Z",
+          title: "Objective complete",
+          titleText: null,
+          actionBearing: false,
+          data: {
+            summary: { en: "The objective reached a terminal state after validation." },
+            recommendedNextAction: { en: "Prepare the closing summary." },
+            affectedTaskIds: ["task_1"],
+          },
+        },
+        {
+          id: "decision_resolution:decision_1",
+          type: "decision_resolution",
+          companyId: "company_1",
+          sourceId: "decision_1",
+          taskId: "task_1",
+          departmentId: "department_1",
+          objectiveId: null,
+          keyResultId: null,
+          occurredAt: "2026-08-17T00:04:00.000Z",
+          title: "Choose launch target",
+          titleText: null,
+          actionBearing: false,
+          data: {
+            requestItemId: "decision_request:decision_1",
+            outcome: "resolved",
+            chosenOption: "Clinics",
+            note: { en: "Start where urgency is clearest." },
+          },
+        },
+        {
+          id: "final_report:report_1",
+          type: "final_report",
+          companyId: "company_1",
+          sourceId: "report_1",
+          taskId: null,
+          departmentId: null,
+          objectiveId: null,
+          keyResultId: null,
+          occurredAt: "2026-08-17T00:05:00.000Z",
+          title: "Final Founder Report",
+          titleText: null,
+          actionBearing: false,
+          data: {
+            classification: "achieved",
+            sections: {
+              vision: { en: "Build a sustainable business." },
+              actualResult: { en: "A proof-backed pilot offer is ready." },
+              departmentContributions: [{ en: "Product validated the offer." }],
+              goalFit: { en: "The objective is complete." },
+              remainingGaps: { en: "No blocking gaps remain." },
+              recommendedNextStep: { en: "Start founder-led sales." },
+            },
+            isCurrent: true,
+            supersedesReportId: null,
+          },
+        },
+      ] satisfies CeoOfficeItemSummary[],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const timeline = within(screen.getByRole("region", { name: "CEO Intake Report" })).getByRole("region", { name: "Timeline" });
+    expect(timeline).toHaveTextContent("Stage Change");
+    expect(timeline).toHaveTextContent("The objective reached a terminal state after validation.");
+    expect(timeline).toHaveTextContent("Decision Resolution");
+    expect(timeline).toHaveTextContent("Start where urgency is clearest.");
+    expect(timeline).toHaveTextContent("Clinics");
+    expect(timeline).toHaveTextContent("Final Report");
+    expect(timeline).toHaveTextContent("A proof-backed pilot offer is ready.");
+    expect(timeline).toHaveTextContent("Start founder-led sales.");
+
+    const renderedItems = within(timeline).getAllByRole("article");
+    expect(renderedItems.map((item) => within(item).getByRole("heading").textContent)).toEqual([
+      "Objective complete",
+      "Choose launch target",
+      "Final Founder Report",
+    ]);
+  });
+
   it("styles a goal_stage_change rollup as an achievement, distinct from an exception rollup", async () => {
     const api = createMockApiClient();
     const response = {

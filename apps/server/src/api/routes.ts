@@ -840,6 +840,7 @@ function buildCompanyState(
       keyResults,
       businessArtifacts: businessArtifactRecords,
       founderDecisions: ceoAttention.founderDecisions,
+      founderDecisionResolutions,
       humanActions: ceoAttention.humanActions,
       waitStates: ceoAttention.waitStates,
       visionGaps: ceoAttention.visionGaps,
