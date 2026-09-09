@@ -1,4 +1,4 @@
-import { localizedTextFromString, localizedTextSchema, nextStepItemSeveritySchema, nextStepItemTypeSchema, parseExecutionReportInput, type BusinessArtifact, type ExecutionReport, type LocalizedText, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
+import { localizedTextFromString, localizedTextSchema, nextStepItemSeveritySchema, nextStepItemTypeSchema, parseExecutionReportInput, type BusinessArtifact, type ExecutionReport, type Locale, type LocalizedText, type NextStepItem, type NextStepItemSeverity, type NextStepItemType, type Task, type TaskAcceptanceProvenance, type TaskCompletionEvent, type TaskCompletionOutcome } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { parseOpenDecisions, type FounderDecisionDeclaration } from "./founderDecision";
 import { createDefaultId } from "./ids";
@@ -47,7 +47,10 @@ export function recordTaskCompletionEvent(input: {
   const executionReport =
     input.executionReport !== undefined
       ? input.executionReport
-      : extractExecutionReport(input.businessArtifact?.payload);
+      : extractExecutionReport(
+          input.businessArtifact?.payload,
+          input.repositories.getCompany(input.task.companyId)?.locale ?? "en",
+        );
   const event: TaskCompletionEvent = {
     id: input.createId?.("task_completion_event") ?? createDefaultId("task_completion_event"),
     companyId: input.task.companyId,
@@ -69,12 +72,18 @@ export function recordTaskCompletionEvent(input: {
   return event;
 }
 
-export function extractExecutionReport(payload: unknown): ExecutionReport | null {
+/**
+ * Read the structured Execution Report the completing agent wrote into the Business Artifact payload.
+ * `locale` is the company's canonical content locale: a bare-string field is stored under that key
+ * (see {@link parseExecutionReportInput}). Returns `null` when no structured report is present, in
+ * which case the `outcome_summary` compatibility fallback carries the prose.
+ */
+export function extractExecutionReport(payload: unknown, locale: Locale): ExecutionReport | null {
   if (!isRecord(payload)) {
     return null;
   }
   const value = payload.execution_report ?? payload.executionReport;
-  return parseExecutionReportInput(value);
+  return parseExecutionReportInput(value, locale);
 }
 
 /**

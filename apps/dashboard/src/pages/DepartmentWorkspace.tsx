@@ -17,6 +17,7 @@ import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
   BusinessArtifactSummary,
+  Locale,
   LocalizedText,
   CeoAttentionRollupSummary,
   CeoReviewDecisionResponse,
@@ -220,6 +221,7 @@ export function DepartmentWorkspace({
                 />
                 <CeoIntakeWorkspace
                   companyId={company.id}
+                  companyLocale={company.locale ?? "en"}
                   draft={ceoIntakeDraft}
                   departments={departments}
                   intakes={ceoIntakes}
@@ -323,6 +325,7 @@ function CeoIntakeWorkspace({
   ceoAttentionRollups,
   ceoOfficeItems,
   companyId,
+  companyLocale,
   finalFounderReport,
   finalFounderReportPreparing,
   departments,
@@ -349,6 +352,7 @@ function CeoIntakeWorkspace({
   ceoAttentionRollups: CeoAttentionRollupSummary[];
   ceoOfficeItems: CeoOfficeItemSummary[];
   companyId: string;
+  companyLocale: Locale;
   finalFounderReport: FinalFounderReportSummary | null;
   finalFounderReportPreparing: boolean;
   departments: DepartmentSummary[];
@@ -423,6 +427,7 @@ function CeoIntakeWorkspace({
         successMessage={successMessage}
       />
       <CeoOfficeTimeline
+        companyLocale={companyLocale}
         departmentsById={departmentsById}
         highlightedItemId={highlightedOfficeItemId}
         items={ceoOfficeItems}
@@ -675,12 +680,14 @@ function FinalFounderReportPanel({
 }
 
 function CeoOfficeTimeline({
+  companyLocale,
   departmentsById,
   highlightedItemId,
   items,
   outcomesLastSeen,
   tasksById,
 }: {
+  companyLocale: Locale;
   departmentsById: Map<string, DepartmentSummary>;
   highlightedItemId: string | null;
   items: CeoOfficeItemSummary[];
@@ -688,7 +695,26 @@ function CeoOfficeTimeline({
   tasksById: Map<string, TaskSummary>;
 }) {
   const { language, t } = useLanguage();
-  const line = (text: LocalizedText | null | undefined): string => resolveLocalizedValue(text, language, text?.en ?? "");
+  // A founder-facing localized field is authored in the one company locale (ADR 0013 → single
+  // canonical locale). When that locale value is absent we show a visible "untranslated" marker and
+  // log the gap, rather than silently falling back to another locale — the founder should see it as a
+  // gap, not as the intended content (spec Decision 2). A field that is simply not present (`null`)
+  // is not a translation gap: it returns "" so the caller's `|| t("department.none")` fallback wins.
+  const line = (text: LocalizedText | null | undefined): string => {
+    if (!text) {
+      return "";
+    }
+    const value = text[companyLocale];
+    if (value && value.trim().length > 0) {
+      return value;
+    }
+    console.warn(
+      `[CeoOfficeTimeline] localized field is missing the company locale "${companyLocale}"; available locales: ${
+        Object.keys(text).join(", ") || "none"
+      }`,
+    );
+    return t("department.timelineUntranslated");
+  };
   const visibleItems = [...items].sort(compareCeoOfficeTimelineItems);
 
   return (

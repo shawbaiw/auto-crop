@@ -180,6 +180,77 @@ describe("captureBusinessArtifact", () => {
     );
   });
 
+  it("accepts a deliverable whose Execution Report omits the company locale on a field (marker, not a failure)", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "deliverable",
+        artifact_role: "findings",
+        artifact_subtype: "pricing_scan",
+        task_type: "research.pricing_scan",
+        payload: {
+          execution_report: {
+            conclusion: { zh: "创始人倾向于固定的试点价格。" },
+            // The agent left this field in English on a zh company — a visible marker in the UI, not
+            // a structural validation failure (spec Decision 2).
+            vision_impact: { en: "The offer can be validated without usage metering." },
+            remaining_gap: { zh: "尚无买家为该套餐付费。" },
+            recommendation: { zh: "与三位潜在客户测试固定试点价格。" },
+          },
+          outcome_summary: "创始人倾向于固定的试点价格。",
+        },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    const artifact = captureBusinessArtifact({
+      task: createTaskRecord(),
+      proofs: [createProofRecord()],
+      workspacePath,
+      locale: "zh",
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact.validationStatus).toBe("valid");
+  });
+
+  it("still fails a deliverable that omits the Execution Report entirely on a zh company", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(
+      join(workspacePath, ".auto-crop", "business-artifact.json"),
+      JSON.stringify({
+        artifact_kind: "deliverable",
+        artifact_role: "findings",
+        artifact_subtype: "pricing_scan",
+        task_type: "research.pricing_scan",
+        payload: { outcome_summary: "仅有旧版摘要。" },
+        lineage: {},
+      }),
+      "utf8",
+    );
+
+    const artifact = captureBusinessArtifact({
+      task: createTaskRecord(),
+      proofs: [createProofRecord()],
+      workspacePath,
+      locale: "zh",
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: () => "business_artifact_1",
+    });
+
+    expect(artifact.validationStatus).toBe("invalid_schema");
+    expect(artifact.validationErrors).toContain(
+      "payload.execution_report: Required for deliverable and final_report artifacts (conclusion, vision_impact, remaining_gap, recommendation).",
+    );
+  });
+
   it("records an invalid blocker artifact when no artifact file exists", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);

@@ -576,6 +576,56 @@ describe("Dashboard App", () => {
     ]);
   });
 
+  it("marks an Execution Report field that is missing the company locale as untranslated and logs it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      company: { ...created.company, locale: "zh" as const },
+      ceoOfficeItems: [
+        {
+          id: "execution_report:task_completion_event_1",
+          type: "execution_report",
+          companyId: "company_1",
+          sourceId: "task_completion_event_1",
+          taskId: "task_1",
+          departmentId: "department_1",
+          objectiveId: null,
+          keyResultId: null,
+          occurredAt: "2026-08-17T00:02:00.000Z",
+          title: "连接分析账户",
+          titleText: null,
+          actionBearing: false,
+          data: {
+            conclusion: { zh: "分析已准备好连接。" },
+            visionImpact: { en: "English-only vision impact." },
+            remainingGap: null,
+            recommendation: null,
+            summaryFallback: null,
+            businessArtifactId: null,
+            remainingGaps: [],
+            recommendedNextSteps: [],
+            outcome: "accepted",
+          },
+        },
+      ] satisfies CeoOfficeItemSummary[],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    // The company-locale (zh) conclusion renders as-is; the vision impact only has `en`, so it shows
+    // the visible marker rather than silently falling back to English.
+    expect(await screen.findByText("分析已准备好连接。")).toBeInTheDocument();
+    expect(screen.getByText("未翻译 / untranslated")).toBeInTheDocument();
+    expect(screen.queryByText("English-only vision impact.")).not.toBeInTheDocument();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('missing the company locale "zh"'));
+
+    warn.mockRestore();
+  });
+
   it("renders action-bearing CEO Office Items in the Timeline with business details", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();

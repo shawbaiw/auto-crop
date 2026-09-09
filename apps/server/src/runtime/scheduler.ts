@@ -410,6 +410,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               task: { ...task, workspacePath: runWorkspacePath },
               proofs: proof,
               workspacePath: runWorkspacePath,
+              locale: input.repositories.getCompany(task.companyId)?.locale ?? "en",
               environmentBlockerVerification,
               now,
               createId,

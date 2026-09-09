@@ -10,6 +10,7 @@ import {
   localizedTextSchema,
   nextStepItemTypeSchema,
   parseCeoResponse,
+  parseExecutionReportInput,
   parseFinalFounderReportOutput,
   strategicDecisionKindSchema,
   taskAcceptanceProvenanceSchema,
@@ -114,6 +115,50 @@ describe("localizedTextSchema", () => {
   it("rejects empty localized text", () => {
     expect(() => localizedTextSchema.parse({})).toThrow("Localized text must include at least one locale value.");
     expect(() => localizedTextSchema.parse({ en: " " })).toThrow("Localized text must include at least one locale value.");
+  });
+});
+
+describe("parseExecutionReportInput", () => {
+  const bareStrings = {
+    conclusion: "结论。",
+    vision_impact: "愿景影响。",
+    remaining_gap: "剩余缺口。",
+    recommendation: "建议。",
+  };
+
+  it("normalizes a bare string field under the given company locale", () => {
+    expect(parseExecutionReportInput(bareStrings, "zh")).toEqual({
+      conclusion: { zh: "结论。" },
+      visionImpact: { zh: "愿景影响。" },
+      remainingGap: { zh: "剩余缺口。" },
+      recommendation: { zh: "建议。" },
+    });
+    expect(parseExecutionReportInput(bareStrings, "en")).toEqual({
+      conclusion: { en: "结论。" },
+      visionImpact: { en: "愿景影响。" },
+      remainingGap: { en: "剩余缺口。" },
+      recommendation: { en: "建议。" },
+    });
+  });
+
+  it("accepts an already-localized { en, zh } object unchanged", () => {
+    const localized = {
+      conclusion: { en: "Conclusion.", zh: "结论。" },
+      vision_impact: { en: "Impact." },
+      remaining_gap: { zh: "缺口。" },
+      recommendation: { en: "Recommendation.", zh: "建议。" },
+    };
+    expect(parseExecutionReportInput(localized, "zh")).toEqual({
+      conclusion: { en: "Conclusion.", zh: "结论。" },
+      visionImpact: { en: "Impact." },
+      remainingGap: { zh: "缺口。" },
+      recommendation: { en: "Recommendation.", zh: "建议。" },
+    });
+  });
+
+  it("returns null when a field is missing entirely", () => {
+    expect(parseExecutionReportInput({ conclusion: "只有结论。" }, "zh")).toBeNull();
+    expect(parseExecutionReportInput(null, "zh")).toBeNull();
   });
 });
 

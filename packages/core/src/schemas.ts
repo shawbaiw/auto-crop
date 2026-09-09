@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Locale } from "./localizedText";
 import type { ExecutionReport } from "./types";
 
 export const nonEmptyString = z.string().trim().min(1);
@@ -96,15 +97,25 @@ export const executionReportSchema = z.object({
   recommendation: localizedTextSchema,
 });
 
-export function parseExecutionReportInput(input: unknown): ExecutionReport | null {
+/**
+ * Normalize a raw Execution Report payload into the four-field structured shape.
+ *
+ * A bare string field is stored under the company's canonical locale key (`{ [locale]: value }`) —
+ * the founder-facing authoring contract (ADR 0013 → single canonical locale) is that the agent writes
+ * in that one language. An already-localized `{ en, zh }` object is accepted unchanged. Validation
+ * only requires each field to carry at least one locale value; a field that lacks the company locale
+ * but has another is still structurally valid and surfaces as a visible "untranslated" marker in the
+ * UI rather than a completion-blocking failure (spec Decision 2).
+ */
+export function parseExecutionReportInput(input: unknown, locale: Locale): ExecutionReport | null {
   if (!isRecord(input)) {
     return null;
   }
   const normalized = {
-    conclusion: normalizeLocalizedReportField(input.conclusion),
-    visionImpact: normalizeLocalizedReportField(input.visionImpact ?? input.vision_impact),
-    remainingGap: normalizeLocalizedReportField(input.remainingGap ?? input.remaining_gap),
-    recommendation: normalizeLocalizedReportField(input.recommendation),
+    conclusion: normalizeLocalizedReportField(input.conclusion, locale),
+    visionImpact: normalizeLocalizedReportField(input.visionImpact ?? input.vision_impact, locale),
+    remainingGap: normalizeLocalizedReportField(input.remainingGap ?? input.remaining_gap, locale),
+    recommendation: normalizeLocalizedReportField(input.recommendation, locale),
   };
   const parsed = executionReportSchema.safeParse(normalized);
   return parsed.success ? parsed.data : null;
@@ -199,9 +210,9 @@ export const finalFounderReportJobSchema = z.object({
 
 export type FinalFounderReportOutput = z.infer<typeof finalFounderReportOutputSchema>;
 
-function normalizeLocalizedReportField(value: unknown): unknown {
+function normalizeLocalizedReportField(value: unknown, locale: Locale): unknown {
   if (typeof value === "string" && value.trim().length > 0) {
-    return { en: value.trim() };
+    return { [locale]: value.trim() };
   }
   return value;
 }

@@ -144,6 +144,7 @@ export function recoverProofIfPossible(
     task,
     proofs: proof,
     workspacePath,
+    locale: input.repositories.getCompany(task.companyId)?.locale ?? "en",
     now: input.now,
     createId: input.createId,
   });

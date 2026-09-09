@@ -7,6 +7,7 @@ import {
   type BusinessArtifactKind,
   type BusinessArtifactRole,
   type BusinessArtifactType,
+  type Locale,
   type Proof,
   type Task,
 } from "@auto-crop/core";
@@ -86,6 +87,11 @@ export type CaptureBusinessArtifactInput = {
   task: Task;
   proofs: Proof[];
   workspacePath: string;
+  /**
+   * The company's canonical content locale. A bare-string Execution Report field is normalized under
+   * this key; defaults to `"en"` for older callers and companies created before `Company.locale`.
+   */
+  locale?: Locale;
   /** Result of independently checking an Environment-Blocked Blocker's claim. A verified claim degrades the blocker to a deliverable. */
   environmentBlockerVerification?: EnvironmentBlockerVerification;
   now?: () => Date;
@@ -126,7 +132,7 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
   }
 
   const raw = readFileSync(sourcePath, "utf8");
-  const parsed = parseDeclaredBusinessArtifact(raw, input.task);
+  const parsed = parseDeclaredBusinessArtifact(raw, input.task, input.locale ?? "en");
   if (!parsed.success) {
     return {
       id,
@@ -181,7 +187,7 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
   };
 }
 
-function parseDeclaredBusinessArtifact(raw: string, task: Task):
+function parseDeclaredBusinessArtifact(raw: string, task: Task, locale: Locale):
   | { success: true; value: DeclaredBusinessArtifact }
   | { success: false; errors: string[] } {
   let json: unknown;
@@ -261,7 +267,7 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
     if (outcomeSummaryError) {
       errors.push(outcomeSummaryError);
     }
-    const executionReportError = executionReportFieldError(json.payload, { required: usesStructuredClassification });
+    const executionReportError = executionReportFieldError(json.payload, { required: usesStructuredClassification, locale });
     if (executionReportError) {
       errors.push(executionReportError);
     }
@@ -294,7 +300,15 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task):
   };
 }
 
-function executionReportFieldError(payload: unknown, options: { required: boolean }): string | null {
+/**
+ * A `deliverable` / `final_report` must carry a structured Execution Report — `conclusion`,
+ * `vision_impact`, `remaining_gap`, `recommendation` — each a non-empty string (authored in the
+ * company locale, `options.locale`) or an `{ en, zh }` object. A completely absent `execution_report`
+ * is a structural validation failure as before. A field that is present but omits the company locale
+ * (has another locale instead) is NOT a failure: it parses, and the dashboard shows a visible
+ * "untranslated" marker rather than blocking completion or acceptance (spec Decision 2).
+ */
+function executionReportFieldError(payload: unknown, options: { required: boolean; locale: Locale }): string | null {
   const required =
     "payload.execution_report: Required for deliverable and final_report artifacts (conclusion, vision_impact, remaining_gap, recommendation).";
   if (!isRecord(payload)) {
@@ -304,7 +318,7 @@ function executionReportFieldError(payload: unknown, options: { required: boolea
   if (value === undefined || value === null) {
     return options.required ? required : null;
   }
-  return parseExecutionReportInput(value)
+  return parseExecutionReportInput(value, options.locale)
     ? null
     : "payload.execution_report: Expected conclusion, vision_impact, remaining_gap, and recommendation as non-empty strings or localized text objects.";
 }
