@@ -662,11 +662,11 @@ describe("projectCeoOfficeItems", () => {
     ]);
     expect(items.find((item) => item.type === "wait_state")).toMatchObject({
       actionBearing: false,
-      data: { reason: "Search indexing has to settle before validation.", status: "waiting" },
+      data: { reason: { en: "Search indexing has to settle before validation." }, status: "waiting" },
     });
     expect(items.find((item) => item.type === "blocked_issue")).toMatchObject({
       taskId: "blocked_task",
-      data: { reason: "Expected deliverable was not recorded.", status: "open", affectedTaskIds: ["blocked_task"] },
+      data: { reason: { en: "Expected deliverable was not recorded." }, status: "open", affectedTaskIds: ["blocked_task"] },
     });
   });
 
@@ -712,7 +712,7 @@ describe("projectCeoOfficeItems", () => {
       })).toContainEqual(expect.objectContaining({
         type: "blocked_issue",
         actionBearing: true,
-        data: expect.objectContaining({ status: "open", reason: "The task cannot move forward." }),
+        data: expect.objectContaining({ status: "open", reason: { en: "The task cannot move forward." } }),
       }));
     },
   );
@@ -738,10 +738,92 @@ describe("projectCeoOfficeItems", () => {
         type: "blocked_issue",
         actionBearing: true,
         taskId: "task",
-        data: { status: "open", reason: "The work could not be accepted" },
+        data: { status: "open", reason: { en: "The work could not be accepted" } },
       });
     },
   );
+
+  it("keeps a blocked completion's outcome summary as authored so a missing company locale stays visible", () => {
+    const state = scenario("Recover the deliverable", "n/a");
+    const [task] = state.tasks;
+    const zhCompany: Company = { ...company, locale: "zh" };
+    // The agent authored the summary in English only; for a zh company the zh slot must stay absent
+    // so the dashboard renders its "untranslated" marker rather than silently showing English.
+    const blocked: TaskCompletionEvent = {
+      ...state.taskCompletionEvents[0]!, outcome: "blocked",
+      outcomeSummaryText: { en: "The deliverable could not be accepted." },
+    };
+
+    const items = projectCeoOfficeItems({
+      ...state, company: zhCompany, tasks: [{ ...task!, status: "blocked" }], taskCompletionEvents: [blocked],
+    });
+
+    expect(items.find((item) => item.type === "blocked_issue")?.data).toMatchObject({
+      reason: { en: "The deliverable could not be accepted." },
+    });
+    expect((items.find((item) => item.type === "blocked_issue")?.data as { reason: Record<string, string> }).reason.zh)
+      .toBeUndefined();
+  });
+
+  it("wraps agent-authored wait/blocked reasons and human-action labels under the company locale", () => {
+    const state = scenario("Localize the timeline", "Nothing blocks acceptance");
+    const [task] = state.tasks;
+    const zhCompany: Company = { ...company, locale: "zh" };
+    const humanAction: HumanAction = {
+      id: "human_action", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: task!.id,
+      departmentId: "product", label: "连接分析账户。", blockedTaskIds: [],
+      confirmationRequirements: [], evidence: {}, status: "pending",
+      verifiedAt: null, verificationErrors: [], createdAt: "2026-09-01T10:07:00Z",
+    };
+    const waitState: WaitState = {
+      id: "wait_state", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: task!.id,
+      departmentId: "product", keyResultId: null, businessArtifactId: null,
+      label: "等待搜索索引。", reason: "等待搜索索引稳定后再验证。",
+      relatedTaskId: null, relatedBusinessArtifactId: null, affectedTaskIds: [],
+      nextCheckAt: "2026-09-08T10:00:00Z", status: "waiting", severity: "informational",
+      createdAt: "2026-09-01T10:08:00Z",
+    };
+    const blockedTask: Task = {
+      ...task!, id: "blocked_task", title: "恢复缺失的证明", status: "blocked",
+      latestFailureReason: null, latestFailureMessage: "部门报告了阻塞。",
+    };
+    const blockedEvent: TaskEvent = {
+      id: "blocked_event", companyId: company.id, taskId: blockedTask.id, type: "task_blocked",
+      message: "部门报告了阻塞。", messageText: null, createdAt: "2026-09-01T10:09:00Z", status: "blocked",
+      failureReason: null, failureMessage: "部门报告了阻塞。", executionProfileName: null,
+      requestedTimeoutMs: null, effectiveTimeoutMs: null, dependencyNote: null, artifactWorkspacePath: null,
+    };
+
+    const items = projectCeoOfficeItems({
+      ...state, company: zhCompany, tasks: [task!, blockedTask],
+      humanActions: [humanAction], waitStates: [waitState], taskEvents: [blockedEvent],
+    });
+
+    expect(items.find((item) => item.type === "human_action")?.data).toMatchObject({ label: { zh: "连接分析账户。" } });
+    expect(items.find((item) => item.type === "wait_state")?.data).toMatchObject({ reason: { zh: "等待搜索索引稳定后再验证。" } });
+    expect(items.find((item) => item.type === "blocked_issue")?.data).toMatchObject({ reason: { zh: "部门报告了阻塞。" } });
+    expect(JSON.stringify(items)).not.toMatch(/"reason":"[^"]/);
+  });
+
+  it("falls back to a bilingual deterministic blocked-issue reason when no reason string is present", () => {
+    const state = scenario("Recover proof", "n/a");
+    const [task] = state.tasks;
+    const blockedTask: Task = {
+      ...task!, id: "blocked_task", status: "failed",
+      latestFailureReason: "retry_exhausted", latestFailureMessage: null, dependencyNote: null,
+    };
+    const blockedEvent: TaskEvent = {
+      id: "blocked_event", companyId: company.id, taskId: blockedTask.id, type: "task_failed",
+      message: "", messageText: null, createdAt: "2026-09-01T10:09:00Z", status: "failed",
+      failureReason: "retry_exhausted", failureMessage: null, executionProfileName: null,
+      requestedTimeoutMs: null, effectiveTimeoutMs: null, dependencyNote: null, artifactWorkspacePath: null,
+    };
+
+    const items = projectCeoOfficeItems({ ...state, tasks: [blockedTask], taskEvents: [blockedEvent] });
+    expect(items.find((item) => item.type === "blocked_issue")?.data).toMatchObject({
+      reason: { en: "Retries exhausted", zh: "重试次数已用尽" },
+    });
+  });
 
   it("projects exactly one Execution Report plus a Decision Resolution when a task goes awaiting_founder_decision then accepted", () => {
     const state = scenario("Choose pricing", "Flat pilot pricing is the pick");

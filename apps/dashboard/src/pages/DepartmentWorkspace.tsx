@@ -46,7 +46,7 @@ import { UnseenBadge } from "../ui/ceoOutcomes/UnseenBadge";
 import { isUnseenSince, readOutcomesLastSeen, writeOutcomesLastSeen } from "../ui/ceoOutcomes/lastSeen";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { HumanActionPanel } from "../ui/humanActions/HumanActionPanel";
-import { useLanguage } from "../ui/language";
+import { useLanguage, type TranslationKey } from "../ui/language";
 import { resolveLocalizedValue } from "../ui/language/localizedText";
 import { AppShell, PageHeader, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroListRow, RetroPanel } from "../ui/retro";
@@ -753,7 +753,7 @@ function CeoOfficeTimeline({
                     { label: t("department.timelineKeyResult"), value: line(item.data.keyResultTitle) || t("department.none") },
                     { label: t("department.timelineMetric"), value: item.data.keyResultMetricName ?? t("department.none") },
                     { label: t("department.timelineTarget"), value: line(item.data.keyResultTargetValue) || t("department.none") },
-                    { label: t("department.timelineDependencies"), value: formatTimelineDependencies(item.data.dependsOnTaskIds, t("department.none")) },
+                    { label: t("department.timelineDependencies"), value: formatTimelineTasks(item.data.dependsOnTaskIds, tasksById, language, t) },
                   ]}
                 />
               </div>
@@ -772,10 +772,10 @@ function CeoOfficeTimeline({
             ) : null}
             {item.type === "decision_resolution" ? (
               <div className="ceo-office-timeline__body">
-                <p>{line(item.data.note) || item.data.chosenOption || item.data.outcome}</p>
+                <p>{line(item.data.note) || item.data.chosenOption || formatCompletionOutcome(item.data.outcome, t)}</p>
                 <VideotexKeyValue
                   items={[
-                    { label: t("department.timelineResolutionOutcome"), value: item.data.outcome },
+                    { label: t("department.timelineResolutionOutcome"), value: formatCompletionOutcome(item.data.outcome, t) },
                     { label: t("department.timelineChosenOption"), value: item.data.chosenOption ?? t("department.none") },
                     { label: t("department.timelineDecisionRequest"), value: item.data.requestItemId },
                   ]}
@@ -788,9 +788,9 @@ function CeoOfficeTimeline({
                 <VideotexKeyValue
                   items={[
                     { label: t("department.founderDecisionKind"), value: formatDecisionKind(item.data.decisionKind, t) },
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status) },
+                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
                     { label: t("department.timelineChosenOption"), value: item.data.resolvedOption ?? t("department.none") },
-                    { label: t("department.blockedTasks"), value: formatTimelineTasks(item.data.blockedTaskIds, tasksById, language, t("department.none")) },
+                    { label: t("department.blockedTasks"), value: formatTimelineTasks(item.data.blockedTaskIds, tasksById, language, t) },
                   ]}
                 />
                 <TimelineOptions options={item.data.options} />
@@ -801,19 +801,19 @@ function CeoOfficeTimeline({
                 <p>{t("department.timelineApprovalRequestBody")}</p>
                 <VideotexKeyValue
                   items={[
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status) },
+                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
                   ]}
                 />
               </div>
             ) : null}
             {item.type === "human_action" ? (
               <div className="ceo-office-timeline__body">
-                <p>{item.data.label}</p>
+                <p>{line(item.data.label)}</p>
                 <VideotexKeyValue
                   items={[
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status) },
-                    { label: t("department.humanActionConfirmation"), value: formatTimelineDependencies(item.data.confirmationRequirements, t("department.none")) },
-                    { label: t("department.blockedTasks"), value: formatTimelineTasks(item.data.blockedTaskIds, tasksById, language, t("department.none")) },
+                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
+                    { label: t("department.humanActionConfirmation"), value: formatTimelineTextList(item.data.confirmationRequirements, t) },
+                    { label: t("department.blockedTasks"), value: formatTimelineTasks(item.data.blockedTaskIds, tasksById, language, t) },
                     { label: t("department.timelineVerifiedAt"), value: item.data.verifiedAt ?? t("department.none") },
                   ]}
                 />
@@ -821,23 +821,23 @@ function CeoOfficeTimeline({
             ) : null}
             {item.type === "wait_state" ? (
               <div className="ceo-office-timeline__body">
-                <p>{item.data.reason}</p>
+                <p>{line(item.data.reason)}</p>
                 <VideotexKeyValue
                   items={[
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status) },
+                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
                     { label: t("department.waitStateNextCheck"), value: item.data.nextCheckAt },
-                    { label: t("department.waitStateAffectedTasks"), value: formatTimelineTasks(item.data.affectedTaskIds, tasksById, language, t("department.none")) },
+                    { label: t("department.waitStateAffectedTasks"), value: formatTimelineTasks(item.data.affectedTaskIds, tasksById, language, t) },
                   ]}
                 />
               </div>
             ) : null}
             {item.type === "blocked_issue" ? (
               <div className="ceo-office-timeline__body">
-                <p>{item.data.reason}</p>
+                <p>{line(item.data.reason)}</p>
                 <VideotexKeyValue
                   items={[
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status) },
-                    { label: t("department.blockedTasks"), value: formatTimelineTasks(item.data.affectedTaskIds, tasksById, language, t("department.none")) },
+                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
+                    { label: t("department.blockedTasks"), value: formatTimelineTasks(item.data.affectedTaskIds, tasksById, language, t) },
                   ]}
                 />
               </div>
@@ -848,7 +848,7 @@ function CeoOfficeTimeline({
                 <VideotexKeyValue
                   items={[
                     { label: t("department.timelineRecommendation"), value: line(item.data.recommendedNextAction) },
-                    { label: t("department.completedTasks"), value: formatTimelineTasks(item.data.affectedTaskIds, tasksById, language, t("department.none")) },
+                    { label: t("department.completedTasks"), value: formatTimelineTasks(item.data.affectedTaskIds, tasksById, language, t) },
                   ]}
                 />
               </div>
@@ -956,26 +956,77 @@ function formatTimelineNextSteps(
   return nextSteps.length === 0 ? emptyLabel : nextSteps.map((step) => step.label).join(" ");
 }
 
-function formatTimelineDependencies(dependsOnTaskIds: string[], emptyLabel: string): string {
-  return dependsOnTaskIds.length === 0 ? emptyLabel : dependsOnTaskIds.join(", ");
-}
+type TranslateFn = ReturnType<typeof useLanguage>["t"];
 
-function formatTimelineTasks(taskIds: string[], tasksById: Map<string, TaskSummary>, language: "en" | "zh", emptyLabel: string): string {
+/**
+ * Task references (dependencies, affected/blocked tasks) render as task titles, never raw IDs
+ * (spec User Story 12). Falls back to a localized count only when an ID resolves to no known task.
+ */
+function formatTimelineTasks(
+  taskIds: string[],
+  tasksById: Map<string, TaskSummary>,
+  language: "en" | "zh",
+  t: TranslateFn,
+): string {
   if (taskIds.length === 0) {
-    return emptyLabel;
+    return t("department.none");
   }
 
-  return taskIds
+  const titles = taskIds
     .map((taskId) => {
       const task = tasksById.get(taskId);
       return task ? taskTitle(task, language) : null;
     })
-    .filter((title): title is string => Boolean(title))
-    .join(", ") || `${taskIds.length} ${taskIds.length === 1 ? "task" : "tasks"}`;
+    .filter((title): title is string => Boolean(title));
+
+  if (titles.length > 0) {
+    return titles.join(", ");
+  }
+  const countKey = taskIds.length === 1 ? "department.timelineTaskCountOne" : "department.timelineTaskCountOther";
+  return t(countKey).replace("{count}", String(taskIds.length));
 }
 
-function formatTimelineStatus(status: string): string {
-  return status.replaceAll("_", " ");
+/** Free-text requirement lists (not task IDs) — joined, with a localized empty fallback. */
+function formatTimelineTextList(values: string[], t: TranslateFn): string {
+  return values.length === 0 ? t("department.none") : values.join(", ");
+}
+
+// Enum-class timeline values render through translation keys; an unmapped value still de-snakes via
+// `formatCodeLabel`, so the timeline never shows raw snake_case (spec User Story 16). The blocked/wait
+// deterministic reason strings have a matching bilingual table in `packages/core/src/ceoOffice.ts`.
+const TIMELINE_STATUS_KEY: Record<string, TranslationKey> = {
+  pending: "department.timelineStatusPending",
+  resolved: "department.timelineStatusResolved",
+  returned: "department.timelineStatusReturned",
+  approved: "department.timelineStatusApproved",
+  confirmed: "department.timelineStatusConfirmed",
+  waiting: "department.timelineStatusWaiting",
+  ready_for_check_in: "department.timelineStatusReadyForCheckIn",
+  open: "department.timelineStatusOpen",
+};
+
+const TIMELINE_OUTCOME_KEY: Record<string, TranslationKey> = {
+  accepted: "department.timelineOutcomeAccepted",
+  blocked: "department.timelineOutcomeBlocked",
+  failed_to_review: "department.timelineOutcomeFailedToReview",
+  needs_replan: "department.timelineOutcomeNeedsReplan",
+  awaiting_founder_decision: "department.timelineOutcomeAwaitingFounderDecision",
+  resolved: "department.timelineOutcomeResolved",
+  approved: "department.timelineOutcomeApproved",
+  returned: "department.timelineOutcomeReturned",
+};
+
+function translateTimelineCode(value: string, keys: Record<string, TranslationKey>, t: TranslateFn): string {
+  const key = keys[value];
+  return key ? t(key) : formatCodeLabel(value);
+}
+
+function formatTimelineStatus(status: string, t: TranslateFn): string {
+  return translateTimelineCode(status, TIMELINE_STATUS_KEY, t);
+}
+
+function formatCompletionOutcome(outcome: string, t: TranslateFn): string {
+  return translateTimelineCode(outcome, TIMELINE_OUTCOME_KEY, t);
 }
 
 function CeoOutcomesView({

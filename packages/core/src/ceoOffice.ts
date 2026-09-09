@@ -1,4 +1,4 @@
-import { localizedTextFromString, type LocalizedText } from "./localizedText";
+import { localizedTextFromString, type Locale, type LocalizedText } from "./localizedText";
 import type {
   AgentFailureReason, BusinessArtifact, CeoAttentionRollup, CeoReviewDecision, Company, FinalFounderReport,
   FounderDecision, FounderDecisionResolution, HumanAction, KeyResult, Objective, Task, TaskCompletionEvent,
@@ -57,11 +57,18 @@ export type CEOOfficeItem =
       note: LocalizedText | null;
     }, false>
   | OfficeItem<"human_action", Pick<HumanAction,
-      "label" | "status" | "confirmationRequirements" | "blockedTaskIds" | "verifiedAt">>
+      "status" | "confirmationRequirements" | "blockedTaskIds" | "verifiedAt"> & {
+      /** Agent-authored in the company locale (ADR 0013); rendered through the dashboard's localization path. */
+      label: LocalizedText;
+    }>
   | OfficeItem<"wait_state", Pick<WaitState,
-      "reason" | "status" | "nextCheckAt" | "affectedTaskIds">>
+      "status" | "nextCheckAt" | "affectedTaskIds"> & {
+      /** Agent-authored in the company locale (ADR 0013); rendered through the dashboard's localization path. */
+      reason: LocalizedText;
+    }>
   | OfficeItem<"blocked_issue", {
-      reason: string;
+      /** Agent/runtime string wrapped in the company locale, or a bilingual deterministic fallback. */
+      reason: LocalizedText;
       status: "open" | "resolved";
       affectedTaskIds: string[];
     }>
@@ -279,7 +286,7 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
       id: `human_action:${action.id}`, type: "human_action", sourceId: action.id,
       occurredAt: action.createdAt, actionBearing: action.status === "pending",
       data: {
-        label: action.label,
+        label: companyLocaleText(action.label, input.company.locale),
         status: action.status,
         confirmationRequirements: action.confirmationRequirements,
         blockedTaskIds: action.blockedTaskIds,
@@ -295,7 +302,7 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
       id: `wait_state:${waitState.id}`, type: "wait_state", sourceId: waitState.id,
       occurredAt: waitState.createdAt, actionBearing: false,
       data: {
-        reason: waitState.reason,
+        reason: companyLocaleText(waitState.reason, input.company.locale),
         status: waitState.status,
         nextCheckAt: waitState.nextCheckAt,
         affectedTaskIds: waitState.affectedTaskIds,
@@ -397,6 +404,7 @@ function projectBlockedIssues(input: {
   completions: readonly TaskCompletionEvent[];
   businessArtifacts: readonly BusinessArtifact[];
 }): CEOOfficeItem[] {
+  const locale = input.company.locale;
   const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
   const taskIssues = input.tasks.flatMap((task) => {
     if (!isBlockedIssueTask(task)) {
@@ -420,7 +428,11 @@ function projectBlockedIssues(input: {
       occurredAt: source.occurredAt,
       actionBearing: true,
       data: {
-        reason: source.reason ?? task.latestFailureMessage ?? task.dependencyNote ?? formatBlockedReason(task.latestFailureReason ?? task.status),
+        reason: blockedIssueReason(
+          source.reason ?? task.latestFailureMessage ?? task.dependencyNote ?? null,
+          task.latestFailureReason ?? task.status,
+          locale,
+        ),
         status: "open" as const,
         affectedTaskIds: [task.id],
       },
@@ -446,7 +458,7 @@ function projectBlockedIssues(input: {
       occurredAt: artifact.createdAt,
       actionBearing: true,
       data: {
-        reason: readBlockerReason(artifact.payload) ?? "Blocker Report recorded.",
+        reason: blockedIssueReason(readBlockerReason(artifact.payload), "blocker_report_recorded", locale),
         status: "open" as const,
         affectedTaskIds: [artifact.taskId],
       },
@@ -470,7 +482,7 @@ function latestBlockedTaskSource(
   taskEvents: readonly TaskEvent[],
   progressEvents: readonly TaskProgressEvent[],
   completions: readonly TaskCompletionEvent[],
-): { sourceId: string; occurredAt: string; reason: string | null } | null {
+): { sourceId: string; occurredAt: string; reason: string | LocalizedText | null } | null {
   const candidates = [
     ...taskEvents
       .filter((event) => event.taskId === task.id)
@@ -490,14 +502,58 @@ function latestBlockedTaskSource(
     ...completions
       .filter((event) => event.taskId === task.id)
       .filter((event) => event.outcome === "blocked" || event.outcome === "failed_to_review" || event.outcome === "needs_replan")
-      .map((event) => ({ sourceId: event.id, occurredAt: event.createdAt, reason: event.outcomeSummaryText?.en ?? null })),
+      // The outcome summary is an agent-authored LocalizedText — pass it through untouched so the
+      // dashboard shows its "untranslated" marker if the company locale is the one the agent skipped.
+      .map((event) => ({ sourceId: event.id, occurredAt: event.createdAt, reason: event.outcomeSummaryText ?? null })),
   ].filter((candidate) => Number.isFinite(Date.parse(candidate.occurredAt)));
 
   return candidates.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt) || (a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0))[0] ?? null;
 }
 
-function formatBlockedReason(reason: AgentFailureReason | TaskStatus): string {
-  return reason.replace(/_/g, " ");
+/**
+ * Wrap an agent- or runtime-authored founder-facing string as a single-locale {@link LocalizedText}.
+ * The string is authored in the company's canonical locale (ADR 0013 → single canonical locale), so
+ * it belongs under that key; the dashboard renders it through its localization path and shows an
+ * "untranslated" marker only if the key is absent. Old rows authored before the single-locale
+ * contract render as-is under this key (the accepted migration fallback).
+ */
+function companyLocaleText(value: string, locale: Locale): LocalizedText {
+  return { [locale]: value };
+}
+
+/**
+ * Deterministic, code-derived blocked-issue reasons — bilingual so they read in either locale.
+ * The dashboard keeps a matching table for enum-class values (`TIMELINE_STATUS_KEY` /
+ * `TIMELINE_OUTCOME_KEY` in `apps/dashboard/src/pages/DepartmentWorkspace.tsx`); core cannot import
+ * the dashboard's translation table, so a reword touches both places.
+ */
+const BLOCKED_REASON_TEXT: Record<string, LocalizedText> = {
+  retry_exhausted: { en: "Retries exhausted", zh: "重试次数已用尽" },
+  missing_deliverable: { en: "Expected deliverable was not recorded", zh: "未记录预期交付物" },
+  needs_replan: { en: "Needs replanning", zh: "需要重新规划" },
+  blocked: { en: "Blocked", zh: "受阻" },
+  failed: { en: "The task failed", zh: "任务失败" },
+  blocker_report_recorded: { en: "Blocker Report recorded.", zh: "已记录阻塞报告。" },
+};
+
+/**
+ * The blocked-issue reason. An already-authored `LocalizedText` (the outcome summary) passes through
+ * untouched; a bare agent/runtime string is wrapped in the company locale (raw-string migration
+ * fallback, per the issue); otherwise a bilingual deterministic fallback keyed off the failure
+ * reason or task status.
+ */
+function blockedIssueReason(
+  reason: string | LocalizedText | null,
+  code: AgentFailureReason | TaskStatus | "blocker_report_recorded",
+  locale: Locale,
+): LocalizedText {
+  if (reason && typeof reason === "object") {
+    return reason;
+  }
+  if (typeof reason === "string" && reason.trim().length > 0) {
+    return companyLocaleText(reason, locale);
+  }
+  return BLOCKED_REASON_TEXT[code] ?? { en: code.replace(/_/g, " "), zh: code.replace(/_/g, " ") };
 }
 
 function readBlockerReason(payload: unknown): string | null {

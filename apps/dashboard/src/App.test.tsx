@@ -432,7 +432,7 @@ describe("Dashboard App", () => {
         titleText: null,
         actionBearing: true,
         data: {
-          label: "Connect the analytics account.",
+          label: { en: "Connect the analytics account." },
           status: "pending",
           confirmationRequirements: ["Account connected screenshot"],
           blockedTaskIds: ["task_2"],
@@ -453,7 +453,7 @@ describe("Dashboard App", () => {
         titleText: null,
         actionBearing: false,
         data: {
-          reason: "Wait for first analytics import.",
+          reason: { en: "Wait for first analytics import." },
           status: "waiting",
           nextCheckAt: "2026-08-18T00:00:00.000Z",
           affectedTaskIds: ["task_2"],
@@ -626,6 +626,51 @@ describe("Dashboard App", () => {
     warn.mockRestore();
   });
 
+  it("renders wait-state, blocked-issue, and human-action strings through the company-locale path", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      company: { ...created.company, locale: "zh" as const },
+      tasks: [{ ...created.tasks[0], id: "task_1", title: "监控首次导入", status: "blocked" }],
+      ceoOfficeItems: [
+        {
+          id: "human_action:action_1", type: "human_action", companyId: "company_1", sourceId: "action_1",
+          taskId: "task_1", departmentId: "department_1", objectiveId: null, keyResultId: null,
+          occurredAt: "2026-08-17T00:03:00.000Z", title: "连接分析账户", titleText: null, actionBearing: true,
+          data: { label: { zh: "连接分析账户。" }, status: "pending", confirmationRequirements: [], blockedTaskIds: [], verifiedAt: null },
+        },
+        {
+          id: "wait_state:wait_1", type: "wait_state", companyId: "company_1", sourceId: "wait_1",
+          taskId: "task_1", departmentId: "department_1", objectiveId: null, keyResultId: null,
+          occurredAt: "2026-08-17T00:04:00.000Z", title: "监控首次导入", titleText: null, actionBearing: false,
+          data: { reason: { zh: "等待首次分析导入。" }, status: "waiting", nextCheckAt: "2026-08-18T00:00:00.000Z", affectedTaskIds: ["task_1"] },
+        },
+        {
+          id: "blocked_issue:block_1", type: "blocked_issue", companyId: "company_1", sourceId: "block_1",
+          taskId: "task_1", departmentId: "department_1", objectiveId: null, keyResultId: null,
+          occurredAt: "2026-08-17T00:05:00.000Z", title: "监控首次导入", titleText: null, actionBearing: true,
+          data: { reason: { en: "English-only blocker." }, status: "open", affectedTaskIds: ["task_1"] },
+        },
+      ] satisfies CeoOfficeItemSummary[],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    // The company locale is zh, so the chrome (and region names) render in Chinese.
+    const timeline = screen.getByRole("region", { name: "时间线" });
+    expect(timeline).toHaveTextContent("连接分析账户。");
+    expect(timeline).toHaveTextContent("等待首次分析导入。");
+    // The blocker only carries `en`, so the founder sees the untranslated marker, not silent English.
+    expect(timeline).not.toHaveTextContent("English-only blocker.");
+    expect(within(timeline).getAllByText("未翻译 / untranslated").length).toBeGreaterThan(0);
+
+    warn.mockRestore();
+  });
+
   it("renders action-bearing CEO Office Items in the Timeline with business details", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();
@@ -684,7 +729,7 @@ describe("Dashboard App", () => {
           titleText: null,
           actionBearing: true,
           data: {
-            label: "Connect the Stripe account.",
+            label: { en: "Connect the Stripe account." },
             status: "pending",
             confirmationRequirements: ["Paste the account confirmation."],
             blockedTaskIds: ["task_3"],
@@ -705,7 +750,7 @@ describe("Dashboard App", () => {
           titleText: null,
           actionBearing: false,
           data: {
-            reason: "Wait for the first payment import.",
+            reason: { en: "Wait for the first payment import." },
             status: "waiting",
             nextCheckAt: "2026-08-18T00:00:00.000Z",
             affectedTaskIds: ["task_3"],
@@ -725,7 +770,7 @@ describe("Dashboard App", () => {
           titleText: null,
           actionBearing: true,
           data: {
-            reason: "Expected deliverable was not recorded.",
+            reason: { en: "Expected deliverable was not recorded." },
             status: "open",
             affectedTaskIds: ["task_4"],
           },
@@ -756,6 +801,14 @@ describe("Dashboard App", () => {
     expect(timeline).not.toHaveTextContent("workspace");
     expect(timeline).not.toHaveTextContent("business_artifact_1");
     expect(timeline).not.toHaveTextContent("task_2");
+
+    // Internal codes render as business language, never raw snake_case (spec User Story 16).
+    expect(timeline).toHaveTextContent("Pending");
+    expect(timeline).toHaveTextContent("Monitoring");
+    expect(timeline).toHaveTextContent("Open");
+    expect(timeline).not.toHaveTextContent("pricing_model");
+    expect(timeline).not.toHaveTextContent("ready_for_check_in");
+    expect(timeline).not.toHaveTextContent("awaiting_founder_decision");
 
     expect(within(ceoReport).getByRole("region", { name: "Outcomes" })).toBeInTheDocument();
     expect(within(ceoReport).getByRole("region", { name: "CEO Pending" })).toBeInTheDocument();
