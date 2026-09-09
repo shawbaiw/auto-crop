@@ -61,7 +61,8 @@ export function reconcileReviewTasksForAutomaticAcceptance(
     if (evaluateAutomaticAcceptance({ task, artifact }).kind !== "accept") {
       continue;
     }
-    if (parseOpenDecisions(artifact!.payload).kept.length > 0) {
+    const companyLocale = input.repositories.getCompany(task.companyId)?.locale ?? "en";
+    if (parseOpenDecisions(artifact!.payload, companyLocale).kept.length > 0) {
       continue;
     }
 

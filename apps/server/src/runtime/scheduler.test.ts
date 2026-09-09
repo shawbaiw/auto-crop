@@ -381,6 +381,7 @@ describe("runSchedulerOnce", () => {
             ],
             recommendation: "Flat monthly fee",
             rationale: "Early buyers want a predictable bill and the usage spread is still narrow.",
+            briefing: "Explored flat and usage-based pricing with interviewed buyers; the opportunity is predictable billing for solo buyers and monetization rests on a low-friction paid unlock.",
           },
         ]);
         return [createProofForTask(task)];
@@ -447,6 +448,7 @@ describe("runSchedulerOnce", () => {
             ],
             recommendation: "Flat monthly fee",
             rationale: "Early buyers want a predictable bill.",
+            briefing: "Explored flat and usage-based pricing with interviewed buyers; the opportunity is predictable billing for solo buyers and monetization rests on a low-friction paid unlock.",
           },
         ]);
         return [createProofForTask(task)];
@@ -489,6 +491,7 @@ describe("runSchedulerOnce", () => {
             ],
             recommendation: "ResumeSpark",
             rationale: "Punchier for early word of mouth.",
+            briefing: "Explored flat and usage-based pricing with interviewed buyers; the opportunity is predictable billing for solo buyers and monetization rests on a low-friction paid unlock.",
           },
         ]);
         return [createProofForTask(task)];

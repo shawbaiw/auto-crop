@@ -273,7 +273,7 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task, locale: Locale):
     }
     // An `open_decisions` entry on an unknown decisionKind is dropped silently; a malformed entry on a
     // known decisionKind is a structural failure like any other required-field failure.
-    errors.push(...parseOpenDecisions(json.payload).errors);
+    errors.push(...parseOpenDecisions(json.payload, locale).errors);
   }
   if (sourceProofId !== undefined && typeof sourceProofId !== "string") {
     errors.push("sourceProofId/source_proof_id: Expected a string.");

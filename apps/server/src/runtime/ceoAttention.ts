@@ -296,6 +296,7 @@ export function collectFounderDecisions(
         decisionKind: decisionKind.data,
         options,
         rationale: optionalString(detail.rationale) ?? "",
+        briefing: optionalString(detail.briefing) ?? "",
         status: resolution?.status ?? "pending",
         resolvedOption: resolution?.status === "resolved" ? resolution.chosenOption : null,
         resolvedAt: resolution?.resolvedAt ?? null,

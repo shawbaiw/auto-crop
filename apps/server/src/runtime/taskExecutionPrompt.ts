@@ -25,6 +25,7 @@ type PromptExamples = {
     options: { label: string; tradeoffs: string }[];
     recommendation: string;
     rationale: string;
+    briefing: string;
   };
 };
 
@@ -47,6 +48,8 @@ const LOCALE_PROMPT_EXAMPLES: Record<Locale, PromptExamples> = {
       ],
       recommendation: "Flat monthly fee",
       rationale: "Early buyers want a predictable bill and the usage spread is still narrow.",
+      briefing:
+        "We explored three pricing shapes against the resume-tool buyers we interviewed. The opportunity is solo job seekers who convert on a single polished output; what is differentiated is same-session turnaround with no account setup. Monetization is a low-friction paid unlock at the moment of value, and a flat fee is the only shape those buyers could forecast.",
     },
   },
   zh: {
@@ -64,6 +67,8 @@ const LOCALE_PROMPT_EXAMPLES: Record<Locale, PromptExamples> = {
       ],
       recommendation: "统一月费",
       rationale: "早期买家希望账单可预测，且当前用量差异仍然较小。",
+      briefing:
+        "我们针对访谈过的简历工具买家评估了三种定价形态。机会点在于以单份高质量成品完成转化的个人求职者；差异化在于无需注册、当次会话即可交付。变现方式是在价值兑现的节点提供低摩擦的付费解锁，而只有统一月费这种形态是这些买家能够预估的。",
     },
   },
 };
@@ -137,12 +142,16 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
         options: examples.openDecision.options,
         recommendation: examples.openDecision.recommendation,
         rationale: examples.openDecision.rationale,
+        briefing: examples.openDecision.briefing,
       },
       null,
       2,
     ),
     "`decisionKind` must be one of the five kinds above (any other choice is your own call and is ignored).",
     "Give more than one option, each with its trade-offs; name the recommended option and give your rationale.",
+    "`briefing` is required: the substance the founder needs to decide from the card alone — what you",
+    "explored, where the opportunity is, what is differentiated, the monetization angle and why these",
+    "options exist. An entry missing `briefing` fails validation, exactly like a missing `rationale`.",
     `Write every \`label\`, \`tradeoffs\`, \`recommendation\`, \`rationale\`, and \`briefing\` in ${languageName}.`,
     "A choice on one of these kinds is the founder's to make, not yours.",
   ];

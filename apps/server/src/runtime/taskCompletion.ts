@@ -32,8 +32,9 @@ export function recordTaskCompletionEvent(input: {
   createId?: (prefix: string) => string;
 }): TaskCompletionEvent {
   const proposal = input.nextStepItems ? { items: input.nextStepItems, errors: [] } : extractNextStepItems(input.businessArtifact?.payload);
+  const companyLocale = input.repositories.getCompany(input.task.companyId)?.locale ?? "en";
   const founderDecisionItems = buildFounderDecisionItems(
-    input.founderDecisions ?? parseOpenDecisions(input.businessArtifact?.payload).kept,
+    input.founderDecisions ?? parseOpenDecisions(input.businessArtifact?.payload, companyLocale).kept,
     input.businessArtifact,
     input.task,
     input.founderDecisionBlockedTaskIds ?? [],
@@ -47,10 +48,7 @@ export function recordTaskCompletionEvent(input: {
   const executionReport =
     input.executionReport !== undefined
       ? input.executionReport
-      : extractExecutionReport(
-          input.businessArtifact?.payload,
-          input.repositories.getCompany(input.task.companyId)?.locale ?? "en",
-        );
+      : extractExecutionReport(input.businessArtifact?.payload, companyLocale);
   const event: TaskCompletionEvent = {
     id: input.createId?.("task_completion_event") ?? createDefaultId("task_completion_event"),
     companyId: input.task.companyId,
@@ -112,7 +110,7 @@ export function extractOutcomeSummaryText(payload: unknown): LocalizedText | nul
 /**
  * Turn each kept `open_decisions` declaration into a `founder_decision` Next Step Item on the Task
  * Completion Event. The decision detail (`decisionKind`, ordered options with trade-offs and a
- * recommended flag, `rationale`) and the blocked downstream task ids ride on the item's
+ * recommended flag, `rationale`, `briefing`) and the blocked downstream task ids ride on the item's
  * `dependencyImpact.founderDecision`, which is where the `FounderDecision` projection reads them —
  * mirroring how `human_action` items carry their confirmation detail. Nesting them keeps the blocked
  * ids out of the generic dependency-impact scan, so a gated decision does not by itself raise a
@@ -138,6 +136,7 @@ function buildFounderDecisionItems(
         decisionKind: declaration.decisionKind,
         options: declaration.options,
         rationale: declaration.rationale,
+        briefing: declaration.briefing,
         blockedTaskIds,
       },
     },

@@ -157,6 +157,7 @@ describe("reconcileReviewTasksForAutomaticAcceptance", () => {
             ],
             recommendation: "Flat monthly fee",
             rationale: "Early buyers want a predictable bill.",
+            briefing: "Explored flat and usage-based against interviewed buyers; flat is the only shape they could forecast, and monetization rests on a predictable bill.",
           },
         ],
       }),

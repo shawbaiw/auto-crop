@@ -45,7 +45,7 @@ export type CEOOfficeItem =
       outcome: TaskCompletionEvent["outcome"];
     }, false>
   | OfficeItem<"decision_request", Pick<FounderDecision,
-      "decisionKind" | "options" | "rationale" | "status" | "resolvedOption" | "resolvedAt" | "blockedTaskIds">>
+      "decisionKind" | "options" | "rationale" | "briefing" | "status" | "resolvedOption" | "resolvedAt" | "blockedTaskIds">>
   | OfficeItem<"approval_request", {
       businessArtifactId: string;
       status: "pending" | "approved" | "returned";
@@ -226,6 +226,7 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
       occurredAt: decision.createdAt, actionBearing: status === "pending",
       data: {
         decisionKind: decision.decisionKind, options: decision.options, rationale: decision.rationale,
+        briefing: decision.briefing,
         status, resolvedOption, resolvedAt,
         blockedTaskIds: decision.blockedTaskIds,
       },

@@ -1043,7 +1043,11 @@ describe("API routes", () => {
           type: "decision_request",
           taskId: sourceTask.id,
           actionBearing: true,
-          data: expect.objectContaining({ status: "pending", decisionKind: "pricing_model" }),
+          data: expect.objectContaining({
+            status: "pending",
+            decisionKind: "pricing_model",
+            briefing: "Recorded briefing: what was explored, the opportunity, the differentiation, and the monetization angle.",
+          }),
         }),
       ]),
     );
@@ -1984,6 +1988,7 @@ describe("API routes", () => {
                 { label: "Usage-based", tradeoffs: "Scales with value; harder to forecast.", recommended: false },
               ],
               rationale: "Early buyers want a predictable bill.",
+              briefing: "Explored flat, usage-based, and tiered pricing against interviewed buyers; the opportunity is predictable billing for solo buyers and monetization rests on a low-friction paid unlock.",
               blockedTaskIds: [downstreamTask.id],
             },
           },
@@ -2004,6 +2009,7 @@ describe("API routes", () => {
         decisionKind: string;
         options: Array<{ label: string; tradeoffs: string; recommended: boolean }>;
         rationale: string;
+        briefing: string;
         status: string;
         resolvedOption: string | null;
         resolvedAt: string | null;
@@ -2021,6 +2027,7 @@ describe("API routes", () => {
           { label: "Usage-based", tradeoffs: "Scales with value; harder to forecast.", recommended: false },
         ],
         rationale: "Early buyers want a predictable bill.",
+        briefing: "Explored flat, usage-based, and tiered pricing against interviewed buyers; the opportunity is predictable billing for solo buyers and monetization rests on a low-friction paid unlock.",
         status: "pending",
         resolvedOption: null,
         resolvedAt: null,
@@ -3653,6 +3660,7 @@ async function seedAwaitingFounderDecision(options: {
         options: decision.options.map((option) => ({ label: option.label, tradeoffs: option.tradeoffs })),
         recommendation: decision.options.find((option) => option.recommended)?.label ?? decision.options[0]!.label,
         rationale: "Recorded rationale.",
+        briefing: "Recorded briefing: what was explored, the opportunity, the differentiation, and the monetization angle.",
       })),
     },
   });
@@ -3681,6 +3689,7 @@ async function seedAwaitingFounderDecision(options: {
             recommended: option.recommended === true,
           })),
           rationale: "Recorded rationale.",
+          briefing: "Recorded briefing: what was explored, the opportunity, the differentiation, and the monetization angle.",
           blockedTaskIds: [downstreamTask.id],
         },
       },

@@ -827,6 +827,7 @@ describe("captureBusinessArtifact", () => {
           options: [{ label: "Flat monthly fee", tradeoffs: "Predictable; underprices heavy users." }],
           recommendation: "Flat monthly fee",
           rationale: "Buyers want a predictable bill.",
+          briefing: "Explored flat and usage-based against interviewed buyers; flat is the only shape they could forecast.",
         },
       ],
     });
@@ -834,6 +835,29 @@ describe("captureBusinessArtifact", () => {
     expect(artifact.validationStatus).toBe("invalid_schema");
     expect(artifact.validationErrors).toContain(
       "payload.open_decisions[0].options: Expected more than one option, each with a label and its trade-offs.",
+    );
+  });
+
+  it("fails structural validation for a known-kind open_decisions entry missing briefing", () => {
+    const artifact = captureDeliverableWithPayload({
+      outcome_summary:
+        "The brief settles pricing. It gives Growth a number to test; the remaining gap is willingness-to-pay evidence.",
+      open_decisions: [
+        {
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat monthly fee", tradeoffs: "Predictable; underprices heavy users." },
+            { label: "Usage-based", tradeoffs: "Scales with value; harder to forecast." },
+          ],
+          recommendation: "Flat monthly fee",
+          rationale: "Buyers want a predictable bill and usage spread is still narrow.",
+        },
+      ],
+    });
+
+    expect(artifact.validationStatus).toBe("invalid_schema");
+    expect(artifact.validationErrors).toContain(
+      "payload.open_decisions[0].briefing: Expected a non-empty string.",
     );
   });
 
@@ -850,6 +874,7 @@ describe("captureBusinessArtifact", () => {
           ],
           recommendation: "Flat monthly fee",
           rationale: "Buyers want a predictable bill and usage spread is still narrow.",
+          briefing: "Explored flat, usage-based, and tiered against interviewed buyers; the opportunity is predictable billing for solo buyers and flat is the only shape they could forecast.",
         },
       ],
     });

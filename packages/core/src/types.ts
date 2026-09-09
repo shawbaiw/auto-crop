@@ -311,6 +311,14 @@ export type FounderDecision = {
   decisionKind: StrategicDecisionKind;
   options: FounderDecisionOption[];
   rationale: string;
+  /**
+   * The substance the founder needs to decide from the Decision card alone: what was explored, where
+   * the opportunity is, what is differentiated, the monetization angle and why. Authored by the
+   * completing agent in the company's canonical locale and stored as that locale's plain string
+   * (a bare string or an `{ en, zh }` object are both accepted and normalized). Empty only for a
+   * legacy decision projected from a completion event recorded before `briefing` existed.
+   */
+  briefing: string;
   status: FounderDecisionStatus;
   resolvedOption: string | null;
   resolvedAt: string | null;

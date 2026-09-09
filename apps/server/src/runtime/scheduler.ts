@@ -569,7 +569,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             // items and the Task Outcome Summary) and stop. Downstream dependency readiness keeps
             // blocking on the non-accepted upstream. A risk-pattern hit takes precedence — it lands
             // in the `requires_review` branch below before this check runs.
-            const founderDecisions = parseOpenDecisions(businessArtifact.payload).kept;
+            const founderDecisions = parseOpenDecisions(
+              businessArtifact.payload,
+              input.repositories.getCompany(task.companyId)?.locale ?? "en",
+            ).kept;
             if (founderDecisions.length > 0) {
               input.repositories.updateTaskStatus(task.id, "review");
               recordTaskCompletionEvent({

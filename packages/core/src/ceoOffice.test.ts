@@ -72,6 +72,7 @@ describe("projectCeoOfficeItems", () => {
     const decision: FounderDecision = {
       id: "choice", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: "task",
       departmentId: "product", decisionKind: "pricing_model", rationale: "Choose a billing period",
+      briefing: "Monthly and annual both tested well; the split comes down to cash timing versus commitment.",
       options: [{ label: "Monthly", tradeoffs: "Lower upfront commitment", recommended: true }],
       status: "pending", resolvedOption: null, resolvedAt: null, blockedTaskIds: ["launch"],
       createdAt: "2026-09-01T10:00:00Z",
@@ -79,7 +80,14 @@ describe("projectCeoOfficeItems", () => {
     const pending = projectCeoOfficeItems({ ...state, founderDecisions: [decision] });
     expect(pending.map((item) => item.type)).toEqual(["task_brief", "execution_report", "decision_request"]);
     expect(pending.filter((item) => item.actionBearing)).toMatchObject([
-      { id: "decision_request:choice", data: { status: "pending", decisionKind: "pricing_model" } },
+      {
+        id: "decision_request:choice",
+        data: {
+          status: "pending",
+          decisionKind: "pricing_model",
+          briefing: "Monthly and annual both tested well; the split comes down to cash timing versus commitment.",
+        },
+      },
     ]);
     const resolved = projectCeoOfficeItems({ ...state, founderDecisions: [{
       ...decision, status: "resolved", resolvedOption: "Monthly", resolvedAt: "2026-09-01T11:00:00Z",
@@ -190,6 +198,7 @@ describe("projectCeoOfficeItems", () => {
     const decision: FounderDecision = {
       id: "launch_choice", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: "task",
       departmentId: "growth", decisionKind: "launch_target", rationale: "Choose the first audience",
+      briefing: "We scoped clinics and gyms; clinics show the sharper workflow pain and a clearer buyer.",
       options: [{ label: "Clinics", tradeoffs: "More urgent workflow pain", recommended: true }],
       status: "pending", resolvedOption: null, resolvedAt: null, blockedTaskIds: ["launch"],
       createdAt: "2026-09-01T10:00:00Z",
@@ -242,6 +251,7 @@ describe("projectCeoOfficeItems", () => {
     const decision: FounderDecision = {
       id: "launch_choice", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: "task",
       departmentId: "growth", decisionKind: "launch_target", rationale: "Choose the first audience",
+      briefing: "We scoped clinics and gyms; clinics show the sharper workflow pain and a clearer buyer.",
       options: [{ label: "Clinics", tradeoffs: "More urgent workflow pain", recommended: true }],
       status: "pending", resolvedOption: null, resolvedAt: null, blockedTaskIds: ["launch"],
       createdAt: "2026-09-01T10:00:00Z",
@@ -602,6 +612,7 @@ describe("projectCeoOfficeItems", () => {
     const decision: FounderDecision = {
       id: "decision", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: task!.id,
       departmentId: "product", decisionKind: "launch_target", rationale: "Pick the first launch audience",
+      briefing: "Clinics and gyms both viable; clinics carry the more acute pain and a named budget owner.",
       options: [{ label: "Clinics", tradeoffs: "More urgent pain", recommended: true }],
       status: "pending", resolvedOption: null, resolvedAt: null, blockedTaskIds: ["launch"],
       createdAt: "2026-09-01T10:06:00Z",

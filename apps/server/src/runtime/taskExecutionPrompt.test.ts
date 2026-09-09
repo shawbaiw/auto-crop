@@ -52,6 +52,8 @@ describe("buildTaskExecutionPrompt", () => {
     expect(zhPrompt).toContain(
       "Write every `label`, `tradeoffs`, `recommendation`, `rationale`, and `briefing` in 简体中文 (Simplified Chinese)",
     );
+    expect(zhPrompt).toContain("`briefing` is required");
+    expect(zhPrompt).toContain("An entry missing `briefing` fails validation, exactly like a missing `rationale`.");
     // The "string or {en, zh} object" escape hatch is gone.
     expect(zhPrompt).not.toContain('{ "en"');
     expect(zhPrompt).not.toContain("may be a string");
@@ -72,6 +74,7 @@ describe("buildTaskExecutionPrompt", () => {
     expect(zhPrompt).toContain('"conclusion": "目标关键词具备可排名的机会，竞争页面内容陈旧。"');
     expect(zhPrompt).toContain('"label": "统一月费"');
     expect(zhPrompt).toContain('"decisionKind": "pricing_model"');
+    expect(zhPrompt).toContain('"briefing": "我们针对访谈过的简历工具买家评估了三种定价形态。');
 
     expect(enPrompt).toContain(
       '"conclusion": "The target keyword has a rankable opening and the competing pages are stale."',
