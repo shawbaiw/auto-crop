@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: complete
 
 # CEO Office Surfaces Business Outcomes, Not Review Mechanics
 
