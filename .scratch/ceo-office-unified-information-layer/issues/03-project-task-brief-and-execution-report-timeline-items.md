@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Define CEO Office Item Projection Contract), 02 (Add Structured Execution Report Output Contract)
 
-**Status:** ready-for-agent
+**Status:** complete
 
 - [x] Task Brief items are projected from task definition data, dependency context, objective/key-result context, and department assessment/progress data when available.
 - [x] Department assessment data is preferred for Task Briefs when present, with task definition fallback when it is absent.

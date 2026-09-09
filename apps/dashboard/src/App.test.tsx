@@ -576,6 +576,147 @@ describe("Dashboard App", () => {
     ]);
   });
 
+  it("renders action-bearing CEO Office Items in the Timeline with business details", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        { ...created.tasks[0], id: "task_1", title: "Choose pricing path", status: "review" },
+        { ...created.tasks[0], id: "task_2", title: "Connect Stripe", status: "blocked" },
+        { ...created.tasks[0], id: "task_3", title: "Monitor first import", status: "queued" },
+        { ...created.tasks[0], id: "task_4", title: "Recover launch proof", status: "failed" },
+      ],
+      ceoOfficeItems: [
+        {
+          id: "decision_request:decision_1",
+          type: "decision_request",
+          companyId: "company_1",
+          sourceId: "decision_1",
+          taskId: "task_1",
+          departmentId: "department_1",
+          objectiveId: "objective_1",
+          keyResultId: null,
+          occurredAt: "2026-08-17T00:02:00.000Z",
+          title: "Choose pricing path",
+          titleText: null,
+          actionBearing: true,
+          data: {
+            decisionKind: "pricing_model",
+            options: [
+              { label: "Subscription", tradeoffs: "Recurring revenue.", recommended: true },
+              { label: "One-time", tradeoffs: "Lower buying friction.", recommended: false },
+            ],
+            rationale: "Pricing affects the first offer.",
+            status: "pending",
+            resolvedOption: null,
+            resolvedAt: null,
+            blockedTaskIds: ["task_2"],
+          },
+        },
+        createApprovalRequestCeoOfficeItem({
+          businessArtifactId: "business_artifact_1",
+          taskId: "task_1",
+          title: "Review pricing artifact",
+        }),
+        {
+          id: "human_action:action_1",
+          type: "human_action",
+          companyId: "company_1",
+          sourceId: "action_1",
+          taskId: "task_2",
+          departmentId: "department_1",
+          objectiveId: null,
+          keyResultId: null,
+          occurredAt: "2026-08-17T00:04:00.000Z",
+          title: "Connect Stripe",
+          titleText: null,
+          actionBearing: true,
+          data: {
+            label: "Connect the Stripe account.",
+            status: "pending",
+            confirmationRequirements: ["Paste the account confirmation."],
+            blockedTaskIds: ["task_3"],
+            verifiedAt: null,
+          },
+        },
+        {
+          id: "wait_state:wait_1",
+          type: "wait_state",
+          companyId: "company_1",
+          sourceId: "wait_1",
+          taskId: "task_3",
+          departmentId: "department_1",
+          objectiveId: null,
+          keyResultId: null,
+          occurredAt: "2026-08-17T00:05:00.000Z",
+          title: "Monitor first import",
+          titleText: null,
+          actionBearing: false,
+          data: {
+            reason: "Wait for the first payment import.",
+            status: "waiting",
+            nextCheckAt: "2026-08-18T00:00:00.000Z",
+            affectedTaskIds: ["task_3"],
+          },
+        },
+        {
+          id: "blocked_issue:block_1",
+          type: "blocked_issue",
+          companyId: "company_1",
+          sourceId: "block_1",
+          taskId: "task_4",
+          departmentId: "department_1",
+          objectiveId: null,
+          keyResultId: null,
+          occurredAt: "2026-08-17T00:06:00.000Z",
+          title: "Recover launch proof",
+          titleText: null,
+          actionBearing: true,
+          data: {
+            reason: "Expected deliverable was not recorded.",
+            status: "open",
+            affectedTaskIds: ["task_4"],
+          },
+        },
+      ] satisfies CeoOfficeItemSummary[],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
+    const timeline = within(ceoReport).getByRole("region", { name: "Timeline" });
+    expect(timeline).toHaveTextContent("Decision Request");
+    expect(timeline).toHaveTextContent("Pricing affects the first offer.");
+    expect(timeline).toHaveTextContent("Subscription");
+    expect(timeline).toHaveTextContent("Recurring revenue.");
+    expect(timeline).toHaveTextContent("Approval Request");
+    expect(timeline).toHaveTextContent("Human Action");
+    expect(timeline).toHaveTextContent("Connect the Stripe account.");
+    expect(timeline).toHaveTextContent("Paste the account confirmation.");
+    expect(timeline).toHaveTextContent("Wait State");
+    expect(timeline).toHaveTextContent("Wait for the first payment import.");
+    expect(timeline).toHaveTextContent("2026-08-18");
+    expect(timeline).toHaveTextContent("Blocked Issue");
+    expect(timeline).toHaveTextContent("Expected deliverable was not recorded.");
+    expect(timeline).toHaveTextContent("Recover launch proof");
+    expect(timeline).not.toHaveTextContent("workspace");
+    expect(timeline).not.toHaveTextContent("business_artifact_1");
+    expect(timeline).not.toHaveTextContent("task_2");
+
+    expect(within(ceoReport).getByRole("region", { name: "Outcomes" })).toBeInTheDocument();
+    expect(within(ceoReport).getByRole("region", { name: "CEO Pending" })).toBeInTheDocument();
+    expect(within(ceoReport).getByRole("region", { name: "Executive Overview" })).toBeInTheDocument();
+    expect(within(ceoReport).getAllByRole("region", { name: "Human Actions" }).length).toBeGreaterThan(0);
+    expect(within(ceoReport).getAllByRole("region", { name: "Wait States" }).length).toBeGreaterThan(0);
+
+    await user.click(within(ceoReport).getAllByRole("button", { name: "View Task Choose pricing path" })[0]!);
+    const highlighted = within(timeline).getByText("Pricing affects the first offer.").closest("article");
+    expect(highlighted).toHaveAttribute("aria-current", "true");
+  });
+
   it("styles a goal_stage_change rollup as an achievement, distinct from an exception rollup", async () => {
     const api = createMockApiClient();
     const response = {
@@ -2771,7 +2912,7 @@ describe("Dashboard App", () => {
     }
   });
 
-  it("leads CEO Office with an Outcomes view grouped by objective and pins Founder Decisions", async () => {
+  it("leads CEO Office with state, pending, and timeline before the Outcomes view", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => createOutcomesCompanyResponse());
     const user = userEvent.setup();
@@ -2780,9 +2921,13 @@ describe("Dashboard App", () => {
     await createCompany(user);
 
     const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
-    const outcomes = within(ceoReport).getByRole("region", { name: "Outcomes" });
     const overview = within(ceoReport).getByRole("region", { name: "Executive Overview" });
-    expect(Boolean(outcomes.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    const pending = within(ceoReport).getByRole("region", { name: "CEO Pending" });
+    const timeline = within(ceoReport).getByRole("region", { name: "Timeline" });
+    const outcomes = within(ceoReport).getByRole("region", { name: "Outcomes" });
+    expect(Boolean(overview.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(pending.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(timeline.compareDocumentPosition(outcomes) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
 
     const objectiveGroup = within(outcomes).getByRole("region", { name: "Validate first wedge" });
     expect(objectiveGroup).toHaveTextContent("Two SEO keyword clusters are viable");
@@ -3056,9 +3201,9 @@ describe("Dashboard App", () => {
     const graph = within(ceoReport).getByRole("region", { name: "CEO Task Dependency Graph" });
     expect(within(graph).getByRole("button", { name: /Prepare SEO launch Waiting on your decision/ })).toBeInTheDocument();
 
-    const outcomes = within(ceoReport).getByRole("region", { name: "Outcomes" });
     const pending = within(ceoReport).getByRole("region", { name: "CEO Pending" });
-    expect(Boolean(outcomes.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    const timeline = within(ceoReport).getByRole("region", { name: "Timeline" });
+    expect(Boolean(pending.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(within(ceoReport).getByRole("region", { name: "CEO Blueprint Summary" })).toBeInTheDocument();
   });
 

@@ -768,6 +768,10 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.ceo-office-timeline__item--highlighted {
+  border-color: var(--accent-secondary);
+}
+
 .ceo-founder-decision__options,
 .ceo-founder-decision__return {
   display: grid;

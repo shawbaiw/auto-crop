@@ -4,13 +4,12 @@
 
 **Blocked by:** 01 (Define CEO Office Item Projection Contract)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Unresolved Founder Decisions project as action-bearing decision request items.
-- [ ] Reviewable CEO approval or return gates project as action-bearing approval request items.
-- [ ] Human Actions project as action-bearing CEO Office Items with their external action requirements.
-- [ ] Wait States project as CEO Office Items but are not presented as failures.
-- [ ] Blocked, retry-exhausted, missing-deliverable, needs-replan, and unrecoverable failure states project as Blocked Issue items.
-- [ ] CEO Pending can be computed from action-bearing CEO Office Items while excluding ordinary Task Briefs and Execution Reports.
-- [ ] Tests cover action-bearing projection and pending derivation without depending on a specific business topic.
-
+- [x] Unresolved Founder Decisions project as action-bearing decision request items.
+- [x] Reviewable CEO approval or return gates project as action-bearing approval request items.
+- [x] Human Actions project as action-bearing CEO Office Items with their external action requirements.
+- [x] Wait States project as CEO Office Items but are not presented as failures.
+- [x] Blocked, retry-exhausted, missing-deliverable, needs-replan, and unrecoverable failure states project as Blocked Issue items.
+- [x] CEO Pending can be computed from action-bearing CEO Office Items while excluding ordinary Task Briefs and Execution Reports.
+- [x] Tests cover action-bearing projection and pending derivation without depending on a specific business topic.

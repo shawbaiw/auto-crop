@@ -8,8 +8,8 @@ export type VideotexKeyValueProps = {
 export function VideotexKeyValue({ items }: VideotexKeyValueProps) {
   return (
     <dl className="videotex-key-value">
-      {items.map((item) => (
-        <div key={item.label}>
+      {items.map((item, index) => (
+        <div key={`${item.label}:${index}`}>
           <dt>{item.label}</dt>
           <dd>{item.value}</dd>
         </div>
