@@ -31,7 +31,53 @@ describe("buildTaskExecutionPrompt", () => {
     expect(prompt).toContain("Original Proof Schema: research-report");
     expect(prompt).toContain("## Structured Execution Report");
     expect(prompt).toContain("`conclusion`, `vision_impact`, `remaining_gap`, and `recommendation`");
-    expect(prompt).toContain("Also include `outcome_summary` for compatibility");
+    expect(prompt).toContain("Also include `outcome_summary`, written in English, for compatibility");
+  });
+
+  it("tells the agent to author founder-facing prose in the company language, exempting machine text", () => {
+    const zhPrompt = buildTaskExecutionPrompt({
+      company: createCompanyRecord({ locale: "zh" }),
+      task: createTaskRecord({ title: "选择第一个 SEO 关键词机会" }),
+      handoffs: [],
+    });
+
+    expect(zhPrompt).toContain(
+      "Company Language: 简体中文 (Simplified Chinese). Author every founder-facing prose field in 简体中文 (Simplified Chinese)",
+    );
+    expect(zhPrompt).toContain(
+      "Do not translate machine identifiers, file paths, URLs, code, or brand names",
+    );
+    expect(zhPrompt).toContain("Write each one in 简体中文 (Simplified Chinese)");
+    expect(zhPrompt).toContain("Also include `outcome_summary`, written in 简体中文 (Simplified Chinese)");
+    expect(zhPrompt).toContain(
+      "Write every `label`, `tradeoffs`, `recommendation`, `rationale`, and `briefing` in 简体中文 (Simplified Chinese)",
+    );
+    // The "string or {en, zh} object" escape hatch is gone.
+    expect(zhPrompt).not.toContain('{ "en"');
+    expect(zhPrompt).not.toContain("may be a string");
+  });
+
+  it("localizes the JSON example values to the company language while keeping keys English", () => {
+    const zhPrompt = buildTaskExecutionPrompt({
+      company: createCompanyRecord({ locale: "zh" }),
+      task: createTaskRecord(),
+      handoffs: [],
+    });
+    const enPrompt = buildTaskExecutionPrompt({
+      company: createCompanyRecord({ locale: "en" }),
+      task: createTaskRecord(),
+      handoffs: [],
+    });
+
+    expect(zhPrompt).toContain('"conclusion": "目标关键词具备可排名的机会，竞争页面内容陈旧。"');
+    expect(zhPrompt).toContain('"label": "统一月费"');
+    expect(zhPrompt).toContain('"decisionKind": "pricing_model"');
+
+    expect(enPrompt).toContain(
+      '"conclusion": "The target keyword has a rankable opening and the competing pages are stale."',
+    );
+    expect(enPrompt).toContain('"label": "Flat monthly fee"');
+    expect(enPrompt).not.toMatch(/[一-鿿]/);
   });
 
   it("keeps accepted upstream business handoffs inside the same execution prompt contract", () => {
