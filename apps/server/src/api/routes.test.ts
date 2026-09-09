@@ -1051,6 +1051,8 @@ describe("API routes", () => {
         }),
       ]),
     );
+    // The awaiting_founder_decision completion (task_completion_event_fd) is represented by its
+    // decision_request card, not an execution_report — only the accepted completion projects a report.
     const relevantTimelineIds = first.ceoOfficeItems
       .map((item) => item.id)
       .filter((id) =>
@@ -1064,11 +1066,11 @@ describe("API routes", () => {
       );
     expect(relevantTimelineIds).toEqual([
       "task_brief:founder_decision_resolve_source",
-      "execution_report:task_completion_event_fd",
       `decision_request:${seeded.decisionId(1)}`,
       "task_brief:company_state_ordinary_completion",
       "execution_report:task_completion_event_company_state_ordinary",
     ]);
+    expect(first.ceoOfficeItems.map((item) => item.id)).not.toContain("execution_report:task_completion_event_fd");
     const ceoPendingIds = deriveCeoPendingItems(first.ceoOfficeItems).map((item) => item.id);
     expect(ceoPendingIds).toContain(`decision_request:${seeded.decisionId(1)}`);
     expect(ceoPendingIds).not.toContain("execution_report:task_completion_event_company_state_ordinary");

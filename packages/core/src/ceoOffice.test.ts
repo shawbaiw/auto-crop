@@ -717,6 +717,72 @@ describe("projectCeoOfficeItems", () => {
     },
   );
 
+  it.each([
+    ["blocked", "blocked"],
+    ["needs_replan", "needs_replan"],
+    ["failed_to_review", "blocked"],
+  ] satisfies Array<[TaskCompletionEvent["outcome"], TaskStatus]>)(
+    "emits no Execution Report for a %s completion outcome but still projects a Blocked Issue",
+    (outcome, status) => {
+      const state = scenario("Recover the deliverable", "The work could not be accepted");
+      const [task] = state.tasks;
+
+      const items = projectCeoOfficeItems({
+        ...state,
+        tasks: [{ ...task!, status }],
+        taskCompletionEvents: [{ ...state.taskCompletionEvents[0]!, outcome }],
+      });
+
+      expect(items.some((item) => item.type === "execution_report")).toBe(false);
+      expect(items.find((item) => item.type === "blocked_issue")).toMatchObject({
+        type: "blocked_issue",
+        actionBearing: true,
+        taskId: "task",
+        data: { status: "open", reason: "The work could not be accepted" },
+      });
+    },
+  );
+
+  it("projects exactly one Execution Report plus a Decision Resolution when a task goes awaiting_founder_decision then accepted", () => {
+    const state = scenario("Choose pricing", "Flat pilot pricing is the pick");
+    const [task] = state.tasks;
+    const awaiting: TaskCompletionEvent = {
+      ...state.taskCompletionEvents[0]!, id: "completion_awaiting",
+      outcome: "awaiting_founder_decision", createdAt: "2026-09-01T10:00:00Z",
+    };
+    const accepted: TaskCompletionEvent = {
+      ...state.taskCompletionEvents[0]!, id: "completion_accepted",
+      outcome: "accepted", createdAt: "2026-09-01T11:30:00Z",
+    };
+    const decision: FounderDecision = {
+      id: "pricing_choice", companyId: company.id, sourceTaskCompletionEventId: "completion_awaiting", taskId: task!.id,
+      departmentId: "product", decisionKind: "pricing_model", rationale: "Choose the billing period",
+      briefing: "Both plans tested well; the founder owns the call.",
+      options: [{ label: "Flat", tradeoffs: "Simplest to sell", recommended: true }],
+      status: "pending", resolvedOption: null, resolvedAt: null, blockedTaskIds: ["launch"],
+      createdAt: "2026-09-01T10:00:00Z",
+    };
+    const resolution: FounderDecisionResolution = {
+      founderDecisionId: decision.id, companyId: company.id, taskId: task!.id, status: "resolved",
+      chosenOption: "Flat", returnReason: null, note: null, resolvedAt: "2026-09-01T11:00:00Z",
+    };
+
+    const items = projectCeoOfficeItems({
+      ...state,
+      taskCompletionEvents: [awaiting, accepted],
+      founderDecisions: [decision],
+      founderDecisionResolutions: [resolution],
+    });
+
+    expect(items.map((item) => item.type)).toEqual([
+      "task_brief", "decision_request", "decision_resolution", "execution_report",
+    ]);
+    expect(items.filter((item) => item.type === "execution_report")).toMatchObject([
+      { id: "execution_report:completion_accepted", occurredAt: "2026-09-01T11:30:00Z" },
+    ]);
+    expect(items.some((item) => item.type === "blocked_issue")).toBe(false);
+  });
+
   it("derives CEO Pending from action-bearing CEO Office Items only", () => {
     const base = {
       companyId: company.id,

@@ -193,6 +193,9 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
   }
 
   for (const event of completions) {
+    // Non-accepted completions are surfaced by their exception card, not a report; the row stays a
+    // durable fact. This also collapses the two completions a founder-decision task leaves behind.
+    if (event.outcome !== "accepted") continue;
     const executionReport = event.executionReport ?? null;
     const businessArtifact = event.businessArtifactId ? businessArtifactsById.get(event.businessArtifactId) ?? null : null;
     const associatedBusinessArtifact = businessArtifact?.taskId === event.taskId ? businessArtifact : null;
