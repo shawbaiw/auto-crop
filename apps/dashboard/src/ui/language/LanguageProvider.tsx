@@ -20,14 +20,26 @@ const translations = {
 export type LanguageProviderProps = {
   children: ReactNode;
   defaultLanguage?: LanguageId;
+  /**
+   * The canonical locale of the loaded company. When it changes the UI language is initialized to
+   * it (generated business content is authored in this one language); the toggle still switches
+   * chrome freely afterward.
+   */
+  syncLocale?: LanguageId | null;
 };
 
-export function LanguageProvider({ children, defaultLanguage = "en" }: LanguageProviderProps) {
+export function LanguageProvider({ children, defaultLanguage = "en", syncLocale }: LanguageProviderProps) {
   const [language, setLanguage] = useState<LanguageId>(defaultLanguage);
 
   useEffect(() => {
     writeCurrentLanguage(language);
   }, [language]);
+
+  useEffect(() => {
+    if (syncLocale && isLanguageId(syncLocale)) {
+      setLanguage(syncLocale);
+    }
+  }, [syncLocale]);
 
   const value = useMemo(
     () => ({

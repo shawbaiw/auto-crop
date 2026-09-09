@@ -22,7 +22,7 @@ import {
 } from "./index";
 
 const company: Company = {
-  id: "company", name: "Studio", founderVision: "Build a sustainable business",
+  id: "company", name: "Studio", founderVision: "Build a sustainable business", locale: "en",
   selectedCeoAgentId: "ceo", playbookId: "custom", status: "active",
   createdAt: "2026-09-01T08:00:00Z", updatedAt: "2026-09-01T08:00:00Z",
 };

@@ -32,6 +32,7 @@ import type {
   TaskSource,
   TaskStatus,
 } from "@auto-crop/core";
+import { isLocale } from "@auto-crop/core";
 import type { DatabaseClient } from "./client";
 
 export type ReviewRecord = {
@@ -48,14 +49,15 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO companies (
-            id, name, founder_vision, selected_ceo_agent_id, playbook_id, permission_mode, status,
+            id, name, founder_vision, locale, selected_ceo_agent_id, playbook_id, permission_mode, status,
             creation_idempotency_key, creation_input, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           company.id,
           company.name,
           company.founderVision,
+          company.locale,
           company.selectedCeoAgentId,
           company.playbookId,
           company.permissionMode ?? null,
@@ -1241,6 +1243,7 @@ type CompanyRow = {
   id: string;
   name: string;
   founder_vision: string;
+  locale: string | null;
   selected_ceo_agent_id: string;
   playbook_id: string;
   permission_mode: Company["permissionMode"] | null;
@@ -1480,6 +1483,7 @@ function mapCompany(row: CompanyRow): Company {
     id: row.id,
     name: row.name,
     founderVision: row.founder_vision,
+    locale: row.locale && isLocale(row.locale) ? row.locale : "en",
     selectedCeoAgentId: row.selected_ceo_agent_id,
     playbookId: row.playbook_id,
     permissionMode: row.permission_mode ?? null,

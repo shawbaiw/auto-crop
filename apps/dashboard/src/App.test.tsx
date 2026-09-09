@@ -2715,6 +2715,40 @@ describe("Dashboard App", () => {
     }
   });
 
+  it("initializes the dashboard language from the company locale on load", async () => {
+    const restoreStorage = installMockLocalStorage({
+      "auto-crop.currentCompanyId": "company_1",
+      "auto-crop.currentLanguage": "en",
+    });
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.getCompanyState = vi.fn(async () => ({
+      ...created,
+      company: { ...created.company, status: "active" as const, locale: "zh" as const },
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: created.replanProposals ?? [],
+    }));
+
+    try {
+      const user = userEvent.setup();
+      render(<App apiClient={api} />);
+
+      // The company locale wins over the stored "en": chrome loads in Chinese with no toggle click.
+      expect(await screen.findByRole("heading", { name: "公司运营仪表盘" })).toBeInTheDocument();
+
+      // The toggle still switches chrome afterward.
+      await user.click(screen.getByRole("menuitem", { name: "视图" }));
+      await user.click(screen.getByRole("menuitem", { name: "语言" }));
+      await user.click(screen.getByRole("menuitem", { name: "English" }));
+
+      expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
+    } finally {
+      restoreStorage();
+    }
+  });
+
   it("selects detected agents from the reusable Agents menu", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();

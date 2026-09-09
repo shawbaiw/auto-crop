@@ -24,8 +24,8 @@ import type {
   VisionGap,
   WaitState,
 } from "@auto-crop/core";
-import type { CompleteLocalizedText, LocalizedText } from "@auto-crop/core";
-import { localizedTextFromString, projectCeoOfficeItems } from "@auto-crop/core";
+import type { CompleteLocalizedText, Locale, LocalizedText } from "@auto-crop/core";
+import { isLocale, localizedTextFromString, projectCeoOfficeItems } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories, ReviewRecord } from "../db/repositories";
 import { EventStream } from "../events/sse";
@@ -141,12 +141,14 @@ async function routeRequest(
     const body = await readJson<{
       companyName?: string;
       founderVision: string;
+      locale?: string;
       selectedCeoAgentId: string;
       permissionMode: PolicyMode;
       assets?: string[];
       creationIdempotencyKey?: string;
     }>(request);
     const companyName = body.companyName?.trim() ?? "";
+    const locale: Locale = isLocale(body.locale ?? "") ? (body.locale as Locale) : "en";
 
     if (!companyName) {
       sendJson(response, 400, { error: "Company name is required." });
@@ -163,6 +165,7 @@ async function routeRequest(
     const creationInput = {
       companyName,
       founderVision: body.founderVision,
+      locale,
       selectedCeoAgentId: body.selectedCeoAgentId,
       permissionMode: body.permissionMode,
       assets: body.assets ?? [],
@@ -193,6 +196,7 @@ async function routeRequest(
       id: createRouteId(options, "company"),
       name: companyName,
       founderVision: body.founderVision,
+      locale,
       selectedCeoAgentId: selectedCeoAgent.id,
       playbookId: selectPlaybook(body.founderVision).id,
       permissionMode: body.permissionMode,
@@ -940,6 +944,7 @@ async function completeCompanyCreation(input: {
   creationInput: {
     companyName: string;
     founderVision: string;
+    locale?: Locale;
     selectedCeoAgentId: string;
     permissionMode: PolicyMode;
     assets: string[];
@@ -1108,6 +1113,7 @@ function createCompanyEvent(
 function isCreationInput(value: unknown): value is {
   companyName: string;
   founderVision: string;
+  locale?: Locale;
   selectedCeoAgentId: string;
   permissionMode: PolicyMode;
   assets: string[];
@@ -1119,6 +1125,7 @@ function isCreationInput(value: unknown): value is {
   return (
     typeof value.companyName === "string" &&
     typeof value.founderVision === "string" &&
+    (value.locale === undefined || (typeof value.locale === "string" && isLocale(value.locale))) &&
     typeof value.selectedCeoAgentId === "string" &&
     isPolicyMode(value.permissionMode) &&
     Array.isArray(value.assets) &&
@@ -1990,6 +1997,7 @@ function summarizeCompany(company: Company) {
     status: company.status,
     playbookId: company.playbookId,
     founderVision: company.founderVision,
+    locale: company.locale,
     selectedCeoAgentId: company.selectedCeoAgentId,
     permissionMode: company.permissionMode ?? null,
   };

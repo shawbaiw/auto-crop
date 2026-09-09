@@ -6,6 +6,7 @@ export function migrate(database: DatabaseClient): void {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       founder_vision TEXT NOT NULL,
+      locale TEXT NOT NULL DEFAULT 'en',
       selected_ceo_agent_id TEXT NOT NULL,
       playbook_id TEXT NOT NULL,
       permission_mode TEXT,
@@ -320,6 +321,7 @@ export function migrate(database: DatabaseClient): void {
   `);
   migrateTaskPosition(database);
   migrateCompanyPermissionMode(database);
+  migrateCompanyLocale(database);
   migrateCompanyCreationFields(database);
   migrateTasksExecutionFields(database);
   migrateTaskHierarchyFields(database);
@@ -400,6 +402,11 @@ function migrateLocalizedBusinessContentFields(database: DatabaseClient): void {
 function migrateCompanyPermissionMode(database: DatabaseClient): void {
   const columns = getColumnNames(database, "companies");
   addColumnIfMissing(database, columns, "companies", "permission_mode TEXT");
+}
+
+function migrateCompanyLocale(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "companies");
+  addColumnIfMissing(database, columns, "companies", "locale TEXT NOT NULL DEFAULT 'en'");
 }
 
 function migrateReplanProposalDiagnostics(database: DatabaseClient): void {

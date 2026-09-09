@@ -30,6 +30,8 @@ export type CompanySummary = {
   status: string;
   playbookId: string;
   founderVision?: string;
+  /** The canonical language the company's generated founder-facing content is authored in. */
+  locale?: Locale;
   selectedCeoAgentId?: string;
 };
 
@@ -482,6 +484,7 @@ export type ApiClient = {
   createCompany(input: {
     companyName: string;
     founderVision: string;
+    locale?: Locale;
     selectedCeoAgentId: string;
     permissionMode: string;
     assets: string[];

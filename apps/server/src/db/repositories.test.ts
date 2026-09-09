@@ -16,6 +16,48 @@ afterEach(() => {
 });
 
 describe("repositories", () => {
+  it("defaults a pre-locale company row to \"en\" and round-trips an explicit locale", () => {
+    const client = createDatabaseClient(":memory:");
+    // A company table that predates the locale column, with one row already in it.
+    client.exec(`
+      CREATE TABLE companies (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        founder_vision TEXT NOT NULL,
+        selected_ceo_agent_id TEXT NOT NULL,
+        playbook_id TEXT NOT NULL,
+        permission_mode TEXT,
+        status TEXT NOT NULL,
+        creation_idempotency_key TEXT,
+        creation_input TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO companies (id, name, founder_vision, selected_ceo_agent_id, playbook_id, status, created_at, updated_at)
+      VALUES ('company_legacy', 'Legacy Co', 'Vision', 'codex', 'ai-saas', 'active', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+    `);
+
+    migrate(client);
+    const repos = createRepositories(client);
+
+    expect(repos.getCompany("company_legacy")?.locale).toBe("en");
+
+    repos.createCompany({
+      id: "company_zh",
+      name: "ZH Co",
+      founderVision: "Vision",
+      locale: "zh",
+      selectedCeoAgentId: "codex",
+      playbookId: "ai-saas",
+      status: "active",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    });
+    expect(repos.getCompany("company_zh")?.locale).toBe("zh");
+
+    client.close();
+  });
+
   it("persists task lifecycle transitions and proof", () => {
     const { repos, close } = openTestRepositories();
     const records = createRecords();
@@ -396,6 +438,7 @@ function createRecords(): {
       id: "company_1",
       name: "Pricing Page Studio",
       founderVision: "Build an AI SaaS for pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       playbookId: "ai-saas",
       status: "active",

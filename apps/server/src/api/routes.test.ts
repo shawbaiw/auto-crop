@@ -35,6 +35,7 @@ describe("API routes", () => {
       {
         companyName: "Pricing Page Studio",
         founderVision: "Build an AI SaaS that creates pricing pages.",
+        locale: "en",
         selectedCeoAgentId: "codex",
         permissionMode: "balanced",
         assets: ["README.md"],
@@ -183,6 +184,7 @@ describe("API routes", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         founderVision: "Build an AI SaaS that creates pricing pages.",
+        locale: "en",
         selectedCeoAgentId: "codex",
         permissionMode: "balanced",
         assets: [],
@@ -214,6 +216,7 @@ describe("API routes", () => {
       body: JSON.stringify({
         companyName: "Pricing Page Studio",
         founderVision: "Build an AI SaaS that creates pricing pages.",
+        locale: "en",
         selectedCeoAgentId: "codex",
         permissionMode: "balanced",
         assets: [],
@@ -236,6 +239,7 @@ describe("API routes", () => {
       body: JSON.stringify({
         companyName: "Pricing Page Studio",
         founderVision: "Build an AI SaaS that creates pricing pages.",
+        locale: "en",
         selectedCeoAgentId: "codex",
         permissionMode: "balanced",
         assets: [],
@@ -251,6 +255,61 @@ describe("API routes", () => {
     await waitForCompanyStatus(fixture, body.company.id, "draft");
     expect(fixture.repositories.listTasksForCompany(body.company.id).length).toBeGreaterThan(0);
 
+    await fixture.close();
+  });
+
+  it("persists and serializes the company locale chosen at creation", async () => {
+    const fixture = await startFixtureServer();
+
+    const response = await fetch(`${fixture.baseUrl}/api/companies`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        companyName: "Pricing Page Studio",
+        founderVision: "Build an AI SaaS that creates pricing pages.",
+        locale: "zh",
+        selectedCeoAgentId: "codex",
+        permissionMode: "balanced",
+        assets: [],
+        creationIdempotencyKey: "locale-key-1",
+      }),
+    });
+    const body = (await response.json()) as { company: { id: string; locale: string } };
+
+    expect(response.status).toBe(202);
+    expect(body.company.locale).toBe("zh");
+    expect(fixture.repositories.getCompany(body.company.id)?.locale).toBe("zh");
+
+    await waitForCompanyStatus(fixture, body.company.id, "draft");
+    const state = (await (await fetch(`${fixture.baseUrl}/api/companies/${body.company.id}/state`)).json()) as {
+      company: { locale: string };
+    };
+    expect(state.company.locale).toBe("zh");
+
+    await fixture.close();
+  });
+
+  it("defaults the company locale to \"en\" when the creation request omits it", async () => {
+    const fixture = await startFixtureServer();
+
+    const response = await fetch(`${fixture.baseUrl}/api/companies`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        companyName: "Pricing Page Studio",
+        founderVision: "Build an AI SaaS that creates pricing pages.",
+        selectedCeoAgentId: "codex",
+        permissionMode: "balanced",
+        assets: [],
+        creationIdempotencyKey: "locale-key-2",
+      }),
+    });
+    const body = (await response.json()) as { company: { id: string; locale: string } };
+
+    expect(body.company.locale).toBe("en");
+    expect(fixture.repositories.getCompany(body.company.id)?.locale).toBe("en");
+
+    await waitForCompanyStatus(fixture, body.company.id, "draft");
     await fixture.close();
   });
 
@@ -342,6 +401,7 @@ describe("API routes", () => {
       id: "company_1",
       name: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       playbookId: "ai-saas",
       permissionMode: "balanced",
@@ -350,6 +410,7 @@ describe("API routes", () => {
       creationInput: {
         companyName: "Pricing Page Studio",
         founderVision: "Build an AI SaaS that creates pricing pages.",
+        locale: "en",
         selectedCeoAgentId: "codex",
         permissionMode: "balanced",
         assets: [],
@@ -419,6 +480,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -505,6 +567,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -549,6 +612,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -611,6 +675,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -665,6 +730,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -738,6 +804,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -777,6 +844,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -810,6 +878,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -842,6 +911,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -1008,6 +1078,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -1066,6 +1137,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -1122,6 +1194,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -1323,6 +1396,7 @@ describe("API routes", () => {
       id: "company_1",
       name: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       playbookId: "ai-saas",
       status: "active",
@@ -1394,6 +1468,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -1451,6 +1526,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -1729,6 +1805,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -1805,6 +1882,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -1836,6 +1914,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -1866,6 +1945,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -2233,6 +2313,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -2331,6 +2412,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -2463,6 +2545,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Launch Readiness Studio",
       founderVision: "Publish an educational checklist and learn whether teams want it.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -2767,6 +2850,7 @@ describe("API routes", () => {
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -2850,6 +2934,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -2925,6 +3010,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -2989,6 +3075,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -3036,6 +3123,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -3089,6 +3177,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -3115,6 +3204,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -3173,6 +3263,7 @@ describe("API routes", () => {
     await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -3356,6 +3447,7 @@ async function postCreatingCompany(
     body: JSON.stringify({
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
       selectedCeoAgentId: "codex",
       permissionMode: "balanced",
       assets: [],
@@ -3457,6 +3549,7 @@ async function createCompanyForApi(
   return postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
     companyName: "Pricing Page Studio",
     founderVision: "Build an AI SaaS that creates pricing pages.",
+    locale: "en",
     selectedCeoAgentId: "codex",
     permissionMode: "balanced",
     assets: [],
@@ -3520,6 +3613,7 @@ async function seedAwaitingFounderDecision(options: {
   const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
     companyName: "Pricing Page Studio",
     founderVision: "Build an AI SaaS that creates pricing pages.",
+    locale: "en",
     selectedCeoAgentId: "codex",
     permissionMode: "balanced",
     assets: [],

@@ -383,6 +383,7 @@ function createCompanyRecord(): Company {
     id: "company_1",
     name: "Pricing Page Studio",
     founderVision: "Build an AI SaaS that creates pricing pages.",
+    locale: "en",
     selectedCeoAgentId: "codex",
     playbookId: "ai-saas",
     status: "active",

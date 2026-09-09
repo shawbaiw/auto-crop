@@ -85,6 +85,7 @@ describe("createCompany", () => {
       id: "company_1",
       name: "Pricing Page Studio",
       founderVision: blueprint.company.founderVision,
+      locale: "en" as const,
       selectedCeoAgentId: "codex",
       playbookId: blueprint.company.playbookId,
       permissionMode: "balanced" as const,
@@ -164,9 +165,11 @@ describe("createCompany", () => {
     expect(result.company.playbookId).toBe("ai-saas");
     expect(result.company.permissionMode).toBe("balanced");
     expect(result.company.status).toBe("draft");
+    expect(result.company.locale).toBe("en");
 
     expect(repositories.getCompany(result.company.id)?.name).toBe("Pricing Page Studio");
     expect(repositories.getCompany(result.company.id)?.permissionMode).toBe("balanced");
+    expect(repositories.getCompany(result.company.id)?.locale).toBe("en");
     expect(repositories.listDepartments(result.company.id).map((department) => department.name)).toEqual([
       "Product",
       "Research",
@@ -232,6 +235,44 @@ describe("createCompany", () => {
       .find((department) => department.name === "Engineering");
     expect(engineering).toBeDefined();
     expect(existsSync(engineering?.memoryPath ?? "")).toBe(true);
+
+    client.close();
+  });
+
+  it("persists an explicit company locale so agents author founder-facing content in it", async () => {
+    const projectRoot = createTempProjectRoot();
+    const client = createDatabaseClient(":memory:");
+    migrate(client);
+    const repositories = createRepositories(client);
+    const blueprint = aiSaasPlaybook.createBlueprint({
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      preferredEngineeringAgentId: "codex",
+      preferredStrategyAgentId: "claude-code",
+    });
+    const ceoAgent = createMockAgentAdapter({
+      id: "codex",
+      name: "Codex",
+      capabilities: ["code", "frontend", "test"],
+      output: ["```json", JSON.stringify({ brief: "Validate the wedge.", blueprint }), "```"].join("\n"),
+    });
+
+    const result = await createCompany({
+      projectRoot,
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "zh",
+      selectedCeoAgent: ceoAgent,
+      availableAgents: [ceoAgent, createMockAgentAdapter({ id: "claude-code", name: "Claude Code", capabilities: ["writing", "research", "growth"] })],
+      permissionMode: "balanced",
+      assets: [],
+      repositories,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.company.locale).toBe("zh");
+    expect(repositories.getCompany(result.company.id)?.locale).toBe("zh");
 
     client.close();
   });

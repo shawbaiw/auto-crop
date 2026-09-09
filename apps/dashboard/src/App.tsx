@@ -333,6 +333,7 @@ export default function App({ apiClient }: AppProps) {
       const response = await client.createCompany({
         companyName: companyName.trim(),
         founderVision: founderVision.trim(),
+        locale: readCurrentLanguage() ?? defaultLanguage,
         selectedCeoAgentId: selectedAgentId,
         permissionMode,
         assets: [],
@@ -754,7 +755,7 @@ export default function App({ apiClient }: AppProps) {
   function renderAppFrame(children: ReactNode) {
     return (
       <ThemeProvider defaultSkin={defaultSkin}>
-        <LanguageProvider defaultLanguage={defaultLanguage}>
+        <LanguageProvider defaultLanguage={defaultLanguage} syncLocale={blueprint?.company.locale ?? null}>
           <CRTViewport>{children}</CRTViewport>
         </LanguageProvider>
       </ThemeProvider>

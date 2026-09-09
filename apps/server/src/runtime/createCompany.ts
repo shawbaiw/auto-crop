@@ -5,6 +5,7 @@ import type {
   CompanyBlueprint,
   Department,
   KeyResult,
+  Locale,
   Objective,
   Task,
   TaskDependency,
@@ -26,6 +27,8 @@ export type CreateCompanyInput = {
   projectRoot: string;
   companyName: string;
   founderVision: string;
+  /** The canonical language for generated founder-facing content. Defaults to `"en"`. */
+  locale?: Locale;
   selectedCeoAgent: AgentAdapter;
   availableAgents: AgentAdapter[];
   permissionMode: PolicyMode;
@@ -100,6 +103,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     id: companyId,
     name: companyName,
     founderVision: blueprintResult.blueprint.company.founderVision,
+    locale: input.locale ?? "en",
     selectedCeoAgentId: input.selectedCeoAgent.id,
     playbookId: blueprintResult.blueprint.company.playbookId,
     permissionMode: input.permissionMode,

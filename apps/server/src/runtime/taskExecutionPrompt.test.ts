@@ -78,6 +78,7 @@ function createCompanyRecord(overrides: Partial<Company> = {}): Company {
     id: "company_1",
     name: "Launch Loop Lab",
     founderVision: "Find an SEO opportunity and build a lightweight web product.",
+    locale: "en",
     selectedCeoAgentId: "codex",
     playbookId: "ai-saas",
     status: "active",

@@ -19,6 +19,7 @@ function fixture() {
     id: "company_1",
     name: "Co",
     founderVision: "v",
+    locale: "en",
     selectedCeoAgentId: "codex",
     playbookId: "ai-saas",
     status: "active",

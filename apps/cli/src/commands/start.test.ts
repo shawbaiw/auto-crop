@@ -99,6 +99,7 @@ describe("startAutoCrop", () => {
         body: JSON.stringify({
           companyName: "Pricing Page Studio",
           founderVision: "Build an AI SaaS that creates pricing pages.",
+          locale: "en",
           selectedCeoAgentId: "codex",
           permissionMode: "balanced",
           assets: [],
@@ -142,6 +143,7 @@ describe("startAutoCrop", () => {
       }>(`${started.url}/api/companies`, {
         companyName: "Vision Studio",
         founderVision: "Build an AI SaaS that turns founder visions into launch plans.",
+        locale: "en",
         selectedCeoAgentId: "codex",
         permissionMode: "balanced",
         assets: [],
@@ -306,6 +308,7 @@ function createCompanyRecord(): Company {
     id: "company_1",
     name: "Pricing Page Studio",
     founderVision: "Build an AI SaaS that creates pricing pages.",
+    locale: "en",
     selectedCeoAgentId: "codex",
     playbookId: "ai-saas",
     status: "active",

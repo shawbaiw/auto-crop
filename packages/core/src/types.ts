@@ -1,4 +1,4 @@
-import type { LocalizedText } from "./localizedText";
+import type { Locale, LocalizedText } from "./localizedText";
 
 export type CompanyStatus = "creating" | "creation_failed" | "draft" | "active" | "paused" | "review";
 export type PermissionMode = "safe" | "balanced" | "autonomous";
@@ -391,6 +391,8 @@ export type Company = {
   id: string;
   name: string;
   founderVision: string;
+  /** The one language the company's generated founder-facing content is authored in. Set once at creation. */
+  locale: Locale;
   selectedCeoAgentId: string;
   playbookId: string;
   permissionMode?: PermissionMode | null;
