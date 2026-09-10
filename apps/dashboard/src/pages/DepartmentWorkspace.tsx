@@ -48,7 +48,7 @@ import { VideotexKeyValue, VideotexLog } from "../ui/data";
 import { HumanActionPanel } from "../ui/humanActions/HumanActionPanel";
 import { useLanguage, type TranslationKey } from "../ui/language";
 import { resolveLocalizedValue } from "../ui/language/localizedText";
-import { AppShell, PageHeader, Workspace } from "../ui/layout";
+import { AppShell, PageHeader, RetroDialog, Workspace } from "../ui/layout";
 import { RetroBadge, RetroButton, RetroListRow, RetroPanel } from "../ui/retro";
 import {
   formatArtifactKind,
@@ -149,6 +149,14 @@ export function DepartmentWorkspace({
     () => getCeoPendingItems(ceoOfficeItems, tasks, departmentNamesById),
     [ceoOfficeItems, departmentNamesById, tasks],
   );
+  // The Founder Vision is shown once in the CEO Office header. The company record carries it; a Task
+  // Brief item is the fallback for an older snapshot whose company summary omits it.
+  const ceoOfficeFounderVision =
+    company.founderVision ??
+    ceoOfficeItems.find(
+      (item): item is Extract<CeoOfficeItemSummary, { type: "task_brief" }> => item.type === "task_brief",
+    )?.data.founderVision ??
+    "";
   const tasksByDepartment = useMemo(() => {
     const grouped = new Map(departments.map((department) => [department.id, [] as TaskSummary[]]));
     for (const task of tasks) {
@@ -222,6 +230,7 @@ export function DepartmentWorkspace({
                 <CeoIntakeWorkspace
                   companyId={company.id}
                   companyLocale={company.locale ?? "en"}
+                  founderVision={ceoOfficeFounderVision}
                   draft={ceoIntakeDraft}
                   departments={departments}
                   intakes={ceoIntakes}
@@ -328,6 +337,7 @@ function CeoIntakeWorkspace({
   companyLocale,
   finalFounderReport,
   finalFounderReportPreparing,
+  founderVision,
   departments,
   draft,
   founderDecisions,
@@ -355,6 +365,7 @@ function CeoIntakeWorkspace({
   companyLocale: Locale;
   finalFounderReport: FinalFounderReportSummary | null;
   finalFounderReportPreparing: boolean;
+  founderVision: string;
   departments: DepartmentSummary[];
   draft: string;
   founderDecisions: FounderDecisionSummary[];
@@ -409,6 +420,7 @@ function CeoIntakeWorkspace({
       <CeoExecutiveOverview
         ceoAttentionRollups={ceoAttentionRollups}
         companyTaskCount={tasks.length}
+        founderVision={founderVision}
         outcomesLastSeen={outcomesLastSeen}
         departmentsById={departmentsById}
         humanActions={humanActions}
@@ -427,11 +439,18 @@ function CeoIntakeWorkspace({
         successMessage={successMessage}
       />
       <CeoOfficeTimeline
+        artifactsByTask={artifactsByTask}
         companyLocale={companyLocale}
         departmentsById={departmentsById}
         highlightedItemId={highlightedOfficeItemId}
         items={ceoOfficeItems}
+        onViewTaskDetail={(taskId) => {
+          setHighlightedOfficeItemId(null);
+          setSelectedTaskId(taskId);
+          setSuccessMessage(null);
+        }}
         outcomesLastSeen={outcomesLastSeen}
+        proofsByTask={proofsByTask}
         tasksById={tasksById}
       />
       <FinalFounderReportPanel
@@ -679,28 +698,17 @@ function FinalFounderReportPanel({
   );
 }
 
-function CeoOfficeTimeline({
-  companyLocale,
-  departmentsById,
-  highlightedItemId,
-  items,
-  outcomesLastSeen,
-  tasksById,
-}: {
-  companyLocale: Locale;
-  departmentsById: Map<string, DepartmentSummary>;
-  highlightedItemId: string | null;
-  items: CeoOfficeItemSummary[];
-  outcomesLastSeen: string | null;
-  tasksById: Map<string, TaskSummary>;
-}) {
-  const { language, t } = useLanguage();
-  // A founder-facing localized field is authored in the one company locale (ADR 0013 → single
-  // canonical locale). When that locale value is absent we show a visible "untranslated" marker and
-  // log the gap, rather than silently falling back to another locale — the founder should see it as a
-  // gap, not as the intended content (spec Decision 2). A field that is simply not present (`null`)
-  // is not a translation gap: it returns "" so the caller's `|| t("department.none")` fallback wins.
-  const line = (text: LocalizedText | null | undefined): string => {
+/**
+ * A localized line resolver bound to the company canonical locale (ADR 0013 → single canonical
+ * locale). When the company-locale value is absent it returns a visible "untranslated" marker and
+ * logs the gap, rather than silently falling back to another locale — the founder should see it as a
+ * gap, not the intended content (spec Decision 2). A field that is simply not present (`null`)
+ * returns "" so a caller's `|| t("department.none")` fallback wins.
+ */
+type LineResolver = (text: LocalizedText | null | undefined) => string;
+
+function makeLineResolver(companyLocale: Locale, t: TranslateFn): LineResolver {
+  return (text) => {
     if (!text) {
       return "";
     }
@@ -715,7 +723,221 @@ function CeoOfficeTimeline({
     );
     return t("department.timelineUntranslated");
   };
+}
+
+// The type tag carries semantic weight: these three are the cards that need a founder or CEO move,
+// so they render with an accent stripe; every other type renders quiet (spec User Story 15).
+const ACTION_STATE_TIMELINE_TYPES = new Set<CeoOfficeItemSummary["type"]>([
+  "decision_request",
+  "approval_request",
+  "blocked_issue",
+]);
+
+// Largest-unit relative time ("2 hours ago", "3 天前"), so a card reads like a broadcast feed.
+const RELATIVE_TIME_DIVISIONS: Array<{ amount: number; unit: Intl.RelativeTimeFormatUnit }> = [
+  { amount: 60, unit: "second" },
+  { amount: 60, unit: "minute" },
+  { amount: 24, unit: "hour" },
+  { amount: 7, unit: "day" },
+  { amount: 4.34524, unit: "week" },
+  { amount: 12, unit: "month" },
+  { amount: Number.POSITIVE_INFINITY, unit: "year" },
+];
+
+function formatTimelineRelativeTime(iso: string, language: "en" | "zh"): string {
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) {
+    return iso;
+  }
+  const formatter = new Intl.RelativeTimeFormat(language, { numeric: "auto" });
+  let duration = (timestamp - Date.now()) / 1000;
+  for (const division of RELATIVE_TIME_DIVISIONS) {
+    if (Math.abs(duration) < division.amount) {
+      return formatter.format(Math.round(duration), division.unit);
+    }
+    duration /= division.amount;
+  }
+  return iso;
+}
+
+/** Everything the card and modal need to turn one timeline item into business language. */
+type TimelineRenderContext = {
+  line: LineResolver;
+  t: TranslateFn;
+  tasksById: Map<string, TaskSummary>;
+  language: "en" | "zh";
+};
+
+type TimelineItemView = {
+  /** The one key line a summary card leads with: the point of the item. */
+  keyLine: string;
+  /** The full key-value detail, shown only inside the modal. */
+  rows: Array<{ label: string; value: string }>;
+};
+
+/**
+ * The single place each timeline item's key line and detail rows are defined, so the card and the
+ * modal never drift. The Decision card leads with the briefing; options and rationale are secondary
+ * (spec). `execution_report` conclusion falls back to the older `outcome_summary` compatibility text.
+ */
+function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRenderContext): TimelineItemView {
+  const { line, t, tasksById, language } = ctx;
+  const tasks = (ids: string[]) => formatTimelineTasks(ids, tasksById, language, t);
+  const none = t("department.none");
+  switch (item.type) {
+    case "task_brief":
+      return {
+        keyLine: line(item.data.purpose),
+        rows: [
+          { label: t("department.timelinePurposeSource"), value: formatTaskBriefPurposeSource(item.data.purposeSource, t) },
+          { label: t("department.timelineObjective"), value: line(item.data.objectiveTitle) || none },
+          { label: t("department.timelineKeyResult"), value: line(item.data.keyResultTitle) || none },
+          { label: t("department.timelineMetric"), value: item.data.keyResultMetricName ?? none },
+          { label: t("department.timelineTarget"), value: line(item.data.keyResultTargetValue) || none },
+          { label: t("department.timelineDependencies"), value: tasks(item.data.dependsOnTaskIds) },
+        ],
+      };
+    case "execution_report":
+      return {
+        keyLine: line(item.data.conclusion) || line(item.data.summaryFallback) || t("department.noExecutionReport"),
+        rows: [
+          { label: t("department.timelineVisionImpact"), value: line(item.data.visionImpact) || none },
+          { label: t("department.timelineRemainingGap"), value: line(item.data.remainingGap) || formatTimelineGaps(item.data.remainingGaps, none) },
+          { label: t("department.timelineRecommendation"), value: line(item.data.recommendation) || formatTimelineNextSteps(item.data.recommendedNextSteps, none) },
+        ],
+      };
+    case "decision_request":
+      return {
+        keyLine: item.data.briefing || item.data.rationale || none,
+        rows: [
+          { label: t("department.timelineBriefing"), value: item.data.briefing || none },
+          { label: t("department.founderDecisionKind"), value: formatDecisionKind(item.data.decisionKind, t) },
+          { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
+          { label: t("department.timelineRationale"), value: item.data.rationale || none },
+          { label: t("department.timelineChosenOption"), value: item.data.resolvedOption ?? none },
+          { label: t("department.blockedTasks"), value: tasks(item.data.blockedTaskIds) },
+        ],
+      };
+    case "approval_request":
+      return {
+        keyLine: t("department.timelineApprovalRequestBody"),
+        rows: [{ label: t("department.status"), value: formatTimelineStatus(item.data.status, t) }],
+      };
+    case "decision_resolution":
+      return {
+        keyLine: line(item.data.note) || item.data.chosenOption || formatCompletionOutcome(item.data.outcome, t),
+        rows: [
+          { label: t("department.timelineResolutionOutcome"), value: formatCompletionOutcome(item.data.outcome, t) },
+          { label: t("department.timelineChosenOption"), value: item.data.chosenOption ?? none },
+          { label: t("department.timelineDecisionRequest"), value: item.data.requestItemId },
+        ],
+      };
+    case "human_action":
+      return {
+        keyLine: line(item.data.label),
+        rows: [
+          { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
+          { label: t("department.humanActionConfirmation"), value: formatTimelineTextList(item.data.confirmationRequirements, t) },
+          { label: t("department.blockedTasks"), value: tasks(item.data.blockedTaskIds) },
+          { label: t("department.timelineVerifiedAt"), value: item.data.verifiedAt ?? none },
+        ],
+      };
+    case "wait_state":
+      return {
+        keyLine: line(item.data.reason),
+        rows: [
+          { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
+          { label: t("department.waitStateNextCheck"), value: item.data.nextCheckAt },
+          { label: t("department.waitStateAffectedTasks"), value: tasks(item.data.affectedTaskIds) },
+        ],
+      };
+    case "blocked_issue":
+      return {
+        keyLine: line(item.data.reason),
+        rows: [
+          { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
+          { label: t("department.blockedTasks"), value: tasks(item.data.affectedTaskIds) },
+        ],
+      };
+    case "stage_change":
+      return {
+        keyLine: line(item.data.summary),
+        rows: [
+          { label: t("department.timelineRecommendation"), value: line(item.data.recommendedNextAction) },
+          { label: t("department.completedTasks"), value: tasks(item.data.affectedTaskIds) },
+        ],
+      };
+    case "final_report":
+      return {
+        keyLine: line(item.data.sections.actualResult),
+        rows: [
+          { label: t("department.finalFounderReport"), value: item.data.isCurrent ? t("department.timelineCurrentReport") : t("department.timelineSupersededReport") },
+          { label: t("department.finalReportVision"), value: line(item.data.sections.vision) },
+          { label: t("department.finalReportGoalFit"), value: line(item.data.sections.goalFit) },
+          { label: t("department.finalReportRemainingGaps"), value: line(item.data.sections.remainingGaps) },
+          { label: t("department.finalReportNextStep"), value: line(item.data.sections.recommendedNextStep) },
+        ],
+      };
+  }
+}
+
+/** The card / modal meta line: type tag · department · time. `relative` picks the time format. */
+function TimelineItemMeta({
+  departmentsById,
+  item,
+  language,
+  relative,
+  t,
+}: {
+  departmentsById: Map<string, DepartmentSummary>;
+  item: CeoOfficeItemSummary;
+  language: "en" | "zh";
+  relative: boolean;
+  t: TranslateFn;
+}) {
+  const department = item.departmentId ? departmentsById.get(item.departmentId) : null;
+  return (
+    <span className="ceo-office-timeline__meta">
+      <span>{formatCeoOfficeItemType(item.type, t)}</span>
+      {department ? <span>{departmentName(department, language)}</span> : null}
+      <span>{relative ? formatTimelineRelativeTime(item.occurredAt, language) : new Date(item.occurredAt).toLocaleString()}</span>
+    </span>
+  );
+}
+
+/**
+ * CEO Office reads as a broadcast station: each timeline item is a summary card (type tag +
+ * department + relative time + title + one key line), newest at the bottom pushing history up.
+ * Clicking a card opens {@link CeoOfficeItemModal} with the full detail, options, and evidence.
+ * Action-bearing cards render with an accent stripe; a newly arrived card briefly highlights
+ * (CSS animation, suppressed under `prefers-reduced-motion`).
+ */
+function CeoOfficeTimeline({
+  artifactsByTask,
+  companyLocale,
+  departmentsById,
+  highlightedItemId,
+  items,
+  onViewTaskDetail,
+  outcomesLastSeen,
+  proofsByTask,
+  tasksById,
+}: {
+  artifactsByTask: Map<string, BusinessArtifactSummary[]>;
+  companyLocale: Locale;
+  departmentsById: Map<string, DepartmentSummary>;
+  highlightedItemId: string | null;
+  items: CeoOfficeItemSummary[];
+  onViewTaskDetail: (taskId: string) => void;
+  outcomesLastSeen: string | null;
+  proofsByTask: Map<string, ProofSummary[]>;
+  tasksById: Map<string, TaskSummary>;
+}) {
+  const { language, t } = useLanguage();
+  const ctx: TimelineRenderContext = { line: makeLineResolver(companyLocale, t), t, tasksById, language };
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const visibleItems = [...items].sort(compareCeoOfficeTimelineItems);
+  const activeItem = activeItemId ? visibleItems.find((item) => item.id === activeItemId) ?? null : null;
 
   return (
     <RetroPanel
@@ -726,151 +948,169 @@ function CeoOfficeTimeline({
     >
       {visibleItems.length === 0 ? <p className="muted">{t("department.noCeoOfficeTimeline")}</p> : null}
       {visibleItems.map((item) => {
-        const department = item.departmentId ? departmentsById.get(item.departmentId) : null;
+        const classes = [
+          "ceo-outcome",
+          "ceo-office-timeline__item",
+          ACTION_STATE_TIMELINE_TYPES.has(item.type)
+            ? "ceo-office-timeline__item--action"
+            : "ceo-office-timeline__item--quiet",
+          item.id === highlightedItemId ? "ceo-office-timeline__item--highlighted" : "",
+          // "Newly arrived" = arrived since the founder's last visit; the highlight is a one-shot CSS
+          // animation (see styles.css), suppressed under `prefers-reduced-motion` (spec User Story 14).
+          isUnseenSince(item.occurredAt, outcomesLastSeen) ? "ceo-office-timeline__item--new" : "",
+        ].filter(Boolean).join(" ");
         return (
           <article
             aria-current={item.id === highlightedItemId ? "true" : undefined}
-            className={`ceo-outcome ceo-office-timeline__item${item.id === highlightedItemId ? " ceo-office-timeline__item--highlighted" : ""}`}
+            className={classes}
             key={item.id}
           >
-            <div>
-              <p className="ceo-office-timeline__meta">
-                <span>{formatCeoOfficeItemType(item.type, t)}</span>
-                {department ? <span>{departmentName(department, language)}</span> : null}
-                <span>{new Date(item.occurredAt).toLocaleString()}</span>
+            <button
+              aria-label={t("department.timelineOpenCard")
+                .replace("{type}", formatCeoOfficeItemType(item.type, t))
+                .replace("{title}", item.title)}
+              className="ceo-office-timeline__card"
+              onClick={() => setActiveItemId(item.id)}
+              type="button"
+            >
+              <span className="ceo-office-timeline__meta-row">
+                <TimelineItemMeta departmentsById={departmentsById} item={item} language={language} relative t={t} />
                 <UnseenBadge createdAt={item.occurredAt} lastSeen={outcomesLastSeen} />
-              </p>
-              <h4>{item.title}</h4>
-            </div>
-            {item.type === "task_brief" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{line(item.data.purpose)}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.timelinePurposeSource"), value: formatTaskBriefPurposeSource(item.data.purposeSource, t) },
-                    { label: t("department.timelineFounderVision"), value: item.data.founderVision },
-                    { label: t("department.timelineObjective"), value: line(item.data.objectiveTitle) || t("department.none") },
-                    { label: t("department.timelineKeyResult"), value: line(item.data.keyResultTitle) || t("department.none") },
-                    { label: t("department.timelineMetric"), value: item.data.keyResultMetricName ?? t("department.none") },
-                    { label: t("department.timelineTarget"), value: line(item.data.keyResultTargetValue) || t("department.none") },
-                    { label: t("department.timelineDependencies"), value: formatTimelineTasks(item.data.dependsOnTaskIds, tasksById, language, t) },
-                  ]}
-                />
-              </div>
-            ) : null}
-            {item.type === "execution_report" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{line(item.data.conclusion) || line(item.data.summaryFallback) || t("department.noExecutionReport")}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.timelineVisionImpact"), value: line(item.data.visionImpact) || t("department.none") },
-                    { label: t("department.timelineRemainingGap"), value: line(item.data.remainingGap) || formatTimelineGaps(item.data.remainingGaps, t("department.none")) },
-                    { label: t("department.timelineRecommendation"), value: line(item.data.recommendation) || formatTimelineNextSteps(item.data.recommendedNextSteps, t("department.none")) },
-                  ]}
-                />
-              </div>
-            ) : null}
-            {item.type === "decision_resolution" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{line(item.data.note) || item.data.chosenOption || formatCompletionOutcome(item.data.outcome, t)}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.timelineResolutionOutcome"), value: formatCompletionOutcome(item.data.outcome, t) },
-                    { label: t("department.timelineChosenOption"), value: item.data.chosenOption ?? t("department.none") },
-                    { label: t("department.timelineDecisionRequest"), value: item.data.requestItemId },
-                  ]}
-                />
-              </div>
-            ) : null}
-            {item.type === "decision_request" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{item.data.rationale || t("department.none")}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.founderDecisionKind"), value: formatDecisionKind(item.data.decisionKind, t) },
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
-                    { label: t("department.timelineChosenOption"), value: item.data.resolvedOption ?? t("department.none") },
-                    { label: t("department.blockedTasks"), value: formatTimelineTasks(item.data.blockedTaskIds, tasksById, language, t) },
-                  ]}
-                />
-                <TimelineOptions options={item.data.options} />
-              </div>
-            ) : null}
-            {item.type === "approval_request" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{t("department.timelineApprovalRequestBody")}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
-                  ]}
-                />
-              </div>
-            ) : null}
-            {item.type === "human_action" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{line(item.data.label)}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
-                    { label: t("department.humanActionConfirmation"), value: formatTimelineTextList(item.data.confirmationRequirements, t) },
-                    { label: t("department.blockedTasks"), value: formatTimelineTasks(item.data.blockedTaskIds, tasksById, language, t) },
-                    { label: t("department.timelineVerifiedAt"), value: item.data.verifiedAt ?? t("department.none") },
-                  ]}
-                />
-              </div>
-            ) : null}
-            {item.type === "wait_state" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{line(item.data.reason)}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
-                    { label: t("department.waitStateNextCheck"), value: item.data.nextCheckAt },
-                    { label: t("department.waitStateAffectedTasks"), value: formatTimelineTasks(item.data.affectedTaskIds, tasksById, language, t) },
-                  ]}
-                />
-              </div>
-            ) : null}
-            {item.type === "blocked_issue" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{line(item.data.reason)}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
-                    { label: t("department.blockedTasks"), value: formatTimelineTasks(item.data.affectedTaskIds, tasksById, language, t) },
-                  ]}
-                />
-              </div>
-            ) : null}
-            {item.type === "stage_change" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{line(item.data.summary)}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.timelineRecommendation"), value: line(item.data.recommendedNextAction) },
-                    { label: t("department.completedTasks"), value: formatTimelineTasks(item.data.affectedTaskIds, tasksById, language, t) },
-                  ]}
-                />
-              </div>
-            ) : null}
-            {item.type === "final_report" ? (
-              <div className="ceo-office-timeline__body">
-                <p>{line(item.data.sections.actualResult)}</p>
-                <VideotexKeyValue
-                  items={[
-                    { label: t("department.finalFounderReport"), value: item.data.isCurrent ? t("department.timelineCurrentReport") : t("department.timelineSupersededReport") },
-                    { label: t("department.finalReportVision"), value: line(item.data.sections.vision) },
-                    { label: t("department.finalReportGoalFit"), value: line(item.data.sections.goalFit) },
-                    { label: t("department.finalReportRemainingGaps"), value: line(item.data.sections.remainingGaps) },
-                    { label: t("department.finalReportNextStep"), value: line(item.data.sections.recommendedNextStep) },
-                  ]}
-                />
-              </div>
-            ) : null}
+              </span>
+              <h4 className="ceo-office-timeline__title">{item.title}</h4>
+              <span className="ceo-office-timeline__key-line">{timelineItemView(item, ctx).keyLine}</span>
+              {item.type === "task_brief" ? <TaskBriefCardLines ctx={ctx} data={item.data} /> : null}
+            </button>
           </article>
         );
       })}
+      {activeItem ? (
+        <CeoOfficeItemModal
+          businessArtifacts={activeItem.taskId ? artifactsByTask.get(activeItem.taskId) ?? [] : []}
+          ctx={ctx}
+          departmentsById={departmentsById}
+          item={activeItem}
+          onClose={() => setActiveItemId(null)}
+          onViewTaskDetail={(taskId) => {
+            setActiveItemId(null);
+            onViewTaskDetail(taskId);
+          }}
+          proofs={activeItem.taskId ? proofsByTask.get(activeItem.taskId) ?? [] : []}
+        />
+      ) : null}
     </RetroPanel>
+  );
+}
+
+/** The `task_brief` card is one announcement: objective / key result on a line, then dependency titles. */
+function TaskBriefCardLines({
+  ctx,
+  data,
+}: {
+  ctx: TimelineRenderContext;
+  data: Extract<CeoOfficeItemSummary, { type: "task_brief" }>["data"];
+}) {
+  const objectiveAndKeyResult = [ctx.line(data.objectiveTitle), ctx.line(data.keyResultTitle)].filter(Boolean).join(" / ");
+  const dependencies = data.dependsOnTaskIds.length > 0
+    ? formatTimelineTasks(data.dependsOnTaskIds, ctx.tasksById, ctx.language, ctx.t)
+    : "";
+  return (
+    <>
+      {objectiveAndKeyResult ? <span className="ceo-office-timeline__sub">{objectiveAndKeyResult}</span> : null}
+      {dependencies ? (
+        <span className="ceo-office-timeline__sub">{`${ctx.t("department.timelineDependencies")}: ${dependencies}`}</span>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The full detail behind a summary card: the key-value table, options, and a collapsed evidence
+ * section modelled on `ceo-task-review-detail`, plus a "View task detail" affordance. No new route
+ * (spec Decision 3).
+ */
+function CeoOfficeItemModal({
+  businessArtifacts,
+  ctx,
+  departmentsById,
+  item,
+  onClose,
+  onViewTaskDetail,
+  proofs,
+}: {
+  businessArtifacts: BusinessArtifactSummary[];
+  ctx: TimelineRenderContext;
+  departmentsById: Map<string, DepartmentSummary>;
+  item: CeoOfficeItemSummary;
+  onClose: () => void;
+  onViewTaskDetail: (taskId: string) => void;
+  proofs: ProofSummary[];
+}) {
+  const { language, t } = ctx;
+  const headingId = useId();
+  const view = timelineItemView(item, ctx);
+  const hasEvidence = Boolean(item.taskId) && (proofs.length > 0 || businessArtifacts.length > 0);
+
+  return (
+    <RetroDialog className="ceo-timeline-modal" labelledBy={headingId} onClose={onClose}>
+      <header className="ceo-timeline-modal__head">
+        <TimelineItemMeta departmentsById={departmentsById} item={item} language={language} relative={false} t={t} />
+        <RetroButton aria-label={t("department.timelineClose")} onClick={onClose}>
+          {t("department.timelineClose")}
+        </RetroButton>
+      </header>
+      <h3 id={headingId}>{item.title}</h3>
+      <p className="ceo-timeline-modal__key-line">{view.keyLine}</p>
+      <VideotexKeyValue items={view.rows} />
+      {item.type === "decision_request" ? <TimelineOptions options={item.data.options} /> : null}
+      {hasEvidence ? <TimelineEvidence businessArtifacts={businessArtifacts} language={language} proofs={proofs} t={t} /> : null}
+      {item.taskId ? (
+        <div className="ceo-timeline-modal__actions">
+          <RetroButton onClick={() => onViewTaskDetail(item.taskId!)}>
+            {t("department.timelineViewDetail")}
+          </RetroButton>
+        </div>
+      ) : null}
+    </RetroDialog>
+  );
+}
+
+/**
+ * The modal's collapsed evidence section, modelled on the `ceo-task-review-detail` one: the
+ * department's submitted Proof, then the current Business Artifact's kind / role / status.
+ */
+function TimelineEvidence({
+  businessArtifacts,
+  language,
+  proofs,
+  t,
+}: {
+  businessArtifacts: BusinessArtifactSummary[];
+  language: "en" | "zh";
+  proofs: ProofSummary[];
+  t: TranslateFn;
+}) {
+  const currentArtifact = businessArtifacts.find((artifact) => artifact.isCurrent) ?? businessArtifacts[0] ?? null;
+  return (
+    <details className="ceo-timeline-modal__evidence">
+      <summary>{t("department.ceoReviewEvidenceValidation")}</summary>
+      <h4>{t("department.ceoReviewDepartmentSubmission")}</h4>
+      {proofs.length === 0 ? <p className="muted">{t("department.ceoReviewNoProof")}</p> : null}
+      {proofs.map((proof) => (
+        <article className="ceo-task-review-proof" key={proof.id}>
+          <p>{resolveLocalizedValue(proof.summaryText, language, proof.summary)}</p>
+          <p className="muted">{`${formatProofType(proof.type, t)} / ${proof.uri}`}</p>
+        </article>
+      ))}
+      {currentArtifact ? (
+        <article className="ceo-task-review-proof">
+          <p>{`${formatArtifactKind(currentArtifact.artifactKind, t)} / ${formatArtifactRole(currentArtifact.artifactRole, t)} / ${formatCodeLabel(currentArtifact.artifactSubtype)}`}</p>
+          <p className="muted">{`${formatArtifactValidationStatus(currentArtifact.validationStatus, t)} / ${formatArtifactReviewStatus(currentArtifact.reviewStatus, t)}`}</p>
+        </article>
+      ) : (
+        <p className="muted">{t("dashboard.noBusinessArtifacts")}</p>
+      )}
+    </details>
   );
 }
 
@@ -1260,6 +1500,7 @@ function CeoExecutiveOverview({
   ceoAttentionRollups,
   companyTaskCount,
   departmentsById,
+  founderVision,
   humanActions,
   objectives,
   outcomesLastSeen,
@@ -1270,6 +1511,7 @@ function CeoExecutiveOverview({
   ceoAttentionRollups: CeoAttentionRollupSummary[];
   companyTaskCount: number;
   departmentsById: Map<string, DepartmentSummary>;
+  founderVision: string;
   humanActions: HumanActionSummary[];
   objectives: ObjectiveSummary[];
   outcomesLastSeen: string | null;
@@ -1284,6 +1526,13 @@ function CeoExecutiveOverview({
   return (
     <section className="ceo-executive-overview" aria-label={t("department.ceoExecutiveOverview")}>
       <h3>{t("department.ceoExecutiveOverview")}</h3>
+      {/* The Founder Vision is shown once here, not repeated on every Task Brief card (spec User Story 13). */}
+      {founderVision ? (
+        <p className="ceo-executive-overview__vision">
+          <span className="ceo-executive-overview__label">{t("department.timelineFounderVision")}</span>
+          {founderVision}
+        </p>
+      ) : null}
       <VideotexKeyValue
         items={[
           { label: t("department.objectives"), value: String(objectives.length) },

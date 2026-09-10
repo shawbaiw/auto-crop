@@ -762,14 +762,148 @@ h3 {
   text-transform: uppercase;
 }
 
-.ceo-office-timeline__body {
+/* Each timeline item is a summary card; the full detail opens in a modal on click. */
+.ceo-office-timeline__item {
+  padding: 0;
+}
+
+.ceo-office-timeline__card {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
   display: grid;
-  gap: 8px;
+  font: inherit;
+  gap: 6px;
   overflow-wrap: anywhere;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.ceo-office-timeline__card:hover,
+.ceo-office-timeline__card:focus-visible {
+  background: var(--surface-alt);
+  outline: none;
+}
+
+/* The type tag carries semantic weight: action-state cards get an accent stripe, quiet cards do not. */
+.ceo-office-timeline__item--action {
+  border-left: 4px solid var(--accent-secondary);
+}
+
+.ceo-office-timeline__item--quiet {
+  border-left: 4px solid var(--border);
+}
+
+.ceo-office-timeline__title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.ceo-office-timeline__key-line {
+  line-height: 1.4;
+}
+
+.ceo-office-timeline__sub {
+  color: var(--accent-secondary);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.ceo-office-timeline__meta-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .ceo-office-timeline__item--highlighted {
   border-color: var(--accent-secondary);
+}
+
+/* A newly arrived card briefly highlights, then settles — suppressed under reduced motion. */
+@keyframes ceo-office-timeline-arrive {
+  from {
+    background: color-mix(in srgb, var(--accent-secondary) 22%, var(--surface));
+  }
+
+  to {
+    background: transparent;
+  }
+}
+
+.ceo-office-timeline__item--new {
+  animation: ceo-office-timeline-arrive 1.6s ease-out 1;
+}
+
+/* Page-level overlay dialog (RetroDialog): a fixed backdrop over the current view, not a page swap. */
+.retro-dialog-backdrop {
+  align-items: center;
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: clamp(14px, 4vw, 40px);
+  position: fixed;
+  z-index: 40;
+}
+
+.retro-dialog {
+  background: var(--surface);
+  border: var(--border-px) solid var(--border);
+  box-shadow: calc(var(--hard-shadow-offset) + 4px) calc(var(--hard-shadow-offset) + 4px) 0 var(--titlebar);
+  display: grid;
+  gap: 10px;
+  max-height: min(760px, calc(100vh - 96px));
+  max-width: min(720px, 100%);
+  overflow: auto;
+  padding: var(--screen-gap);
+  width: min(720px, 100%);
+}
+
+.ceo-timeline-modal__head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.ceo-timeline-modal h3 {
+  font-size: 0.9rem;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.ceo-timeline-modal__key-line {
+  line-height: 1.4;
+}
+
+.ceo-timeline-modal__evidence > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.ceo-timeline-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ceo-executive-overview__vision {
+  line-height: 1.4;
+}
+
+.ceo-executive-overview__vision .ceo-executive-overview__label {
+  display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ceo-office-timeline__item--new {
+    animation: none;
+  }
 }
 
 .ceo-founder-decision__options,

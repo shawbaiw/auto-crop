@@ -559,14 +559,16 @@ describe("Dashboard App", () => {
     await createCompany(user);
 
     const timeline = within(screen.getByRole("region", { name: "CEO Intake Report" })).getByRole("region", { name: "Timeline" });
+    // Each item is a summary card: type tag + title + one key line.
     expect(timeline).toHaveTextContent("Stage Change");
     expect(timeline).toHaveTextContent("The objective reached a terminal state after validation.");
     expect(timeline).toHaveTextContent("Decision Resolution");
     expect(timeline).toHaveTextContent("Start where urgency is clearest.");
-    expect(timeline).toHaveTextContent("Clinics");
     expect(timeline).toHaveTextContent("Final Report");
     expect(timeline).toHaveTextContent("A proof-backed pilot offer is ready.");
-    expect(timeline).toHaveTextContent("Start founder-led sales.");
+    // The chosen option and the report's next step are detail — behind the card, not on it.
+    expect(timeline).not.toHaveTextContent("Clinics");
+    expect(timeline).not.toHaveTextContent("Start founder-led sales.");
 
     const renderedItems = within(timeline).getAllByRole("article");
     expect(renderedItems.map((item) => within(item).getByRole("heading").textContent)).toEqual([
@@ -574,6 +576,15 @@ describe("Dashboard App", () => {
       "Choose launch target",
       "Final Founder Report",
     ]);
+
+    // Activating a card opens a modal with the full detail.
+    await user.click(within(timeline).getByRole("button", { name: "Open Decision Resolution: Choose launch target" }));
+    const resolutionModal = screen.getByRole("dialog");
+    expect(resolutionModal).toHaveTextContent("Clinics");
+    await user.click(within(resolutionModal).getByRole("button", { name: "Close" }));
+
+    await user.click(within(timeline).getByRole("button", { name: "Open Final Report: Final Founder Report" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Start founder-led sales.");
   });
 
   it("marks an Execution Report field that is missing the company locale as untranslated and logs it", async () => {
@@ -616,10 +627,14 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
 
-    // The company-locale (zh) conclusion renders as-is; the vision impact only has `en`, so it shows
-    // the visible marker rather than silently falling back to English.
+    // The company-locale (zh) conclusion renders on the card as-is.
     expect(await screen.findByText("分析已准备好连接。")).toBeInTheDocument();
-    expect(screen.getByText("未翻译 / untranslated")).toBeInTheDocument();
+
+    // The vision impact is detail; opening the card shows the visible marker rather than silently
+    // falling back to English, and logs the gap.
+    await user.click(screen.getByRole("button", { name: "打开执行汇报：连接分析账户" }));
+    const modal = screen.getByRole("dialog");
+    expect(within(modal).getByText("未翻译 / untranslated")).toBeInTheDocument();
     expect(screen.queryByText("English-only vision impact.")).not.toBeInTheDocument();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('missing the company locale "zh"'));
 
@@ -784,32 +799,56 @@ describe("Dashboard App", () => {
 
     const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
     const timeline = within(ceoReport).getByRole("region", { name: "Timeline" });
+
+    // Cards are summaries: type tag + title + one key line. The Decision card leads with the briefing.
     expect(timeline).toHaveTextContent("Decision Request");
-    expect(timeline).toHaveTextContent("Pricing affects the first offer.");
-    expect(timeline).toHaveTextContent("Subscription");
-    expect(timeline).toHaveTextContent("Recurring revenue.");
+    expect(timeline).toHaveTextContent("We tested subscription and one-time against early buyers");
     expect(timeline).toHaveTextContent("Approval Request");
     expect(timeline).toHaveTextContent("Human Action");
     expect(timeline).toHaveTextContent("Connect the Stripe account.");
-    expect(timeline).toHaveTextContent("Paste the account confirmation.");
     expect(timeline).toHaveTextContent("Wait State");
     expect(timeline).toHaveTextContent("Wait for the first payment import.");
-    expect(timeline).toHaveTextContent("2026-08-18");
     expect(timeline).toHaveTextContent("Blocked Issue");
     expect(timeline).toHaveTextContent("Expected deliverable was not recorded.");
     expect(timeline).toHaveTextContent("Recover launch proof");
+
+    // The table, options, trade-offs, rationale, statuses, and dates are detail — behind the card.
+    expect(timeline).not.toHaveTextContent("Pricing affects the first offer.");
+    expect(timeline).not.toHaveTextContent("Subscription");
+    expect(timeline).not.toHaveTextContent("Recurring revenue.");
+    expect(timeline).not.toHaveTextContent("Paste the account confirmation.");
+    expect(timeline).not.toHaveTextContent("2026-08-18");
     expect(timeline).not.toHaveTextContent("workspace");
     expect(timeline).not.toHaveTextContent("business_artifact_1");
     expect(timeline).not.toHaveTextContent("task_2");
-
-    // Internal codes render as business language, never raw snake_case (spec User Story 16).
-    expect(timeline).toHaveTextContent("Pending");
-    expect(timeline).toHaveTextContent("Monitoring");
-    expect(timeline).toHaveTextContent("Open");
     expect(timeline).not.toHaveTextContent("pricing_model");
     expect(timeline).not.toHaveTextContent("ready_for_check_in");
     expect(timeline).not.toHaveTextContent("awaiting_founder_decision");
 
+    // Action-bearing cards (decision, approval, blocked) are visually distinct from routine ones.
+    expect(
+      within(timeline).getByRole("button", { name: "Open Decision Request: Choose pricing path" }).closest("article"),
+    ).toHaveClass("ceo-office-timeline__item--action");
+    expect(
+      within(timeline).getByRole("button", { name: "Open Blocked Issue: Recover launch proof" }).closest("article"),
+    ).toHaveClass("ceo-office-timeline__item--action");
+    expect(
+      within(timeline).getByRole("button", { name: "Open Wait State: Monitor first import" }).closest("article"),
+    ).toHaveClass("ceo-office-timeline__item--quiet");
+
+    // Opening the Decision card shows the options, trade-offs, rationale, and status as business language.
+    await user.click(within(timeline).getByRole("button", { name: "Open Decision Request: Choose pricing path" }));
+    const modal = screen.getByRole("dialog");
+    expect(modal).toHaveTextContent("Subscription");
+    expect(modal).toHaveTextContent("Recurring revenue.");
+    expect(modal).toHaveTextContent("Pricing affects the first offer.");
+    expect(modal).toHaveTextContent("Pending");
+    expect(modal).not.toHaveTextContent("pricing_model");
+    expect(modal).not.toHaveTextContent("awaiting_founder_decision");
+    expect(within(modal).getByRole("button", { name: "View task detail" })).toBeInTheDocument();
+    await user.click(within(modal).getByRole("button", { name: "Close" }));
+
+    // The other sections are left in place.
     expect(within(ceoReport).getByRole("region", { name: "Outcomes" })).toBeInTheDocument();
     expect(within(ceoReport).getByRole("region", { name: "CEO Pending" })).toBeInTheDocument();
     expect(within(ceoReport).getByRole("region", { name: "Executive Overview" })).toBeInTheDocument();
@@ -817,7 +856,9 @@ describe("Dashboard App", () => {
     expect(within(ceoReport).getAllByRole("region", { name: "Wait States" }).length).toBeGreaterThan(0);
 
     await user.click(within(ceoReport).getAllByRole("button", { name: "View Task Choose pricing path" })[0]!);
-    const highlighted = within(timeline).getByText("Pricing affects the first offer.").closest("article");
+    const highlighted = within(timeline)
+      .getByRole("button", { name: "Open Decision Request: Choose pricing path" })
+      .closest("article");
     expect(highlighted).toHaveAttribute("aria-current", "true");
   });
 
@@ -3107,15 +3148,113 @@ describe("Dashboard App", () => {
     const timeline = screen.getByRole("region", { name: "Timeline" });
     expect(timeline).toHaveTextContent("Task Brief");
     expect(timeline).toHaveTextContent("Execution Report");
+    // The task_brief card is one announcement line: purpose + objective / key result.
     expect(timeline).toHaveTextContent("Rank for buyer-intent SEO keywords");
-    expect(timeline).toHaveTextContent("Build an AI SaaS that creates pricing pages.");
-    expect(timeline).toHaveTextContent("Pick a first customer segment");
-    expect(timeline).toHaveTextContent("segment_selected");
+    expect(timeline).toHaveTextContent("Validate first wedge / Pick a first customer segment");
+    // Founder vision is shown once in the CEO Office header, not repeated on the brief card.
+    expect(timeline).not.toHaveTextContent("Build an AI SaaS that creates pricing pages.");
+    expect(screen.getByRole("region", { name: "Executive Overview" })).toHaveTextContent(
+      "Build an AI SaaS that creates pricing pages.",
+    );
+    // The Execution Report card leads with its conclusion; the gap and recommendation are detail.
     expect(timeline).toHaveTextContent("Prototype validated against the brief.");
-    expect(timeline).toHaveTextContent("Organic traffic validation remains open.");
-    expect(timeline).toHaveTextContent("Prepare the launch page next.");
+    expect(timeline).not.toHaveTextContent("segment_selected");
+    expect(timeline).not.toHaveTextContent("Organic traffic validation remains open.");
+    expect(timeline).not.toHaveTextContent("Prepare the launch page next.");
     expect(timeline).not.toHaveTextContent("artifactSubtype");
     expect(timeline).not.toHaveTextContent("/private/workspace");
+
+    // The detail table appears only after the card is activated.
+    await user.click(within(timeline).getByRole("button", { name: "Open Execution Report: Find SEO keyword opportunity" }));
+    const modal = screen.getByRole("dialog");
+    expect(modal).toHaveTextContent("Organic traffic validation remains open.");
+    expect(modal).toHaveTextContent("Prepare the launch page next.");
+    expect(within(modal).getByRole("button", { name: "View task detail" })).toBeInTheDocument();
+  });
+
+  it("shows the collapsed evidence section only inside the activated timeline card's modal", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [{ ...created.tasks[0], id: "task_1", title: "Find SEO keyword opportunity", status: "review" }],
+      proof: [
+        { id: "proof_1", taskId: "task_1", type: "command_output", uri: "agent.log", summary: "Keyword scan output" },
+      ],
+      businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
+      ceoOfficeItems: [
+        {
+          id: "execution_report:tce_1",
+          type: "execution_report",
+          companyId: "company_1",
+          sourceId: "tce_1",
+          taskId: "task_1",
+          departmentId: "department_1",
+          objectiveId: null,
+          keyResultId: null,
+          occurredAt: "2026-08-19T00:00:00.000Z",
+          title: "Find SEO keyword opportunity",
+          titleText: null,
+          actionBearing: false,
+          data: {
+            conclusion: { en: "Two clusters are viable." },
+            visionImpact: null,
+            remainingGap: null,
+            recommendation: null,
+            summaryFallback: null,
+            businessArtifactId: "business_artifact_1",
+            remainingGaps: [],
+            recommendedNextSteps: [],
+            outcome: "accepted",
+          },
+        },
+      ] satisfies CeoOfficeItemSummary[],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const timeline = screen.getByRole("region", { name: "Timeline" });
+    // The evidence section is not on the card; the raw artifact id is never shown.
+    expect(timeline).not.toHaveTextContent("Evidence & validation");
+    expect(timeline).not.toHaveTextContent("business_artifact_1");
+
+    await user.click(within(timeline).getByRole("button", { name: "Open Execution Report: Find SEO keyword opportunity" }));
+    const modal = screen.getByRole("dialog");
+    expect(within(modal).getByText("Evidence & validation")).toBeInTheDocument();
+    expect(modal).toHaveTextContent("Keyword scan output");
+    // The Business Artifact renders as its kind / role / status, not a raw id.
+    expect(modal).not.toHaveTextContent("business_artifact_1");
+  });
+
+  it("marks a newly arrived timeline card so it can briefly highlight", async () => {
+    const restoreStorage = installMockLocalStorage({
+      "auto-crop.ceoOutcomesLastSeen.company_1": "2026-08-18T00:00:00.000Z",
+    });
+    try {
+      const api = createMockApiClient();
+      api.createCompany = vi.fn(async () => createOutcomesNewMarkerResponse());
+      const user = userEvent.setup();
+
+      render(<App apiClient={api} />);
+      await createCompany(user);
+
+      const timeline = screen.getByRole("region", { name: "Timeline" });
+      // The Execution Report occurred after the last visit; the Task Brief occurred before it.
+      expect(
+        within(timeline)
+          .getByRole("button", { name: "Open Execution Report: Find SEO keyword opportunity" })
+          .closest("article"),
+      ).toHaveClass("ceo-office-timeline__item--new");
+      expect(
+        within(timeline)
+          .getByRole("button", { name: "Open Task Brief: Find SEO keyword opportunity" })
+          .closest("article"),
+      ).not.toHaveClass("ceo-office-timeline__item--new");
+    } finally {
+      restoreStorage();
+    }
   });
 
   it("marks how many outcomes are new since the last visit and clears the marker after a visit", async () => {
