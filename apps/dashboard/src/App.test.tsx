@@ -686,6 +686,57 @@ describe("Dashboard App", () => {
     warn.mockRestore();
   });
 
+  it("renders the Timeline in the company canonical locale even when the interface toggle is the other language", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    // The company was created in English; the interface toggle is switched to Chinese below. The
+    // timeline is the founder's broadcast surface, so its content must follow the company locale,
+    // not the toggle — otherwise the card reads half in one language and half in the other.
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      company: { ...created.company, locale: "en" as const },
+      departments: [{ ...created.departments[0], id: "department_1", name: "Product", nameText: { en: "Product", zh: "产品" } }],
+      tasks: [
+        { ...created.tasks[0], id: "task_1", title: "Define the revenue path", titleText: { en: "Define the revenue path", zh: "定义收入路径" } },
+        { ...created.tasks[0], id: "task_2", title: "Research the keyword", titleText: { en: "Research the keyword", zh: "研究关键词" } },
+      ],
+      ceoOfficeItems: [
+        {
+          id: "task_brief:task_1", type: "task_brief", companyId: "company_1", sourceId: "task_1",
+          taskId: "task_1", departmentId: "department_1", objectiveId: null, keyResultId: null,
+          occurredAt: "2026-08-17T00:02:00.000Z", title: "Define the revenue path",
+          titleText: { en: "Define the revenue path", zh: "定义收入路径" }, actionBearing: false,
+          data: {
+            purpose: { en: "Turn the opportunity into a brief", zh: "把机会转化为简报" },
+            purposeSource: "task_definition", founderVision: "Vision",
+            objectiveTitle: null, keyResultTitle: null, keyResultMetricName: null, keyResultTargetValue: null,
+            dependsOnTaskIds: ["task_2"],
+          },
+        },
+      ] satisfies CeoOfficeItemSummary[],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    await user.click(screen.getByRole("menuitem", { name: "View" }));
+    await user.click(screen.getByRole("menuitem", { name: "Language" }));
+    await user.click(screen.getByRole("menuitem", { name: "中文" }));
+
+    // Chrome follows the toggle...
+    const timeline = screen.getByRole("region", { name: "时间线" });
+    // ...but every value inside the timeline stays in the company locale (en).
+    expect(timeline).toHaveTextContent("Define the revenue path");
+    expect(timeline).toHaveTextContent("Turn the opportunity into a brief");
+    expect(timeline).toHaveTextContent("Research the keyword");
+    expect(timeline).toHaveTextContent("Product");
+    expect(timeline).not.toHaveTextContent("定义收入路径");
+    expect(timeline).not.toHaveTextContent("把机会转化为简报");
+    expect(timeline).not.toHaveTextContent("研究关键词");
+    expect(timeline).not.toHaveTextContent("产品");
+  });
+
   it("renders action-bearing CEO Office Items in the Timeline with business details", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();

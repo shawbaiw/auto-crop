@@ -769,12 +769,20 @@ function formatTimelineRelativeTime(iso: string, language: "en" | "zh"): string 
   return iso;
 }
 
-/** Everything the card and modal need to turn one timeline item into business language. */
+/**
+ * Everything the card and modal need to turn one timeline item into founder-facing text. The CEO
+ * Office timeline is the founder's broadcast surface, so every value in it is resolved against the
+ * company canonical locale (ADR 0013) — never the dashboard language toggle, which governs chrome
+ * only. `line` is for agent-authored prose: it shows the visible "untranslated" marker when the
+ * company-locale value is missing. `localize` is for blueprint-authored names and titles: it falls
+ * back to the other locale and then the canonical string rather than showing a marker as a headline.
+ */
 type TimelineRenderContext = {
+  locale: Locale;
   line: LineResolver;
+  localize: (text: LocalizedText | null | undefined, fallback: string) => string;
   t: TranslateFn;
   tasksById: Map<string, TaskSummary>;
-  language: "en" | "zh";
 };
 
 type TimelineItemView = {
@@ -787,11 +795,12 @@ type TimelineItemView = {
 /**
  * The single place each timeline item's key line and detail rows are defined, so the card and the
  * modal never drift. The Decision card leads with the briefing; options and rationale are secondary
- * (spec). `execution_report` conclusion falls back to the older `outcome_summary` compatibility text.
+ * (spec). `execution_report` conclusion falls back to the older `outcome_summary` compatibility text;
+ * the projection only emits the item when one of those carries a body, so there is always a key line.
  */
 function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRenderContext): TimelineItemView {
-  const { line, t, tasksById, language } = ctx;
-  const tasks = (ids: string[]) => formatTimelineTasks(ids, tasksById, language, t);
+  const { line, t, tasksById, locale } = ctx;
+  const tasks = (ids: string[]) => formatTimelineTasks(ids, tasksById, locale, t);
   const none = t("department.none");
   switch (item.type) {
     case "task_brief":
@@ -808,7 +817,7 @@ function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRenderContext
       };
     case "execution_report":
       return {
-        keyLine: line(item.data.conclusion) || line(item.data.summaryFallback) || t("department.noExecutionReport"),
+        keyLine: line(item.data.conclusion) || line(item.data.summaryFallback) || none,
         rows: [
           { label: t("department.timelineVisionImpact"), value: line(item.data.visionImpact) || none },
           { label: t("department.timelineRemainingGap"), value: line(item.data.remainingGap) || formatTimelineGaps(item.data.remainingGaps, none) },
@@ -894,13 +903,13 @@ function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRenderContext
 function TimelineItemMeta({
   departmentsById,
   item,
-  language,
+  locale,
   relative,
   t,
 }: {
   departmentsById: Map<string, DepartmentSummary>;
   item: CeoOfficeItemSummary;
-  language: "en" | "zh";
+  locale: Locale;
   relative: boolean;
   t: TranslateFn;
 }) {
@@ -908,8 +917,8 @@ function TimelineItemMeta({
   return (
     <span className="ceo-office-timeline__meta">
       <span>{formatCeoOfficeItemType(item.type, t)}</span>
-      {department ? <span>{departmentName(department, language)}</span> : null}
-      <span>{relative ? formatTimelineRelativeTime(item.occurredAt, language) : new Date(item.occurredAt).toLocaleString()}</span>
+      {department ? <span>{departmentName(department, locale)}</span> : null}
+      <span>{relative ? formatTimelineRelativeTime(item.occurredAt, locale) : new Date(item.occurredAt).toLocaleString(locale)}</span>
     </span>
   );
 }
@@ -942,8 +951,14 @@ function CeoOfficeTimeline({
   proofsByTask: Map<string, ProofSummary[]>;
   tasksById: Map<string, TaskSummary>;
 }) {
-  const { language, t } = useLanguage();
-  const ctx: TimelineRenderContext = { line: makeLineResolver(companyLocale, t), t, tasksById, language };
+  const { t } = useLanguage();
+  const ctx: TimelineRenderContext = {
+    locale: companyLocale,
+    line: makeLineResolver(companyLocale, t),
+    localize: (text, fallback) => resolveLocalizedValue(text, companyLocale, fallback),
+    t,
+    tasksById,
+  };
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const visibleItems = [...items].sort(compareCeoOfficeTimelineItems);
   const activeItem = activeItemId ? visibleItems.find((item) => item.id === activeItemId) ?? null : null;
@@ -977,16 +992,16 @@ function CeoOfficeTimeline({
             <button
               aria-label={t("department.timelineOpenCard")
                 .replace("{type}", formatCeoOfficeItemType(item.type, t))
-                .replace("{title}", item.title)}
+                .replace("{title}", ctx.localize(item.titleText, item.title))}
               className="ceo-office-timeline__card"
               onClick={() => setActiveItemId(item.id)}
               type="button"
             >
               <span className="ceo-office-timeline__meta-row">
-                <TimelineItemMeta departmentsById={departmentsById} item={item} language={language} relative t={t} />
+                <TimelineItemMeta departmentsById={departmentsById} item={item} locale={ctx.locale} relative t={t} />
                 <UnseenBadge createdAt={item.occurredAt} lastSeen={outcomesLastSeen} />
               </span>
-              <h4 className="ceo-office-timeline__title">{item.title}</h4>
+              <h4 className="ceo-office-timeline__title">{ctx.localize(item.titleText, item.title)}</h4>
               <span className="ceo-office-timeline__key-line">{timelineItemView(item, ctx).keyLine}</span>
               {item.type === "task_brief" ? <TaskBriefCardLines ctx={ctx} data={item.data} /> : null}
             </button>
@@ -1021,7 +1036,7 @@ function TaskBriefCardLines({
 }) {
   const objectiveAndKeyResult = [ctx.line(data.objectiveTitle), ctx.line(data.keyResultTitle)].filter(Boolean).join(" / ");
   const dependencies = data.dependsOnTaskIds.length > 0
-    ? formatTimelineTasks(data.dependsOnTaskIds, ctx.tasksById, ctx.language, ctx.t)
+    ? formatTimelineTasks(data.dependsOnTaskIds, ctx.tasksById, ctx.locale, ctx.t)
     : "";
   return (
     <>
@@ -1055,7 +1070,7 @@ function CeoOfficeItemModal({
   onViewTaskDetail: (taskId: string) => void;
   proofs: ProofSummary[];
 }) {
-  const { language, t } = ctx;
+  const { locale, t } = ctx;
   const headingId = useId();
   const view = timelineItemView(item, ctx);
   const hasEvidence = Boolean(item.taskId) && (proofs.length > 0 || businessArtifacts.length > 0);
@@ -1063,16 +1078,16 @@ function CeoOfficeItemModal({
   return (
     <RetroDialog className="ceo-timeline-modal" labelledBy={headingId} onClose={onClose}>
       <header className="ceo-timeline-modal__head">
-        <TimelineItemMeta departmentsById={departmentsById} item={item} language={language} relative={false} t={t} />
+        <TimelineItemMeta departmentsById={departmentsById} item={item} locale={locale} relative={false} t={t} />
         <RetroButton aria-label={t("department.timelineClose")} onClick={onClose}>
           {t("department.timelineClose")}
         </RetroButton>
       </header>
-      <h3 id={headingId}>{item.title}</h3>
+      <h3 id={headingId}>{ctx.localize(item.titleText, item.title)}</h3>
       <p className="ceo-timeline-modal__key-line">{view.keyLine}</p>
       <VideotexKeyValue items={view.rows} />
       {item.type === "decision_request" ? <TimelineOptions options={item.data.options} /> : null}
-      {hasEvidence ? <TimelineEvidence businessArtifacts={businessArtifacts} language={language} proofs={proofs} t={t} /> : null}
+      {hasEvidence ? <TimelineEvidence businessArtifacts={businessArtifacts} locale={locale} proofs={proofs} t={t} /> : null}
       {item.taskId ? (
         <div className="ceo-timeline-modal__actions">
           <RetroButton onClick={() => onViewTaskDetail(item.taskId!)}>
@@ -1090,12 +1105,12 @@ function CeoOfficeItemModal({
  */
 function TimelineEvidence({
   businessArtifacts,
-  language,
+  locale,
   proofs,
   t,
 }: {
   businessArtifacts: BusinessArtifactSummary[];
-  language: "en" | "zh";
+  locale: Locale;
   proofs: ProofSummary[];
   t: TranslateFn;
 }) {
@@ -1107,7 +1122,7 @@ function TimelineEvidence({
       {proofs.length === 0 ? <p className="muted">{t("department.ceoReviewNoProof")}</p> : null}
       {proofs.map((proof) => (
         <article className="ceo-task-review-proof" key={proof.id}>
-          <p>{resolveLocalizedValue(proof.summaryText, language, proof.summary)}</p>
+          <p>{resolveLocalizedValue(proof.summaryText, locale, proof.summary)}</p>
           <p className="muted">{`${formatProofType(proof.type, t)} / ${proof.uri}`}</p>
         </article>
       ))}
@@ -1209,12 +1224,13 @@ type TranslateFn = ReturnType<typeof useLanguage>["t"];
 
 /**
  * Task references (dependencies, affected/blocked tasks) render as task titles, never raw IDs
- * (spec User Story 12). Falls back to a localized count only when an ID resolves to no known task.
+ * (spec User Story 12), resolved in the company canonical locale like the rest of the timeline.
+ * Falls back to a localized count only when an ID resolves to no known task.
  */
 function formatTimelineTasks(
   taskIds: string[],
   tasksById: Map<string, TaskSummary>,
-  language: "en" | "zh",
+  locale: Locale,
   t: TranslateFn,
 ): string {
   if (taskIds.length === 0) {
@@ -1224,7 +1240,7 @@ function formatTimelineTasks(
   const titles = taskIds
     .map((taskId) => {
       const task = tasksById.get(taskId);
-      return task ? taskTitle(task, language) : null;
+      return task ? taskTitle(task, locale) : null;
     })
     .filter((title): title is string => Boolean(title));
 

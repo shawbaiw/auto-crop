@@ -743,6 +743,23 @@ describe("projectCeoOfficeItems", () => {
     },
   );
 
+  it("does not project an Execution Report for an accepted completion that carries no conclusion or outcome summary", () => {
+    const state = scenario("Record the implementation diff", "unused");
+    const [task] = state.tasks;
+    // An accepted completion with a business artifact but no authored narrative — the shape older
+    // completions have. There is nothing to broadcast, so no Report card; the completion row and its
+    // artifact still exist as durable facts.
+    const bodiless: TaskCompletionEvent = {
+      ...state.taskCompletionEvents[0]!, outcome: "accepted",
+      businessArtifactId: "artifact_1", outcomeSummaryText: null, executionReport: null,
+    };
+
+    const items = projectCeoOfficeItems({ ...state, taskCompletionEvents: [bodiless] });
+
+    expect(items.some((item) => item.type === "execution_report")).toBe(false);
+    expect(items.some((item) => item.type === "task_brief")).toBe(true);
+  });
+
   it("keeps a blocked completion's outcome summary as authored so a missing company locale stays visible", () => {
     const state = scenario("Recover the deliverable", "n/a");
     const [task] = state.tasks;

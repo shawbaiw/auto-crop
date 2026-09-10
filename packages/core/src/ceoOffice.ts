@@ -204,6 +204,11 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     // durable fact. This also collapses the two completions a founder-decision task leaves behind.
     if (event.outcome !== "accepted") continue;
     const executionReport = event.executionReport ?? null;
+    // A Report broadcasts a founder-facing conclusion. With neither a structured Execution Report
+    // nor an outcome summary there is nothing to broadcast — the completion stays a durable fact but
+    // not a timeline card. Completions authored before the Execution Report contract land here, as
+    // would any future accepted outcome that carries no narrative.
+    if (!executionReport && !hasLocalizedText(event.outcomeSummaryText)) continue;
     const businessArtifact = event.businessArtifactId ? businessArtifactsById.get(event.businessArtifactId) ?? null : null;
     const associatedBusinessArtifact = businessArtifact?.taskId === event.taskId ? businessArtifact : null;
     items.push({
@@ -519,6 +524,11 @@ function latestBlockedTaskSource(
  */
 function companyLocaleText(value: string, locale: Locale): LocalizedText {
   return { [locale]: value };
+}
+
+/** True when a localized field carries a non-empty value in at least one locale. */
+function hasLocalizedText(text: LocalizedText | null | undefined): boolean {
+  return text != null && Object.values(text).some((value) => typeof value === "string" && value.trim().length > 0);
 }
 
 /**

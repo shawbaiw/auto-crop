@@ -14,3 +14,5 @@
 - [x] Tests: core projection wraps reasons/labels under the company locale and keeps an English-only outcome summary un-marked-as-translated for a `zh` company; dashboard timeline renders status/outcome as business language (no raw `snake_case`), renders task references as titles, and shows the "untranslated" marker for a reason missing the company locale.
 
 **Implementation note:** No redesign of the `WaitState` or blocked-issue data models. No historical backfill — a migration fallback (show the raw string until re-authored) is acceptable for old rows.
+
+**Follow-up (2026-09-10):** `formatTimelineTasks`, the card/modal title, `TimelineItemMeta` (department name + relative time), and `TimelineEvidence` were still resolving against the Interface Locale toggle, so an `"en"` company's timeline read half-English half-Chinese under a `zh` toggle. `TimelineRenderContext` now carries `locale` (not `language`) plus a `localize` fallback resolver, and every timeline value goes through the company locale. Recorded as a bullet in ADR 0013's extension.

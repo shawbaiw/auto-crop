@@ -1363,23 +1363,17 @@ describe("API routes", () => {
             founderVision: "Build an AI SaaS that creates pricing pages.",
           }),
         }),
+        // The next step surfaces as its own Human Action card.
         expect.objectContaining({
-          id: "execution_report:task_completion_event_1",
-          type: "execution_report",
+          type: "human_action",
           taskId: approvedTask!.id,
-          actionBearing: false,
-          data: expect.objectContaining({
-            businessArtifactId: "business_artifact_1",
-            recommendedNextSteps: [
-              expect.objectContaining({
-                label: "Deploy the prototype to a public URL.",
-                type: "human_action",
-              }),
-            ],
-          }),
+          data: expect.objectContaining({ label: { en: "Deploy the prototype to a public URL." } }),
         }),
       ]),
     );
+    // The completion authored no conclusion or outcome summary, so there is no Report to broadcast —
+    // the completion stays a durable fact and its artifact / next step surface through their own cards.
+    expect(state.ceoOfficeItems.some((item) => item.type === "execution_report")).toBe(false);
     expect(JSON.stringify(state.ceoOfficeItems)).not.toContain("artifactSubtype");
     expect(JSON.stringify(state.ceoOfficeItems)).not.toContain("workspace");
     expect(state.founderReport.actualOutputs).toContainEqual(expect.objectContaining({ taskId: approvedTask!.id }));
