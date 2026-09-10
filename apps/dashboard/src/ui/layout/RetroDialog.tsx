@@ -10,11 +10,18 @@ export type RetroDialogProps = {
 
 /**
  * A page-level overlay dialog: a fixed backdrop over the current view (not a full-page swap like
- * {@link ModalFrame}), portalled to `document.body`. Closes on Escape or backdrop click, moves focus
- * into the dialog on open, and restores focus to the previously focused element on close.
+ * {@link ModalFrame}). Closes on Escape or backdrop click, moves focus into the dialog on open, and
+ * restores focus to the previously focused element on close.
+ *
+ * Portalled into `.theme-root` (the element `ThemeProvider` sets the palette CSS variables on), not
+ * `document.body` — a body-level portal renders outside the theme scope, so `var(--surface)` /
+ * `var(--ink)` and friends fail to resolve and the dialog paints with no background or backdrop.
+ * `.theme-root` sits above the CRT geometry transform, so the fixed backdrop is still viewport-anchored.
  */
 export function RetroDialog({ children, className, labelledBy, onClose }: RetroDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const portalTarget =
+    (typeof document !== "undefined" && document.querySelector<HTMLElement>(".theme-root")) || null;
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -47,6 +54,6 @@ export function RetroDialog({ children, className, labelledBy, onClose }: RetroD
         {children}
       </div>
     </div>,
-    document.body,
+    portalTarget ?? document.body,
   );
 }

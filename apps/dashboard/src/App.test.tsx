@@ -839,6 +839,9 @@ describe("Dashboard App", () => {
     // Opening the Decision card shows the options, trade-offs, rationale, and status as business language.
     await user.click(within(timeline).getByRole("button", { name: "Open Decision Request: Choose pricing path" }));
     const modal = screen.getByRole("dialog");
+    // The dialog portals inside `.theme-root` so the palette CSS variables resolve — a body-level
+    // portal renders the modal with no background or backdrop.
+    expect(modal.closest(".theme-root")).not.toBeNull();
     expect(modal).toHaveTextContent("Subscription");
     expect(modal).toHaveTextContent("Recurring revenue.");
     expect(modal).toHaveTextContent("Pricing affects the first offer.");
