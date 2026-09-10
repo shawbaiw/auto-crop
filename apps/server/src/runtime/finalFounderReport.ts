@@ -13,6 +13,7 @@ import {
   type FounderDecision,
   type HumanAction,
   type KeyResult,
+  type Locale,
   type LocalizedText,
   type Objective,
   type Task,
@@ -27,6 +28,7 @@ import { defaultAgentSessionManager, type AgentSessionManager } from "./agentSes
 import { resolveEffectiveTimeoutForProfileName } from "./executionProfile";
 import { summarizeFounderReport, type FounderReportProjection } from "./founderReportProjection";
 import { createDefaultId } from "./ids";
+import { LOCALE_LANGUAGE_NAME } from "./localePromptText";
 import { runtimeText } from "./localizedRuntimeText";
 import { resolveAgentSessionPolicy } from "./sessionPolicy";
 import { createCompanyWorkspace } from "./workspace";
@@ -179,10 +181,14 @@ async function authorFinalFounderReportSections(
     throw new Error(`CEO agent failed to author the Final Founder Report: ${detail}`);
   }
 
-  return parseFinalFounderReportOutput(agentRun.result.stdout).sections;
+  return parseFinalFounderReportOutput(agentRun.result.stdout, input.company.locale).sections;
 }
 
-type DeterministicReportInput = Pick<
+/**
+ * The company facts every Final Founder Report path reads — shared by the CEO-Agent prompt builder
+ * and the deterministic fallback assembler so a single fixture feeds both.
+ */
+type FinalFounderReportFacts = Pick<
   GenerateFinalFounderReportInput,
   | "company"
   | "classification"
@@ -191,11 +197,13 @@ type DeterministicReportInput = Pick<
   | "keyResults"
   | "taskCompletionEvents"
   | "businessArtifacts"
-  | "taskDependencies"
   | "visionGaps"
   | "waitStates"
   | "humanActions"
 >;
+
+type DeterministicReportInput = FinalFounderReportFacts &
+  Pick<GenerateFinalFounderReportInput, "taskDependencies">;
 
 /**
  * Assemble the six report sections deterministically from the shared `summarizeFounderReport`
@@ -348,7 +356,50 @@ function deterministicRecommendedNextStep(
   );
 }
 
-export function buildFinalFounderReportPrompt(input: GenerateFinalFounderReportInput): string {
+type FinalReportPromptExamples = {
+  vision: string;
+  actualResult: string;
+  departmentContribution: string;
+  goalFit: string;
+  remainingGaps: string;
+  recommendedNextStep: string;
+};
+
+/**
+ * Example section values for the Output Contract block, in the company's canonical locale. Under
+ * ADR 0013's single-canonical-locale model the CEO Agent authors each section as a bare string in one
+ * language, so these examples are bare strings (not `{ en, zh }` objects) and match the injected
+ * "author in <language>" instruction.
+ *
+ * Deliberately parallel to `taskExecutionPrompt.ts`'s `LOCALE_PROMPT_EXAMPLES`: same per-locale shape,
+ * different content (report sections vs execution-report fields). Only the shared datum — the language
+ * name — is factored out, into `localePromptText.ts`.
+ */
+const LOCALE_FINAL_REPORT_EXAMPLES: Record<Locale, FinalReportPromptExamples> = {
+  en: {
+    vision: "The founder's original vision, restated.",
+    actualResult: "What was actually produced, in plain language.",
+    departmentContribution: "Department X: inputs it consumed and outputs it delivered.",
+    goalFit: "How the result fits the objectives and key results.",
+    remainingGaps: "Remaining Vision Gaps between 'all tasks done' and 'vision achieved'.",
+    recommendedNextStep: "One concrete recommended next step for the founder.",
+  },
+  zh: {
+    vision: "复述创始人的原始愿景。",
+    actualResult: "实际产出的成果，用通俗语言描述。",
+    departmentContribution: "X 部门：消耗的输入与交付的产出。",
+    goalFit: "成果与目标和关键结果的契合度。",
+    remainingGaps: "任务全部完成与愿景达成之间尚存的差距。",
+    recommendedNextStep: "为创始人推荐的一个具体下一步。",
+  },
+};
+
+export type BuildFinalFounderReportPromptInput = FinalFounderReportFacts &
+  Pick<GenerateFinalFounderReportInput, "objectives" | "founderDecisions">;
+
+export function buildFinalFounderReportPrompt(input: BuildFinalFounderReportPromptInput): string {
+  const languageName = LOCALE_LANGUAGE_NAME[input.company.locale];
+  const examples = LOCALE_FINAL_REPORT_EXAMPLES[input.company.locale];
   const departmentById = new Map(input.departments.map((department) => [department.id, department]));
   const keyResultsByObjectiveId = new Map<string, KeyResult[]>();
   for (const keyResult of input.keyResults) {
@@ -375,6 +426,12 @@ export function buildFinalFounderReportPrompt(input: GenerateFinalFounderReportI
     "report in plain business language: what the vision was, what was actually produced, what each",
     "department contributed, how the result fits the goals, what gaps remain, and one recommended",
     "next step.",
+    "",
+    `## Company Language`,
+    `Author every section value — \`vision\`, \`actualResult\`, each \`departmentContributions\` entry,`,
+    `\`goalFit\`, \`remainingGaps\`, and \`recommendedNextStep\` — in ${languageName}. This is the one`,
+    "language the company was created with; do not write a second language or a translation table.",
+    "Do not translate machine identifiers, file paths, URLs, code, or brand names; leave them as they are.",
     "",
     `## Computed Classification`,
     input.classification,
@@ -451,23 +508,22 @@ export function buildFinalFounderReportPrompt(input: GenerateFinalFounderReportI
   lines.push(
     "",
     "## Output Contract",
-    "Return a fenced JSON block. The runtime parses only this block. Every section value is Localized",
-    'Business Content: a `{ "en": "...", "zh": "..." }` object (provide both locales).',
-    "`departmentContributions` is a list — one entry per department that did work.",
+    "Return a fenced JSON block. The runtime parses only this block.",
+    `Each section value is a single plain string authored in ${languageName} — business prose, not a`,
+    '`{ "en": "...", "zh": "..." }` object.',
+    "`departmentContributions` is a list of strings — one entry per department that did work.",
     "",
     "```json",
     JSON.stringify(
       {
         classification: input.classification,
         sections: {
-          vision: { en: "The founder's original vision, restated.", zh: "复述创始人的原始愿景。" },
-          actualResult: { en: "What was actually produced, in plain language.", zh: "实际产出的成果，用通俗语言描述。" },
-          departmentContributions: [
-            { en: "Department X: inputs it consumed and outputs it delivered.", zh: "X 部门：消耗的输入与交付的产出。" },
-          ],
-          goalFit: { en: "How the result fits the objectives and key results.", zh: "成果与目标和关键结果的契合度。" },
-          remainingGaps: { en: "Remaining Vision Gaps between 'all tasks done' and 'vision achieved'.", zh: "任务全部完成与愿景达成之间尚存的差距。" },
-          recommendedNextStep: { en: "One concrete recommended next step for the founder.", zh: "为创始人推荐的一个具体下一步。" },
+          vision: examples.vision,
+          actualResult: examples.actualResult,
+          departmentContributions: [examples.departmentContribution],
+          goalFit: examples.goalFit,
+          remainingGaps: examples.remainingGaps,
+          recommendedNextStep: examples.recommendedNextStep,
         },
       },
       null,

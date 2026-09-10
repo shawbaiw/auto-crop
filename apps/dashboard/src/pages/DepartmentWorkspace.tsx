@@ -454,6 +454,7 @@ function CeoIntakeWorkspace({
         tasksById={tasksById}
       />
       <FinalFounderReportPanel
+        companyLocale={companyLocale}
         report={finalFounderReport}
         preparing={finalFounderReportPreparing}
         outcomesLastSeen={outcomesLastSeen}
@@ -631,18 +632,22 @@ const FINAL_REPORT_CLASSIFICATION_TONE = {
 /**
  * The Final Founder Report, pinned above the Outcomes view when an `isCurrent` report exists. Shows
  * the classification prominently, then the six localized-text sections, using existing retro
- * primitives. Localized text renders in the active Interface Locale.
+ * primitives. Sections are authored in the company canonical locale (ADR 0013 → single canonical
+ * locale), so they render through `makeLineResolver` with the visible "untranslated" marker when
+ * that locale value is absent — not the active Interface Locale.
  */
 function FinalFounderReportPanel({
+  companyLocale,
   report,
   preparing = false,
   outcomesLastSeen = null,
 }: {
+  companyLocale: Locale;
   report: FinalFounderReportSummary | null;
   preparing?: boolean;
   outcomesLastSeen?: string | null;
 }) {
-  const { language, t } = useLanguage();
+  const { t } = useLanguage();
 
   if (!report) {
     if (!preparing) {
@@ -661,7 +666,10 @@ function FinalFounderReportPanel({
   }
 
   const sections = report.sections;
-  const line = (text: LocalizedText): string => resolveLocalizedValue(text, language, text.en ?? "");
+  // The same founder-facing line resolver the timeline uses: it renders the visible "untranslated"
+  // marker (and logs) when the company-locale value is absent, rather than silently falling back to
+  // another locale (ADR 0013 → single canonical locale; spec Decision 2).
+  const line = makeLineResolver(companyLocale, t);
 
   return (
     <RetroPanel
@@ -700,10 +708,11 @@ function FinalFounderReportPanel({
 
 /**
  * A localized line resolver bound to the company canonical locale (ADR 0013 → single canonical
- * locale). When the company-locale value is absent it returns a visible "untranslated" marker and
- * logs the gap, rather than silently falling back to another locale — the founder should see it as a
- * gap, not the intended content (spec Decision 2). A field that is simply not present (`null`)
- * returns "" so a caller's `|| t("department.none")` fallback wins.
+ * locale). Used by both the CEO Office Timeline and the Final Founder Report panel. When the
+ * company-locale value is absent it returns a visible "untranslated" marker and logs the gap, rather
+ * than silently falling back to another locale — the founder should see it as a gap, not the intended
+ * content (spec Decision 2). A field that is simply not present (`null`) returns "" so a caller's
+ * `|| t("department.none")` fallback wins.
  */
 type LineResolver = (text: LocalizedText | null | undefined) => string;
 
@@ -717,7 +726,7 @@ function makeLineResolver(companyLocale: Locale, t: TranslateFn): LineResolver {
       return value;
     }
     console.warn(
-      `[CeoOfficeTimeline] localized field is missing the company locale "${companyLocale}"; available locales: ${
+      `[CeoOffice] localized field is missing the company locale "${companyLocale}"; available locales: ${
         Object.keys(text).join(", ") || "none"
       }`,
     );

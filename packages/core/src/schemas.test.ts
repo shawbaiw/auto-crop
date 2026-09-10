@@ -372,14 +372,43 @@ describe("Final Founder Report schema", () => {
   it("parses a fenced JSON report authored by the CEO Agent", () => {
     const parsed = parseFinalFounderReportOutput(
       ["The company is done.", "", "```json", JSON.stringify({ classification: "achieved", sections: validSections }), "```"].join("\n"),
+      "en",
     );
 
     expect(parsed.classification).toBe("achieved");
     expect(parsed.sections.departmentContributions).toHaveLength(1);
   });
 
+  it("stores bare-string sections under the company canonical locale", () => {
+    const bareSections = {
+      vision: "复述创始人愿景。",
+      actualResult: "交付了有证据支撑的原型。",
+      departmentContributions: ["工程部构建并验证了原型。"],
+      goalFit: "与关键结果部分契合。",
+      remainingGaps: "用户验证仍待完成。",
+      recommendedNextStep: "进行五人测试。",
+    };
+    const parsed = parseFinalFounderReportOutput(
+      ["```json", JSON.stringify({ classification: "waiting", sections: bareSections }), "```"].join("\n"),
+      "zh",
+    );
+
+    expect(parsed.sections.vision).toEqual({ zh: "复述创始人愿景。" });
+    expect(parsed.sections.departmentContributions).toEqual([{ zh: "工程部构建并验证了原型。" }]);
+    expect(parsed.sections.recommendedNextStep).toEqual({ zh: "进行五人测试。" });
+  });
+
+  it("accepts an already-localized { en, zh } sections object unchanged", () => {
+    const parsed = parseFinalFounderReportOutput(
+      ["```json", JSON.stringify({ classification: "achieved", sections: validSections }), "```"].join("\n"),
+      "zh",
+    );
+
+    expect(parsed.sections.vision).toEqual({ en: "Restated vision", zh: "复述愿景" });
+  });
+
   it("throws when the CEO Agent output has no fenced JSON block", () => {
-    expect(() => parseFinalFounderReportOutput("No JSON here.")).toThrow(/strict JSON/i);
+    expect(() => parseFinalFounderReportOutput("No JSON here.", "en")).toThrow(/strict JSON/i);
   });
 });
 

@@ -221,7 +221,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function parseFinalFounderReportOutput(output: string): FinalFounderReportOutput {
+/**
+ * Normalize a Final Founder Report sections payload into the localized shape the schema expects.
+ *
+ * The founder-facing authoring contract (ADR 0013 → single canonical locale) is that the CEO Agent
+ * writes each section as a bare string in the company's canonical language. A bare string is stored
+ * under `{ [locale]: value }`; an already-localized `{ en, zh }` object is accepted unchanged (older
+ * shape / defensive). `departmentContributions` is a list, so each entry is normalized the same way.
+ */
+function normalizeFinalFounderReportSections(
+  sections: Record<string, unknown>,
+  locale: Locale,
+): Record<string, unknown> {
+  const single = (value: unknown): unknown => normalizeLocalizedReportField(value, locale);
+  // Build a fresh object with only the known section fields, matching `parseExecutionReportInput`'s
+  // discipline — stray keys are dropped rather than passed through to the schema.
+  return {
+    vision: single(sections.vision),
+    actualResult: single(sections.actualResult),
+    departmentContributions: Array.isArray(sections.departmentContributions)
+      ? sections.departmentContributions.map(single)
+      : sections.departmentContributions,
+    goalFit: single(sections.goalFit),
+    remainingGaps: single(sections.remainingGaps),
+    recommendedNextStep: single(sections.recommendedNextStep),
+  };
+}
+
+export function parseFinalFounderReportOutput(
+  output: string,
+  locale: Locale,
+): FinalFounderReportOutput {
   const jsonSource = output.match(/```json\s*([\s\S]*?)\s*```/i)?.[1] ?? null;
 
   if (!jsonSource) {
@@ -233,6 +263,10 @@ export function parseFinalFounderReportOutput(output: string): FinalFounderRepor
     parsed = JSON.parse(jsonSource);
   } catch (error) {
     throw new Error(`Final Founder Report strict JSON is invalid: ${(error as Error).message}`);
+  }
+
+  if (isRecord(parsed) && isRecord(parsed.sections)) {
+    parsed = { ...parsed, sections: normalizeFinalFounderReportSections(parsed.sections, locale) };
   }
 
   return finalFounderReportOutputSchema.parse(parsed);

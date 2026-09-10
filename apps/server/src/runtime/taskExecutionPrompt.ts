@@ -1,16 +1,12 @@
 import type { Company, Locale, Task } from "@auto-crop/core";
 import type { TaskHandoff } from "./dependencyReadiness";
+import { LOCALE_LANGUAGE_NAME } from "./localePromptText";
 import { buildProofContractInstructions } from "./proofContract";
 
 export type BuildTaskExecutionPromptInput = {
   company: Company;
   task: Task;
   handoffs: TaskHandoff[];
-};
-
-const LOCALE_LANGUAGE_NAME: Record<Locale, string> = {
-  en: "English",
-  zh: "简体中文 (Simplified Chinese)",
 };
 
 type PromptExamples = {
