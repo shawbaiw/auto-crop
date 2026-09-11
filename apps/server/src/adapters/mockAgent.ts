@@ -19,6 +19,13 @@ export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter 
       return options.detected ?? true;
     },
     async run(request: AgentRunRequest): Promise<AgentRunResult> {
+      if (request.metadata.phase === "execution_brief") {
+        return { status: "complete", exitCode: 0, stderr: "", stdout: JSON.stringify({
+          purpose: "Evaluate the task requirements",
+          approach: "Compare the supplied inputs, perform the requested checks, and record their results",
+          expectedOutcome: "A deliverable with evidence for the requested acceptance conditions",
+        }) };
+      }
       return {
         status: options.status ?? "complete",
         exitCode: options.status === "failed" ? 1 : 0,

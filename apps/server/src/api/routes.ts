@@ -834,6 +834,7 @@ function buildCompanyState(
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
     businessArtifacts,
     ceoOfficeItems: projectCeoOfficeItems({
+      companyEvents: repositories.listCompanyEventsForCompany(currentCompany.id),
       company: currentCompany,
       tasks,
       taskCompletionEvents,

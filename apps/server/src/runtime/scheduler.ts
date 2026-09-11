@@ -1,3 +1,4 @@
+import { prepareExecutionBrief } from "./executionBrief";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
@@ -227,22 +228,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               effectiveTimeoutMs: initialTimeoutResolution.effectiveTimeoutMs,
             });
           }
-          appendAndEmitTaskEvent(input, {
-            task,
-            type: "task_started",
-            message: `Task started: ${task.title} (${task.assigneeAgentId}, ${initialTimeoutResolution.executionProfile.name} budget ${formatExecutionBudget(initialTimeoutResolution.effectiveTimeoutMs)}).`,
-            status: "running",
-            executionProfileName: initialTimeoutResolution.executionProfile.name,
-            requestedTimeoutMs: initialTimeoutResolution.requestedTimeoutMs,
-            effectiveTimeoutMs: initialTimeoutResolution.effectiveTimeoutMs,
-          });
-          appendTaskProgressEvent(input, {
-            task,
-            step: "executing",
-            status: "current",
-            label: `Task ${task.position + 1} (${task.title}) in progress`,
-            subjectTaskId: task.id,
-          });
 
           const taskWorkspace = task.workspacePath
             ? { root: task.workspacePath }
@@ -280,22 +265,47 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             if (!company) {
               throw new Error(`Company not found for task ${task.id}: ${task.companyId}`);
             }
-            agentResult = await adapter.run({
+            const request = {
               taskId: task.id,
-              prompt: buildTaskExecutionPrompt({ task, company, handoffs }),
+              prompt: "",
               promptPath: "",
               workspacePath: runWorkspacePath,
-              metadata: {
-                departmentId: task.departmentId,
-                proofSchemaId: task.proofSchemaId,
-              },
+              metadata: { departmentId: task.departmentId, proofSchemaId: task.proofSchemaId },
               timeoutMs: timeoutResolution.effectiveTimeoutMs,
-            });
+            };
+            const preparationStartedAt = now().getTime();
+            const preparation = await prepareExecutionBrief({ adapter, request: { ...request, timeoutMs: Math.min(request.timeoutMs, 60_000) }, company, task, handoffs });
+            const remainingMs = request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
+            if (preparation.brief && remainingMs > 0) {
+              appendAndEmitTaskEvent(input, {
+                task, type: "task_started", status: "running",
+                message: `Task started: ${task.title}`,
+                executionBrief: { ...preparation.brief, title: task.titleText ?? { [company.locale]: task.title } },
+                executionProfileName: timeoutResolution.executionProfile.name,
+                requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+              });
+              appendTaskProgressEvent(input, {
+                task, step: "executing", status: "current",
+                label: `Task ${task.position + 1} (${task.title}) in progress`, subjectTaskId: task.id,
+              });
+              agentResult = await adapter.run({
+                ...request,
+                timeoutMs: remainingMs,
+                prompt: buildTaskExecutionPrompt({ task, company, handoffs }) +
+                  `\n\n## Your announced execution plan\n${JSON.stringify(preparation.brief)}\nCarry out this plan. Explain material deviations in the final report.`,
+              });
+            } else {
+              agentResult = remainingMs <= 0 ? { ...preparation.result, status: "failed", failureReason: "timeout" } : preparation.result;
+            }
             const logContent = [
               `# Agent Run ${agentRunId}`,
               "",
               `status: ${agentResult.status}`,
               `exitCode: ${agentResult.exitCode ?? ""}`,
+              "",
+              "## Preparation",
+              preparation.result.stdout,
               "",
               "## stdout",
               agentResult.stdout,
@@ -407,6 +417,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 })
               : undefined;
             businessArtifact = captureBusinessArtifact({
+              requireExecutionDetails: true,
               task: { ...task, workspacePath: runWorkspacePath },
               proofs: proof,
               workspacePath: runWorkspacePath,
@@ -1248,6 +1259,7 @@ function blockTaskForDependency(
     failureReason,
     failureMessage,
     dependencyNote,
+    blockedByTaskId: dependency.id,
   });
   recordTaskCompletionEvent({
     repositories: input.repositories,
@@ -1284,6 +1296,7 @@ function blockTaskForMissingDeliverable(
     failureReason,
     failureMessage,
     dependencyNote,
+    blockedByTaskId: dependency.id,
   });
   recordTaskCompletionEvent({
     repositories: input.repositories,
@@ -1367,6 +1380,8 @@ function appendAndEmitTaskEvent(
     effectiveTimeoutMs?: number;
     dependencyNote?: string;
     artifactWorkspacePath?: string;
+    executionBrief?: TaskEvent["executionBrief"];
+    blockedByTaskId?: string;
   },
 ): void {
   const now = input.now ?? (() => new Date());
@@ -1376,6 +1391,8 @@ function appendAndEmitTaskEvent(
     companyId: event.task.companyId,
     taskId: event.task.id,
     type: event.type,
+    executionBrief: event.executionBrief,
+    blockedByTaskId: event.blockedByTaskId,
     message: event.message,
     createdAt: now().toISOString(),
     status: event.status ?? null,

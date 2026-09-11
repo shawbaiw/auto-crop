@@ -84,6 +84,8 @@ export type EnvironmentBlockerVerification = {
 };
 
 export type CaptureBusinessArtifactInput = {
+  /** New execution runs must report actual work and its supporting evidence. */
+  requireExecutionDetails?: boolean;
   task: Task;
   proofs: Proof[];
   workspacePath: string;
@@ -132,7 +134,7 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
   }
 
   const raw = readFileSync(sourcePath, "utf8");
-  const parsed = parseDeclaredBusinessArtifact(raw, input.task, input.locale ?? "en");
+  const parsed = parseDeclaredBusinessArtifact(raw, input.task, input.locale ?? "en", input.requireExecutionDetails ?? false);
   if (!parsed.success) {
     return {
       id,
@@ -187,7 +189,7 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
   };
 }
 
-function parseDeclaredBusinessArtifact(raw: string, task: Task, locale: Locale):
+function parseDeclaredBusinessArtifact(raw: string, task: Task, locale: Locale, requireDetails: boolean):
   | { success: true; value: DeclaredBusinessArtifact }
   | { success: false; errors: string[] } {
   let json: unknown;
@@ -267,7 +269,7 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task, locale: Locale):
     if (outcomeSummaryError) {
       errors.push(outcomeSummaryError);
     }
-    const executionReportError = executionReportFieldError(json.payload, { required: usesStructuredClassification, locale });
+    const executionReportError = executionReportFieldError(json.payload, { required: usesStructuredClassification, locale, requireDetails });
     if (executionReportError) {
       errors.push(executionReportError);
     }
@@ -308,13 +310,17 @@ function parseDeclaredBusinessArtifact(raw: string, task: Task, locale: Locale):
  * (has another locale instead) is NOT a failure: it parses, and the dashboard shows a visible
  * "untranslated" marker rather than blocking completion or acceptance (spec Decision 2).
  */
-function executionReportFieldError(payload: unknown, options: { required: boolean; locale: Locale }): string | null {
+function executionReportFieldError(payload: unknown, options: { required: boolean; locale: Locale; requireDetails?: boolean }): string | null {
   const required =
     "payload.execution_report: Required for deliverable and final_report artifacts (conclusion, vision_impact, remaining_gap, recommendation).";
   if (!isRecord(payload)) {
     return options.required ? required : null;
   }
   const value = payload.execution_report ?? payload.executionReport;
+  if (options.requireDetails || payload.report_version === 2) {
+    const report = parseExecutionReportInput(value, options.locale);
+    if (!report?.workSummary || !report.evidence) return "payload.execution_report: New execution reports require work_summary and evidence.";
+  }
   if (value === undefined || value === null) {
     return options.required ? required : null;
   }

@@ -156,7 +156,7 @@ describe("startAutoCrop", () => {
 
         expect(state.company.id).toMatch(/^company_[0-9a-f-]{36}$/);
         expect(state.company.id).not.toMatch(/^company_\d+$/);
-        expect(creationEvents).toHaveLength(5);
+        expect(creationEvents).toHaveLength(6);
         expect(new Set(creationEvents.map((event) => event.id)).size).toBe(creationEvents.length);
         expect(creationEvents.every((event) => /^company_event_[0-9a-f-]{36}$/.test(event.id))).toBe(true);
       } finally {
@@ -187,6 +187,7 @@ describe("startAutoCrop", () => {
           capabilities: ["test"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             mkdirSync(join(request.workspacePath, ".auto-crop"), { recursive: true });
             writeFileSync(
               join(request.workspacePath, ".auto-crop", "business-artifact.json"),
@@ -198,6 +199,8 @@ describe("startAutoCrop", () => {
                 payload: {
                   summary: "Scheduler wake task completed.",
                   execution_report: {
+                    work_summary: "Compared the requested inputs and checked the deliverable.",
+                    evidence: "Recorded checks support the reported result.",
                     conclusion: "The wake-requested task is complete and validated.",
                     vision_impact: "It keeps the objective on schedule.",
                     remaining_gap: "CEO review before downstream work proceeds remains.",

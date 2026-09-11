@@ -602,6 +602,7 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       events.addEventListener("task_retrying", listener);
       events.addEventListener("task_recovered", listener);
       events.addEventListener("task_needs_replan", listener);
+      events.addEventListener("task_replanned", listener);
       events.addEventListener("deliverable_missing", listener);
       events.addEventListener("company_creation_accepted", listener);
       events.addEventListener("company_creation_agent_started", listener);

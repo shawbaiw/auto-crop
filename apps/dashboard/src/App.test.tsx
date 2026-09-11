@@ -351,7 +351,7 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("button", { name: "Growth" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("renders CEO Office around attention rollups before the review queue", async () => {
+  it("renders CEO Office around the executive overview before the review queue", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => createCeoOfficeAttentionCompanyResponse());
     const user = userEvent.setup();
@@ -365,12 +365,9 @@ describe("Dashboard App", () => {
     const pending = within(ceoReport).getByRole("region", { name: "CEO Pending" });
     expect(Boolean(overview.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
 
-    expect(overview).toHaveTextContent("Launch path blocked on deployment evidence");
-    expect(overview).toHaveTextContent("Website exists but launch cannot continue until a deployable URL is confirmed.");
-    expect(overview).toHaveTextContent("Engineering");
-    expect(overview).toHaveTextContent("Growth");
-    expect(overview).toHaveTextContent("Production URL missing.");
-    expect(overview).toHaveTextContent("Confirm deployment evidence or assign deployment follow-up.");
+    // The Attention Rollups panel was removed (it duplicated CEO Pending / the Timeline); the
+    // overview still surfaces the critical dependency chain and the Human Action / Wait State /
+    // Vision Gap signal lists.
     expect(overview).toHaveTextContent("Prepare SEO launch");
     expect(overview).toHaveTextContent("Needs deployed URL from Engineering.");
     expect(overview).toHaveTextContent("Human Actions");
@@ -916,64 +913,11 @@ describe("Dashboard App", () => {
     expect(highlighted).toHaveAttribute("aria-current", "true");
   });
 
-  it("styles a goal_stage_change rollup as an achievement, distinct from an exception rollup", async () => {
-    const api = createMockApiClient();
-    const response = {
-      ...createCeoOfficeAttentionCompanyResponse(),
-      ceoAttentionRollups: [createCeoAttentionRollupSummary(), createGoalStageChangeRollupSummary()],
-    };
-    api.createCompany = vi.fn(async () => response);
-    const user = userEvent.setup();
-
-    render(<App apiClient={api} />);
-
-    await createCompany(user);
-
-    const overview = within(screen.getByRole("region", { name: "CEO Intake Report" })).getByRole("region", {
-      name: "Executive Overview",
-    });
-
-    expect(within(overview).getByText("Objective stage change")).toBeInTheDocument();
-    expect(within(overview).getByText("Validate the first AI SaaS wedge")).toBeInTheDocument();
-    expect(within(overview).getByText("Review the missed key result: Document the first revenue path.")).toBeInTheDocument();
-
-    const rollups = document.querySelectorAll(".ceo-attention-rollup");
-    const achievementRollups = document.querySelectorAll(".ceo-attention-rollup--achievement");
-    expect(rollups).toHaveLength(2);
-    expect(achievementRollups).toHaveLength(1);
-    expect(achievementRollups[0]).toHaveTextContent("Validate the first AI SaaS wedge");
-    expect(achievementRollups[0]).not.toHaveTextContent("Launch path blocked on deployment evidence");
-  });
-
-  it("renders no cross-department rollup entries for a quiescent company snapshot", async () => {
-    const api = createMockApiClient();
-    // A quiescent company: its Final Founder Report is in, and the server has already suppressed the
-    // mechanical cross-department rollups — only the objective achievement remains.
-    const response = {
-      ...createCeoOfficeAttentionCompanyResponse(),
-      finalFounderReport: createFinalFounderReportCompanyResponse().finalFounderReport,
-      ceoAttentionRollups: [createGoalStageChangeRollupSummary()],
-    };
-    api.createCompany = vi.fn(async () => response);
-    const user = userEvent.setup();
-
-    render(<App apiClient={api} />);
-
-    await createCompany(user);
-
-    const overview = within(screen.getByRole("region", { name: "CEO Intake Report" })).getByRole("region", {
-      name: "Executive Overview",
-    });
-
-    // The objective achievement is the only rollup: no exception entry, and specifically none of the
-    // cross-department rollup the running-company fixture carries.
-    const rollups = document.querySelectorAll(".ceo-attention-rollup");
-    expect(rollups).toHaveLength(1);
-    expect(rollups[0]).toHaveClass("ceo-attention-rollup--achievement");
-    const crossDepartmentRollup = createCeoAttentionRollupSummary();
-    expect(within(overview).queryByText(crossDepartmentRollup.title)).not.toBeInTheDocument();
-    expect(within(overview).queryByText(crossDepartmentRollup.summary)).not.toBeInTheDocument();
-  });
+  // The Attention Rollups panel (achievement-styled goal_stage_change entries, cross-department
+  // exception entries, and quiescence suppression between them) was a dashboard-only rendering of
+  // `ceoAttentionRollups` and has been removed as duplicating CEO Pending / the Timeline; the two
+  // tests that lived here asserted only on that removed DOM (`.ceo-attention-rollup*`), not on the
+  // server-side `projectCeoAttention` filtering itself, so there is nothing left here to assert.
 
   it("pins the Final Founder Report above the Outcomes view with its classification and sections", async () => {
     const api = createMockApiClient();
@@ -3145,7 +3089,7 @@ describe("Dashboard App", () => {
     }
   });
 
-  it("leads CEO Office with state, pending, and timeline before the Outcomes view", async () => {
+  it("keeps auxiliary views above the chronological feed beside the composer", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => createOutcomesCompanyResponse());
     const user = userEvent.setup();
@@ -3160,7 +3104,7 @@ describe("Dashboard App", () => {
     const outcomes = within(ceoReport).getByRole("region", { name: "Outcomes" });
     expect(Boolean(overview.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(Boolean(pending.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-    expect(Boolean(timeline.compareDocumentPosition(outcomes) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(outcomes.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
 
     const objectiveGroup = within(outcomes).getByRole("region", { name: "Validate first wedge" });
     expect(objectiveGroup).toHaveTextContent("Two SEO keyword clusters are viable");
@@ -3441,7 +3385,7 @@ describe("Dashboard App", () => {
     }
   });
 
-  it("marks the Final Founder Report banner and objective rollup as new against the last-seen value", async () => {
+  it("marks the Final Founder Report banner as new against the last-seen value", async () => {
     const restoreStorage = installMockLocalStorage({
       "auto-crop.ceoOutcomesLastSeen.company_1": "2026-08-17T12:00:00.000Z",
     });
@@ -3453,9 +3397,6 @@ describe("Dashboard App", () => {
           ...createFinalFounderReportCompanyResponse().finalFounderReport!,
           createdAt: "2026-08-18T00:00:00.000Z",
         },
-        ceoAttentionRollups: [
-          { ...createGoalStageChangeRollupSummary(), createdAt: "2026-08-18T00:00:00.000Z" },
-        ],
       };
       api.createCompany = vi.fn(async () => response);
       const user = userEvent.setup();
@@ -3466,11 +3407,6 @@ describe("Dashboard App", () => {
       const ceoReport = screen.getByRole("region", { name: "CEO Intake Report" });
       const panel = within(ceoReport).getByRole("region", { name: "Final Founder Report" });
       expect(within(panel).getByText("new")).toBeInTheDocument();
-
-      const overview = within(ceoReport).getByRole("region", { name: "Executive Overview" });
-      const achievement = overview.querySelector(".ceo-attention-rollup--achievement");
-      expect(achievement).not.toBeNull();
-      expect(within(achievement as HTMLElement).getByText("new")).toBeInTheDocument();
     } finally {
       restoreStorage();
     }
@@ -3856,30 +3792,6 @@ function createCeoAttentionRollupSummary(): CeoAttentionRollupSummary {
     relevantFounderDecisions: [],
     sourceTaskCompletionEventIds: ["task_completion_event_1"],
     createdAt: "2026-08-17T00:02:00.000Z",
-  };
-}
-
-function createGoalStageChangeRollupSummary(): CeoAttentionRollupSummary {
-  return {
-    id: "ceo_attention_rollup_goal_stage_change_objective:objective_1",
-    companyId: "company_1",
-    group: { type: "objective", objectiveId: "objective_1" },
-    title: "Validate the first AI SaaS wedge",
-    summary:
-      'Every task under "Validate the first AI SaaS wedge" has reached a terminal state. Key results — Ship a proof-backed landing page prototype: met; Document the first revenue path: missed.',
-    ownerDepartmentId: "department_1",
-    downstreamDepartmentIds: [],
-    affectedTaskIds: ["task_1", "task_2"],
-    currentBlocker: null,
-    recommendedNextAction: "Review the missed key result: Document the first revenue path.",
-    severity: "informational",
-    reasons: ["goal_stage_change"],
-    relevantHumanActions: [],
-    relevantWaitStates: [],
-    relevantVisionGaps: [],
-    relevantFounderDecisions: [],
-    sourceTaskCompletionEventIds: ["task_completion_event_1"],
-    createdAt: "2026-08-17T00:06:00.000Z",
   };
 }
 

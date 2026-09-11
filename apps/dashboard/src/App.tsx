@@ -4,7 +4,6 @@ import {
   type AgentSummary,
   type ApiClient,
   type BusinessArtifactSummary,
-  type CeoAttentionRollupSummary,
   type CeoIntakeSummary,
   type CeoOfficeItemSummary,
   type CompanyEventSummary,
@@ -73,7 +72,6 @@ export default function App({ apiClient }: AppProps) {
   const [replanProposals, setReplanProposals] = useState<ReplanProposalSummary[]>([]);
   const [humanActions, setHumanActions] = useState<HumanActionSummary[]>([]);
   const [visionGaps, setVisionGaps] = useState<VisionGapSummary[]>([]);
-  const [ceoAttentionRollups, setCeoAttentionRollups] = useState<CeoAttentionRollupSummary[]>([]);
   const [waitStates, setWaitStates] = useState<WaitStateSummary[]>([]);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
@@ -164,7 +162,6 @@ export default function App({ apiClient }: AppProps) {
     setReplanProposals(response.replanProposals ?? []);
     setHumanActions(response.humanActions ?? []);
     setVisionGaps(response.visionGaps ?? []);
-    setCeoAttentionRollups(response.ceoAttentionRollups ?? []);
     setWaitStates(response.waitStates ?? []);
     setSelectedAgentId(response.company.selectedCeoAgentId ?? "");
     if (response.company.status !== "creating") {
@@ -213,7 +210,9 @@ export default function App({ apiClient }: AppProps) {
       return;
     }
 
-    return client.subscribeEvents(blueprint.company.id, (event) => {
+    let cancelled = false;
+    let revision = 0;
+    const unsubscribe = client.subscribeEvents(blueprint.company.id, (event) => {
       setEvents((current) => [...current.slice(-49), event]);
       if (event.type.startsWith("company_creation_") && event.companyId) {
         setCreationEvents((current) => [...current, event as CompanyEventSummary]);
@@ -221,12 +220,29 @@ export default function App({ apiClient }: AppProps) {
       setBlueprint((current) => updateBlueprintTaskStatus(current, event));
 
       if (shouldReloadCompanyStateAfterEvent(event)) {
+        const requestRevision = ++revision;
         void client
           .getCompanyState(blueprint.company.id)
-          .then((response) => applyCompanyState(response, viewAfterReloadEvent(event, view, response.company.status)))
+          .then((response) => {
+            if (cancelled || requestRevision !== revision) return;
+            if (["task_review", "company_creation_completed", "company_creation_failed", "company_report_ready"].includes(event.type)) {
+              applyCompanyState(response, viewAfterReloadEvent(event, view, response.company.status));
+            } else {
+              // Keep the live activity stream and task status just received over SSE. Refresh the
+              // authoritative business projection without replacing them with a snapshot in flight.
+              setBlueprint(current => current ? { ...current, ceoOfficeItems: response.ceoOfficeItems,
+                finalFounderReport: response.finalFounderReport, finalFounderReportPreparing: response.finalFounderReportPreparing } : current);
+              setTaskCompletionEvents(response.taskCompletionEvents ?? []);
+              setFounderDecisions(response.founderDecisions ?? []);
+              setHumanActions(response.humanActions ?? []);
+              setWaitStates(response.waitStates ?? []);
+              setVisionGaps(response.visionGaps ?? []);
+            }
+          })
           .catch(() => undefined);
       }
     });
+    return () => { cancelled = true; unsubscribe(); };
   }, [blueprint?.company.id, client, view]);
 
   useEffect(() => {
@@ -319,7 +335,6 @@ export default function App({ apiClient }: AppProps) {
     setReplanProposals([]);
     setHumanActions([]);
     setVisionGaps([]);
-    setCeoAttentionRollups([]);
     setWaitStates([]);
     setReviews([]);
     setEvents([]);
@@ -652,7 +667,6 @@ export default function App({ apiClient }: AppProps) {
     setReplanProposals([]);
     setHumanActions([]);
     setVisionGaps([]);
-    setCeoAttentionRollups([]);
     setWaitStates([]);
     setDashboardFocusTarget(null);
     setCompanyName("");
@@ -809,7 +823,6 @@ export default function App({ apiClient }: AppProps) {
         onConfirmHumanAction={handleConfirmHumanAction}
         proof={proof}
         businessArtifacts={businessArtifacts}
-        ceoAttentionRollups={ceoAttentionRollups}
         ceoOfficeItems={(blueprint.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
         finalFounderReport={blueprint.finalFounderReport ?? null}
         finalFounderReportPreparing={blueprint.finalFounderReportPreparing ?? false}
@@ -1213,6 +1226,7 @@ function taskStatusFromEvent(eventType: string) {
 
 function shouldReloadCompanyStateAfterEvent(event: ServerEvent) {
   return (
+    ["task_started", "task_failed", "task_blocked", "task_needs_replan", "task_replanned", "task_recovered", "dependency_ready", "dependency_waiting", "deliverable_missing", "automatic_acceptance", "founder_decision", "ceo_review_decision"].includes(event.type) ||
     event.type === "task_review" ||
     event.type === "company_creation_completed" ||
     event.type === "company_creation_failed" ||

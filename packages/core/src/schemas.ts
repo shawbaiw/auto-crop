@@ -91,6 +91,8 @@ export const taskAcceptanceProvenanceSchema = z.enum([
   "founder_decision",
 ]);
 export const executionReportSchema = z.object({
+  workSummary: localizedTextSchema.optional(),
+  evidence: localizedTextSchema.optional(),
   conclusion: localizedTextSchema,
   visionImpact: localizedTextSchema,
   remainingGap: localizedTextSchema,
@@ -112,6 +114,8 @@ export function parseExecutionReportInput(input: unknown, locale: Locale): Execu
     return null;
   }
   const normalized = {
+    ...(input.workSummary ?? input.work_summary ? { workSummary: normalizeLocalizedReportField(input.workSummary ?? input.work_summary, locale) } : {}),
+    ...(input.evidence ? { evidence: normalizeLocalizedReportField(input.evidence, locale) } : {}),
     conclusion: normalizeLocalizedReportField(input.conclusion, locale),
     visionImpact: normalizeLocalizedReportField(input.visionImpact ?? input.vision_impact, locale),
     remainingGap: normalizeLocalizedReportField(input.remainingGap ?? input.remaining_gap, locale),

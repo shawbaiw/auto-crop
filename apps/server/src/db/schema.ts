@@ -319,6 +319,9 @@ export function migrate(database: DatabaseClient): void {
       confirmed_at TEXT
     );
   `);
+  addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "execution_brief TEXT");
+  addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "blocked_by_task_id TEXT");
+  addColumnIfMissing(database, getColumnNames(database, "company_events"), "company_events", "plan_snapshot TEXT");
   migrateTaskPosition(database);
   migrateCompanyPermissionMode(database);
   migrateCompanyLocale(database);

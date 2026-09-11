@@ -45,7 +45,13 @@ function scenario(title: string, conclusion: string) {
     outcomeSummaryText: { en: conclusion, zh: "业务结论" }, dependencyImpact: {},
     nextStepItems: [], visionGaps: [], createdAt: "2026-09-01T10:00:00Z",
   };
-  return { company, tasks: [task], taskProgressEvents: [progress], taskCompletionEvents: [completion] };
+  const start: TaskEvent = {
+    id: "started", taskId: task.id, companyId: company.id, type: "task_started", message: "Started",
+    createdAt: completion.createdAt, status: "running", failureReason: null, failureMessage: null,
+    executionProfileName: null, requestedTimeoutMs: null, effectiveTimeoutMs: null, dependencyNote: null, artifactWorkspacePath: null,
+    executionBrief: { title: { en: title }, purpose: { en: "Evaluate the business options" }, approach: { en: "Compare the supplied options against buyer needs" }, expectedOutcome: { en: "A supported recommendation" } },
+  };
+  return { company, tasks: [task], taskEvents: [start], taskProgressEvents: [progress], taskCompletionEvents: [completion] };
 }
 
 describe("projectCeoOfficeItems", () => {
@@ -57,7 +63,8 @@ describe("projectCeoOfficeItems", () => {
     const state = scenario(title, conclusion);
     const items = projectCeoOfficeItems(state);
     expect(items).toMatchObject([
-      { id: "task_brief:task", type: "task_brief", title, occurredAt: "2026-09-01T09:00:00Z", actionBearing: false },
+      // Equal timestamps still put a real start before its completion.
+      { id: "task_brief:task", type: "task_brief", title, occurredAt: "2026-09-01T10:00:00Z", actionBearing: false },
       { id: "execution_report:completion", type: "execution_report", title,
         occurredAt: "2026-09-01T10:00:00Z", actionBearing: false,
         data: { conclusion: null, summaryFallback: { en: conclusion, zh: "业务结论" } } },
@@ -65,6 +72,62 @@ describe("projectCeoOfficeItems", () => {
     expect(items).toHaveLength(2);
     expect(items.filter((item) => item.actionBearing)).toEqual([]);
     expect(JSON.stringify(items)).not.toContain("/private/workspace");
+  });
+
+  it("does not project a Task Brief for a task that has not started executing", () => {
+    // Only the decomposition-time "received" bookkeeping event exists — no "executing" step, no
+    // completion. The task hasn't started work yet, so it must not broadcast a brief.
+    const state = scenario("Research the first overseas keyword opportunity", "unused");
+    const [task] = state.tasks;
+    const items = projectCeoOfficeItems({
+      ...state, tasks: [{ ...task!, status: "queued" }], taskEvents: [], taskCompletionEvents: [],
+    });
+    expect(items.some((item) => item.type === "task_brief")).toBe(false);
+  });
+
+  it("projects exactly one plan_brief for the founding decomposition, and no Task Briefs before execution", () => {
+    const foundingTasks: Task[] = ["research", "product", "growth"].map((departmentId, position) => ({
+      id: `${departmentId}_task`, companyId: company.id, departmentId, keyResultId: null,
+      position, title: `Found the ${departmentId} plan`, description: "Split from the founder vision",
+      assigneeAgentId: "agent", requiredCapabilities: [], proofSchemaId: "custom-proof",
+      workspacePath: "/private/workspace", status: "queued", riskLevel: "low", source: "ceo",
+    }));
+    const receivedEvents: TaskProgressEvent[] = foundingTasks.map((task) => ({
+      id: `received_${task.id}`, companyId: company.id, departmentId: task.departmentId,
+      parentTaskId: task.id, subjectTaskId: task.id, step: "received", status: "complete",
+      label: "Received CEO task", detail: null, createdAt: company.createdAt,
+    }));
+
+    const items = projectCeoOfficeItems({
+      company, tasks: foundingTasks, taskProgressEvents: receivedEvents, taskCompletionEvents: [],
+    });
+
+    expect(items.map((item) => item.type)).toEqual(["plan_brief"]);
+    const planBrief = items[0]!;
+    if (planBrief.type !== "plan_brief") throw new Error("expected plan_brief");
+    expect(planBrief.occurredAt).toBe(company.createdAt);
+    expect(planBrief.data.taskCount).toBe(3);
+    expect(planBrief.data.tasks.map((task) => task.taskId)).toEqual(["research_task", "product_task", "growth_task"]);
+  });
+
+  it("sorts plan_brief before the first Task Brief on a timestamp tie", () => {
+    const foundingTask: Task = {
+      id: "task", companyId: company.id, departmentId: "product", keyResultId: null,
+      position: 0, title: "Found the plan", description: "Split from the founder vision",
+      assigneeAgentId: "agent", requiredCapabilities: [], proofSchemaId: "custom-proof",
+      workspacePath: "/private/workspace", status: "running", riskLevel: "low", source: "ceo",
+    };
+    const executing: TaskProgressEvent = {
+      id: "executing", companyId: company.id, departmentId: "product", parentTaskId: foundingTask.id,
+      subjectTaskId: foundingTask.id, step: "executing", status: "current", label: "In progress",
+      detail: null, createdAt: company.createdAt, // same instant as the plan_brief
+    };
+
+    const items = projectCeoOfficeItems({
+      company, tasks: [foundingTask], taskProgressEvents: [executing], taskEvents: [{ ...scenario("Found the plan", "").taskEvents[0]!, createdAt: company.createdAt }], taskCompletionEvents: [],
+    });
+
+    expect(items.map((item) => item.id)).toEqual([`plan_brief:${company.id}`, "task_brief:task"]);
   });
 
   it("puts the conclusion before its pending choice and preserves the choice identity after resolution", () => {
@@ -314,7 +377,7 @@ describe("projectCeoOfficeItems", () => {
     const before = structuredClone(input);
     const projected = projectCeoOfficeItems(input);
     expect(projected.map((item) => item.id)).toEqual([
-      "task_brief:earlier", "execution_report:early", "task_brief:task", "execution_report:a", "execution_report:z",
+      "execution_report:early", "task_brief:task", "execution_report:a", "execution_report:z",
     ]);
     expect(projectCeoOfficeItems({
       ...input, tasks: [...input.tasks].reverse(), taskCompletionEvents: [...input.taskCompletionEvents].reverse(),
@@ -322,13 +385,10 @@ describe("projectCeoOfficeItems", () => {
     expect(input).toEqual(before);
   });
 
-  it("omits unstarted work and uses completion facts when older tasks have no progress history", () => {
+  it("does not fabricate a pre-work brief from a legacy completion", () => {
     const state = scenario("Plan a launch", "Invite pilot customers");
-    expect(projectCeoOfficeItems({ ...state, taskProgressEvents: [], taskCompletionEvents: [] })).toEqual([]);
-    expect(projectCeoOfficeItems({ ...state, taskProgressEvents: [] })).toMatchObject([
-      { type: "task_brief", occurredAt: "2026-09-01T10:00:00Z" },
-      { type: "execution_report", occurredAt: "2026-09-01T10:00:00Z" },
-    ]);
+    expect(projectCeoOfficeItems({ ...state, taskEvents: [], taskProgressEvents: [], taskCompletionEvents: [] })).toEqual([]);
+    expect(projectCeoOfficeItems({ ...state, taskEvents: [], taskProgressEvents: [] }).map(item => item.type)).toEqual(["execution_report"]);
   });
 
   it("prefers structured Execution Report fields and keeps Task Outcome Summary as fallback", () => {
@@ -358,118 +418,22 @@ describe("projectCeoOfficeItems", () => {
     });
   });
 
-  it("builds Task Briefs from assessment, objective, key-result, dependency, and task definition facts", () => {
-    const objective: Objective = {
-      id: "objective_growth", companyId: company.id, title: "Reach founder-market fit", status: "active", priority: 1,
-    };
-    const keyResult: KeyResult = {
-      id: "kr_pipeline", objectiveId: objective.id, title: "Qualify 20 buyer conversations",
-      metricName: "qualified conversations", targetValue: "20", currentValue: "6", status: "active",
-    };
-    const state = scenario("Interview pilot buyers", "Three segments are ready for outreach");
-    const assessment: TaskProgressEvent = {
-      id: "assessment", companyId: company.id, departmentId: "product", parentTaskId: "task",
-      subjectTaskId: "task", step: "assessment_complete", status: "complete",
-      label: "Assessment complete", labelText: { en: "Buyer interview plan confirmed" },
-      detail: "Original task fallback should not win",
-      detailText: { en: "Validate whether clinic operators have urgent scheduling pain." },
-      createdAt: "2026-09-01T08:45:00Z",
-    };
-
-    const items = projectCeoOfficeItems({
-      ...state,
-      tasks: [{ ...state.tasks[0]!, keyResultId: keyResult.id, description: "Original CEO assignment" }],
-      taskProgressEvents: [state.taskProgressEvents[0]!, assessment],
-      taskDependencies: [
-        { taskId: "task", dependsOnTaskId: "dependency_b" },
-        { taskId: "task", dependsOnTaskId: "dependency_a" },
-        { taskId: "task", dependsOnTaskId: "dependency_a" },
-      ],
-      objectives: [objective],
-      keyResults: [keyResult],
-    });
-
-    expect(items.find((item) => item.type === "task_brief")).toMatchObject({
-      occurredAt: "2026-09-01T08:45:00Z",
-      objectiveId: objective.id,
-      keyResultId: keyResult.id,
-      data: {
-        purpose: { en: "Validate whether clinic operators have urgent scheduling pain." },
-        purposeSource: "department_assessment",
-        founderVision: company.founderVision,
-        objectiveTitle: { en: "Reach founder-market fit" },
-        keyResultTitle: { en: "Qualify 20 buyer conversations" },
-        keyResultMetricName: "qualified conversations",
-        keyResultTargetValue: { en: "20" },
-        dependsOnTaskIds: ["dependency_a", "dependency_b"],
-      },
-    });
-    expect(JSON.stringify(items)).not.toContain("assessment_complete");
-    expect(JSON.stringify(items)).not.toContain("received");
+  it("preserves the announced plan when task definitions and assessments change", () => {
+    const state = scenario("Interview buyers", "Three segments are ready");
+    const before = projectCeoOfficeItems(state).find(item => item.type === "task_brief");
+    const after = projectCeoOfficeItems({ ...state,
+      tasks: [{ ...state.tasks[0]!, title: "A new assignment", description: "Different instructions" }],
+      taskProgressEvents: [{ ...state.taskProgressEvents[0]!, step: "assessment_complete", detail: "A later assessment" }],
+    }).find(item => item.type === "task_brief");
+    expect(after?.titleText).toEqual(before?.titleText);
+    expect(after?.data).toEqual(before?.data);
+    expect(after).toMatchObject({ data: { purposeSource: "execution_plan", approach: { en: "Compare the supplied options against buyer needs" }, expectedOutcome: { en: "A supported recommendation" } } });
   });
 
-  it("falls Task Brief purpose back to the task definition when assessment detail is unavailable", () => {
-    const state = scenario("Plan a launch", "Launch plan is ready");
-    const [task] = state.tasks;
-
-    expect(projectCeoOfficeItems({
-      ...state,
-      tasks: [{ ...task!, description: "Define channel, audience, and launch proof." }],
-      taskProgressEvents: [{
-        ...state.taskProgressEvents[0]!,
-        step: "assessment_complete",
-        label: "Assessment complete",
-        detail: null,
-      }],
-    }).find((item) => item.type === "task_brief")).toMatchObject({
-      data: {
-        purpose: { en: "Define channel, audience, and launch proof." },
-        purposeSource: "task_definition",
-      },
-    });
-  });
-
-  it("does not rewrite a pre-execution Task Brief from an assessment recorded after execution", () => {
-    const state = scenario("Plan a launch", "Launch plan is ready");
-    const [task] = state.tasks;
-
-    expect(projectCeoOfficeItems({
-      ...state,
-      tasks: [{ ...task!, description: "Define channel, audience, and launch proof." }],
-      taskProgressEvents: [
-        ...state.taskProgressEvents,
-        {
-          id: "executing",
-          companyId: company.id,
-          departmentId: "product",
-          parentTaskId: "task",
-          subjectTaskId: "task",
-          step: "executing",
-          status: "complete",
-          label: "Executing",
-          detail: null,
-          createdAt: "2026-09-01T09:30:00Z",
-        },
-        {
-          id: "late_assessment",
-          companyId: company.id,
-          departmentId: "product",
-          parentTaskId: "task",
-          subjectTaskId: "task",
-          step: "assessment_complete",
-          status: "complete",
-          label: "Assessment complete",
-          detailText: { en: "Late assessment should not rewrite the brief." },
-          detail: "Late assessment should not rewrite the brief.",
-          createdAt: "2026-09-01T09:45:00Z",
-        },
-      ],
-    }).find((item) => item.type === "task_brief")).toMatchObject({
-      data: {
-        purpose: { en: "Define channel, audience, and launch proof." },
-        purposeSource: "task_definition",
-      },
-    });
+  it("marks the plan unavailable for old real starts without inventing task instructions", () => {
+    const state = scenario("Launch", "Ready");
+    expect(projectCeoOfficeItems({ ...state, taskEvents: [{ ...state.taskEvents[0]!, executionBrief: undefined }] }).find(item => item.type === "task_brief"))
+      .toMatchObject({ data: { purposeSource: "unavailable", approach: null, expectedOutcome: null } });
   });
 
   it("links Execution Reports to their associated Business Artifact without exposing artifact payloads", () => {
@@ -650,7 +614,7 @@ describe("projectCeoOfficeItems", () => {
       founderDecisions: [decision],
       humanActions: [humanAction],
       waitStates: [waitState],
-      taskEvents: [blockedEvent],
+      taskEvents: [...state.taskEvents, blockedEvent],
       taskCompletionEvents: state.taskCompletionEvents,
     });
 
@@ -708,7 +672,7 @@ describe("projectCeoOfficeItems", () => {
       expect(projectCeoOfficeItems({
         ...state,
         tasks: [blockedTask],
-        taskEvents: [blockedEvent],
+        taskEvents: [...state.taskEvents, blockedEvent],
       })).toContainEqual(expect.objectContaining({
         type: "blocked_issue",
         actionBearing: true,
@@ -813,7 +777,7 @@ describe("projectCeoOfficeItems", () => {
 
     const items = projectCeoOfficeItems({
       ...state, company: zhCompany, tasks: [task!, blockedTask],
-      humanActions: [humanAction], waitStates: [waitState], taskEvents: [blockedEvent],
+      humanActions: [humanAction], waitStates: [waitState], taskEvents: [...state.taskEvents, blockedEvent],
     });
 
     expect(items.find((item) => item.type === "human_action")?.data).toMatchObject({ label: { zh: "连接分析账户。" } });
@@ -839,6 +803,76 @@ describe("projectCeoOfficeItems", () => {
     const items = projectCeoOfficeItems({ ...state, tasks: [blockedTask], taskEvents: [blockedEvent] });
     expect(items.find((item) => item.type === "blocked_issue")?.data).toMatchObject({
       reason: { en: "Retries exhausted", zh: "重试次数已用尽" },
+    });
+  });
+
+  function blockedTaskFixture(id: string, title: string): { task: Task; event: TaskEvent } {
+    return {
+      task: {
+        id, companyId: company.id, departmentId: "product", keyResultId: null, position: 0, title,
+        description: "Blocked by a dependency cascade", assigneeAgentId: "agent", requiredCapabilities: [],
+        proofSchemaId: "custom-proof", workspacePath: "/private/workspace", status: "blocked", riskLevel: "low",
+        latestFailureReason: "dependency_failed" as AgentFailureReason,
+        latestFailureMessage: `Blocked by failed dependency: ${title}.`,
+      },
+      event: {
+        id: `${id}_event`, companyId: company.id, taskId: id, type: "task_blocked",
+        message: `Blocked by failed dependency: ${title}.`, messageText: null,
+        createdAt: "2026-09-01T10:09:00Z", status: "blocked", failureReason: "dependency_failed",
+        failureMessage: `Blocked by failed dependency: ${title}.`, executionProfileName: null,
+        requestedTimeoutMs: null, effectiveTimeoutMs: null, dependencyNote: null, artifactWorkspacePath: null,
+      },
+    };
+  }
+
+  it("collapses a blocked dependency chain into one root Blocked Issue with every cascaded task attached", () => {
+    // A fails on its own; B depends on A and only reads as blocked because A is; C depends on B for
+    // the same reason. Only A should surface as an actionable CEO Pending item.
+    const a = blockedTaskFixture("task_a", "Root cause task");
+    const b = blockedTaskFixture("task_b", "Middle task");
+    const c = blockedTaskFixture("task_c", "Downstream task");
+    a.task.latestFailureReason = null; // the actual root: not itself a dependency-cascade victim
+
+    const items = projectCeoOfficeItems({
+      company, tasks: [a.task, b.task, c.task], taskCompletionEvents: [],
+      taskEvents: [a.event, { ...b.event, blockedByTaskId: a.task.id }, { ...c.event, blockedByTaskId: b.task.id }],
+      taskDependencies: [
+        { taskId: "task_b", dependsOnTaskId: "task_a" },
+        { taskId: "task_c", dependsOnTaskId: "task_b" },
+      ],
+    });
+
+    const blockedIssues = items.filter((item) => item.type === "blocked_issue");
+    expect(blockedIssues).toHaveLength(1);
+    expect(blockedIssues[0]).toMatchObject({
+      taskId: "task_a",
+      data: { affectedTaskIds: ["task_a", "task_b", "task_c"] },
+    });
+  });
+
+  it("attaches a task blocked by two independently-broken upstreams to both roots", () => {
+    const a = blockedTaskFixture("task_a", "First root");
+    const e = blockedTaskFixture("task_e", "Second root");
+    const d = blockedTaskFixture("task_d", "Fan-in task");
+    a.task.latestFailureReason = null;
+    e.task.latestFailureReason = null;
+
+    const items = projectCeoOfficeItems({
+      company, tasks: [a.task, e.task, d.task], taskCompletionEvents: [],
+      taskEvents: [a.event, e.event, { ...d.event, blockedByTaskId: a.task.id }, { ...d.event, id: "second_cause", blockedByTaskId: e.task.id }],
+      taskDependencies: [
+        { taskId: "task_d", dependsOnTaskId: "task_a" },
+        { taskId: "task_d", dependsOnTaskId: "task_e" },
+      ],
+    });
+
+    const blockedIssues = items.filter((item) => item.type === "blocked_issue");
+    expect(blockedIssues).toHaveLength(2);
+    expect(blockedIssues.find((item) => item.taskId === "task_a")).toMatchObject({
+      data: { affectedTaskIds: ["task_a", "task_d"] },
+    });
+    expect(blockedIssues.find((item) => item.taskId === "task_e")).toMatchObject({
+      data: { affectedTaskIds: ["task_d", "task_e"] },
     });
   });
 

@@ -250,6 +250,15 @@ export function confirmReplanProposal(input: ConfirmReplanProposalInput): Confir
     latestFailureMessage: `Task replaced by replan proposal ${proposal.id}.`,
     dependencyNote: `Replaced by replan proposal ${proposal.id}.`,
   });
+  const locale = input.repositories.getCompany(sourceTask.companyId)?.locale ?? "en";
+  input.repositories.appendCompanyEvent({
+    id: createId("company_event"), companyId: sourceTask.companyId, type: "company_plan_created",
+    message: proposal.rationale, createdAt: now,
+    planSnapshot: { tasks: createdTasks.map(task => ({ taskId: task.id,
+      title: task.titleText ?? { [locale]: task.title }, purpose: task.descriptionText ?? { [locale]: task.description },
+      departmentId: task.departmentId, dependsOnTaskIds: input.repositories.listTaskDependencies(task.id).map(dep => dep.dependsOnTaskId),
+    })) },
+  });
   // A CEO replan resets the source task's Bounded Recovery budget so it can be recovered again.
   resetTaskAttempts(input.repositories, sourceTask.id, now);
   input.repositories.updateReplanProposalStatus(proposal.id, "confirmed", now);
@@ -257,7 +266,7 @@ export function confirmReplanProposal(input: ConfirmReplanProposalInput): Confir
     id: createId("task_event"),
     companyId: sourceTask.companyId,
     taskId: sourceTask.id,
-    type: "task_blocked",
+    type: "task_replanned",
     message: `Task replaced by replan proposal ${proposal.id}.`,
     createdAt: now,
     status: "blocked",

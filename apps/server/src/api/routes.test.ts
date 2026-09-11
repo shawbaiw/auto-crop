@@ -331,7 +331,7 @@ describe("API routes", () => {
       "company_creation_records_created",
       "company_creation_completed",
     ]));
-    expect(creationEvents).toHaveLength(5);
+    expect(creationEvents).toHaveLength(6);
     expect(new Set(creationEvents.map((event) => event.id)).size).toBe(creationEvents.length);
 
     await fixture.close();
@@ -356,6 +356,7 @@ describe("API routes", () => {
       "company_creation_accepted",
       "company_creation_agent_started",
       "company_creation_blueprint_parsed",
+      "company_plan_created",
       "company_creation_records_created",
     ]);
     expect(logs).toContain("Company Creation completed but completion event could not be recorded: simulated completed event insert failure");
@@ -1065,9 +1066,7 @@ describe("API routes", () => {
         ].includes(id),
       );
     expect(relevantTimelineIds).toEqual([
-      "task_brief:founder_decision_resolve_source",
       `decision_request:${seeded.decisionId(1)}`,
-      "task_brief:company_state_ordinary_completion",
       "execution_report:task_completion_event_company_state_ordinary",
     ]);
     expect(first.ceoOfficeItems.map((item) => item.id)).not.toContain("execution_report:task_completion_event_fd");
@@ -1351,18 +1350,9 @@ describe("API routes", () => {
     expect(state.taskCompletionEvents[0]?.dependencyImpact.nextStepValidationErrors).toEqual([
       "nextStepItems[1].label: Expected a non-empty string.",
     ]);
+    expect(state.ceoOfficeItems.some(item => item.type === "task_brief")).toBe(false); // fixture has no real start
     expect(state.ceoOfficeItems).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          id: `task_brief:${approvedTask!.id}`,
-          type: "task_brief",
-          taskId: approvedTask!.id,
-          actionBearing: false,
-          data: expect.objectContaining({
-            purposeSource: "task_definition",
-            founderVision: "Build an AI SaaS that creates pricing pages.",
-          }),
-        }),
         // The next step surfaces as its own Human Action card.
         expect.objectContaining({
           type: "human_action",

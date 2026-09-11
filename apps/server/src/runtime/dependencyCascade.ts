@@ -27,6 +27,7 @@ export type PropagateDependencyCascadeInput = {
 };
 
 type DependencyUpdate = {
+  blockedByTaskId?: string;
   type: TaskEvent["type"];
   status: TaskStatus;
   failureReason: AgentFailureReason | null;
@@ -289,6 +290,7 @@ function dependencyUpdateForTask(
     const failureReason = "missing_deliverable";
     const failureMessage = `Task blocked: ${task.title} / missing_deliverable / ${readiness.dependency.title} has no accepted business artifact.`;
     return {
+      blockedByTaskId: readiness.dependency.id,
       type: "deliverable_missing",
       status: "blocked",
       failureReason,
@@ -300,6 +302,7 @@ function dependencyUpdateForTask(
 
   const failureMessage = `Task blocked: ${task.title} / ${readiness.reason} / ${readiness.dependency.title} is ${readiness.dependency.status}.`;
   return {
+    blockedByTaskId: readiness.dependency.id,
     type: "task_blocked",
     status: "blocked",
     failureReason: readiness.reason,
@@ -330,6 +333,7 @@ function createTaskEvent(
     id: createId("task_event"),
     companyId: task.companyId,
     taskId: task.id,
+    blockedByTaskId: update.blockedByTaskId,
     type: update.type,
     message: update.message,
     createdAt: now().toISOString(),

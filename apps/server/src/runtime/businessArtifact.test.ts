@@ -119,6 +119,22 @@ describe("captureBusinessArtifact", () => {
     });
   });
 
+  it.each([false, true])("requires actual work and evidence for a new execution (details present: %s)", (includeDetails) => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(join(workspacePath, ".auto-crop", "business-artifact.json"), JSON.stringify({
+      artifact_kind: "deliverable", artifact_role: "findings", artifact_subtype: "comparison", task_type: "research.comparison", lineage: {},
+      payload: { outcome_summary: "A supports the requested use case.", execution_report: {
+        conclusion: "Select A", vision_impact: "Supports the requested use case", remaining_gap: "Verify ongoing costs", recommendation: "Run a pilot",
+        ...(includeDetails ? { work_summary: "Compared A and B against the requirements", evidence: "A passed all three checks; B failed the reliability check" } : {}),
+      } },
+    }));
+    const artifact = captureBusinessArtifact({ task: createTaskRecord(), proofs: [createProofRecord()], workspacePath, requireExecutionDetails: true });
+    expect(artifact.validationStatus).toBe(includeDetails ? "valid" : "invalid_schema");
+    if (!includeDetails) expect(artifact.validationErrors).toContain("payload.execution_report: New execution reports require work_summary and evidence.");
+  });
+
   it("rejects malformed or missing structured Execution Report fields on new deliverables", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);

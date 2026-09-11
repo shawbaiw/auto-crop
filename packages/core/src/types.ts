@@ -29,6 +29,7 @@ export type ProofType =
 export type AgentRunStatus = "queued" | "running" | "complete" | "failed" | "cancelled";
 export type CreationAttemptStatus = "running" | "complete" | "failed";
 export type CompanyEventType =
+  | "company_plan_created"
   | "company_creation_accepted"
   | "company_creation_agent_started"
   | "company_creation_blueprint_parsed"
@@ -115,6 +116,7 @@ export type TaskEventType =
   | "task_retrying"
   | "task_recovered"
   | "task_needs_replan"
+  | "task_replanned"
   | "deliverable_missing";
 export type TaskProgressStep =
   | "received"
@@ -137,7 +139,19 @@ export type TaskCompletionOutcome =
   | "needs_replan"
   | "awaiting_founder_decision";
 export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance" | "founder_decision";
+export type ExecutionBrief = {
+  purpose: LocalizedText;
+  approach: LocalizedText;
+  expectedOutcome: LocalizedText;
+};
+
+export type CompanyPlanSnapshot = {
+  tasks: Array<{ taskId: string; title: LocalizedText; purpose: LocalizedText; departmentId: string; dependsOnTaskIds: string[] }>;
+};
+
 export type ExecutionReport = {
+  workSummary?: LocalizedText;
+  evidence?: LocalizedText;
   conclusion: LocalizedText;
   visionImpact: LocalizedText;
   remainingGap: LocalizedText;
@@ -422,6 +436,7 @@ export type CreationAttempt = {
 };
 
 export type CompanyEvent = {
+  planSnapshot?: CompanyPlanSnapshot;
   id: string;
   companyId: string;
   type: CompanyEventType;
@@ -639,6 +654,12 @@ export type ReplanProposal = {
 };
 
 export type TaskEvent = {
+  /** Database append order disambiguates events recorded in the same millisecond. */
+  sequence?: number;
+  /** Captured before substantive execution; never rebuilt from mutable task definitions. */
+  executionBrief?: ExecutionBrief & { title: LocalizedText };
+  /** Explicit causal link for dependency propagation; absent for independent problems. */
+  blockedByTaskId?: string;
   id: string;
   companyId: string;
   taskId: string;

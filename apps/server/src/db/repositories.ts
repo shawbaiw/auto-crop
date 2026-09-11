@@ -134,8 +134,8 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO company_events (
-            id, company_id, type, message, message_text, created_at, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            id, company_id, type, message, message_text, created_at, status, plan_snapshot
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           event.id,
@@ -145,6 +145,7 @@ export function createRepositories(database: DatabaseClient) {
           stringifyLocalizedText(event.messageText),
           event.createdAt,
           event.status ?? null,
+          event.planSnapshot ? JSON.stringify(event.planSnapshot) : null,
         );
     },
 
@@ -1166,8 +1167,8 @@ export function createRepositories(database: DatabaseClient) {
           `INSERT INTO task_events (
             id, company_id, task_id, type, message, message_text, created_at, status, failure_reason,
             failure_message, execution_profile_name, requested_timeout_ms, effective_timeout_ms,
-            dependency_note, artifact_workspace_path
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            dependency_note, artifact_workspace_path, execution_brief, blocked_by_task_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           event.id,
@@ -1185,16 +1186,18 @@ export function createRepositories(database: DatabaseClient) {
           event.effectiveTimeoutMs,
           event.dependencyNote,
           event.artifactWorkspacePath,
+          event.executionBrief ? JSON.stringify(event.executionBrief) : null,
+          event.blockedByTaskId ?? null,
         );
     },
 
     listTaskEventsForCompany(companyId: string): TaskEvent[] {
       const rows = database
         .prepare(
-          `SELECT *
+          `SELECT rowid AS sequence, *
            FROM task_events
            WHERE company_id = ?
-           ORDER BY created_at ASC, id ASC`,
+           ORDER BY created_at ASC, rowid ASC`,
         )
         .all(companyId);
       return rows.map((row) => mapTaskEvent(row as TaskEventRow));
@@ -1265,6 +1268,7 @@ type CreationAttemptRow = {
 };
 
 type CompanyEventRow = {
+  plan_snapshot: string | null;
   id: string;
   company_id: string;
   type: CompanyEvent["type"];
@@ -1409,6 +1413,9 @@ type TaskDependencyRow = {
 };
 
 type TaskEventRow = {
+  sequence: number;
+  execution_brief: string | null;
+  blocked_by_task_id: string | null;
   id: string;
   company_id: string;
   task_id: string;
@@ -1509,6 +1516,7 @@ function mapCreationAttempt(row: CreationAttemptRow): CreationAttempt {
 
 function mapCompanyEvent(row: CompanyEventRow): CompanyEvent {
   return {
+    ...(row.plan_snapshot ? { planSnapshot: JSON.parse(row.plan_snapshot) } : {}),
     id: row.id,
     companyId: row.company_id,
     type: row.type,
@@ -1784,6 +1792,9 @@ function parseLocalizedText(value: string | null): LocalizedText | null {
 
 function mapTaskEvent(row: TaskEventRow): TaskEvent {
   return {
+    sequence: row.sequence,
+    ...(row.execution_brief ? { executionBrief: JSON.parse(row.execution_brief) } : {}),
+    ...(row.blocked_by_task_id ? { blockedByTaskId: row.blocked_by_task_id } : {}),
     id: row.id,
     companyId: row.company_id,
     taskId: row.task_id,

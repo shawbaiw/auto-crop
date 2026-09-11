@@ -13,13 +13,12 @@ import {
   RefreshCcw,
   Send,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useId, useMemo, useState, type ReactNode } from "react";
 import type {
   AgentSummary,
   BusinessArtifactSummary,
   Locale,
   LocalizedText,
-  CeoAttentionRollupSummary,
   CeoReviewDecisionResponse,
   CeoReviewReturnReason,
   CeoIntakeSummary,
@@ -75,7 +74,6 @@ export type DepartmentWorkspaceProps = {
   ceoIntakes?: CeoIntakeSummary[];
   proof?: ProofSummary[];
   businessArtifacts?: BusinessArtifactSummary[];
-  ceoAttentionRollups?: CeoAttentionRollupSummary[];
   ceoOfficeItems?: CeoOfficeItemSummary[];
   finalFounderReport?: FinalFounderReportSummary | null;
   finalFounderReportPreparing?: boolean;
@@ -123,7 +121,6 @@ export function DepartmentWorkspace({
   ceoIntakes = [],
   proof = [],
   businessArtifacts = [],
-  ceoAttentionRollups = [],
   ceoOfficeItems = [],
   finalFounderReport = null,
   finalFounderReportPreparing = false,
@@ -237,7 +234,6 @@ export function DepartmentWorkspace({
                   objectives={objectives}
                   keyResults={keyResults}
                   ceoOfficeItems={ceoOfficeItems}
-                  ceoAttentionRollups={ceoAttentionRollups}
                   finalFounderReport={finalFounderReport}
                   finalFounderReportPreparing={finalFounderReportPreparing}
                   founderDecisions={founderDecisions}
@@ -331,7 +327,6 @@ function departmentIcon(departmentName: string): ReactNode {
 }
 
 function CeoIntakeWorkspace({
-  ceoAttentionRollups,
   ceoOfficeItems,
   companyId,
   companyLocale,
@@ -359,7 +354,6 @@ function CeoIntakeWorkspace({
   visionGaps,
   waitStates,
 }: {
-  ceoAttentionRollups: CeoAttentionRollupSummary[];
   ceoOfficeItems: CeoOfficeItemSummary[];
   companyId: string;
   companyLocale: Locale;
@@ -415,10 +409,46 @@ function CeoIntakeWorkspace({
     );
   };
 
+  const historyRef = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+  const [hasNewMessages, setHasNewMessages] = useState(false);
+  const itemRevision = ceoOfficeItems.map(item => `${item.id}:${item.actionBearing}`).join("|");
+  const scrollToLatest = () => {
+    const history = historyRef.current;
+    if (history) history.scrollTop = history.scrollHeight;
+    followLatest.current = true;
+    setHasNewMessages(false);
+  };
+  useLayoutEffect(() => {
+    followLatest.current = true;
+    scrollToLatest();
+  }, [companyId]);
+  useLayoutEffect(() => {
+    if (followLatest.current) scrollToLatest();
+    else setHasNewMessages(true);
+  }, [itemRevision]);
+  useEffect(() => {
+    const history = historyRef.current;
+    if (!history || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (followLatest.current) history.scrollTop = history.scrollHeight;
+    });
+    observer.observe(history);
+    if (history.firstElementChild) observer.observe(history.firstElementChild);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <section className="department-leader-report ceo-intake-report" aria-label={t("department.ceoIntakeReport")}>
+      <div className="ceo-intake-report__history" ref={historyRef} role="region" aria-label={t("department.ceoHistory")} tabIndex={0}
+        onScroll={() => {
+          const history = historyRef.current;
+          if (!history) return;
+          followLatest.current = history.scrollHeight - history.scrollTop - history.clientHeight < 48;
+          if (followLatest.current) setHasNewMessages(false);
+        }}>
+      <div className="ceo-intake-report__content">
       <CeoExecutiveOverview
-        ceoAttentionRollups={ceoAttentionRollups}
         companyTaskCount={tasks.length}
         founderVision={founderVision}
         outcomesLastSeen={outcomesLastSeen}
@@ -437,21 +467,6 @@ function CeoIntakeWorkspace({
           setSuccessMessage(null);
         }}
         successMessage={successMessage}
-      />
-      <CeoOfficeTimeline
-        artifactsByTask={artifactsByTask}
-        companyLocale={companyLocale}
-        departmentsById={departmentsById}
-        highlightedItemId={highlightedOfficeItemId}
-        items={ceoOfficeItems}
-        onViewTaskDetail={(taskId) => {
-          setHighlightedOfficeItemId(null);
-          setSelectedTaskId(taskId);
-          setSuccessMessage(null);
-        }}
-        outcomesLastSeen={outcomesLastSeen}
-        proofsByTask={proofsByTask}
-        tasksById={tasksById}
       />
       <FinalFounderReportPanel
         companyLocale={companyLocale}
@@ -492,8 +507,27 @@ function CeoIntakeWorkspace({
         pendingItems={pendingItems}
         tasks={tasks}
       />
-      <div className="department-leader-report__spacer" aria-hidden="true" />
-      <CeoIntakeMessageBox draft={draft} onDraftChange={onDraftChange} onSubmit={onSubmit} />
+      <CeoOfficeTimeline
+        artifactsByTask={artifactsByTask}
+        companyLocale={companyLocale}
+        departmentsById={departmentsById}
+        highlightedItemId={highlightedOfficeItemId}
+        items={ceoOfficeItems}
+        onViewTaskDetail={(taskId) => {
+          setHighlightedOfficeItemId(null);
+          setSelectedTaskId(taskId);
+          setSuccessMessage(null);
+        }}
+        outcomesLastSeen={outcomesLastSeen}
+        proofsByTask={proofsByTask}
+        tasksById={tasksById}
+      />
+      </div>
+      </div>
+      <div className="ceo-intake-report__footer">
+        {hasNewMessages ? <RetroButton onClick={scrollToLatest}>{t("department.ceoNewMessages")}</RetroButton> : null}
+        <CeoIntakeMessageBox draft={draft} onDraftChange={onDraftChange} onSubmit={onSubmit} />
+      </div>
     </section>
   );
 }
@@ -803,11 +837,22 @@ function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRenderContext
   const tasks = (ids: string[]) => formatTimelineTasks(ids, tasksById, locale, t);
   const none = t("department.none");
   switch (item.type) {
+    case "plan_brief":
+      return {
+        keyLine: `${t("department.timelinePlanBriefPrefix")}${item.data.taskCount}${t("department.timelinePlanBriefSuffix")}`,
+        rows: [
+          ...item.data.tasks.map(task => ({
+            label: line(task.title),
+            value: [line(task.purpose), task.dependsOnTaskIds.length ? `${t("department.timelineDependencies")}: ${task.dependsOnTaskIds.map(id => line(item.data.tasks.find(candidate => candidate.taskId === id)?.title)).filter(Boolean).join(", ")}` : ""].filter(Boolean).join(" — "),
+          })),
+        ],
+      };
     case "task_brief":
       return {
         keyLine: line(item.data.purpose),
         rows: [
-          { label: t("department.timelinePurposeSource"), value: formatTaskBriefPurposeSource(item.data.purposeSource, t) },
+          { label: t("department.timelineApproach"), value: line(item.data.approach) || t("department.timelineNotRecorded") },
+          { label: t("department.timelineExpectedOutcome"), value: line(item.data.expectedOutcome) || t("department.timelineNotRecorded") },
           { label: t("department.timelineObjective"), value: line(item.data.objectiveTitle) || none },
           { label: t("department.timelineKeyResult"), value: line(item.data.keyResultTitle) || none },
           { label: t("department.timelineMetric"), value: item.data.keyResultMetricName ?? none },
@@ -819,6 +864,8 @@ function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRenderContext
       return {
         keyLine: line(item.data.conclusion) || line(item.data.summaryFallback) || none,
         rows: [
+          { label: t("department.timelineWorkSummary"), value: line(item.data.workSummary) || t("department.timelineNotRecorded") },
+          { label: t("department.timelineEvidence"), value: line(item.data.evidence) || t("department.timelineNotRecorded") },
           { label: t("department.timelineVisionImpact"), value: line(item.data.visionImpact) || none },
           { label: t("department.timelineRemainingGap"), value: line(item.data.remainingGap) || formatTimelineGaps(item.data.remainingGaps, none) },
           { label: t("department.timelineRecommendation"), value: line(item.data.recommendation) || formatTimelineNextSteps(item.data.recommendedNextSteps, none) },
@@ -1156,6 +1203,7 @@ function TimelineOptions({ options }: { options: Extract<CeoOfficeItemSummary, {
 }
 
 const ceoOfficeTimelineOrder: Record<CeoOfficeItemSummary["type"], number> = {
+  plan_brief: -1,
   task_brief: 0,
   execution_report: 1,
   decision_request: 2,
@@ -1176,6 +1224,8 @@ function compareCeoOfficeTimelineItems(a: CeoOfficeItemSummary, b: CeoOfficeItem
 
 function formatCeoOfficeItemType(type: CeoOfficeItemSummary["type"], t: ReturnType<typeof useLanguage>["t"]): string {
   switch (type) {
+    case "plan_brief":
+      return t("department.timelinePlanBrief");
     case "task_brief":
       return t("department.timelineTaskBrief");
     case "execution_report":
@@ -1197,13 +1247,6 @@ function formatCeoOfficeItemType(type: CeoOfficeItemSummary["type"], t: ReturnTy
     case "final_report":
       return t("department.timelineFinalReport");
   }
-}
-
-function formatTaskBriefPurposeSource(
-  source: Extract<CeoOfficeItemSummary, { type: "task_brief" }>["data"]["purposeSource"],
-  t: ReturnType<typeof useLanguage>["t"],
-): string {
-  return source === "department_assessment" ? t("department.timelineDepartmentAssessment") : t("department.timelineTaskDefinition");
 }
 
 function formatTimelineGaps(
@@ -1522,7 +1565,6 @@ function CeoFounderDecisionCard({
 }
 
 function CeoExecutiveOverview({
-  ceoAttentionRollups,
   companyTaskCount,
   departmentsById,
   founderVision,
@@ -1533,7 +1575,6 @@ function CeoExecutiveOverview({
   visionGaps,
   waitStates,
 }: {
-  ceoAttentionRollups: CeoAttentionRollupSummary[];
   companyTaskCount: number;
   departmentsById: Map<string, DepartmentSummary>;
   founderVision: string;
@@ -1562,51 +1603,9 @@ function CeoExecutiveOverview({
         items={[
           { label: t("department.objectives"), value: String(objectives.length) },
           { label: t("department.completedTasks"), value: `${completedTasks.length}/${companyTaskCount}` },
-          { label: t("department.attentionRollups"), value: String(ceoAttentionRollups.length) },
           { label: t("department.blockedTasks"), value: String(blockingTasks.length) },
         ]}
       />
-      <section className="ceo-attention-rollups" aria-label={t("department.attentionRollups")}>
-        <h4>{t("department.attentionRollups")}</h4>
-        {ceoAttentionRollups.length === 0 ? <p className="muted">{t("department.noAttentionRollups")}</p> : null}
-        {ceoAttentionRollups.map((rollup) => {
-          // An Objective Stage Change is an achievement, not an alarm — styled apart from the
-          // exception rollups and led by an achievement badge rather than the owning department.
-          const isObjectiveStageChange = rollup.reasons.includes("goal_stage_change");
-          return (
-            <article
-              className={`ceo-attention-rollup${isObjectiveStageChange ? " ceo-attention-rollup--achievement" : ""}`}
-              key={rollup.id}
-            >
-              <div>
-                {isObjectiveStageChange ? (
-                  <p>
-                    <RetroBadge tone="signal">{t("department.objectiveStageChange")}</RetroBadge>
-                    <UnseenBadge createdAt={rollup.createdAt} lastSeen={outcomesLastSeen} />
-                  </p>
-                ) : (
-                  <p>{formatRollupOwner(rollup.ownerDepartmentId, departmentsById)}</p>
-                )}
-                <h5>{rollup.title}</h5>
-                <p className="muted">{rollup.summary}</p>
-              </div>
-              <VideotexKeyValue
-                items={[
-                  // An achievement rollup carries no severity / blocker / downstream impact.
-                  ...(isObjectiveStageChange
-                    ? []
-                    : [
-                        { label: t("department.rollupSeverity"), value: rollup.severity },
-                        { label: t("department.downstreamImpact"), value: formatDepartments(rollup.downstreamDepartmentIds, departmentsById, t("department.none")) },
-                        { label: t("department.currentBlocker"), value: rollup.currentBlocker ?? t("department.none") },
-                      ]),
-                  { label: t("department.recommendedNextAction"), value: rollup.recommendedNextAction },
-                ]}
-              />
-            </article>
-          );
-        })}
-      </section>
       <VideotexLog
         emptyMessage={t("department.noCriticalChains")}
         rows={criticalDependencyRows([...tasksById.values()], departmentsById)}
@@ -1640,14 +1639,6 @@ function CeoExecutiveOverview({
 
 function formatRollupOwner(departmentId: string, departmentsById: Map<string, DepartmentSummary>): string {
   return departmentsById.get(departmentId)?.name ?? departmentId;
-}
-
-function formatDepartments(departmentIds: string[], departmentsById: Map<string, DepartmentSummary>, emptyLabel: string): string {
-  if (departmentIds.length === 0) {
-    return emptyLabel;
-  }
-
-  return departmentIds.map((departmentId) => departmentsById.get(departmentId)?.name ?? departmentId).join(", ");
 }
 
 function criticalDependencyRows(tasks: TaskSummary[], departmentsById: Map<string, DepartmentSummary>): string[] {
@@ -1953,6 +1944,7 @@ function formatCeoPendingType(item: CeoPendingItem, t: ReturnType<typeof useLang
       return `${t("department.ceoPendingBlockedIssueFrom")} ${item.departmentName}`;
     case "wait_state":
       return `${t("department.ceoPendingWaitStateFrom")} ${item.departmentName}`;
+    case "plan_brief":
     case "task_brief":
     case "execution_report":
     case "decision_resolution":

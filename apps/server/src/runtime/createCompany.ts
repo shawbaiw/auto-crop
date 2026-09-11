@@ -342,6 +342,15 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
   ).forEach((dependency) => repositories.createTaskDependency(dependency));
   inferValidationDependencies(tasks).forEach((dependency) => repositories.createTaskDependency(dependency));
   taskWarnings.forEach((warning) => repositories.appendTaskEvent(warning));
+  repositories.appendCompanyEvent({
+    id: createId("company_event"), companyId: company.id, type: "company_plan_created",
+    message: "Initial task decomposition", createdAt: input.createdAt,
+    planSnapshot: { tasks: tasks.map(task => ({
+      taskId: task.id, title: task.titleText ?? { [company.locale]: task.title },
+      purpose: task.descriptionText ?? { [company.locale]: task.description }, departmentId: task.departmentId,
+      dependsOnTaskIds: repositories.listTaskDependencies(task.id).map(dependency => dependency.dependsOnTaskId),
+    })) },
+  });
 
   return {
     company,

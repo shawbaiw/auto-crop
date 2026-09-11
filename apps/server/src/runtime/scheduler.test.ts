@@ -1,3 +1,4 @@
+import { projectCeoOfficeItems } from "@auto-crop/core";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,6 +55,41 @@ describe("task locks", () => {
 });
 
 describe("runSchedulerOnce", () => {
+  it("persists the execution plan before dispatching substantive work", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+    const phases: string[] = [];
+    const adapter: AgentAdapter = {
+      id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      run: async request => {
+        phases.push(request.metadata.phase ?? "work");
+        const items = projectCeoOfficeItems({ company: repositories.getCompany("company_1")!, tasks: repositories.listTasksForCompany("company_1"), taskEvents: repositories.listTaskEventsForCompany("company_1"), taskCompletionEvents: [] });
+        if (request.metadata.phase === "execution_brief") {
+          expect(items.filter(item => item.type === "task_brief")).toEqual([]);
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Compare options", approach: "Check cost and reliability against the supplied requirements", expectedOutcome: "An evidence-backed recommendation" }), stderr: "" };
+        }
+        expect(items.find(item => item.type === "task_brief")).toMatchObject({ data: { approach: { en: "Check cost and reliability against the supplied requirements" }, purposeSource: "execution_plan" } });
+        expect(request.prompt).toContain("Check cost and reliability");
+        return { status: "complete", exitCode: 0, stdout: "Completed the comparison", stderr: "" };
+      },
+    };
+    await runSchedulerOnce({ projectRoot, repositories, adapters: [adapter], workerId: "worker", maxTasks: 1, approvalRequired: () => false,
+      proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; }, emit: () => undefined });
+    expect(phases).toEqual(["execution_brief", "work"]);
+    client.close();
+  });
+
+  it("does not dispatch work or fabricate a brief if preparation is malformed", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+    const phases: string[] = [];
+    await runSchedulerOnce({ projectRoot, repositories, adapters: [{ id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      run: async request => { phases.push(request.metadata.phase ?? "work"); return { status: "complete", exitCode: 0, stdout: "No structured plan", stderr: "" }; },
+    }], workerId: "worker", maxTasks: 1, approvalRequired: () => false, proofCollector: () => { throw new Error("Must not collect proof"); }, emit: () => undefined });
+    expect(phases).toEqual(["execution_brief"]);
+    expect(repositories.listTaskEventsForCompany("company_1").some(event => event.type === "task_started")).toBe(false);
+    expect(repositories.getTask("task_1")?.status).toBe("failed");
+    client.close();
+  });
+
   it("reconciles stale running tasks before dispatching queued work", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "running", "low"),
@@ -152,7 +188,7 @@ describe("runSchedulerOnce", () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: "task_started",
       taskId: "task_1",
-      message: "Task started: Task task_1 (mock-worker, long budget 10m).",
+      message: "Task started: Task task_1",
       executionProfileName: "long",
       requestedTimeoutMs: 600_000,
       effectiveTimeoutMs: 600_000,
@@ -184,6 +220,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             prompt = request.prompt;
             return {
               status: "complete",
@@ -817,6 +854,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             workspacePath = request.workspacePath;
             mkdirSync(join(workspacePath, "node_modules", "vite"), { recursive: true });
             writeFileSync(join(workspacePath, "node_modules", "vite", "index.js"), "module.exports = {}\n", "utf8");
@@ -1025,6 +1063,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             timeoutCalls.push(request.timeoutMs);
 
             if (timeoutCalls.length === 1) {
@@ -1102,6 +1141,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             timeoutMs = request.timeoutMs;
             return {
               status: "complete",
@@ -1431,6 +1471,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             prompt = request.prompt;
             return {
               status: "complete",
@@ -1510,6 +1551,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             adapterWorkspacePath = request.workspacePath;
             mkdirSync(join(request.workspacePath, ".auto-crop-proof"), { recursive: true });
             writeFileSync(
@@ -1528,6 +1570,8 @@ describe("runSchedulerOnce", () => {
                 payload: {
                   summary: "Recorded implementation diff.",
                   execution_report: {
+                    work_summary: "Compared the requested inputs and checked the deliverable.",
+                    evidence: "Recorded checks support the reported result.",
                     conclusion: "The implementation changes are recorded as a diff.",
                     vision_impact: "This completes the build step for the objective.",
                     remaining_gap: "Review and downstream integration remain.",
@@ -1602,6 +1646,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             prompt = request.prompt;
             return {
               status: "complete",
@@ -1650,6 +1695,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             timeoutCalls.push(request.timeoutMs);
 
             if (timeoutCalls.length === 1) {
@@ -1811,6 +1857,9 @@ describe("runSchedulerOnce", () => {
       }),
     );
 
+    const office = projectCeoOfficeItems({ company: repositories.getCompany("company_1")!, tasks: repositories.listTasksForCompany("company_1"),
+      taskEvents: repositories.listTaskEventsForCompany("company_1"), taskCompletionEvents: repositories.listTaskCompletionEventsForCompany("company_1") });
+    expect(office.filter(item => item.type === "blocked_issue" && item.actionBearing).map(item => item.taskId)).toEqual([producer.id]);
     client.close();
   });
 
@@ -1954,6 +2003,7 @@ describe("runSchedulerOnce", () => {
           capabilities: ["code"],
           detect: async () => true,
           run: async (request) => {
+            if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             workspacePath = request.workspacePath;
             return {
               status: "complete",
@@ -2918,6 +2968,8 @@ function writeValidBusinessArtifact(task: Task): void {
       payload: {
         summary: "Mock implementation completed.",
         execution_report: {
+                    work_summary: "Compared the requested inputs and checked the deliverable.",
+                    evidence: "Recorded checks support the reported result.",
           conclusion: "The prototype implementation is complete and passes its mock proof.",
           vision_impact: "It advances the objective's build milestone.",
           remaining_gap: "Validation with real users before launch remains.",
@@ -2952,6 +3004,8 @@ function writeBusinessArtifactWithOpenDecisions(task: Task, openDecisions: unkno
       payload: {
         summary: "Mock brief completed.",
         execution_report: {
+                    work_summary: "Compared the requested inputs and checked the deliverable.",
+                    evidence: "Recorded checks support the reported result.",
           conclusion: "The brief settles on a pricing wedge and leaves the pricing model open.",
           vision_impact: "It gives Growth a number to test.",
           remaining_gap: "Willingness-to-pay evidence remains.",
