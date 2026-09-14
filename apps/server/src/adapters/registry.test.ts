@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { noToolGrant } from "../policies/capabilityGrant";
 import { createClaudeCodeAdapter, createCliAgentAdapter, createCodexAdapter, interpolateCommandTemplate } from "./cliAgent";
 import { createMockAgentAdapter } from "./mockAgent";
 import { createAgentRegistry } from "./registry";
@@ -15,6 +16,15 @@ const request: AgentRunRequest = {
   metadata: {
     departmentName: "Engineering",
     proofSchemaId: "landing-page-proof",
+  },
+};
+
+const researchRequest: AgentRunRequest = {
+  ...request,
+  grant: {
+    granted: ["workspace_read", "workspace_write", "web_research"],
+    withheld: [],
+    id: "workspace_read+workspace_write+web_research",
   },
 };
 
@@ -106,7 +116,7 @@ describe("CLI command template adapter", () => {
   });
 
   it("uses current non-interactive command shapes for built-in local agents", () => {
-    expect(createCodexAdapter().commandPreview(request)).toEqual({
+    expect(createCodexAdapter().commandPreview(researchRequest)).toEqual({
       command: "codex",
       args: [
         "exec",
@@ -114,17 +124,29 @@ describe("CLI command template adapter", () => {
         "gpt-5.5",
         "-C",
         "/tmp/workspace",
+        "--ignore-user-config",
+        "--ignore-rules",
         "--skip-git-repo-check",
         "--sandbox",
-        "workspace-write",
+        "read-only",
         "--ephemeral",
+        "-c",
+        "tools.web_search=true",
         "Create a landing page",
       ],
     });
-    expect(createClaudeCodeAdapter().commandPreview(request)).toEqual({
+    expect(createClaudeCodeAdapter().commandPreview(researchRequest)).toEqual({
       command: "claude",
       args: [
         "-p",
+        "--restricted",
+        "--strict-mcp-config",
+        "--permission-prompts",
+        "none",
+        "--tools",
+        "Read,Glob,Grep,Write,Edit,WebSearch,WebFetch",
+        "--allowedTools",
+        "Read,Glob,Grep,Write,Edit,WebSearch,WebFetch",
         "--permission-mode",
         "acceptEdits",
         "--no-session-persistence",
@@ -134,8 +156,41 @@ describe("CLI command template adapter", () => {
     });
   });
 
+  /**
+   * The reported failure, pinned. `--permission-mode acceptEdits` auto-approves file edits only, so a
+   * run that had `WebSearch` in its toolset but not in `--allowedTools` met a permission prompt no
+   * one could answer, called the denial a sandbox, and delivered estimates (ADR 0021).
+   */
+  it("pre-approves the web tools it grants, not just exposes them", () => {
+    const args = createClaudeCodeAdapter().commandPreview(researchRequest).args;
+    const allowed = args[args.indexOf("--allowedTools") + 1] ?? "";
+
+    expect(allowed).toContain("WebSearch");
+    expect(allowed).toContain("WebFetch");
+  });
+
+  it("withholds the shell and the web from a grant that does not carry them", () => {
+    const preview = createClaudeCodeAdapter().commandPreview({
+      ...request,
+      grant: { granted: ["workspace_read", "workspace_write"], withheld: [], id: "workspace_read+workspace_write" },
+    });
+
+    expect(preview.args[preview.args.indexOf("--tools") + 1]).toBe("Read,Glob,Grep,Write,Edit");
+    expect(preview.args).toContain("--restricted");
+    expect(createCodexAdapter().commandPreview({ ...request, grant: undefined }).args).toContain(
+      "tools.web_search=false",
+    );
+  });
+
+  it("gives a no-tool grant an empty toolset and nothing to pre-approve", () => {
+    const preview = createClaudeCodeAdapter().commandPreview({ ...request, grant: noToolGrant });
+
+    expect(preview.args[preview.args.indexOf("--tools") + 1]).toBe("");
+    expect(preview.args).not.toContain("--allowedTools");
+  });
+
   it("allows the Codex model to be overridden without inheriting the CLI default", () => {
-    expect(createCodexAdapter({ model: "gpt-5.6-sol" }).commandPreview(request)).toEqual({
+    expect(createCodexAdapter({ model: "gpt-5.6-sol" }).commandPreview(researchRequest)).toEqual({
       command: "codex",
       args: [
         "exec",
@@ -143,10 +198,14 @@ describe("CLI command template adapter", () => {
         "gpt-5.6-sol",
         "-C",
         "/tmp/workspace",
+        "--ignore-user-config",
+        "--ignore-rules",
         "--skip-git-repo-check",
         "--sandbox",
-        "workspace-write",
+        "read-only",
         "--ephemeral",
+        "-c",
+        "tools.web_search=true",
         "Create a landing page",
       ],
     });

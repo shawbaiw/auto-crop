@@ -147,5 +147,5 @@ export class AgentSessionManager {
 export const defaultAgentSessionManager = new AgentSessionManager();
 
 function serializeSessionKey(key: AgentSessionKey): string {
-  return `${key.companyId}\0${key.agentId}\0${key.permissionMode}`;
+  return `${key.companyId}\0${key.agentId}\0${key.permissionMode}\0${key.grantId}`;
 }

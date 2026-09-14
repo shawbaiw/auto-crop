@@ -1,4 +1,5 @@
 import type { Company, Locale, Task } from "@auto-crop/core";
+import { describeRuntimeCapability, type AgentCapabilityGrant } from "../policies/capabilityGrant";
 import type { TaskHandoff } from "./dependencyReadiness";
 import { LOCALE_LANGUAGE_NAME } from "./localePromptText";
 import { buildProofContractInstructions } from "./proofContract";
@@ -7,7 +8,47 @@ export type BuildTaskExecutionPromptInput = {
   company: Company;
   task: Task;
   handoffs: TaskHandoff[];
+  /** What this run may actually do. Omitted only by callers that do not launch an agent. */
+  grant?: AgentCapabilityGrant;
 };
+
+/**
+ * State the run's Agent Capability Grant, and forbid substituting priors for a capability it holds or
+ * lacks.
+ *
+ * An agent that discovers a denial mid-run has no vocabulary for it and will invent one. That is not
+ * hypothetical: a keyword research run met a silent `WebSearch` permission denial, reported it as "a
+ * sandbox environment with no live keyword tooling", screened eight keywords from prior knowledge,
+ * and submitted the result as a deliverable — which Automatic Acceptance passed. Naming the grant up
+ * front is what makes "file a blocker instead" an instruction the agent can actually follow, and what
+ * makes runtime refutation of a false capability claim fair (ADR 0021).
+ */
+function buildCapabilityGrantInstructions(grant: AgentCapabilityGrant | undefined): string[] {
+  if (!grant) {
+    return [];
+  }
+
+  return [
+    "## Granted Capabilities",
+    "",
+    "This run holds exactly these capabilities, and nothing else:",
+    ...grant.granted.map((capability) => `- ${describeRuntimeCapability(capability)}`),
+    ...(grant.withheld.length > 0
+      ? [
+        "",
+        "Refused by this company's Permission Mode:",
+        ...grant.withheld.map((capability) => `- ${describeRuntimeCapability(capability)}`),
+      ]
+      : []),
+    "",
+    "This list is authoritative. It is not a sandbox limitation to work around, and the runtime knows what it granted.",
+    "If the task cannot be done with what is listed, write `.auto-crop/business-artifact.json` as a `blocker` with",
+    "`payload.blocker_class: \"environment_blocked\"` and `payload.capability` naming the missing capability.",
+    "Do not substitute estimates, priors, or recalled figures for data a capability would have retrieved and then",
+    "submit the result as a `deliverable`. Claiming a capability you were granted was unavailable fails the task.",
+    "Where a finding rests on judgement rather than retrieved evidence, say so in `payload.validationLimits`.",
+  ];
+}
 
 type PromptExamples = {
   executionReport: {
@@ -70,7 +111,7 @@ const LOCALE_PROMPT_EXAMPLES: Record<Locale, PromptExamples> = {
 };
 
 export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): string {
-  const { company, task, handoffs } = input;
+  const { company, task, handoffs, grant } = input;
   const languageName = LOCALE_LANGUAGE_NAME[company.locale];
   const examples = LOCALE_PROMPT_EXAMPLES[company.locale];
   const companyContext = [
@@ -153,7 +194,16 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
     "A choice on one of these kinds is the founder's to make, not yours.",
   ];
   const proofInstructions = buildProofContractInstructions(task);
-  const basePrompt = [...companyContext, task.description, "", ...artifactInstructions, "", ...proofInstructions];
+  const grantInstructions = buildCapabilityGrantInstructions(grant);
+  const basePrompt = [
+    ...companyContext,
+    task.description,
+    "",
+    ...(grantInstructions.length > 0 ? [...grantInstructions, ""] : []),
+    ...artifactInstructions,
+    "",
+    ...proofInstructions,
+  ];
 
   if (handoffs.length === 0) {
     return basePrompt.join("\n");

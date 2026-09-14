@@ -8,6 +8,7 @@ export * from "./adapters/cliAgent";
 export * from "./adapters/mockAgent";
 export * from "./policies/policy";
 export * from "./policies/defaults";
+export * from "./policies/capabilityGrant";
 export * from "./playbooks/types";
 export * from "./playbooks/aiSaas";
 export * from "./playbooks/selectPlaybook";

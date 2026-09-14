@@ -469,6 +469,7 @@ describe("createCompany", () => {
         companyId: "company_1",
         agentId: "codex",
         permissionMode: "balanced",
+        grantId: "workspace_read+workspace_write+web_research",
       },
       alive: true,
       async run(request) {
@@ -520,6 +521,7 @@ describe("createCompany", () => {
       companyId: "company_1",
       agentId: "codex",
       permissionMode: "balanced",
+      grantId: "workspace_read+workspace_write+web_research",
     });
     expect(sessionRuns).toEqual(["company_1_ceo_blueprint"]);
     expect(result.company.permissionMode).toBe("balanced");

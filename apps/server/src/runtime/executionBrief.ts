@@ -1,5 +1,6 @@
 import type { Company, ExecutionBrief, Task } from "@auto-crop/core";
 import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "../adapters/types";
+import { noToolGrant } from "../policies/capabilityGrant";
 import type { TaskHandoff } from "./dependencyReadiness";
 
 /** Preparation is a separate run: a brief is durable before the work prompt is dispatched. */
@@ -13,6 +14,8 @@ export async function prepareExecutionBrief(input: {
   const language = input.company.locale === "zh" ? "Chinese" : "English";
   const result = await input.adapter.run({
     ...input.request,
+    // "Do not use tools" below is enforced, not requested: this run is launched holding none.
+    grant: noToolGrant,
     metadata: { ...input.request.metadata, phase: "execution_brief", locale: input.company.locale },
     prompt: [
       "Prepare a founder-facing execution brief. This is a planning-only run.",

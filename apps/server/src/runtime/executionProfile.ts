@@ -1,4 +1,5 @@
 import type { Task } from "@auto-crop/core";
+import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
 
 export type TaskExecutionProfileName = "short" | "medium" | "long";
 
@@ -18,7 +19,26 @@ const shortProfile = { name: "short", timeoutMs: 120_000 } as const satisfies Ta
 const mediumProfile = { name: "medium", timeoutMs: 300_000 } as const satisfies TaskExecutionProfile;
 const longProfile = { name: "long", timeoutMs: 600_000 } as const satisfies TaskExecutionProfile;
 
-export function resolveTaskExecutionProfile(task: Pick<Task, "proofSchemaId" | "requiredCapabilities">): TaskExecutionProfile {
+/**
+ * Minimum profile a Runtime Capability's wall-clock cost demands, regardless of deliverable shape.
+ *
+ * `research-report` and `product-brief` were sized `short` (120s) for a task writing down what the
+ * agent already knew. A run that actually searches the web and reads pages cannot fit that, and the
+ * floor is derived from the grant rather than added to the proof-schema table so a later
+ * network-bound capability inherits the rule instead of needing its own row (ADR 0021).
+ */
+const capabilityProfileFloor: Partial<Record<RuntimeCapability, TaskExecutionProfileName>> = {
+  web_research: "medium",
+};
+
+export function resolveTaskExecutionProfile(
+  task: Pick<Task, "proofSchemaId" | "requiredCapabilities">,
+  grant?: AgentCapabilityGrant,
+): TaskExecutionProfile {
+  return applyGrantFloor(profileFromTaskShape(task), grant);
+}
+
+function profileFromTaskShape(task: Pick<Task, "proofSchemaId" | "requiredCapabilities">): TaskExecutionProfile {
   switch (task.proofSchemaId) {
     case "product-brief":
     case "research-report":
@@ -33,11 +53,32 @@ export function resolveTaskExecutionProfile(task: Pick<Task, "proofSchemaId" | "
   }
 }
 
+function applyGrantFloor(
+  profile: TaskExecutionProfile,
+  grant: AgentCapabilityGrant | undefined,
+): TaskExecutionProfile {
+  let result = profile;
+
+  for (const capability of grant?.granted ?? []) {
+    const floor = capabilityProfileFloor[capability];
+    if (floor && profileRank(floor) > profileRank(result.name)) {
+      result = profileByName(floor);
+    }
+  }
+
+  return result;
+}
+
+function profileRank(name: TaskExecutionProfileName): number {
+  return name === "short" ? 0 : name === "medium" ? 1 : 2;
+}
+
 export function resolveEffectiveTimeout(
   task: Pick<Task, "proofSchemaId" | "requiredCapabilities">,
   env: NodeJS.ProcessEnv = process.env,
+  grant?: AgentCapabilityGrant,
 ): EffectiveTimeoutResolution {
-  const executionProfile = resolveTaskExecutionProfile(task);
+  const executionProfile = resolveTaskExecutionProfile(task, grant);
   return resolveEffectiveTimeoutForProfile(executionProfile, env);
 }
 

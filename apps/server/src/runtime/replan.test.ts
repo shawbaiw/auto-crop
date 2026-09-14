@@ -142,6 +142,7 @@ describe("replan proposals", () => {
         companyId: "company_1",
         agentId: "codex",
         permissionMode: "balanced",
+        grantId: "workspace_read+workspace_write+web_research",
       },
       alive: true,
       async run(request) {
@@ -190,6 +191,7 @@ describe("replan proposals", () => {
       companyId: "company_1",
       agentId: "codex",
       permissionMode: "balanced",
+      grantId: "workspace_read+workspace_write+web_research",
     });
     expect(sessionRuns).toEqual(["source_task_replan_planner"]);
     expect(proposal.proposalSource).toBe("planner_agent");

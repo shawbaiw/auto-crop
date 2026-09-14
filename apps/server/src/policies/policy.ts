@@ -2,6 +2,7 @@ export const actionTypes = [
   "read_workspace",
   "write_workspace",
   "run_safe_command",
+  "read_public_web",
   "install_dependency",
   "deploy",
   "access_external_account",

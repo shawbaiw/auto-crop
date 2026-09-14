@@ -13,6 +13,8 @@ import type {
 } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
+import { planningCapabilityNeeds, resolveAgentCapabilityGrant } from "../policies/capabilityGrant";
+import { resolvePolicyForPermissionMode } from "../policies/defaults";
 import type { PolicyMode } from "../policies/policy";
 import { defaultAgentSessionManager, type AgentSessionManager } from "./agentSessions";
 import { buildCeoPrompt } from "./ceoPrompt";
@@ -143,6 +145,10 @@ export async function generateCompanyBlueprint(input: GenerateCompanyBlueprintIn
   const promptPath = `${companyWorkspace.companyRoot}/ceo-prompt.md`;
   writeFileSync(promptPath, prompt, "utf8");
 
+  const grant = resolveAgentCapabilityGrant({
+    needs: planningCapabilityNeeds,
+    policy: resolvePolicyForPermissionMode(input.permissionMode),
+  });
   const agentRequest = {
     taskId: `${input.companyId}_ceo_blueprint`,
     prompt,
@@ -153,12 +159,14 @@ export async function generateCompanyBlueprint(input: GenerateCompanyBlueprintIn
       permissionMode: input.permissionMode,
     },
     timeoutMs: resolveEffectiveTimeoutForProfileName("long").effectiveTimeoutMs,
+    grant,
   };
   const sessionPolicy = resolveAgentSessionPolicy({
     companyId: input.companyId,
     agentId: input.selectedCeoAgent.id,
     permissionMode: input.permissionMode,
     purpose: "ceo_blueprint",
+    grantId: grant.id,
     env: input.agentSessionEnv,
   });
   const agentRun = await (input.agentSessionManager ?? defaultAgentSessionManager).run({
