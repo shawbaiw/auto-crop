@@ -19,6 +19,8 @@ export type CliAgentAdapter = AgentAdapter & {
   commandPreview(request: AgentRunRequest): InterpolatedCommand;
 };
 
+const DEFAULT_CODEX_MODEL = "gpt-5.5";
+
 export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter {
   return {
     id: options.id,
@@ -72,12 +74,16 @@ export function createClaudeCodeAdapter(options: Pick<CliAgentOptions, "timeoutM
   });
 }
 
-export function createCodexAdapter(options: Pick<CliAgentOptions, "timeoutMs" | "log"> = {}): CliAgentAdapter {
+export function createCodexAdapter(
+  options: Pick<CliAgentOptions, "timeoutMs" | "log"> & { model?: string } = {},
+): CliAgentAdapter {
+  const model = options.model ?? process.env.AUTO_CROP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL;
+
   return createCliAgentAdapter({
     id: "codex",
     name: "Codex",
     capabilities: ["code", "frontend", "test", "refactor"],
-    commandTemplate: "codex exec -C {workspace} --skip-git-repo-check --sandbox workspace-write --ephemeral {prompt}",
+    commandTemplate: `codex exec -m ${model} -C {workspace} --skip-git-repo-check --sandbox workspace-write --ephemeral {prompt}`,
     ...options,
   });
 }

@@ -22,6 +22,7 @@ const createdDirs: string[] = [];
 
 afterEach(() => {
   delete process.env.AUTO_CROP_AGENT_TIMEOUT_MS;
+  delete process.env.AUTO_CROP_CODEX_MODEL;
   for (const dir of createdDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -109,6 +110,8 @@ describe("CLI command template adapter", () => {
       command: "codex",
       args: [
         "exec",
+        "-m",
+        "gpt-5.5",
         "-C",
         "/tmp/workspace",
         "--skip-git-repo-check",
@@ -126,6 +129,24 @@ describe("CLI command template adapter", () => {
         "acceptEdits",
         "--no-session-persistence",
         "--",
+        "Create a landing page",
+      ],
+    });
+  });
+
+  it("allows the Codex model to be overridden without inheriting the CLI default", () => {
+    expect(createCodexAdapter({ model: "gpt-5.6-sol" }).commandPreview(request)).toEqual({
+      command: "codex",
+      args: [
+        "exec",
+        "-m",
+        "gpt-5.6-sol",
+        "-C",
+        "/tmp/workspace",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "--ephemeral",
         "Create a landing page",
       ],
     });
