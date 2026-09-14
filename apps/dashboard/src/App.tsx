@@ -230,7 +230,8 @@ export default function App({ apiClient }: AppProps) {
             } else {
               // Keep the live activity stream and task status just received over SSE. Refresh the
               // authoritative business projection without replacing them with a snapshot in flight.
-              setBlueprint(current => current ? { ...current, ceoOfficeItems: response.ceoOfficeItems,
+              setBlueprint(current => current ? { ...current, tasks: adoptSettledTasks(current.tasks, response.tasks),
+                ceoOfficeItems: response.ceoOfficeItems,
                 finalFounderReport: response.finalFounderReport, finalFounderReportPreparing: response.finalFounderReportPreparing } : current);
               setTaskCompletionEvents(response.taskCompletionEvents ?? []);
               setFounderDecisions(response.founderDecisions ?? []);
@@ -562,6 +563,17 @@ export default function App({ apiClient }: AppProps) {
     return response;
   }
 
+  async function handleDecideFounderApproval(approvalId: string, decision: "approved" | "denied") {
+    const response = await client.decideFounderApproval(approvalId, { decision });
+    if (response.task) {
+      setBlueprint((current) => updateBlueprintTask(current, response.task!));
+    }
+    if (response.event) {
+      setEvents((current) => [...current.slice(-49), response.event!]);
+    }
+    return response;
+  }
+
   async function handleRecoverTask(taskId: string) {
     const response = await client.recoverTask(taskId);
     setBlueprint((current) => updateBlueprintTasksAfterRecovery(current, response.task, response.followUpTask));
@@ -817,6 +829,8 @@ export default function App({ apiClient }: AppProps) {
         objectives={blueprint.objectives}
         onRefreshTask={handleRefreshTask}
         onRecoverTask={handleRecoverTask}
+        onDecideFounderApproval={handleDecideFounderApproval}
+        onCreateReplanProposal={handleCreateReplanProposal}
         onCreateCeoIntake={handleCreateCeoIntake}
         onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
         onResolveFounderDecision={handleResolveFounderDecision}
@@ -951,11 +965,20 @@ function upsertCeoOfficeItems(
   };
 }
 
+/**
+ * Add the CEO Office approval item for a task that just entered review, without waiting for the next
+ * full company-state read.
+ *
+ * Gated on the task carrying a `ceo_review_decision` Resume Affordance, not on the artifact reading
+ * `unreviewed` — the same rule the server projects and guards with. Deriving it from the artifact
+ * alone is exactly how CEO Office ended up offering decisions the API refused (ADR 0020).
+ */
 function createApprovalRequestItemFromArtifact(
   artifact: BusinessArtifactSummary,
   task: TaskSummary,
 ): CeoOfficeItemSummary[] {
-  if (!isReviewableArtifact(artifact) || artifact.taskId !== task.id) {
+  const offered = (task.affordances ?? []).some((affordance) => affordance.kind === "ceo_review_decision");
+  if (!offered || !isReviewableArtifact(artifact) || artifact.taskId !== task.id) {
     return [];
   }
 
@@ -1172,6 +1195,11 @@ function updateBlueprintTaskStatus(blueprint: CreateCompanyResponse | null, even
     return {
       ...task,
       status: nextStatus ?? task.status,
+      // Holds and Resume Affordances belong to the status the *server* computed them for. An event
+      // that moves the task locally invalidates them, and keeping them would let the board offer an
+      // action the server never offered for this state — the fabrication ADR 0020 exists to stop.
+      // They come back with the next snapshot that agrees with what we just saw.
+      ...(nextStatus && nextStatus !== task.status ? { holds: undefined, affordances: undefined } : {}),
       failureReason: event.failureReason ?? (clearsTaskFailure(event.type) ? undefined : task.failureReason),
       failureMessage: event.failureMessage ?? (clearsTaskFailure(event.type) ? undefined : task.failureMessage),
       executionProfileName: event.executionProfileName ?? task.executionProfileName,
@@ -1183,6 +1211,20 @@ function updateBlueprintTaskStatus(blueprint: CreateCompanyResponse | null, even
   });
 
   return changed ? { ...blueprint, tasks } : blueprint;
+}
+
+/**
+ * Take the server's version of a task only where the snapshot agrees with the status the live stream
+ * already showed. Where they disagree the snapshot is simply in flight, and mixing its Resume
+ * Affordances into a status it was not computed for would offer actions for the wrong state.
+ */
+function adoptSettledTasks(current: TaskSummary[], snapshot: TaskSummary[]): TaskSummary[] {
+  const snapshotById = new Map(snapshot.map((task) => [task.id, task]));
+
+  return current.map((task) => {
+    const settled = snapshotById.get(task.id);
+    return settled && settled.status === task.status ? settled : task;
+  });
 }
 
 function clearsTaskFailure(eventType: string): boolean {

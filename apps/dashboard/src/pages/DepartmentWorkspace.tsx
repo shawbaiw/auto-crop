@@ -10,8 +10,11 @@ import {
   Megaphone,
   MessageSquareText,
   Package,
+  GitBranchPlus,
   RefreshCcw,
   Send,
+  ShieldAlert,
+  ShieldCheck,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useId, useMemo, useState, type ReactNode } from "react";
 import type {
@@ -33,6 +36,8 @@ import type {
   KeyResultSummary,
   ObjectiveSummary,
   ProofSummary,
+  FounderApprovalResponse,
+  TaskAffordanceKind,
   TaskCompletionEventSummary,
   TaskRecoveryResponse,
   TaskRefreshResponse,
@@ -41,6 +46,11 @@ import type {
   VisionGapSummary,
   WaitStateSummary,
 } from "../api/client";
+import {
+  inlineAffordanceControls,
+  type InlineAffordanceButton,
+  type InlineAffordanceHandler,
+} from "../ui/tasks/affordanceControls";
 import { UnseenBadge } from "../ui/ceoOutcomes/UnseenBadge";
 import { isUnseenSince, readOutcomesLastSeen, writeOutcomesLastSeen } from "../ui/ceoOutcomes/lastSeen";
 import { VideotexKeyValue, VideotexLog } from "../ui/data";
@@ -92,6 +102,8 @@ export type DepartmentWorkspaceProps = {
     note?: string;
   }) => Promise<FounderDecisionResolutionResponse> | FounderDecisionResolutionResponse;
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
+  onCreateReplanProposal?: (taskId: string) => Promise<unknown> | unknown | void;
+  onDecideFounderApproval?: (approvalId: string, decision: "approved" | "denied") => Promise<FounderApprovalResponse> | FounderApprovalResponse | void;
   onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
   onCreateCeoReviewDecision?: (input: {
@@ -115,6 +127,8 @@ export function DepartmentWorkspace({
   onResolveFounderDecision,
   onConfirmHumanAction,
   onRefreshTask,
+  onCreateReplanProposal,
+  onDecideFounderApproval,
   onRecoverTask,
   selectedCeoAgentId,
   tasks,
@@ -208,6 +222,8 @@ export function DepartmentWorkspace({
                   onDraftChange={setDepartmentDraft}
                   onViewCeoPending={() => setSelectedRoleId(ceoRoleId)}
                   onRefreshTask={onRefreshTask}
+                  onCreateReplanProposal={onCreateReplanProposal}
+                  onDecideFounderApproval={onDecideFounderApproval}
                   onRecoverTask={onRecoverTask}
                   pendingItems={ceoPendingItems}
                   progressEvents={taskProgressEvents}
@@ -2360,6 +2376,8 @@ function DepartmentLeaderReport({
   waitStates,
   onConfirmHumanAction,
   onDraftChange,
+  onCreateReplanProposal,
+  onDecideFounderApproval,
   onRecoverTask,
   onRefreshTask,
   onViewCeoPending,
@@ -2376,6 +2394,8 @@ function DepartmentLeaderReport({
   onConfirmHumanAction?: DepartmentWorkspaceProps["onConfirmHumanAction"];
   onDraftChange: (value: string) => void;
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
+  onCreateReplanProposal?: DepartmentWorkspaceProps["onCreateReplanProposal"];
+  onDecideFounderApproval?: DepartmentWorkspaceProps["onDecideFounderApproval"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
   onViewCeoPending: () => void;
   pendingItems: CeoPendingItem[];
@@ -2395,6 +2415,8 @@ function DepartmentLeaderReport({
       <DepartmentProgressFlows
         departmentId={departmentId}
         onRefreshTask={onRefreshTask}
+        onCreateReplanProposal={onCreateReplanProposal}
+        onDecideFounderApproval={onDecideFounderApproval}
         onRecoverTask={onRecoverTask}
         onViewCeoPending={onViewCeoPending}
         pendingItems={pendingItems}
@@ -2410,6 +2432,8 @@ function DepartmentLeaderReport({
 function DepartmentProgressFlows({
   departmentId,
   onRefreshTask,
+  onCreateReplanProposal,
+  onDecideFounderApproval,
   onRecoverTask,
   onViewCeoPending,
   pendingItems,
@@ -2418,6 +2442,8 @@ function DepartmentProgressFlows({
 }: {
   departmentId: string;
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
+  onCreateReplanProposal?: DepartmentWorkspaceProps["onCreateReplanProposal"];
+  onDecideFounderApproval?: DepartmentWorkspaceProps["onDecideFounderApproval"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
   onViewCeoPending: () => void;
   pendingItems: CeoPendingItem[];
@@ -2467,6 +2493,8 @@ function DepartmentProgressFlows({
                     {subjectTask ? (
                       <TaskStatusAction
                         onRefreshTask={onRefreshTask}
+                        onCreateReplanProposal={onCreateReplanProposal}
+                        onDecideFounderApproval={onDecideFounderApproval}
                         onRecoverTask={onRecoverTask}
                         showStatusBadge={false}
                         task={subjectTask}
@@ -2479,6 +2507,8 @@ function DepartmentProgressFlows({
           </ol>
           <TaskStatusAction
             onRefreshTask={onRefreshTask}
+            onCreateReplanProposal={onCreateReplanProposal}
+            onDecideFounderApproval={onDecideFounderApproval}
             onRecoverTask={onRecoverTask}
             showStatusBadge={false}
             task={flow.task}
@@ -2892,32 +2922,81 @@ function DepartmentMessageBox({
 }
 
 function TaskStatusAction({
+  onCreateReplanProposal,
+  onDecideFounderApproval,
   onRecoverTask,
   onRefreshTask,
   showStatusBadge = true,
   task,
 }: {
+  onCreateReplanProposal?: (taskId: string) => Promise<unknown> | unknown | void;
+  onDecideFounderApproval?: (
+    approvalId: string,
+    decision: "approved" | "denied",
+  ) => Promise<FounderApprovalResponse> | FounderApprovalResponse | void;
   onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
   showStatusBadge?: boolean;
   task: TaskSummary;
 }) {
   const { language, t } = useLanguage();
-  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
-  const canRefresh = Boolean(onRefreshTask) && isRefreshableTask(task);
-  const canRecover = Boolean(onRecoverTask) && isRecoverableTask(task);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
-  const handleRefresh = async () => {
-    const response = await onRefreshTask?.(task.id);
-    setRefreshMessage(response?.recovery?.message ?? null);
+  /**
+   * One handler per inline affordance, keyed so the registry and the wiring cannot drift: adding an
+   * inline affordance without a handler here is a compile error.
+   */
+  const handlers: Record<
+    InlineAffordanceHandler,
+    { available: boolean; icon: ReactNode; run: (button: InlineAffordanceButton, subjectId: string | null) => Promise<void> }
+  > = {
+    refresh: {
+      available: Boolean(onRefreshTask),
+      icon: <RefreshCcw size={14} aria-hidden="true" />,
+      run: async () => {
+        const response = await onRefreshTask?.(task.id);
+        setActionMessage(response?.recovery?.message ?? null);
+      },
+    },
+    recover: {
+      available: Boolean(onRecoverTask),
+      icon: <RefreshCcw size={14} aria-hidden="true" />,
+      run: async () => {
+        const response = await onRecoverTask?.(task.id);
+        setActionMessage(response?.recovery?.message ?? null);
+      },
+    },
+    founderApproval: {
+      available: Boolean(onDecideFounderApproval),
+      icon: <ShieldCheck size={14} aria-hidden="true" />,
+      run: async (button, subjectId) => {
+        if (!subjectId || !button.decision) {
+          return;
+        }
+        await onDecideFounderApproval?.(subjectId, button.decision);
+        setActionMessage(null);
+      },
+    },
+    requestReplan: {
+      available: Boolean(onCreateReplanProposal),
+      icon: <GitBranchPlus size={14} aria-hidden="true" />,
+      run: async () => {
+        await onCreateReplanProposal?.(task.id);
+        setActionMessage(null);
+      },
+    },
   };
 
-  const handleRecover = async () => {
-    const response = await onRecoverTask?.(task.id);
-    setRefreshMessage(response?.recovery?.message ?? null);
-  };
+  // Drawn strictly from the server's Resume Affordances. The dashboard used to decide this with its
+  // own predicates, which drifted from the server's guards and left a task at the Bounded Recovery
+  // ceiling with no offered way forward at all (ADR 0020).
+  const controls = inlineAffordanceControls(task.affordances ?? [])
+    .filter((control) => handlers[control.handler].available);
+  const holdReason = task.holds?.[0]
+    ? resolveLocalizedValue(task.holds[0].reasonText, language, task.holds[0].reason)
+    : null;
 
-  if (!showStatusBadge && !canRefresh && !canRecover && !refreshMessage) {
+  if (!showStatusBadge && controls.length === 0 && !actionMessage) {
     return null;
   }
 
@@ -2928,25 +3007,21 @@ function TaskStatusAction({
           {taskTitle(task, language)} / {formatTaskStatus(task, t)}
         </RetroBadge>
       ) : null}
-      {canRefresh ? (
-        <RetroButton
-          aria-label={`${t("department.refreshTask")} ${taskTitle(task, language)}`}
-          icon={<RefreshCcw size={14} aria-hidden="true" />}
-          onClick={handleRefresh}
-        >
-          {t("department.refreshTask")}
-        </RetroButton>
-      ) : null}
-      {canRecover ? (
-        <RetroButton
-          aria-label={`${t("department.recoverTask")} ${taskTitle(task, language)}`}
-          icon={<RefreshCcw size={14} aria-hidden="true" />}
-          onClick={handleRecover}
-        >
-          {t("department.recoverTask")}
-        </RetroButton>
-      ) : null}
-      {refreshMessage ? <p className="system-message">{refreshMessage}</p> : null}
+      {holdReason ? <p className="system-message">{holdReason}</p> : null}
+      {controls.flatMap((control) =>
+        control.buttons.map((button) => (
+          <RetroButton
+            aria-label={`${t(button.labelKey)} ${taskTitle(task, language)}`}
+            icon={button.tone === "danger" ? <ShieldAlert size={14} aria-hidden="true" /> : handlers[control.handler].icon}
+            key={`${control.kind}:${button.labelKey}`}
+            onClick={() => handlers[control.handler].run(button, control.subjectId)}
+            variant={button.tone === "danger" ? "danger" : undefined}
+          >
+            {t(button.labelKey)}
+          </RetroButton>
+        )),
+      )}
+      {actionMessage ? <p className="system-message">{actionMessage}</p> : null}
     </div>
   );
 }
@@ -2967,18 +3042,19 @@ function taskDescription(task: TaskSummary, language: "en" | "zh"): string {
   return resolveLocalizedValue(task.descriptionText, language, task.description ?? "");
 }
 
-function isRefreshableTask(task: TaskSummary): boolean {
-  return (
-    task.status === "blocked" ||
-    ((task.status === "failed" || task.status === "needs_replan") &&
-      (task.failureReason === "no_proof" || task.failureReason === "missing_deliverable"))
-  );
+/**
+ * Whether the server currently offers this action on this task. The dashboard never decides that for
+ * itself: an eligibility rule kept on both sides is a rule that drifts, and when it drifted the
+ * founder was shown either an action the API refused or no action at all (ADR 0020).
+ */
+function hasAffordance(task: TaskSummary, kind: TaskAffordanceKind): boolean {
+  return (task.affordances ?? []).some((affordance) => affordance.kind === kind);
 }
 
-function isRecoverableTask(task: TaskSummary): boolean {
-  if (task.status === "failed" || task.status === "needs_replan") {
-    return task.failureReason !== "no_proof" && task.failureReason !== "missing_deliverable";
-  }
-
-  return false;
+/**
+ * The record an affordance acts on, carried from the Task Hold that produced it — an Approval id, a
+ * Human Action id, an upstream task id. The UI needs no lookup of its own to act on it.
+ */
+function affordanceSubjectId(task: TaskSummary, kind: TaskAffordanceKind): string | null {
+  return (task.affordances ?? []).find((affordance) => affordance.kind === kind)?.subjectId ?? null;
 }

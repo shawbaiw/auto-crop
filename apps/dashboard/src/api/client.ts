@@ -114,6 +114,41 @@ export type TaskSummary = {
   parentTaskId?: string;
   taskKind?: "parent" | "department_subtask";
   source?: "ceo" | "department" | "user";
+  /** Why the task is stopped and who owns it. Server-computed; never re-derived here (ADR 0020). */
+  holds?: TaskHoldSummary[];
+  /** What can be done to the task right now. The only source of which actions the UI offers. */
+  affordances?: TaskAffordanceSummary[];
+};
+
+export type TaskHoldSummary = {
+  id: string;
+  kind: string;
+  resolver: "ceo_office" | "founder" | "upstream_task" | "runtime" | "time";
+  subjectKind?: string;
+  subjectId?: string;
+  reason: string;
+  reasonText?: CompleteLocalizedText;
+  openedAt: string;
+};
+
+export type TaskAffordanceKind =
+  | "ceo_review_decision"
+  | "decide_founder_approval"
+  | "confirm_human_action"
+  | "resolve_founder_decision"
+  | "refresh_task"
+  | "recover_task"
+  | "request_replan"
+  | "confirm_replan"
+  | "cancel_task";
+
+export type TaskAffordanceSummary = {
+  kind: TaskAffordanceKind;
+  actor: "ceo_office" | "founder" | "upstream_task" | "runtime" | "time";
+  holdId: string | null;
+  holdKind: string | null;
+  subjectKind: string | null;
+  subjectId: string | null;
 };
 
 export type TaskProgressEventSummary = {
@@ -320,6 +355,24 @@ export type TaskRecoveryResponse = {
   parentAggregation?: TaskUpdateBatchSummary;
 };
 
+export type ApprovalSummary = {
+  id: string;
+  companyId: string;
+  taskId: string | null;
+  actionType: string;
+  riskLevel: string;
+  status: "pending" | "approved" | "denied";
+  requestedAt: string;
+  decidedAt?: string | null;
+  note?: string | null;
+};
+
+export type FounderApprovalResponse = {
+  approval: ApprovalSummary;
+  task?: TaskSummary;
+  event?: ServerEvent;
+};
+
 export type ReviewSummary = {
   id: string;
   companyId: string;
@@ -511,6 +564,7 @@ export type ApiClient = {
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
   refreshTask(taskId: string): Promise<TaskRefreshResponse>;
   recoverTask(taskId: string): Promise<TaskRecoveryResponse>;
+  decideFounderApproval(approvalId: string, input: { decision: "approved" | "denied"; note?: string }): Promise<FounderApprovalResponse>;
   createReplanProposal(taskId: string): Promise<{ proposal: ReplanProposalSummary }>;
   confirmReplanProposal(proposalId: string): Promise<{
     proposal: ReplanProposalSummary;
@@ -569,6 +623,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     },
     async recoverTask(taskId) {
       return postJson(`${baseUrl}/api/tasks/${taskId}/recover`, {}, requestTimeoutMs);
+    },
+    async decideFounderApproval(approvalId, input) {
+      return postJson(`${baseUrl}/api/approvals/${approvalId}`, input, requestTimeoutMs);
     },
     async createReplanProposal(taskId) {
       return postJson(`${baseUrl}/api/tasks/${taskId}/replan-proposals`, {}, requestTimeoutMs);
