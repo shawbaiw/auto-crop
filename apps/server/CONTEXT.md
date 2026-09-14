@@ -54,9 +54,19 @@ The runtime repairs state on read rather than trusting every writer. Three passe
 
 `reconcileTaskHolds` may sharpen the unattributed `runtime_interrupted` fallback using facts the pure rule cannot see — an upstream that still owes a deliverable makes it a dependency wait, not an unknown interruption. Refinement only ever narrows the fallback; an attributed Hold is left exactly as derived.
 
-## Permission Mode Reaches The Scheduler
+## Permission Mode Reaches The Agent Process, Not Just The Scheduler
 
-`approvalRequired` on the scheduler decides whether a task needs Founder Approval before dispatch. It resolves the **company's** Permission Mode through `resolvePolicyForPermissionMode`, not a hardcoded default — a company set to `safe` must actually ask.
+An Agent Run executes under an **Agent Capability Grant**: what the task needs, intersected with what the company's Permission Mode allows. `resolveAgentCapabilityGrant` (`src/policies/capabilityGrant.ts`) is the only place that decides it, and an adapter translates a grant into its own launch flags without looking at the task.
+
+Before this existed, the launch was one constant — `claude -p --permission-mode acceptEdits` — which auto-approves file edits and nothing else. A research task's `WebSearch` was denied by a prompt no non-interactive run can answer; the agent called that a sandbox and shipped estimates as a deliverable. See ADR 0021.
+
+Three rules follow:
+
+1. **Fail closed, then grant back.** The base launch removes shell and code-running tools, ignores user/project/local settings files, skips host MCP servers, confines file tools to the working directory, and denies anything that would prompt. A capability exists only because the grant named it. A run must never depend on what the operator's machine happens to have configured.
+2. **The prompt states the grant.** `buildTaskExecutionPrompt` emits a `## Granted Capabilities` section. An agent that discovers a denial mid-run has no vocabulary for it and invents one.
+3. **A capability blocker is refutable.** `verifyEnvironmentBlockerClaim` rejects an Environment-Blocked Blocker naming a capability the run was granted. This is the mirror of ADR 0016: there, runtime-held evidence confirms a claim the agent cannot prove; here it refutes one the agent should not have filed. A capability the runtime does not grant (`browser_screenshot`, `keyword_data`) is never refuted — see `GRANTABLE_CAPABILITY_ALIASES`.
+
+`approvalRequired` decides whether a task needs Founder Approval before dispatch. It resolves the **company's** Permission Mode through `resolvePolicyForPermissionMode`, not a hardcoded default — a company set to `safe` must actually ask — and asks when any capability the run needs carries an `ask` decision.
 
 A task blocked this way gets an `awaiting_founder_approval` Hold naming its Approval record, and `POST /api/approvals/:id` is what clears it. Denying moves the task to `needs_replan`, because a task whose required action the founder refuses cannot run as specified. Granting goes through `releaseTaskHold`, not a direct transition — see below.
 
@@ -85,7 +95,7 @@ Find the Hold with `findOpenTaskHold(repositories, taskId, kind, subjectId)` —
 
 The event a released path emits must report the task's **actual** resulting status, not `queued`. "Human Action confirmed; task queued" on a task that is still waiting on an upstream is the same lie in a different place.
 
-The granularity is deliberately coarse: one pre-dispatch check using `run_safe_command` as a proxy for the whole task. Per-action approval during execution is a separate, larger change.
+The granularity is deliberately coarse: one pre-dispatch question for the whole run, not one per action. That is also why an `ask` decision *grants* the capability rather than withholding it — the consent was already collected, once, before dispatch. Per-action approval during execution, and the per-action grant narrowing that belongs with it, are a separate and larger change.
 
 ## Glossary
 
@@ -94,3 +104,5 @@ The granularity is deliberately coarse: one pre-dispatch check using `run_safe_c
 - **Resume Affordance**: An action an actor can take right now to move a stopped task forward, computed server-side and checked by the route that performs it. _Avoid_: button, enabled action, recovery eligibility.
 - **Standing Reconciliation**: A repair pass that runs on every read and is never marked as done, because the drift it repairs can recur. Contrast with the one-time, marker-guarded migration passes. _Avoid_: migration, backfill.
 - **Hold Release**: Answering one Task Hold and letting the remaining open Holds decide whether the task may move. Distinct from unblocking a task, which only happens when the released Hold was the last one. _Avoid_: unblock, resume.
+- **Agent Capability Grant**: The set of Runtime Capabilities one Agent Run is launched with, resolved by `resolveAgentCapabilityGrant` from the task's needs and the company's Permission Mode. Passed to the adapter as launch flags; never inherited from the operator's machine. _Avoid_: permission mode, allowed tools, sandbox.
+- **Grant Refutation**: Rejecting an Environment-Blocked Blocker because it names a capability the run actually held. The runtime is the authority on what it granted, so that claim is checkable rather than testimony. _Avoid_: blocker validation, agent distrust.

@@ -271,7 +271,7 @@ type Approval = {
 - Create: `apps/server/src/policies/defaults.ts`
 - Test: `apps/server/src/policies/policy.test.ts`
 
-- [x] Define action types: read_workspace, write_workspace, run_safe_command, install_dependency, deploy, access_external_account, write_outside_workspace, destructive_file_change, send_message, paid_action.
+- [x] Define action types: read_workspace, write_workspace, run_safe_command, read_public_web, install_dependency, deploy, access_external_account, write_outside_workspace, destructive_file_change, send_message, paid_action. (`read_public_web` added by ADR 0021: `ask` in `safe`, `auto` otherwise.)
 - [x] Implement Safe, Balanced, and Autonomous policies.
 - [x] Make Balanced the default: read/write workspace auto, safe commands auto, install/deploy ask, outside workspace deny, paid actions deny.
 - [x] Add tests for auto / ask / deny decisions.

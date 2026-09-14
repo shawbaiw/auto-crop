@@ -27,6 +27,7 @@ Persistent sessions are an execution optimization, not a deliverable channel. Th
 - **Probe before relying on sessions:** A failed session probe should mean "run one-shot", not "agent unavailable".
 - **Reset bad sessions:** Stale resume ids, context overflow, dead processes, or permission errors should drop the session instead of wedging future work.
 - **Code mechanisms over prompt rules:** Correctness must come from scheduler policy, Proof, and Handoff Package contracts, not from asking the agent to remember boundaries.
+- **Fail-closed launch with explicit config (landed as ADR 0021):** Cumora's BYOA daemon runs Claude Code `--restricted` and Codex `--ignore-user-config --ignore-rules`, denying web and shell by default and handing back one audited surface. Auto-Crop took the posture — an Agent Capability Grant per run, nothing inherited from the operator's machine — without the daemon, the device pairing, or the MCP bridge.
 
 ## Domain Rules
 
@@ -41,10 +42,12 @@ Persistent sessions are an execution optimization, not a deliverable channel. Th
 Use:
 
 ```text
-companyId + agentId + permissionMode
+companyId + agentId + permissionMode + grantId
 ```
 
 Permission Mode is part of the key so a session created under one execution policy cannot silently carry assumptions into another policy.
+
+The Agent Capability Grant id joins it for the sharper version of the same reason (ADR 0021): a session is a live process holding the capabilities it was *launched* with, so serving a run from a session started under a different grant hands that run capabilities it was never granted. Policy assumptions drifting is a correctness problem; capabilities drifting is a privilege one. `resolveAgentSessionPolicy` returns `disabled` with reason `missing_grant` rather than keying on a partial identity.
 
 ## First Eligible Paths
 
@@ -69,6 +72,7 @@ type AgentSessionKey = {
   companyId: string;
   agentId: string;
   permissionMode: string;
+  grantId: string;
 };
 
 type AgentSessionProbeResult =
@@ -251,7 +255,7 @@ Verification:
 
 ### Task 7: Real Adapter Session Probe Only
 
-Status: Not started.
+Status: Done (landed with ADR 0021).
 
 Files:
 
@@ -260,14 +264,26 @@ Files:
 
 Behavior:
 
-- Add optional probe shape only if the real CLI can be tested cheaply.
-- Do not start real persistent Claude/Codex sessions in this task.
-- Report unavailable wake/session path as fallback, not adapter failure.
+- [x] Add optional probe shape only if the real CLI can be tested cheaply. `probeCliSession` reads the CLI's own help output for the stream-json input flag — no model call, no real session.
+- [x] Do not start real persistent Claude/Codex sessions in this task. `getOrStart` returns `null`, which the manager already treats as one-shot fallback.
+- [x] Report unavailable wake/session path as fallback, not adapter failure. `detect()` is unchanged and independent of the probe.
 
 Verification:
 
-- Missing CLI still reports adapter unavailable through existing detection.
-- Session probe failure does not block one-shot adapter use.
+- [x] Missing CLI still reports adapter unavailable through existing detection.
+- [x] Session probe failure does not block one-shot adapter use.
+
+### Task 8: Real Persistent Session Transport
+
+Status: Not started. Gated by the Manual Smoke Criteria below, which need supervised real runs.
+
+The transport, once that gate is met:
+
+```text
+claude -p --input-format stream-json --output-format stream-json --verbose <grant flags>
+```
+
+Keep stdin open, write one user message per Agent Run, read until the `result` event. The grant flags are the same ones the one-shot launch builds, and the session key already carries the grant id so a run needing different capabilities starts its own session instead of borrowing this one.
 
 ## Manual Smoke Criteria Before Real CLI Sessions
 
