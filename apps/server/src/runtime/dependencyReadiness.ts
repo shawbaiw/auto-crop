@@ -25,7 +25,12 @@ export type TaskHandoff = {
 
 export type DependencyReadiness =
   | { kind: "ready"; handoffs: TaskHandoff[] }
-  | { kind: "waiting"; note: string; waitingOnDecision?: boolean }
+  /**
+   * `dependency` is the upstream task being waited on, and `founderDecisionId` the decision parking
+   * it when `waitingOnDecision` is set. Both exist so a Task Hold can name what it waits on instead
+   * of restating the note (ADR 0020).
+   */
+  | { kind: "waiting"; note: string; dependency: Task; waitingOnDecision?: boolean; founderDecisionId?: string | null }
   | { kind: "blocked"; reason: "dependency_failed" | "needs_replan"; note: string; dependency: Task }
   | { kind: "missing_deliverable"; note: string; dependency: Task };
 
@@ -44,13 +49,20 @@ export function resolveDependencyReadiness(
     }
 
     if (isWaitingStatus(upstream.status)) {
-      const decisionNote = waitingOnFounderDecisionNote(repositories, upstream);
-      if (decisionNote) {
-        return { kind: "waiting", note: decisionNote, waitingOnDecision: true };
+      const pendingDecision = waitingOnFounderDecision(repositories, upstream);
+      if (pendingDecision) {
+        return {
+          kind: "waiting",
+          note: pendingDecision.note,
+          dependency: upstream,
+          waitingOnDecision: true,
+          founderDecisionId: pendingDecision.founderDecisionId,
+        };
       }
       return {
         kind: "waiting",
         note: formatDependencyWaitingNote(upstream),
+        dependency: upstream,
       };
     }
 
@@ -76,6 +88,7 @@ export function resolveDependencyReadiness(
       return {
         kind: "waiting",
         note: formatDependencyWaitingNote(upstream),
+        dependency: upstream,
       };
     }
 
@@ -101,10 +114,10 @@ export function resolveDependencyReadiness(
  * persisted `Task` status: an upstream in `review` with a Task Completion Event still carrying a
  * `pending` Founder Decision (no resolution row) is the whole condition.
  */
-function waitingOnFounderDecisionNote(
+function waitingOnFounderDecision(
   repositories: ReturnType<typeof createRepositories>,
   upstream: Task,
-): string | null {
+): { note: string; founderDecisionId: string | null } | null {
   if (upstream.status !== "review") {
     return null;
   }
@@ -120,7 +133,10 @@ function waitingOnFounderDecisionNote(
   if (pending.length === 0) {
     return null;
   }
-  return `Waiting on founder decision: ${pending[0]!.decisionKind.replace(/_/g, " ")}.`;
+  return {
+    note: `Waiting on founder decision: ${pending[0]!.decisionKind.replace(/_/g, " ")}.`,
+    founderDecisionId: pending[0]!.id ?? null,
+  };
 }
 
 function isWaitingStatus(status: Task["status"]): boolean {

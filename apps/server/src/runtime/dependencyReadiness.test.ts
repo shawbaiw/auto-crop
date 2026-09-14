@@ -28,9 +28,11 @@ describe("resolveDependencyReadiness", () => {
 
       const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
 
-      expect(readiness).toEqual({
+      // The waited-on upstream is part of the result so a Task Hold can name it (ADR 0020).
+      expect(readiness).toMatchObject({
         kind: "waiting",
         note: `Waiting for dependency deliverable: Task task_1 (${status}).`,
+        dependency: { id: "task_1" },
       });
       client.close();
     },
@@ -108,10 +110,12 @@ describe("resolveDependencyReadiness", () => {
 
     const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
 
-    expect(readiness).toEqual({
+    expect(readiness).toMatchObject({
       kind: "waiting",
       waitingOnDecision: true,
       note: "Waiting on founder decision: pricing model.",
+      dependency: { id: "task_1" },
+      founderDecisionId: "task_completion_event_fd_founder_decision_1",
     });
     client.close();
   });
@@ -136,10 +140,12 @@ describe("resolveDependencyReadiness", () => {
 
     const readiness = resolveDependencyReadiness(repositories, repositories.getTask("task_2")!);
 
-    expect(readiness).toEqual({
+    expect(readiness).toMatchObject({
       kind: "waiting",
       note: "Waiting for dependency acceptance: Task task_1 (review).",
+      dependency: { id: "task_1" },
     });
+    expect(readiness).not.toHaveProperty("waitingOnDecision");
     client.close();
   });
 

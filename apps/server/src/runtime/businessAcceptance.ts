@@ -9,6 +9,7 @@ import type {
 } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { propagateDependencyCascade, type DependencyCascadeResult } from "./dependencyCascade";
+import { applyTaskTransition } from "./taskTransition";
 import type { FounderDecisionDeclaration } from "./founderDecision";
 import { createDefaultId } from "./ids";
 import { recordTaskCompletionEvent } from "./taskCompletion";
@@ -52,7 +53,15 @@ export function acceptTaskBusinessArtifact(input: {
   const timestamp = (input.now ?? (() => new Date()))().toISOString();
 
   input.repositories.updateBusinessArtifactReviewStatus(input.artifact.id, "accepted", timestamp);
-  input.repositories.updateTaskStatus(input.task.id, "complete");
+  // Acceptance is a resolver acting, so the review Hold ends as `cleared` rather than superseded.
+  applyTaskTransition({
+    repositories: input.repositories,
+    task: input.task,
+    status: "complete",
+    resolution: "cleared",
+    now: input.now,
+    createId: input.createId,
+  });
   if (input.task.keyResultId && input.keyResultProgress) {
     input.repositories.updateKeyResultProgress(
       input.task.keyResultId,

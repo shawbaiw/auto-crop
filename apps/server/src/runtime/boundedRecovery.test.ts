@@ -102,7 +102,7 @@ describe("bounded recovery", () => {
 
   it("terminateAsRetryExhausted moves a failed task to blocked / retry_exhausted with Blocked Queue signals", () => {
     const { repositories, client } = fixture();
-    repositories.updateTaskStatus("task_1", "failed");
+    repositories.writeTaskStatusUnchecked("task_1", "failed");
     repositories.updateTaskExecutionSummary("task_1", {
       latestFailureReason: "no_proof",
       latestFailureMessage: "Task failed: T / no_proof.",
@@ -129,7 +129,7 @@ describe("bounded recovery", () => {
 
   it("terminateAsRetryExhausted is a no-op when the task is already blocked / retry_exhausted", () => {
     const { repositories, client } = fixture();
-    repositories.updateTaskStatus("task_1", "blocked");
+    repositories.writeTaskStatusUnchecked("task_1", "blocked");
     repositories.updateTaskExecutionSummary("task_1", {
       latestFailureReason: "retry_exhausted",
       latestFailureMessage: "already blocked",

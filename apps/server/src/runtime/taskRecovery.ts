@@ -1,9 +1,11 @@
 import type { Proof, ProofSchema, Task, TaskEvent, TaskProgressEvent } from "@auto-crop/core";
+import { isAffordanceApplicable } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhausted } from "./boundedRecovery";
 import { formatExecutionBudget } from "./executionProfile";
 import { buildProofContractInstructions } from "./proofContract";
 import { recoverProofIfPossible } from "./taskRefresh";
+import { applyTaskTransition } from "./taskTransition";
 
 export type ReconcileStaleRunningTasksInput = {
   repositories: ReturnType<typeof createRepositories>;
@@ -66,13 +68,27 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
       failureReason: "timeout",
       failureMessage,
     });
-    input.repositories.updateTaskStatus(task.id, "failed");
-    input.repositories.updateTaskExecutionSummary(task.id, {
-      latestFailureReason: "timeout",
-      latestFailureMessage: failureMessage,
-      latestExecutionProfileName: run.executionProfileName ?? null,
-      latestRequestedTimeoutMs: run.requestedTimeoutMs ?? null,
-      latestEffectiveTimeoutMs: run.effectiveTimeoutMs,
+    // A run whose deadline passed while nobody was watching is the archetypal passive interruption:
+    // the Hold is what stops it from sitting in `failed` with no offered way back.
+    applyTaskTransition({
+      repositories: input.repositories,
+      task,
+      status: "failed",
+      executionSummary: {
+        latestFailureReason: "timeout",
+        latestFailureMessage: failureMessage,
+        latestExecutionProfileName: run.executionProfileName ?? null,
+        latestRequestedTimeoutMs: run.requestedTimeoutMs ?? null,
+        latestEffectiveTimeoutMs: run.effectiveTimeoutMs,
+      },
+      hold: {
+        kind: "runtime_interrupted",
+        subjectKind: "agent_run",
+        subjectId: run.id,
+        reason: failureMessage,
+      },
+      now: input.now,
+      createId: input.createId,
     });
     releaseAnyTaskLock(input.repositories, task.id);
 
@@ -186,11 +202,22 @@ export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
     };
   }
 
-  input.repositories.updateTaskStatus(currentTask.id, "queued");
-  input.repositories.updateTaskExecutionSummary(currentTask.id, {
-    latestFailureReason: null,
-    latestFailureMessage: null,
-    dependencyNote: null,
+  // Recovery answers the Holds it is offered for — an unattributed interruption, or output that was
+  // not reviewable. It says nothing about a Human Action or an upstream deliverable the task may
+  // also be waiting on, so the seam keeps it parked when one of those is still open.
+  applyTaskTransition({
+    repositories: input.repositories,
+    task: currentTask,
+    status: "queued",
+    executionSummary: {
+      latestFailureReason: null,
+      latestFailureMessage: null,
+      dependencyNote: null,
+    },
+    resolvesHoldKinds: ["runtime_interrupted", "invalid_business_artifact"],
+    resolution: "cleared",
+    now: input.now,
+    createId: input.createId,
   });
   const refreshedTask = input.repositories.getTask(currentTask.id);
   if (!refreshedTask) {
@@ -219,8 +246,9 @@ export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
   };
 }
 
+/** One declaration, shared with the offer: `isAffordanceApplicable` in `@auto-crop/core`. */
 function isTaskRecoveryEligible(task: Task): boolean {
-  return task.status === "failed" || task.status === "blocked" || task.status === "needs_replan";
+  return isAffordanceApplicable("recover_task", task.status);
 }
 
 function createRecoveryFollowUpTask(input: RecoverTaskInput, failedTask: Task, timestamp: string): Task {

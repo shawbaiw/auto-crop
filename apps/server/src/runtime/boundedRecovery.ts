@@ -1,6 +1,7 @@
 import type { Task, TaskEvent, TaskProgressEvent } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { recordTaskCompletionEvent } from "./taskCompletion";
+import { applyTaskTransition } from "./taskTransition";
 
 type Repositories = ReturnType<typeof createRepositories>;
 
@@ -77,10 +78,17 @@ export function terminateAsRetryExhausted(input: {
   const failure = retryExhaustedFailureMessage(task);
   const timestamp = now().toISOString();
 
-  repositories.updateTaskStatus(task.id, "blocked");
-  repositories.updateTaskExecutionSummary(task.id, {
-    latestFailureReason: "retry_exhausted",
-    latestFailureMessage: failure,
+  applyTaskTransition({
+    repositories,
+    task,
+    status: "blocked",
+    executionSummary: {
+      latestFailureReason: "retry_exhausted",
+      latestFailureMessage: failure,
+    },
+    hold: { kind: "recovery_exhausted", reason: failure },
+    now: input.now,
+    createId,
   });
 
   const taskEvent: TaskEvent = {

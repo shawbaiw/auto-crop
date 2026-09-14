@@ -128,6 +128,21 @@ export function migrate(database: DatabaseClient): void {
     CREATE INDEX IF NOT EXISTS tasks_status_idx ON tasks(status);
     CREATE INDEX IF NOT EXISTS tasks_company_status_idx ON tasks(company_id, status);
 
+    CREATE TABLE IF NOT EXISTS task_holds (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      resolver TEXT NOT NULL,
+      subject_kind TEXT,
+      subject_id TEXT,
+      reason TEXT NOT NULL,
+      reason_text TEXT,
+      opened_at TEXT NOT NULL,
+      resolved_at TEXT,
+      resolution TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS task_locks (
       task_id TEXT PRIMARY KEY,
       owner_id TEXT NOT NULL,
@@ -292,7 +307,9 @@ export function migrate(database: DatabaseClient): void {
       action_type TEXT NOT NULL,
       risk_level TEXT NOT NULL,
       status TEXT NOT NULL,
-      requested_at TEXT NOT NULL
+      requested_at TEXT NOT NULL,
+      decided_at TEXT,
+      note TEXT
     );
 
     CREATE TABLE IF NOT EXISTS reviews (
@@ -336,8 +353,13 @@ export function migrate(database: DatabaseClient): void {
   migrateTaskCompletionExecutionReport(database);
   migrateReplanProposalDiagnostics(database);
   migrateLocalizedBusinessContentFields(database);
+  migrateApprovalDecisionFields(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
+  // Open Holds are read on every task summary and every affordance guard, so the hot lookup is
+  // "open Holds for this task"; the company index backs the per-company reconciliation pass.
+  database.exec("CREATE INDEX IF NOT EXISTS task_holds_task_open_idx ON task_holds(task_id, resolved_at)");
+  database.exec("CREATE INDEX IF NOT EXISTS task_holds_company_open_idx ON task_holds(company_id, resolved_at)");
   database.exec("CREATE INDEX IF NOT EXISTS task_events_company_created_idx ON task_events(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS companies_creation_idempotency_key_idx ON companies(creation_idempotency_key)");
   database.exec("CREATE INDEX IF NOT EXISTS creation_attempts_company_started_idx ON creation_attempts(company_id, started_at, id)");
@@ -358,6 +380,13 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS founder_reports_company_created_idx ON founder_reports(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS founder_report_jobs_company_status_idx ON founder_report_jobs(company_id, status)");
   database.exec("CREATE INDEX IF NOT EXISTS founder_report_jobs_status_created_idx ON founder_report_jobs(status, created_at, id)");
+}
+
+/** Founder Approval outcomes are recorded, not just requested (ADR 0020 amendment). */
+function migrateApprovalDecisionFields(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "approvals");
+  addColumnIfMissing(database, columns, "approvals", "decided_at TEXT");
+  addColumnIfMissing(database, columns, "approvals", "note TEXT");
 }
 
 function migrateCompanyCreationFields(database: DatabaseClient): void {

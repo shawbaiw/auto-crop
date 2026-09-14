@@ -10,6 +10,7 @@ import { createRepositories, type ReviewRecord } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
+import { applyTaskTransition } from "../runtime/taskTransition";
 import { createApiServer, type SchedulerWakeReason } from "./routes";
 
 const createdDirs: string[] = [];
@@ -157,7 +158,7 @@ describe("API routes", () => {
     );
     expect(cancelled.task.status).toBe("cancelled");
 
-    fixture.repositories.updateTaskStatus(task.id, "running");
+    fixture.repositories.writeTaskStatusUnchecked(task.id, "running");
     fixture.repositories.createAgentRun({
       id: "agent_run_1",
       taskId: task.id,
@@ -488,13 +489,13 @@ describe("API routes", () => {
     });
     const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
     const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
-    fixture.repositories.updateTaskStatus(sourceTask.id, "needs_replan");
+    fixture.repositories.writeTaskStatusUnchecked(sourceTask.id, "needs_replan");
     fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
       latestFailureReason: "needs_replan",
       latestFailureMessage: "Task needs replanning.",
     });
     fixture.repositories.createTaskDependency({ taskId: consumerTask.id, dependsOnTaskId: sourceTask.id });
-    fixture.repositories.updateTaskStatus(consumerTask.id, "blocked");
+    fixture.repositories.writeTaskStatusUnchecked(consumerTask.id, "blocked");
     fixture.repositories.updateTaskExecutionSummary(consumerTask.id, {
       latestFailureReason: "needs_replan",
       latestFailureMessage: `Task blocked: ${consumerTask.title} / needs_replan / ${sourceTask.title} is needs_replan.`,
@@ -575,7 +576,7 @@ describe("API routes", () => {
     });
     const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
     const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
-    fixture.repositories.updateTaskStatus(sourceTask.id, "needs_replan");
+    fixture.repositories.writeTaskStatusUnchecked(sourceTask.id, "needs_replan");
     fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
       latestFailureReason: "needs_replan",
       latestFailureMessage: "Task needs replanning.",
@@ -620,13 +621,13 @@ describe("API routes", () => {
     });
     const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
     const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
-    fixture.repositories.updateTaskStatus(sourceTask.id, "needs_replan");
+    fixture.repositories.writeTaskStatusUnchecked(sourceTask.id, "needs_replan");
     fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
       latestFailureReason: "needs_replan",
       latestFailureMessage: "Task needs replanning.",
     });
     fixture.repositories.createTaskDependency({ taskId: consumerTask.id, dependsOnTaskId: sourceTask.id });
-    fixture.repositories.updateTaskStatus(consumerTask.id, "blocked");
+    fixture.repositories.writeTaskStatusUnchecked(consumerTask.id, "blocked");
     fixture.repositories.updateTaskExecutionSummary(consumerTask.id, {
       latestFailureReason: "needs_replan",
       latestFailureMessage: `Task blocked: ${consumerTask.title} / needs_replan / ${sourceTask.title} is needs_replan.`,
@@ -637,8 +638,8 @@ describe("API routes", () => {
       `${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`,
       {},
     );
-    const originalUpdateTaskStatus = fixture.repositories.updateTaskStatus;
-    fixture.repositories.updateTaskStatus = (taskId, status) => {
+    const originalUpdateTaskStatus = fixture.repositories.writeTaskStatusUnchecked;
+    fixture.repositories.writeTaskStatusUnchecked = (taskId, status) => {
       if (taskId === consumerTask.id) {
         throw new Error("consumer refresh failed");
       }
@@ -684,14 +685,14 @@ describe("API routes", () => {
     const producerTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
     const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
     fixture.repositories.createTaskDependency({ taskId: consumerTask.id, dependsOnTaskId: producerTask.id });
-    fixture.repositories.updateTaskStatus(producerTask.id, "failed");
-    fixture.repositories.updateTaskStatus(consumerTask.id, "blocked");
+    fixture.repositories.writeTaskStatusUnchecked(producerTask.id, "failed");
+    fixture.repositories.writeTaskStatusUnchecked(consumerTask.id, "blocked");
     fixture.repositories.updateTaskExecutionSummary(consumerTask.id, {
       latestFailureReason: "dependency_failed",
       latestFailureMessage: "Task blocked by failed dependency.",
       dependencyNote: `Blocked by failed dependency: ${producerTask.title}.`,
     });
-    fixture.repositories.updateTaskStatus(producerTask.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(producerTask.id, "review");
     fixture.repositories.appendProof({
       id: "proof_1",
       taskId: producerTask.id,
@@ -811,7 +812,7 @@ describe("API routes", () => {
       assets: [],
     });
     const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
-    fixture.repositories.updateTaskStatus(task.id, "running");
+    fixture.repositories.writeTaskStatusUnchecked(task.id, "running");
     fixture.repositories.acquireTaskLock(task.id, "worker_1", "2026-08-16T23:59:00.000Z");
     fixture.repositories.createAgentRun({
       id: "agent_run_1",
@@ -851,7 +852,7 @@ describe("API routes", () => {
       assets: [],
     });
     const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
-    fixture.repositories.updateTaskStatus(task.id, "failed");
+    fixture.repositories.writeTaskStatusUnchecked(task.id, "failed");
     fixture.repositories.updateTaskExecutionSummary(task.id, {
       latestFailureReason: "timeout",
       latestFailureMessage: "Task failed: Create landing page / timeout after 3m.",
@@ -1207,8 +1208,8 @@ describe("API routes", () => {
     const [approvedTask, returnedTask] = fixture.repositories.fetchQueuedTasks(2);
     expect(approvedTask).toBeDefined();
     expect(returnedTask).toBeDefined();
-    fixture.repositories.updateTaskStatus(approvedTask!.id, "review");
-    fixture.repositories.updateTaskStatus(returnedTask!.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(approvedTask!.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(returnedTask!.id, "review");
     fixture.repositories.appendProof({
       id: "proof_1",
       taskId: approvedTask!.id,
@@ -1465,7 +1466,7 @@ describe("API routes", () => {
     });
     const task = fixture.repositories.fetchQueuedTasks(1)[0];
     expect(task).toBeDefined();
-    fixture.repositories.updateTaskStatus(task!.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(task!.id, "review");
     fixture.repositories.appendProof({
       id: "proof_1",
       taskId: task!.id,
@@ -1805,7 +1806,7 @@ describe("API routes", () => {
     const tasks = fixture.repositories.listTasksForCompany(created.company.id);
 
     for (const task of tasks) {
-      fixture.repositories.updateTaskStatus(task.id, "complete");
+      fixture.repositories.writeTaskStatusUnchecked(task.id, "complete");
     }
     fixture.repositories.updateKeyResultProgress(keyResults[0]!.id, "local_url", "met");
     fixture.repositories.updateKeyResultProgress(keyResults[1]!.id, "not_documented", "missed");
@@ -1879,10 +1880,10 @@ describe("API routes", () => {
     });
     const tasks = fixture.repositories.listTasksForCompany(created.company.id);
     for (const task of tasks.slice(2)) {
-      fixture.repositories.updateTaskStatus(task.id, "complete");
+      fixture.repositories.writeTaskStatusUnchecked(task.id, "complete");
     }
     // tasks[0] stays queued; tasks[1] sits in review — review is not a terminal state.
-    fixture.repositories.updateTaskStatus(tasks[1]!.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(tasks[1]!.id, "review");
 
     const queuedAndReview = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
       `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
@@ -1890,7 +1891,7 @@ describe("API routes", () => {
     expect(queuedAndReview.ceoAttentionRollups.some((rollup) => rollup.reasons.includes("goal_stage_change"))).toBe(false);
 
     // Clearing the queued task still leaves the review task holding the objective open.
-    fixture.repositories.updateTaskStatus(tasks[0]!.id, "complete");
+    fixture.repositories.writeTaskStatusUnchecked(tasks[0]!.id, "complete");
     const reviewOnly = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
       `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
     );
@@ -1912,7 +1913,7 @@ describe("API routes", () => {
     const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
     const tasks = fixture.repositories.listTasksForCompany(created.company.id);
     for (const task of tasks) {
-      fixture.repositories.updateTaskStatus(task.id, "complete");
+      fixture.repositories.writeTaskStatusUnchecked(task.id, "complete");
     }
     const looseTask = {
       ...createIsolatedTask(templateTask, "loose_no_key_result", "Ad-hoc exploration", "running", 500),
@@ -2196,7 +2197,7 @@ describe("API routes", () => {
         },
       ],
     });
-    seed.fixture.repositories.updateTaskStatus(seed.sourceTask.id, "complete");
+    seed.fixture.repositories.writeTaskStatusUnchecked(seed.sourceTask.id, "complete");
 
     const state = await getJson<{
       founderDecisions: Array<{ id: string; status: string }>;
@@ -2294,6 +2295,96 @@ describe("API routes", () => {
     });
 
     await seed.fixture.close();
+  });
+
+  /**
+   * The generalisation of the Founder Approval fix (ADR 0020 amendment). A task gated on a Human
+   * Action can also still owe an upstream deliverable — `isHumanActionBlockedTask` accepts
+   * `waiting_dependency` tasks, which already carry a dependency Hold. Confirming the Human Action
+   * answers one of the two, so the task must stay parked and keep saying what it is still waiting on
+   * rather than claiming it is about to run.
+   */
+  it("keeps a task parked when a confirmed Human Action was not the only thing holding it", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const sourceTask = createIsolatedTask(templateTask, "two_hold_source", "Build private prototype", "complete", 400);
+    const launchTask = createIsolatedTask(templateTask, "two_hold_launch", "Launch public prototype", "queued", 401);
+    const humanActionId = "task_completion_event_two_hold_human_action_human_action_1";
+    fixture.repositories.createTask(sourceTask);
+    fixture.repositories.createTask(launchTask);
+    fixture.repositories.createTaskDependency({
+      taskId: launchTask.id,
+      dependsOnTaskId: sourceTask.id,
+      handoffContract: `human_action:${humanActionId}`,
+    });
+    fixture.repositories.appendTaskCompletionEvent({
+      id: "task_completion_event_two_hold_human_action",
+      companyId: created.company.id,
+      taskId: sourceTask.id,
+      departmentId: sourceTask.departmentId,
+      keyResultId: sourceTask.keyResultId,
+      businessArtifactId: null,
+      outcome: "accepted",
+      dependencyImpact: {},
+      nextStepItems: [
+        {
+          type: "human_action",
+          label: "Publish the prototype to a public URL.",
+          ownerDepartmentId: sourceTask.departmentId,
+          relatedTaskId: launchTask.id,
+          relatedBusinessArtifactId: null,
+          dependencyImpact: { blocks: [launchTask.id] },
+          severity: "blocking",
+          priority: 1,
+          evidenceRequirements: ["configuration_value"],
+        },
+      ],
+      visionGaps: [],
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+
+    // An upstream deliverable this task still owes. `waiting_dependency` is what makes it eligible
+    // for the Human Action block on the next state read, which is how a task ends up with two Holds.
+    applyTaskTransition({
+      repositories: fixture.repositories,
+      task: fixture.repositories.getTask(launchTask.id)!,
+      status: "waiting_dependency",
+      hold: {
+        kind: "awaiting_dependency_artifact",
+        subjectKind: "task",
+        subjectId: "two_hold_other_upstream",
+        reason: "Waiting for an accepted deliverable from another upstream task.",
+      },
+    });
+    await getJson(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
+    expect(fixture.repositories.listOpenTaskHolds(launchTask.id).map((hold) => hold.kind).sort())
+      .toEqual(["awaiting_dependency_artifact", "awaiting_human_action"]);
+
+    await postJson(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/human-actions/${humanActionId}/confirm`,
+      { evidence: { configuration_value: "DEPLOYMENT_URL=https://example.test" } },
+    );
+
+    expect(fixture.repositories.getTask(launchTask.id)?.status).not.toBe("queued");
+    expect(fixture.repositories.listOpenTaskHolds(launchTask.id).map((hold) => hold.kind))
+      .toEqual(["awaiting_dependency_artifact"]);
+
+    // And the board still names what the task is actually waiting on.
+    const after = await getJson<{ tasks: Array<{ id: string; holds?: Array<{ reason: string }> }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(after.tasks.find((task) => task.id === launchTask.id)?.holds?.[0]?.reason)
+      .toContain("another upstream task");
+
+    await fixture.close();
   });
 
   it("routes Wait States into timed check-ins without treating them as failures", async () => {
@@ -2852,7 +2943,7 @@ describe("API routes", () => {
     expect(producerTask).toBeDefined();
     expect(consumerTask).toBeDefined();
     fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: producerTask!.id });
-    fixture.repositories.updateTaskStatus(producerTask!.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(producerTask!.id, "review");
     fixture.repositories.appendProof({
       id: "proof_1",
       taskId: producerTask!.id,
@@ -2862,7 +2953,7 @@ describe("API routes", () => {
       verifiedAt: null,
     } satisfies Proof);
     fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", producerTask!.id, "proof_1"));
-    fixture.repositories.updateTaskStatus(consumerTask!.id, "blocked");
+    fixture.repositories.writeTaskStatusUnchecked(consumerTask!.id, "blocked");
     fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
       latestFailureReason: "missing_deliverable",
       latestFailureMessage: "Task blocked by missing upstream proof.",
@@ -3014,8 +3105,8 @@ describe("API routes", () => {
     expect(consumerTask).toBeDefined();
     fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: approvedDependency!.id });
     fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: missingDependency!.id });
-    fixture.repositories.updateTaskStatus(approvedDependency!.id, "review");
-    fixture.repositories.updateTaskStatus(missingDependency!.id, "complete");
+    fixture.repositories.writeTaskStatusUnchecked(approvedDependency!.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(missingDependency!.id, "complete");
     fixture.repositories.appendProof({
       id: "proof_1",
       taskId: approvedDependency!.id,
@@ -3025,7 +3116,7 @@ describe("API routes", () => {
       verifiedAt: null,
     } satisfies Proof);
     fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", approvedDependency!.id, "proof_1"));
-    fixture.repositories.updateTaskStatus(consumerTask!.id, "blocked");
+    fixture.repositories.writeTaskStatusUnchecked(consumerTask!.id, "blocked");
     fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
       latestFailureReason: "missing_deliverable",
       latestFailureMessage: "Task blocked by missing upstream proof.",
@@ -3077,7 +3168,7 @@ describe("API routes", () => {
     expect(producerTask).toBeDefined();
     expect(consumerTask).toBeDefined();
     fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: producerTask!.id });
-    fixture.repositories.updateTaskStatus(producerTask!.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(producerTask!.id, "review");
     fixture.repositories.appendProof({
       id: "proof_1",
       taskId: producerTask!.id,
@@ -3087,7 +3178,7 @@ describe("API routes", () => {
       verifiedAt: null,
     } satisfies Proof);
     fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", producerTask!.id, "proof_1"));
-    fixture.repositories.updateTaskStatus(consumerTask!.id, "failed");
+    fixture.repositories.writeTaskStatusUnchecked(consumerTask!.id, "failed");
     fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
       latestFailureReason: "no_proof",
       latestFailureMessage: "Task failed: downstream work / no_proof.",
@@ -3125,7 +3216,7 @@ describe("API routes", () => {
     expect(producerTask).toBeDefined();
     expect(consumerTask).toBeDefined();
     fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: producerTask!.id });
-    fixture.repositories.updateTaskStatus(producerTask!.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(producerTask!.id, "review");
     fixture.repositories.appendProof({
       id: "proof_1",
       taskId: producerTask!.id,
@@ -3135,7 +3226,7 @@ describe("API routes", () => {
       verifiedAt: null,
     } satisfies Proof);
     fixture.repositories.createBusinessArtifact(createBusinessArtifactRecord("business_artifact_1", producerTask!.id, "proof_1"));
-    fixture.repositories.updateTaskStatus(consumerTask!.id, "waiting_dependency");
+    fixture.repositories.writeTaskStatusUnchecked(consumerTask!.id, "waiting_dependency");
     fixture.repositories.updateTaskExecutionSummary(consumerTask!.id, {
       latestFailureReason: null,
       latestFailureMessage: null,
@@ -3176,7 +3267,7 @@ describe("API routes", () => {
       assets: [],
     });
     const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
-    fixture.repositories.updateTaskStatus(task.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(task.id, "review");
 
     const response = await fetch(`${fixture.baseUrl}/api/ceo-review-decisions`, {
       method: "POST",
@@ -3203,7 +3294,7 @@ describe("API routes", () => {
       assets: [],
     });
     const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
-    fixture.repositories.updateTaskStatus(task.id, "review");
+    fixture.repositories.writeTaskStatusUnchecked(task.id, "review");
     fixture.repositories.appendProof({
       id: "proof_1",
       taskId: task.id,
@@ -3223,6 +3314,127 @@ describe("API routes", () => {
     expect(response.status).toBe(409);
     expect(body.error).toMatch(/business artifact/i);
     expect(fixture.repositories.getTask(task.id)?.status).toBe("review");
+
+    await fixture.close();
+  });
+
+  /**
+   * The reported failure, end to end (ADR 0020). A task that had entered `review` is moved to
+   * `blocked` by something that does not know a CEO decision is outstanding. Before Task Holds, CEO
+   * Office kept offering the approval (it read the artifact's review status), the API refused it with
+   * a bare "no longer waiting for CEO review", and the board showed the task blocked with nothing the
+   * founder could do. All three now agree, and the refusal hands back a real next action.
+   */
+  it("withdraws the CEO decision and offers a way forward when a review task is blocked behind the founder's back", async () => {
+    const fixture = await startFixtureServer();
+    const company = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+
+    applyTaskTransition({
+      repositories: fixture.repositories,
+      task,
+      status: "review",
+      hold: { kind: "awaiting_ceo_review", subjectKind: "business_artifact", subjectId: "artifact_1" },
+    });
+    const offering = await getJson<{ ceoOfficeItems: Array<{ type: string; taskId: string | null }> }>(
+      `${fixture.baseUrl}/api/companies/${company.company.id}/state`,
+    );
+    expect(offering.ceoOfficeItems.some((item) => item.type === "approval_request" && item.taskId === task.id))
+      .toBe(true);
+
+    // Written past the seam deliberately: whatever moves the task must not be trusted to tidy up.
+    fixture.repositories.writeTaskStatusUnchecked(task.id, "blocked");
+    fixture.repositories.updateTaskExecutionSummary(task.id, {
+      latestFailureReason: "retry_exhausted",
+      latestFailureMessage: "Reached the recovery ceiling.",
+    });
+
+    const state = await getJson<{
+      ceoOfficeItems: Array<{ type: string; taskId: string | null }>;
+      tasks: Array<{ id: string; affordances?: Array<{ kind: string }>; holds?: Array<{ kind: string }> }>;
+    }>(`${fixture.baseUrl}/api/companies/${company.company.id}/state`);
+
+    expect(state.ceoOfficeItems.some((item) => item.type === "approval_request" && item.taskId === task.id))
+      .toBe(false);
+    const blocked = state.tasks.find((entry) => entry.id === task.id)!;
+    expect(blocked.holds?.map((hold) => hold.kind)).toEqual(["recovery_exhausted"]);
+    expect(blocked.affordances?.map((affordance) => affordance.kind)).toEqual(["request_replan", "cancel_task"]);
+
+    const response = await fetch(`${fixture.baseUrl}/api/ceo-review-decisions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: task.id, decision: "approve" }),
+    });
+    const body = (await response.json()) as { error: string; affordances: Array<{ kind: string }> };
+
+    expect(response.status).toBe(409);
+    // The refusal is not a dead end: it says what the founder can do instead.
+    expect(body.affordances.map((affordance) => affordance.kind)).toEqual(["request_replan", "cancel_task"]);
+
+    await fixture.close();
+  });
+
+  /**
+   * Founder Approval end to end. The route used to echo the request back and write nothing, so the
+   * Hold it was supposed to clear could never be cleared — the affordance was offered and did
+   * nothing (ADR 0020 amendment).
+   */
+  it("clears the approval Hold and queues the task when the founder grants approval", async () => {
+    const fixture = await startFixtureServer();
+    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "safe",
+      assets: [],
+    });
+    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    fixture.repositories.createApproval({
+      id: "approval_1",
+      companyId: task.companyId,
+      taskId: task.id,
+      actionType: "run_safe_command",
+      riskLevel: task.riskLevel,
+      status: "pending",
+      requestedAt: "2026-08-17T00:00:00.000Z",
+    });
+    applyTaskTransition({
+      repositories: fixture.repositories,
+      task,
+      status: "blocked",
+      hold: {
+        kind: "awaiting_founder_approval",
+        subjectKind: "approval",
+        subjectId: "approval_1",
+        reason: `${task.title} needs Founder Approval before it can run.`,
+      },
+    });
+
+    const granted = await postJson<{
+      approval: { status: string; decidedAt: string | null };
+      task: { status: string; affordances: Array<{ kind: string }> };
+    }>(`${fixture.baseUrl}/api/approvals/approval_1`, { decision: "approved", note: "Go ahead." });
+
+    expect(granted.approval.status).toBe("approved");
+    expect(granted.approval.decidedAt).not.toBeNull();
+    expect(granted.task.status).toBe("queued");
+    expect(fixture.repositories.listOpenTaskHolds(task.id)).toHaveLength(0);
+
+    // Answering twice is refused rather than silently re-applied.
+    const repeat = await fetch(`${fixture.baseUrl}/api/approvals/approval_1`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decision: "denied" }),
+    });
+    expect(repeat.status).toBe(409);
 
     await fixture.close();
   });
@@ -3262,7 +3474,7 @@ describe("API routes", () => {
       assets: [],
     });
     const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
-    fixture.repositories.updateTaskStatus(sourceTask.id, "needs_replan");
+    fixture.repositories.writeTaskStatusUnchecked(sourceTask.id, "needs_replan");
     fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
       latestFailureReason: "needs_replan",
       latestFailureMessage: "Task needs replanning.",
@@ -3565,7 +3777,7 @@ async function seedCrossDepartmentCompletion(
   const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id)!;
 
   for (const task of fixture.repositories.listTasksForCompany(companyId)) {
-    fixture.repositories.updateTaskStatus(task.id, "complete");
+    fixture.repositories.writeTaskStatusUnchecked(task.id, "complete");
   }
 
   const sourceTask = {

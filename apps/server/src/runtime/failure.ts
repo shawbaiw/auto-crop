@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Task } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { applyTaskTransition, type TaskHoldDeclaration } from "./taskTransition";
 
 export type FailureDecision = "create_fix_task" | "mark_blocked" | "escalate_to_ceo";
 
@@ -20,17 +21,37 @@ export type RouteWorkerFailureResult =
 export function routeWorkerFailure(input: RouteWorkerFailureInput): RouteWorkerFailureResult {
   const logExcerpt = readLogExcerpt(input.logPath);
 
-  input.repositories.updateTaskStatus(input.failedTask.id, "failed");
+  const transition = (status: "failed" | "blocked" | "review", hold: TaskHoldDeclaration) =>
+    applyTaskTransition({
+      repositories: input.repositories,
+      task: input.failedTask,
+      status,
+      hold,
+      createId: input.createId,
+    });
 
   if (input.decision === "mark_blocked") {
-    input.repositories.updateTaskStatus(input.failedTask.id, "blocked");
+    transition("blocked", {
+      kind: "invalid_business_artifact",
+      reason: `Worker failure on ${input.failedTask.title} was routed to the CEO Blocked Queue.`,
+    });
     return { kind: "blocked", taskId: input.failedTask.id, logExcerpt };
   }
 
   if (input.decision === "escalate_to_ceo") {
-    input.repositories.updateTaskStatus(input.failedTask.id, "review");
+    transition("review", {
+      kind: "awaiting_ceo_review",
+      subjectKind: "task",
+      subjectId: input.failedTask.id,
+      reason: `Worker failure on ${input.failedTask.title} was escalated to CEO Office.`,
+    });
     return { kind: "escalated_to_ceo", taskId: input.failedTask.id, logExcerpt };
   }
+
+  transition("failed", {
+    kind: "runtime_interrupted",
+    reason: `Worker run for ${input.failedTask.title} failed; a fix task carries the work forward.`,
+  });
 
   const createId = input.createId ?? defaultCreateId;
   const fixTaskId = `${input.failedTask.id}_fix_${extractNumericSuffix(createId("fix"))}`;

@@ -106,6 +106,8 @@ export type TaskEventType =
   | "automatic_acceptance"
   | "ceo_review_decision"
   | "founder_decision"
+  /** The founder granted or denied consent for an action, distinct from a Founder Decision. */
+  | "founder_approval"
   | "proof_recovered"
   | "task_failed"
   | "task_blocked"
@@ -685,6 +687,10 @@ export type Approval = {
   riskLevel: RiskLevel;
   status: ApprovalStatus;
   requestedAt: string;
+  /** When the founder granted or denied it. `null` while `pending`. */
+  decidedAt?: string | null;
+  /** The founder's optional reason, kept for the audit trail on both outcomes. */
+  note?: string | null;
 };
 
 export type ProofSchema = {

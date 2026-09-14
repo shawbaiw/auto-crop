@@ -5,6 +5,7 @@ import type { createRepositories } from "../db/repositories";
 import type { Playbook } from "../playbooks/types";
 import { defaultAgentSessionManager, type AgentSessionManager, type AgentSessionRunEvent } from "./agentSessions";
 import { resetTaskAttempts } from "./boundedRecovery";
+import { applyTaskTransition } from "./taskTransition";
 import { buildReplanPlannerPrompt, parseReplanPlannerOutput } from "./replanPlanner";
 import { resolveAgentSessionPolicy } from "./sessionPolicy";
 import { createCompanyWorkspace, createTaskWorkspace } from "./workspace";
@@ -244,11 +245,27 @@ export function confirmReplanProposal(input: ConfirmReplanProposalInput): Confir
     input.repositories.replaceDependencyConsumers(sourceTask.id, finalTask.id);
   }
 
-  input.repositories.updateTaskStatus(sourceTask.id, "blocked");
-  input.repositories.updateTaskExecutionSummary(sourceTask.id, {
-    latestFailureReason: "needs_replan",
-    latestFailureMessage: `Task replaced by replan proposal ${proposal.id}.`,
-    dependencyNote: `Replaced by replan proposal ${proposal.id}.`,
+  // The source task is retired in favour of the replacement chain, so its Hold names the task that
+  // now owes the deliverable rather than leaving it blocked on nothing.
+  applyTaskTransition({
+    repositories: input.repositories,
+    task: sourceTask,
+    status: "blocked",
+    executionSummary: {
+      latestFailureReason: "needs_replan",
+      latestFailureMessage: `Task replaced by replan proposal ${proposal.id}.`,
+      dependencyNote: `Replaced by replan proposal ${proposal.id}.`,
+    },
+    hold: {
+      kind: "awaiting_dependency_artifact",
+      resolver: "upstream_task",
+      subjectKind: "task",
+      subjectId: finalTask?.id ?? null,
+      reason: `Replaced by replan proposal ${proposal.id}; the replacement tasks now carry this work.`,
+    },
+    resolution: "cleared",
+    now: () => new Date(now),
+    createId,
   });
   const locale = input.repositories.getCompany(sourceTask.companyId)?.locale ?? "en";
   input.repositories.appendCompanyEvent({

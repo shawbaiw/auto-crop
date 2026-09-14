@@ -12,6 +12,7 @@ import {
   type HumanAction,
   type KeyResult,
   type Objective,
+  type TaskHold,
   type Task,
   type TaskCompletionEvent,
   type TaskEvent,
@@ -573,6 +574,12 @@ describe("projectCeoOfficeItems", () => {
       isCurrent: true, supersedesArtifactId: null,
       createdAt: "2026-09-01T10:05:00Z", updatedAt: "2026-09-01T10:05:00Z",
     };
+    const reviewHold: TaskHold = {
+      id: "hold_review", companyId: company.id, taskId: task!.id, kind: "awaiting_ceo_review",
+      resolver: "ceo_office", subjectKind: "business_artifact", subjectId: reviewArtifact.id,
+      reason: "Waiting for a CEO Office review decision.", reasonText: null,
+      openedAt: "2026-09-01T10:05:00Z", resolvedAt: null, resolution: null,
+    };
     const decision: FounderDecision = {
       id: "decision", companyId: company.id, sourceTaskCompletionEventId: "completion", taskId: task!.id,
       departmentId: "product", decisionKind: "launch_target", rationale: "Pick the first launch audience",
@@ -611,6 +618,7 @@ describe("projectCeoOfficeItems", () => {
       ...state,
       tasks: [task!, blockedTask],
       businessArtifacts: [reviewArtifact],
+      taskHolds: [reviewHold],
       founderDecisions: [decision],
       humanActions: [humanAction],
       waitStates: [waitState],
@@ -632,6 +640,49 @@ describe("projectCeoOfficeItems", () => {
       taskId: "blocked_task",
       data: { reason: { en: "Expected deliverable was not recorded." }, status: "open", affectedTaskIds: ["blocked_task"] },
     });
+  });
+
+  /**
+   * The regression this model exists for: a task left `review` — for any reason, by any path —
+   * while its Business Artifact stayed `unreviewed`. CEO Office used to read the artifact alone and
+   * keep offering an approval the API then refused, with the founder also seeing the task as blocked
+   * on the department board and no way to move it. With the Hold as the single source of truth, the
+   * offer disappears with the Hold, whatever moved the task.
+   */
+  it("stops offering a CEO decision once the review Hold is gone, even while the artifact reads unreviewed", () => {
+    const state = scenario("Validate onboarding", "Onboarding evidence is ready");
+    const [task] = state.tasks;
+    const unreviewedArtifact: BusinessArtifact = {
+      id: "artifact_review", companyId: company.id, taskId: task!.id, sourceProofId: "proof_1",
+      artifactKind: "deliverable", artifactRole: "validation", artifactSubtype: "onboarding_evidence",
+      artifactType: "validation_result", taskType: "validation.onboarding",
+      payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "unreviewed",
+      isCurrent: true, supersedesArtifactId: null,
+      createdAt: "2026-09-01T10:05:00Z", updatedAt: "2026-09-01T10:05:00Z",
+    };
+    const blockedTask: Task = { ...task!, status: "blocked", latestFailureReason: "retry_exhausted" };
+
+    const withoutHold = projectCeoOfficeItems({
+      ...state,
+      tasks: [blockedTask],
+      businessArtifacts: [unreviewedArtifact],
+      taskHolds: [],
+    });
+    expect(withoutHold.map((item) => item.type)).not.toContain("approval_request");
+
+    const resolvedHold: TaskHold = {
+      id: "hold_review", companyId: company.id, taskId: task!.id, kind: "awaiting_ceo_review",
+      resolver: "ceo_office", subjectKind: "business_artifact", subjectId: unreviewedArtifact.id,
+      reason: "Waiting for a CEO Office review decision.", reasonText: null,
+      openedAt: "2026-09-01T10:05:00Z", resolvedAt: "2026-09-01T11:00:00Z", resolution: "superseded",
+    };
+    const withResolvedHold = projectCeoOfficeItems({
+      ...state,
+      tasks: [blockedTask],
+      businessArtifacts: [unreviewedArtifact],
+      taskHolds: [resolvedHold],
+    });
+    expect(withResolvedHold.map((item) => item.type)).not.toContain("approval_request");
   });
 
   it.each([

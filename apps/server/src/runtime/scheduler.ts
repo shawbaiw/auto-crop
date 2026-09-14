@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
+import { resolvePolicyForPermissionMode } from "../policies/defaults";
+import { decideAction } from "../policies/policy";
 import type {
   AgentFailureReason,
   BusinessArtifact,
@@ -41,6 +43,7 @@ import { reconcileReviewTasksForAutomaticAcceptance } from "./reviewReconciliati
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
+import { applyTaskTransition } from "./taskTransition";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
 
 export type SchedulerFailureReason = AgentFailureReason;
@@ -68,7 +71,13 @@ export type RunSchedulerOnceInput = {
   maxTasks: number;
   now?: () => Date;
   createId?: (prefix: string) => string;
-  approvalRequired: (task: Task) => boolean;
+  /**
+   * Whether this task needs Founder Approval before it may be dispatched. Optional, and the default
+   * resolves the task's own company Permission Mode — every caller previously had to supply this and
+   * the one that did got it wrong, pinning a hardcoded `balanced` policy so a `safe` company never
+   * asked. Override it only in tests.
+   */
+  approvalRequired?: (task: Task) => boolean;
   proofCollector: (input: { task: Task; stdout: string; stderr: string; logPath: string }) => Proof[];
   /** Injectable fetch used to independently verify Environment-Blocked Blocker claims. Defaults to global fetch. */
   environmentBlockerFetch?: typeof fetch;
@@ -88,6 +97,8 @@ export type RunSchedulerOnceResult = {
 export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<RunSchedulerOnceResult> {
   const now = input.now ?? (() => new Date());
   const createId = input.createId ?? defaultCreateId;
+  const approvalRequired = input.approvalRequired
+    ?? ((task: Task) => requiresFounderApproval(input.repositories, task));
   const result: RunSchedulerOnceResult = {
     started: [],
     completed: [],
@@ -136,11 +147,32 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
     const dependencyDecision = resolveDependencyReadiness(input.repositories, task);
     if (dependencyDecision.kind === "waiting") {
-      if (task.status !== "waiting_dependency") {
-        input.repositories.updateTaskStatus(task.id, "waiting_dependency");
-      }
       if (task.dependencyNote !== dependencyDecision.note || task.status !== "waiting_dependency") {
-        input.repositories.updateTaskExecutionSummary(task.id, { dependencyNote: dependencyDecision.note });
+        applyTaskTransition({
+          repositories: input.repositories,
+          task,
+          status: "waiting_dependency",
+          executionSummary: { dependencyNote: dependencyDecision.note },
+          // An upstream parked on an unresolved Founder Decision is not an ordinary dependency
+          // wait: the founder owns it, so the Hold points at the decision and offers resolving it.
+          hold: dependencyDecision.waitingOnDecision
+            ? {
+              kind: "awaiting_founder_decision",
+              resolver: "founder",
+              subjectKind: "founder_decision",
+              subjectId: dependencyDecision.founderDecisionId ?? null,
+              reason: dependencyDecision.note,
+            }
+            : {
+              kind: "awaiting_dependency_artifact",
+              resolver: "upstream_task",
+              subjectKind: "task",
+              subjectId: dependencyDecision.dependency.id,
+              reason: dependencyDecision.note,
+            },
+          now,
+          createId,
+        });
         appendAndEmitTaskEvent(input, {
           task,
           type: "dependency_waiting",
@@ -179,16 +211,30 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
         let taskWorkspaceRoot: string | null = null;
         try {
-          if (input.approvalRequired(task)) {
-            input.repositories.updateTaskStatus(task.id, "blocked");
+          if (approvalRequired(task)) {
+            const approvalId = createId("approval");
             input.repositories.createApproval({
-              id: createId("approval"),
+              id: approvalId,
               companyId: task.companyId,
               taskId: task.id,
               actionType: "run_safe_command",
               riskLevel: task.riskLevel,
               status: "pending",
               requestedAt: acquiredAt,
+            });
+            applyTaskTransition({
+              repositories: input.repositories,
+              task,
+              status: "blocked",
+              hold: {
+                kind: "awaiting_founder_approval",
+                resolver: "founder",
+                subjectKind: "approval",
+                subjectId: approvalId,
+                reason: `${task.title} needs Founder Approval before it can run.`,
+              },
+              now,
+              createId,
             });
             appendAndEmitTaskEvent(input, {
               task,
@@ -207,14 +253,22 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           }
 
           const initialTimeoutResolution = resolveEffectiveTimeout(task);
-          input.repositories.updateTaskStatus(task.id, "running");
-          input.repositories.updateTaskExecutionSummary(task.id, {
-            latestFailureReason: null,
-            latestFailureMessage: null,
-            latestExecutionProfileName: initialTimeoutResolution.executionProfile.name,
-            latestRequestedTimeoutMs: initialTimeoutResolution.requestedTimeoutMs,
-            latestEffectiveTimeoutMs: initialTimeoutResolution.effectiveTimeoutMs,
-            dependencyNote: null,
+          // Dispatch resolves whatever parked this task: the runtime owns it again.
+          applyTaskTransition({
+            repositories: input.repositories,
+            task,
+            status: "running",
+            executionSummary: {
+              latestFailureReason: null,
+              latestFailureMessage: null,
+              latestExecutionProfileName: initialTimeoutResolution.executionProfile.name,
+              latestRequestedTimeoutMs: initialTimeoutResolution.requestedTimeoutMs,
+              latestEffectiveTimeoutMs: initialTimeoutResolution.effectiveTimeoutMs,
+              dependencyNote: null,
+            },
+            resolution: "cleared",
+            now,
+            createId,
           });
           result.started.push(task.id);
           for (const warning of initialTimeoutResolution.warnings) {
@@ -331,11 +385,18 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               failureMessage: failure,
             });
             timeoutResolution = retryTimeoutResolution;
-            input.repositories.updateTaskStatus(task.id, "retrying");
-            input.repositories.updateTaskExecutionSummary(task.id, {
-              latestExecutionProfileName: timeoutResolution.executionProfile.name,
-              latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-              latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+            applyTaskTransition({
+              repositories: input.repositories,
+              task,
+              status: "retrying",
+              executionSummary: {
+                latestExecutionProfileName: timeoutResolution.executionProfile.name,
+                latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+              },
+              resolution: "cleared",
+              now,
+              createId,
             });
             appendAndEmitTaskEvent(input, {
               task,
@@ -371,10 +432,22 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               }
               const failureReason = "proof_capture_failed";
               const failure = `Task failed: ${task.title} / proof_capture_failed / ${(error as Error).message}`;
-              input.repositories.updateTaskStatus(task.id, "failed");
-              input.repositories.updateTaskExecutionSummary(task.id, {
-                latestFailureReason: failureReason,
-                latestFailureMessage: failure,
+              applyTaskTransition({
+                repositories: input.repositories,
+                task,
+                status: "failed",
+                executionSummary: {
+                  latestFailureReason: failureReason,
+                  latestFailureMessage: failure,
+                },
+                hold: {
+                  kind: "invalid_business_artifact",
+                  subjectKind: "agent_run",
+                  subjectId: agentRunId,
+                  reason: failure,
+                },
+                now,
+                createId,
               });
               input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
                 failureReason,
@@ -442,13 +515,20 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
             if (failureReason === "timeout" && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
               const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
-              input.repositories.updateTaskStatus(task.id, "needs_replan");
-              input.repositories.updateTaskExecutionSummary(task.id, {
-                latestFailureReason: "needs_replan",
-                latestFailureMessage: failure,
-                latestExecutionProfileName: timeoutResolution.executionProfile.name,
-                latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-                latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+              applyTaskTransition({
+                repositories: input.repositories,
+                task,
+                status: "needs_replan",
+                executionSummary: {
+                  latestFailureReason: "needs_replan",
+                  latestFailureMessage: failure,
+                  latestExecutionProfileName: timeoutResolution.executionProfile.name,
+                  latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                  latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+                },
+                hold: { kind: "needs_replan", reason: failure },
+                now,
+                createId,
               });
               input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
                 failureReason: "timeout",
@@ -480,10 +560,18 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               return;
             }
             const failure = failureMessage(task, failureReason, timeoutResolution.effectiveTimeoutMs);
-            input.repositories.updateTaskStatus(task.id, "failed");
-            input.repositories.updateTaskExecutionSummary(task.id, {
-              latestFailureReason: failureReason,
-              latestFailureMessage: failure,
+            applyTaskTransition({
+              repositories: input.repositories,
+              task,
+              status: "failed",
+              executionSummary: {
+                latestFailureReason: failureReason,
+                latestFailureMessage: failure,
+              },
+              // No declared kind: `deriveTaskHold` reads the failure reason just recorded, so a
+              // reason added later still parks the task on an owned Hold.
+              now,
+              createId,
             });
             input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
               failureReason,
@@ -524,10 +612,22 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             }
             const failureReason = businessArtifactFailureReason(businessArtifact);
             const failure = businessArtifactFailureMessage(task, businessArtifact);
-            input.repositories.updateTaskStatus(task.id, "blocked");
-            input.repositories.updateTaskExecutionSummary(task.id, {
-              latestFailureReason: failureReason,
-              latestFailureMessage: failure,
+            applyTaskTransition({
+              repositories: input.repositories,
+              task,
+              status: "blocked",
+              executionSummary: {
+                latestFailureReason: failureReason,
+                latestFailureMessage: failure,
+              },
+              hold: {
+                kind: "invalid_business_artifact",
+                subjectKind: businessArtifact ? "business_artifact" : "agent_run",
+                subjectId: businessArtifact?.id ?? agentRunId,
+                reason: failure,
+              },
+              now,
+              createId,
             });
             input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
               failureReason,
@@ -585,7 +685,22 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               input.repositories.getCompany(task.companyId)?.locale ?? "en",
             ).kept;
             if (founderDecisions.length > 0) {
-              input.repositories.updateTaskStatus(task.id, "review");
+              // Parked in `review` but owned by the founder, not CEO Office: the Hold says so, which
+              // is why this task is not offered as an approvable review item.
+              applyTaskTransition({
+                repositories: input.repositories,
+                task,
+                status: "review",
+                hold: {
+                  kind: "awaiting_founder_decision",
+                  resolver: "founder",
+                  subjectKind: "business_artifact",
+                  subjectId: businessArtifact.id,
+                  reason: `${task.title} declares a Founder Decision that must be made before it can be accepted.`,
+                },
+                now,
+                createId,
+              });
               recordTaskCompletionEvent({
                 repositories: input.repositories,
                 task,
@@ -634,7 +749,22 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             return;
           }
 
-          input.repositories.updateTaskStatus(task.id, "review");
+          // The Hold opened here is what CEO Office reads to offer the decision, and what the
+          // approve/return guard checks. One fact, so the offer and the guard cannot disagree.
+          applyTaskTransition({
+            repositories: input.repositories,
+            task,
+            status: "review",
+            hold: {
+              kind: "awaiting_ceo_review",
+              resolver: "ceo_office",
+              subjectKind: "business_artifact",
+              subjectId: businessArtifact.id,
+              reason: `${task.title} is waiting for a CEO Office review decision.`,
+            },
+            now,
+            createId,
+          });
           appendTaskProgressEvent(input, {
             task,
             step: "awaiting_review",
@@ -983,9 +1113,21 @@ function assessDepartmentTask(input: RunSchedulerOnceInput, task: Task): "ready"
   }
 
   const subtasks = createDepartmentSubtasks(input, task);
-  input.repositories.updateTaskStatus(task.id, "waiting_dependency");
-  input.repositories.updateTaskExecutionSummary(task.id, {
-    dependencyNote: `Waiting for department subtasks: ${subtasks.map((subtask) => subtask.title).join(", ")}.`,
+  const dependencyNote = `Waiting for department subtasks: ${subtasks.map((subtask) => subtask.title).join(", ")}.`;
+  applyTaskTransition({
+    repositories: input.repositories,
+    task,
+    status: "waiting_dependency",
+    executionSummary: { dependencyNote },
+    hold: {
+      kind: "awaiting_dependency_artifact",
+      resolver: "upstream_task",
+      subjectKind: "task",
+      subjectId: subtasks[0]?.id ?? null,
+      reason: dependencyNote,
+    },
+    now: input.now,
+    createId: input.createId,
   });
   appendTaskProgressEvent(input, {
     task,
@@ -1237,6 +1379,24 @@ function buildPartialOutputFollowUpDescription(
   ].join("\n");
 }
 
+/**
+ * Whether dispatching this task needs Founder Approval under its own company's Permission Mode.
+ *
+ * Deliberately coarse: one pre-dispatch question, using `run_safe_command` as the proxy for the
+ * whole task, because the runtime does not yet know which actions an Agent Run will take. Per-action
+ * approval during execution is a separate, larger change; what matters here is that the company's
+ * Permission Mode is the input, not a hardcoded default.
+ */
+export function requiresFounderApproval(
+  repositories: ReturnType<typeof createRepositories>,
+  task: Task,
+): boolean {
+  const company = repositories.getCompany(task.companyId);
+  const policy = resolvePolicyForPermissionMode(company?.permissionMode ?? null);
+
+  return decideAction(policy, "run_safe_command") === "ask";
+}
+
 function blockTaskForDependency(
   input: RunSchedulerOnceInput,
   task: Task,
@@ -1245,11 +1405,24 @@ function blockTaskForDependency(
   dependencyNote: string,
 ): void {
   const failureMessage = `Task blocked: ${task.title} / ${failureReason} / ${dependency.title} is ${dependency.status}.`;
-  input.repositories.updateTaskStatus(task.id, "blocked");
-  input.repositories.updateTaskExecutionSummary(task.id, {
-    latestFailureReason: failureReason,
-    latestFailureMessage: failureMessage,
-    dependencyNote,
+  applyTaskTransition({
+    repositories: input.repositories,
+    task,
+    status: "blocked",
+    executionSummary: {
+      latestFailureReason: failureReason,
+      latestFailureMessage: failureMessage,
+      dependencyNote,
+    },
+    hold: {
+      kind: "awaiting_dependency_artifact",
+      resolver: "upstream_task",
+      subjectKind: "task",
+      subjectId: dependency.id,
+      reason: dependencyNote,
+    },
+    now: input.now,
+    createId: input.createId,
   });
   appendAndEmitTaskEvent(input, {
     task,
@@ -1282,11 +1455,24 @@ function blockTaskForMissingDeliverable(
 ): void {
   const failureReason = "missing_deliverable";
   const failureMessage = `Task blocked: ${task.title} / missing_deliverable / ${dependency.title} has no accepted business artifact.`;
-  input.repositories.updateTaskStatus(task.id, "blocked");
-  input.repositories.updateTaskExecutionSummary(task.id, {
-    latestFailureReason: failureReason,
-    latestFailureMessage: failureMessage,
-    dependencyNote,
+  applyTaskTransition({
+    repositories: input.repositories,
+    task,
+    status: "blocked",
+    executionSummary: {
+      latestFailureReason: failureReason,
+      latestFailureMessage: failureMessage,
+      dependencyNote,
+    },
+    hold: {
+      kind: "awaiting_dependency_artifact",
+      resolver: "upstream_task",
+      subjectKind: "task",
+      subjectId: dependency.id,
+      reason: dependencyNote,
+    },
+    now: input.now,
+    createId: input.createId,
   });
   appendAndEmitTaskEvent(input, {
     task,

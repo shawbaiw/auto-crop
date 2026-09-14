@@ -1,5 +1,6 @@
 import type { AgentFailureReason, Proof, Task, TaskEvent, TaskProgressEvent, TaskStatus } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
+import { applyTaskTransition } from "./taskTransition";
 
 export type ParentTaskAggregationUpdate = {
   task: Task;
@@ -125,11 +126,29 @@ function refreshParentTaskAggregation(
     };
   }
 
-  input.repositories.updateTaskStatus(parent.id, update.status);
-  input.repositories.updateTaskExecutionSummary(parent.id, {
-    latestFailureReason: update.failureReason,
-    latestFailureMessage: update.failureMessage,
-    dependencyNote: update.dependencyNote,
+  applyTaskTransition({
+    repositories: input.repositories,
+    task: parent,
+    status: update.status,
+    executionSummary: {
+      latestFailureReason: update.failureReason,
+      latestFailureMessage: update.failureMessage,
+      dependencyNote: update.dependencyNote,
+    },
+    hold: update.status === "waiting_dependency" || update.status === "blocked"
+      ? {
+        kind: "awaiting_dependency_artifact",
+        resolver: "upstream_task",
+        subjectKind: "task",
+        subjectId: update.blockedByTaskId ?? update.progressSubjectTaskId ?? null,
+        reason: update.dependencyNote ?? update.failureMessage ?? update.message,
+      }
+      : null,
+    // Aggregation answers only the parent's wait on its subtasks.
+    resolvesHoldKinds: ["awaiting_dependency_artifact", "awaiting_founder_decision"],
+    resolution: "superseded",
+    now: input.now,
+    createId: input.createId,
   });
 
   const event = createTaskEvent(input, parent, update);

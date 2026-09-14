@@ -2,6 +2,7 @@ import type { AgentFailureReason, Task, TaskEvent, TaskProgressEvent, TaskStatus
 import type { createRepositories } from "../db/repositories";
 import { isRetryExhausted, resetTaskAttempts } from "./boundedRecovery";
 import { resolveDependencyReadiness } from "./dependencyReadiness";
+import { applyTaskTransition, type TaskHoldDeclaration } from "./taskTransition";
 
 export type DependencyCascadeUpdate = {
   task: Task;
@@ -202,11 +203,24 @@ function refreshDependencyTask(
     resetTaskAttempts(input.repositories, task.id, resetAt);
   }
 
-  input.repositories.updateTaskStatus(task.id, update.status);
-  input.repositories.updateTaskExecutionSummary(task.id, {
-    latestFailureReason: update.failureReason,
-    latestFailureMessage: update.failureMessage,
-    dependencyNote: update.dependencyNote,
+  applyTaskTransition({
+    repositories: input.repositories,
+    task,
+    status: update.status,
+    executionSummary: {
+      latestFailureReason: update.failureReason,
+      latestFailureMessage: update.failureMessage,
+      dependencyNote: update.dependencyNote,
+    },
+    hold: holdForDependencyUpdate(update),
+    // What this cascade actually answers: the task's dependency waits. Anything else holding it —
+    // a Human Action, a Founder Approval — is untouched, and the seam then keeps the task parked
+    // rather than queueing work that is still blocked on it.
+    resolvesHoldKinds: ["awaiting_dependency_artifact", "awaiting_founder_decision"],
+    // Upstream state moved on; nobody acted on the Holds this ends.
+    resolution: "superseded",
+    now: input.now,
+    createId: input.createId,
   });
 
   const event = createTaskEvent(input, task, update);
@@ -309,6 +323,25 @@ function dependencyUpdateForTask(
     failureMessage,
     dependencyNote: readiness.note,
     message: failureMessage,
+  };
+}
+
+/**
+ * The Hold a cascade update parks the task on. The cascade always knows which upstream task is
+ * owed, so the Hold names it — that subject is what lets a surface say "waiting on <task>" instead
+ * of repeating a generic blocked badge.
+ */
+function holdForDependencyUpdate(update: DependencyUpdate): TaskHoldDeclaration | null {
+  if (update.status !== "waiting_dependency" && update.status !== "blocked") {
+    return null;
+  }
+
+  return {
+    kind: "awaiting_dependency_artifact",
+    resolver: "upstream_task",
+    subjectKind: "task",
+    subjectId: update.blockedByTaskId ?? null,
+    reason: update.dependencyNote ?? update.failureMessage ?? update.message,
   };
 }
 

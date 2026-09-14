@@ -70,14 +70,14 @@ describe("repositories", () => {
 
     expect(repos.fetchQueuedTasks(10).map((task) => task.id)).toEqual(["task_1"]);
 
-    repos.updateTaskStatus("task_1", "running");
+    repos.writeTaskStatusUnchecked("task_1", "running");
     expect(repos.getTask("task_1")?.status).toBe("running");
 
-    repos.updateTaskStatus("task_1", "review");
+    repos.writeTaskStatusUnchecked("task_1", "review");
     repos.appendProof(records.proof);
     expect(repos.listProofsForTask("task_1")).toEqual([records.proof]);
 
-    repos.updateTaskStatus("task_1", "complete");
+    repos.writeTaskStatusUnchecked("task_1", "complete");
     expect(repos.getTask("task_1")?.status).toBe("complete");
     expect(repos.fetchQueuedTasks(10)).toEqual([]);
 

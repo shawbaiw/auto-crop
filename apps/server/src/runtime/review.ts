@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { createRepositories } from "../db/repositories";
+import { applyTaskTransition } from "./taskTransition";
 
 export type RunCompanyReviewInput = {
   projectRoot: string;
@@ -40,7 +41,14 @@ export function runCompanyReview(input: RunCompanyReviewInput): RunCompanyReview
       continue;
     }
 
-    input.repositories.updateTaskStatus(task.id, "complete");
+    applyTaskTransition({
+      repositories: input.repositories,
+      task,
+      status: "complete",
+      resolution: "cleared",
+      now: input.now,
+      createId: input.createId,
+    });
     completedTasks.push(task.id);
     proofSummaries.push(...proofs.map((proof) => `- ${task.title}: ${proof.summary}`));
 
