@@ -42,6 +42,8 @@ Make failed, timed-out, or stale running tasks restartable without weakening the
    - If Partial Output exists, create or reuse one follow-up task and replace downstream dependencies.
    - Return the updated task, any created task, activity event, progress event, proof if recovered, and recovery summary.
 
+> **Superseded in part (2026-09-14, ADR 0020):** "eligible" below no longer means a rule the dashboard evaluates. The server sends each task's Resume Affordances and the UI shows **Recover Task** when `recover_task` is among them. The eligibility rules this plan described had drifted from the server's — the API accepted recovery for `blocked` tasks the UI never offered it for.
+
 4. Update dashboard API client types and UI:
    - Add `recoverTask`.
    - Show **Recover Task** on eligible department task flows and CEO task graph nodes.
