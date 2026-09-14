@@ -10,7 +10,6 @@ import {
   createDatabaseClient,
   createProofCollector,
   createRepositories,
-  getDefaultPolicy,
   migrate,
   runFinalFounderReportJobs,
   runSchedulerOnce,
@@ -149,7 +148,8 @@ export function startSchedulerLoop(input: {
         adapters: input.agents,
         workerId,
         maxTasks: 1,
-        approvalRequired: () => getDefaultPolicy().decisions.run_safe_command === "ask",
+        // No `approvalRequired` override: the scheduler resolves each task's own company Permission
+        // Mode. Passing one here is what pinned every company to the `balanced` default.
         proofCollector,
         createId: input.createId,
         emit,

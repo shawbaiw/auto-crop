@@ -13,6 +13,8 @@ import type {
   HumanActionSummary,
   ReplanProposalSummary,
   ServerEvent,
+  TaskAffordanceKind,
+  TaskAffordanceSummary,
   TaskCompletionEventSummary,
   VisionGapSummary,
   WaitStateSummary,
@@ -2081,6 +2083,7 @@ describe("Dashboard App", () => {
           status: "blocked",
           failureReason: "dependency_failed",
           dependencyNote: "Blocked by failed dependency: Write brief.",
+          affordances: offered("refresh_task", "request_replan"),
         },
       ],
     }));
@@ -2128,6 +2131,7 @@ describe("Dashboard App", () => {
       taskKind: "department_subtask" as const,
       parentTaskId: parentTask.id,
       failureReason: "non_reviewable_artifact",
+      affordances: offered("refresh_task", "recover_task", "request_replan"),
     };
     api.createCompany = vi.fn(async () => ({
       ...created,
@@ -2213,6 +2217,7 @@ describe("Dashboard App", () => {
           status: "blocked",
           failureReason: "dependency_failed",
           dependencyNote: "Blocked by failed dependency: Write brief.",
+          affordances: offered("refresh_task", "request_replan"),
         },
         parentTask,
       ],
@@ -2307,6 +2312,7 @@ describe("Dashboard App", () => {
           status: "failed",
           failureReason: "no_proof",
           failureMessage: "Task failed: Create landing page / no_proof.",
+          affordances: offered("refresh_task", "recover_task", "request_replan"),
         },
       ],
     }));
@@ -2314,6 +2320,8 @@ describe("Dashboard App", () => {
       task: {
         ...created.tasks[0],
         status: "review",
+        // Recovering proof opens the CEO review Hold, so the task comes back offering the decision.
+        affordances: offered("ceo_review_decision"),
       },
       event: {
         type: "proof_recovered",
@@ -2374,6 +2382,8 @@ describe("Dashboard App", () => {
           status: "failed",
           failureReason: "timeout",
           failureMessage: "Task failed: Create landing page / timeout after 3m.",
+          // An unattributed run failure offers re-running the work, not re-deriving state.
+          affordances: offered("recover_task", "request_replan"),
         },
       ],
     }));
@@ -2417,6 +2427,84 @@ describe("Dashboard App", () => {
 
     expect(api.recoverTask).toHaveBeenCalledWith("task_1");
     await waitFor(() => expect(screen.getAllByText("Task recovered and queued for another run.").length).toBeGreaterThan(0));
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting"));
+  });
+
+  /**
+   * A task held on Founder Approval used to render no action at all: the dashboard only knew how to
+   * draw Refresh and Recover, and the route behind approval was a stub anyway (ADR 0020 amendment).
+   * The button is drawn from the affordance, and the Approval id rides on the affordance itself.
+   */
+  it("answers a Founder Approval request from the Department Workspace", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [
+        {
+          ...created.tasks[0],
+          status: "blocked",
+          affordances: [
+            {
+              kind: "decide_founder_approval" as const,
+              actor: "founder" as const,
+              holdId: "hold_1",
+              holdKind: "awaiting_founder_approval",
+              subjectKind: "approval",
+              subjectId: "approval_1",
+            },
+            ...offered(),
+          ],
+          holds: [
+            {
+              id: "hold_1",
+              kind: "awaiting_founder_approval",
+              resolver: "founder" as const,
+              subjectKind: "approval",
+              subjectId: "approval_1",
+              reason: "Create landing page needs Founder Approval before it can run.",
+              openedAt: "2026-08-17T00:00:00.000Z",
+            },
+          ],
+        },
+      ],
+    }));
+    api.decideFounderApproval = vi.fn(async (approvalId, input) => ({
+      approval: {
+        id: approvalId,
+        companyId: "company_1",
+        taskId: "task_1",
+        actionType: "run_safe_command",
+        riskLevel: "low",
+        status: input.decision,
+        requestedAt: "2026-08-17T00:00:00.000Z",
+        decidedAt: "2026-08-17T01:00:00.000Z",
+        note: null,
+      },
+      task: { ...created.tasks[0]!, status: "queued" },
+      event: {
+        type: "founder_approval" as const,
+        taskId: "task_1",
+        status: "queued",
+        message: "Founder approved Create landing page; it is queued to run.",
+      },
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+
+    // The Hold explains itself, so the founder knows what the button is for.
+    expect(screen.getAllByText("Create landing page needs Founder Approval before it can run.").length)
+      .toBeGreaterThan(0);
+    expect(within(leaderReport).queryByRole("button", { name: "Recover Task Create landing page" }))
+      .not.toBeInTheDocument();
+
+    await user.click(within(leaderReport).getByRole("button", { name: "Approve And Run Create landing page" }));
+
+    expect(api.decideFounderApproval).toHaveBeenCalledWith("approval_1", { decision: "approved" });
     await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting"));
   });
 
@@ -2521,6 +2609,48 @@ describe("Dashboard App", () => {
     expect(screen.queryByText("Internal prototype slice")).not.toBeInTheDocument();
   });
 
+  /**
+   * The gap the affordance model was supposed to close and did not (ADR 0020 amendment). A task at
+   * the Bounded Recovery ceiling is `blocked`, never `needs_replan`, and replanning is its *only*
+   * way forward. The board drew nothing for it because both surfaces judged eligibility by status:
+   * the task row knew only refresh and recover, and the Operations page filtered on `needs_replan`.
+   */
+  it("offers replanning on a task whose only way forward is a replan", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    const exhaustedTask = {
+      ...created.tasks[0]!,
+      status: "blocked",
+      failureReason: "retry_exhausted",
+      failureMessage: "Task blocked: Create landing page / retry_exhausted.",
+      affordances: offered("request_replan"),
+      holds: [
+        {
+          id: "hold_1",
+          kind: "recovery_exhausted",
+          resolver: "founder" as const,
+          reason: "Create landing page reached the Bounded Recovery ceiling and needs a replan.",
+          openedAt: "2026-08-17T00:00:00.000Z",
+        },
+      ],
+    };
+    api.createCompany = vi.fn(async () => ({ ...created, tasks: [exhaustedTask] }));
+    api.createReplanProposal = vi.fn(async () => ({ proposal: createReplanProposalSummary() }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+
+    // Neither of the actions the board used to know about applies here.
+    expect(within(leaderReport).queryByRole("button", { name: "Refresh Create landing page" })).not.toBeInTheDocument();
+    expect(within(leaderReport).queryByRole("button", { name: "Recover Task Create landing page" })).not.toBeInTheDocument();
+
+    await user.click(within(leaderReport).getByRole("button", { name: "Request Replan Create landing page" }));
+    expect(api.createReplanProposal).toHaveBeenCalledWith("task_1");
+  });
+
   it("shows and confirms replan proposals on the Company Operations page", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -2583,6 +2713,29 @@ describe("Dashboard App", () => {
           },
         ],
       },
+    }));
+
+    // The snapshot the client reloads after the event agrees that the task needs replanning, and
+    // carries the Resume Affordance that says so. The board never infers the action from status.
+    api.getCompanyState = vi.fn(async () => ({
+      ...created,
+      tasks: created.tasks.map((task) => (task.id === "task_1"
+        ? {
+          ...task,
+          status: "needs_replan",
+          failureReason: "needs_replan",
+          affordances: offered("request_replan"),
+        }
+        : task)),
+      proof: [],
+      businessArtifacts: [],
+      reviews: [],
+      activity: [],
+      creationEvents: [],
+      creationAttempts: [],
+      replanProposals: [],
+      taskProgressEvents: [],
+      ceoIntakes: [],
     }));
 
     render(<App apiClient={api} />);
@@ -3592,6 +3745,22 @@ function createFailedCompanyCreationResponse(): Awaited<ReturnType<ApiClient["cr
   };
 }
 
+/**
+ * The Resume Affordances the server would send for a task in this state. Fixtures carry them because
+ * the dashboard offers actions from this list alone — it no longer derives eligibility from status
+ * and failure reason (ADR 0020).
+ */
+function offered(...kinds: TaskAffordanceKind[]): TaskAffordanceSummary[] {
+  return [...kinds, "cancel_task" as const].map((kind) => ({
+    kind,
+    actor: "founder" as const,
+    holdId: "hold_1",
+    holdKind: null,
+    subjectKind: null,
+    subjectId: null,
+  }));
+}
+
 function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>> {
   return {
     company: {
@@ -4390,6 +4559,31 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         recovery: {
           status: "queued",
           message: "Task recovered and queued for another run.",
+        },
+      };
+    },
+    async decideFounderApproval(approvalId, input) {
+      return {
+        approval: {
+          id: approvalId,
+          companyId: "company_1",
+          taskId: "task_1",
+          actionType: "run_safe_command",
+          riskLevel: "low",
+          status: input.decision,
+          requestedAt: "2026-08-17T00:00:00.000Z",
+          decidedAt: "2026-08-17T01:00:00.000Z",
+          note: input.note ?? null,
+        },
+        task: {
+          ...createCompanyResponse().tasks[0]!,
+          status: input.decision === "approved" ? "queued" : "needs_replan",
+        },
+        event: {
+          type: "founder_approval",
+          taskId: "task_1",
+          status: input.decision === "approved" ? "queued" : "needs_replan",
+          message: "Founder answered the approval request.",
         },
       };
     },

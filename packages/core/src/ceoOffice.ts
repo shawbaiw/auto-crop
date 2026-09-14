@@ -1,4 +1,5 @@
 import { localizedTextFromString, type Locale, type LocalizedText } from "./localizedText";
+import type { TaskHold } from "./taskHold";
 import type {
   CompanyEvent, CompanyPlanSnapshot, AgentFailureReason, BusinessArtifact, CeoAttentionRollup, CeoReviewDecision, Company, FinalFounderReport,
   FounderDecision, FounderDecisionResolution, HumanAction, KeyResult, Objective, Task, TaskCompletionEvent,
@@ -55,7 +56,8 @@ export type CEOOfficeItem =
   | OfficeItem<"decision_request", Pick<FounderDecision,
       "decisionKind" | "options" | "rationale" | "briefing" | "status" | "resolvedOption" | "resolvedAt" | "blockedTaskIds">>
   | OfficeItem<"approval_request", {
-      businessArtifactId: string;
+      /** `null` when the Hold names no artifact — the decision is still owed, the evidence is not. */
+      businessArtifactId: string | null;
       status: "pending" | "approved" | "returned";
     }>
   | OfficeItem<"decision_resolution", {
@@ -112,6 +114,8 @@ export type CeoOfficeProjectionInput = {
   objectives?: readonly Objective[];
   keyResults?: readonly KeyResult[];
   businessArtifacts?: readonly BusinessArtifact[];
+  /** Open Task Holds for the company. The sole source of "a decision is still owed" (ADR 0020). */
+  taskHolds?: readonly TaskHold[];
   founderDecisions?: readonly FounderDecision[];
   founderDecisionResolutions?: readonly FounderDecisionResolution[];
   ceoReviewDecisions?: readonly CeoReviewDecision[];
@@ -286,16 +290,22 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     });
   }
 
-  for (const artifact of businessArtifactsById.values()) {
-    if (!isPendingReviewArtifact(artifact)) continue;
+  // An approval is offered exactly when an open `awaiting_ceo_review` Task Hold says the decision is
+  // still owed, never from the artifact's `reviewStatus` alone. Those two used to be independent
+  // facts, and CEO Office offering a decision the API then refused with "no longer waiting for CEO
+  // review" is precisely what that independence produced (ADR 0020).
+  for (const hold of input.taskHolds ?? []) {
+    if (hold.companyId !== input.company.id || hold.kind !== "awaiting_ceo_review" || hold.resolvedAt) continue;
+    const artifact = hold.subjectId ? businessArtifactsById.get(hold.subjectId) ?? null : null;
+    if (artifact && !isPendingReviewArtifact(artifact)) continue;
     items.push({
-      ...context(artifact.taskId),
-      id: `approval_request:${artifact.id}`,
+      ...context(hold.taskId),
+      id: `approval_request:${artifact?.id ?? hold.id}`,
       type: "approval_request",
-      sourceId: artifact.id,
-      occurredAt: artifact.createdAt,
+      sourceId: artifact?.id ?? hold.id,
+      occurredAt: artifact?.createdAt ?? hold.openedAt,
       actionBearing: true,
-      data: { businessArtifactId: artifact.id, status: "pending" },
+      data: { businessArtifactId: artifact?.id ?? null, status: "pending" },
     });
   }
 

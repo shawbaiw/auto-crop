@@ -44,3 +44,14 @@ The UI becomes clearer without forcing a premature full request model. Users can
 Adding CEO Review Decision records gives the product an audit trail for approve/return actions and lets agents include CEO decisions in Company State Snapshot.
 
 The model intentionally remains incomplete. Future work still needs durable `CEO Review Request` and `CEO Reassignment Request` records, explicit checkpoint-vs-completion request state, checkpoint approval that continues execution without completing the task, and a first-class reassignment flow. Until then, the derived pending queue must be treated as a transitional projection, not the final review model.
+
+## Amendment (2026-09-14): The pending queue derives from Task Holds, not from task status
+
+ADR 0020 supersedes two rules above. Both said the same thing in different places — that `task.status === "review"` is what makes a CEO decision pending — and the implementation drifted from it on the CEO Office side, which is how a task ended up being offered for approval while the API refused the decision as stale:
+
+- **Paragraph 28** ("Pending review items will continue to be derived from parent tasks with `task.status === "review"`"): pending items now derive from an open `awaiting_ceo_review` Task Hold. In the common case the two agree, because entering `review` opens that Hold and leaving `review` resolves it in the same write. They differ exactly where it matters: a task moved out of `review` by any other path stops being offered immediately, and a Business Artifact that still reads `unreviewed` on such a task does not resurrect the offer.
+- **Paragraph 36** ("The API must reject stale decisions when the task is no longer in `review`"): the guard now asks whether the task currently offers the `ceo_review_decision` Resume Affordance — the same computation that decided whether to offer it. A rejection carries the task's current affordances so the founder is redirected to a real next action rather than handed a dead end.
+
+The proof and Business Artifact preconditions in paragraphs 32, 34, and 36 are unchanged: approval still requires checkable proof and an approvable current artifact.
+
+The transitional nature of the model is unchanged too. Holds replace status as the source of "a decision is owed"; they are not the durable `CEO Review Request` record this ADR still calls for. A future request model should own the checkpoint-vs-completion distinction, with the Hold pointing at the request as its subject.

@@ -1,4 +1,4 @@
-import type { ActionPolicy } from "./policy";
+import type { ActionPolicy, PolicyMode } from "./policy";
 
 export const safePolicy = {
   mode: "safe",
@@ -50,4 +50,25 @@ export const autonomousPolicy = {
 
 export function getDefaultPolicy(): ActionPolicy {
   return balancedPolicy;
+}
+
+/**
+ * The Action Policy a company's Permission Mode selects.
+ *
+ * Permission Mode was stored on the company and shown in the UI, but the scheduler read
+ * `getDefaultPolicy()` instead, so a company set to `safe` never actually asked. Resolving the
+ * company's own mode is what makes the setting mean something — and it is why Founder Approval had
+ * to become a real, answerable request rather than a stub (ADR 0020 amendment).
+ */
+export function resolvePolicyForPermissionMode(mode: PolicyMode | null | undefined): ActionPolicy {
+  switch (mode) {
+    case "safe":
+      return safePolicy;
+    case "autonomous":
+      return autonomousPolicy;
+    case "balanced":
+      return balancedPolicy;
+    default:
+      return getDefaultPolicy();
+  }
 }

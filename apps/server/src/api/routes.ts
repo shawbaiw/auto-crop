@@ -20,7 +20,9 @@ import type {
   TaskCompletionEvent,
   TaskDependency,
   TaskEvent,
+  TaskHold,
   TaskProgressEvent,
+  TaskStatus,
   VisionGap,
   WaitState,
 } from "@auto-crop/core";
@@ -34,6 +36,7 @@ import { generateCompanyBlueprint, writeCompanyBlueprintRecords } from "../runti
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
 import { founderDecisionSourceEventId, projectCeoAttention } from "../runtime/ceoAttention";
+import { decideFounderApproval } from "../runtime/founderApproval";
 import { createDefaultId } from "../runtime/ids";
 import {
   ceoReturnProgressDetailText,
@@ -44,6 +47,13 @@ import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { reconcileReviewTasksForAutomaticAcceptance } from "../runtime/reviewReconciliation";
 import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
+import {
+  checkTaskAffordance,
+  resolveTaskAffordanceState,
+  type TaskAffordanceState,
+} from "../runtime/taskAffordances";
+import { reconcileTaskHolds } from "../runtime/taskHoldReconciliation";
+import { applyTaskTransition, findOpenTaskHold, releaseTaskHold } from "../runtime/taskTransition";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
 import { refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
 import { propagateParentTaskAggregation, type ParentTaskAggregationResult } from "../runtime/parentTaskAggregation";
@@ -422,8 +432,11 @@ async function routeRequest(
       return;
     }
 
-    if (result.kind === "not_in_review") {
-      sendJson(response, 409, { error: "Task is no longer waiting for CEO review." });
+    if (result.kind === "not_offered") {
+      sendJson(response, 409, {
+        error: "Task is no longer waiting for CEO review.",
+        ...staleAffordanceBody(result.task, result.state, options.repositories),
+      });
       return;
     }
 
@@ -446,7 +459,7 @@ async function routeRequest(
 
     sendJson(response, 201, {
       decision: summarizeCeoReviewDecision(result.decision),
-      task: summarizeTask(result.task, options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId)),
+      task: summarizeTask(result.task, options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId), options.repositories),
       businessArtifacts: options.repositories.listBusinessArtifactsForTask(result.task.id).map(summarizeBusinessArtifact),
       event: summarizeTaskEvent(result.event),
       progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
@@ -517,6 +530,7 @@ async function routeRequest(
       task: summarizeTask(
         result.task,
         options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId),
+        options.repositories,
       ),
       businessArtifacts: options.repositories.listBusinessArtifactsForTask(result.task.id).map(summarizeBusinessArtifact),
       event:
@@ -532,14 +546,56 @@ async function routeRequest(
 
   const cancelMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
   if (method === "POST" && cancelMatch) {
-    const taskId = cancelMatch[1];
-    options.repositories.updateTaskStatus(taskId, "cancelled");
-    sendJson(response, 200, { task: options.repositories.getTask(taskId) });
+    const task = options.repositories.getTask(cancelMatch[1]);
+    if (!task) {
+      sendJson(response, 404, { error: `Task not found: ${cancelMatch[1]}` });
+      return;
+    }
+
+    const cancellable = checkTaskAffordance(options.repositories, task, "cancel_task");
+    if (!cancellable.ok) {
+      sendJson(response, 409, {
+        error: "Task can no longer be cancelled.",
+        ...staleAffordanceBody(task, cancellable.state, options.repositories),
+      });
+      return;
+    }
+
+    const cancelled = applyTaskTransition({
+      repositories: options.repositories,
+      task,
+      status: "cancelled",
+      resolution: "cancelled",
+      now: options.now,
+      createId: options.createId,
+    });
+    sendJson(response, 200, {
+      task: summarizeTask(
+        cancelled.task,
+        options.repositories.listTaskDependencies(task.id).map((dependency) => dependency.dependsOnTaskId),
+        options.repositories,
+      ),
+    });
     return;
   }
 
   const refreshTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/refresh$/);
   if (method === "POST" && refreshTaskMatch) {
+    const refreshTarget = options.repositories.getTask(refreshTaskMatch[1]);
+    if (!refreshTarget) {
+      sendJson(response, 404, { error: `Task not found: ${refreshTaskMatch[1]}` });
+      return;
+    }
+
+    const refreshable = checkTaskAffordance(options.repositories, refreshTarget, "refresh_task");
+    if (!refreshable.ok) {
+      sendJson(response, 409, {
+        error: "Task has nothing to refresh.",
+        ...staleAffordanceBody(refreshTarget, refreshable.state, options.repositories),
+      });
+      return;
+    }
+
     const result = refreshTaskDependencyState({
       repositories: options.repositories,
       taskId: refreshTaskMatch[1],
@@ -562,6 +618,7 @@ async function routeRequest(
       task: summarizeTask(
         result.task,
         dependencies.map((dependency) => dependency.dependsOnTaskId),
+        options.repositories,
       ),
       event,
       progressEvent: result.progressEvent ? summarizeTaskProgressEvent(result.progressEvent) : undefined,
@@ -575,6 +632,21 @@ async function routeRequest(
 
   const recoverTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/recover$/);
   if (method === "POST" && recoverTaskMatch) {
+    const recoverTarget = options.repositories.getTask(recoverTaskMatch[1]);
+    if (!recoverTarget) {
+      sendJson(response, 404, { error: `Task not found: ${recoverTaskMatch[1]}` });
+      return;
+    }
+
+    const recoverable = checkTaskAffordance(options.repositories, recoverTarget, "recover_task");
+    if (!recoverable.ok) {
+      sendJson(response, 409, {
+        error: "Task cannot be recovered from its current state.",
+        ...staleAffordanceBody(recoverTarget, recoverable.state, options.repositories),
+      });
+      return;
+    }
+
     const result = recoverTask({
       repositories: options.repositories,
       taskId: recoverTaskMatch[1],
@@ -596,11 +668,13 @@ async function routeRequest(
       task: summarizeTask(
         result.task,
         options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId),
+        options.repositories,
       ),
       followUpTask: result.followUpTask
         ? summarizeTask(
           result.followUpTask,
           options.repositories.listTaskDependencies(result.followUpTask.id).map((dependency) => dependency.dependsOnTaskId),
+          options.repositories,
         )
         : undefined,
       event,
@@ -616,7 +690,21 @@ async function routeRequest(
   const replanTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/replan-proposals$/);
   if (method === "POST" && replanTaskMatch) {
     const task = options.repositories.getTask(replanTaskMatch[1]);
-    const company = task ? options.repositories.getCompany(task.companyId) : null;
+    if (!task) {
+      sendJson(response, 404, { error: `Task not found: ${replanTaskMatch[1]}` });
+      return;
+    }
+
+    const replannable = checkTaskAffordance(options.repositories, task, "request_replan");
+    if (!replannable.ok) {
+      sendJson(response, 409, {
+        error: "Task cannot be replanned from its current state.",
+        ...staleAffordanceBody(task, replannable.state, options.repositories),
+      });
+      return;
+    }
+
+    const company = options.repositories.getCompany(task.companyId);
     const plannerAgent = company ? options.agents.find((agent) => agent.id === company.selectedCeoAgentId) : undefined;
     const proposal = await createReplanProposalForTask({
       repositories: options.repositories,
@@ -658,8 +746,8 @@ async function routeRequest(
     }
     sendJson(response, 200, {
       proposal: summarizeReplanProposal(result.proposal),
-      sourceTask: summarizeTask(result.sourceTask, []),
-      createdTasks: summarizeTasks(result.createdTasks, []),
+      sourceTask: summarizeTask(result.sourceTask, [], options.repositories),
+      createdTasks: summarizeTasks(result.createdTasks, [], options.repositories),
       dependencyCascade: summarizeDependencyCascade(dependencyCascade, options.repositories),
     });
     return;
@@ -697,6 +785,7 @@ async function routeRequest(
       updatedTasks: summarizeTasks(
         result.updatedTasks,
         result.updatedTasks.flatMap((task) => options.repositories.listTaskDependencies(task.id)),
+        options.repositories,
       ),
       events: result.events.map(summarizeTaskEvent),
     });
@@ -705,8 +794,63 @@ async function routeRequest(
 
   const approvalMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)$/);
   if (method === "POST" && approvalMatch) {
-    const body = await readJson<{ decision: "approved" | "denied" }>(request);
-    sendJson(response, 200, { approval: { id: approvalMatch[1], status: body.decision } });
+    const body = await readJson<{ decision?: "approved" | "denied"; note?: string }>(request);
+
+    if (body.decision !== "approved" && body.decision !== "denied") {
+      sendJson(response, 400, { error: "Decision must be approved or denied." });
+      return;
+    }
+
+    const result = decideFounderApproval({
+      repositories: options.repositories,
+      approvalId: approvalMatch[1],
+      decision: body.decision,
+      note: body.note?.trim() ? body.note.trim() : null,
+      now: options.now,
+      createId: options.createId,
+    });
+
+    if (result.kind === "not_found") {
+      sendJson(response, 404, { error: `Approval not found: ${approvalMatch[1]}` });
+      return;
+    }
+
+    if (result.kind === "already_decided") {
+      sendJson(response, 409, {
+        error: `Approval was already ${result.approval.status}.`,
+        approval: result.approval,
+      });
+      return;
+    }
+
+    if (result.kind === "not_offered") {
+      sendJson(response, 409, {
+        error: "Task is no longer waiting for Founder Approval.",
+        approval: result.approval,
+        ...staleAffordanceBody(result.task, result.state, options.repositories),
+      });
+      return;
+    }
+
+    if (result.kind === "recorded") {
+      sendJson(response, 200, { approval: result.approval });
+      return;
+    }
+
+    const approvalEvent = summarizeTaskEvent(result.event);
+    events.publish(approvalEvent);
+    if (result.task.status === "queued") {
+      options.requestSchedulerWake?.("dependency_cascade_queued");
+    }
+    sendJson(response, 200, {
+      approval: result.approval,
+      task: summarizeTask(
+        result.task,
+        options.repositories.listTaskDependencies(result.task.id).map((dependency) => dependency.dependsOnTaskId),
+        options.repositories,
+      ),
+      event: approvalEvent,
+    });
     return;
   }
 
@@ -752,6 +896,15 @@ function buildCompanyState(
     now: options?.now,
     createId: options?.createId,
     requestSchedulerWake: () => options?.requestSchedulerWake?.("dependency_cascade_queued"),
+  });
+  // Standing repair of the Task Hold invariant (ADR 0020): whatever parked a task — a path that
+  // predates Holds, one that bypassed the seam, or a Hold left open after the task moved on — the
+  // founder gets a task with an owner and a way forward rather than a silent stall.
+  reconcileTaskHolds({
+    repositories,
+    companyId: currentCompany.id,
+    now: options?.now,
+    createId: options?.createId,
   });
   let tasks = repositories.listTasksForCompany(currentCompany.id);
   const keyResults = repositories.listKeyResults(currentCompany.id);
@@ -830,7 +983,7 @@ function buildCompanyState(
     departments: departments.map(summarizeDepartment),
     objectives: objectives.map(summarizeObjective),
     keyResults,
-    tasks: summarizeTasks(tasks, taskDependencies),
+    tasks: summarizeTasks(tasks, taskDependencies, repositories),
     proof: repositories.listProofsForCompany(company.id).map(summarizeProof),
     businessArtifacts,
     ceoOfficeItems: projectCeoOfficeItems({
@@ -844,6 +997,7 @@ function buildCompanyState(
       objectives,
       keyResults,
       businessArtifacts: businessArtifactRecords,
+      taskHolds: repositories.listOpenTaskHoldsForCompany(currentCompany.id),
       founderDecisions: ceoAttention.founderDecisions,
       founderDecisionResolutions,
       humanActions: ceoAttention.humanActions,
@@ -1199,11 +1353,27 @@ async function confirmHumanAction(input: {
       continue;
     }
 
-    input.repositories.updateTaskStatus(task.id, "queued");
-    input.repositories.updateTaskExecutionSummary(task.id, {
-      latestFailureReason: null,
-      latestFailureMessage: null,
-      dependencyNote: null,
+    // Confirming the Human Action answers that Hold and says nothing about any other. A task gated
+    // on a Human Action may also still owe an upstream deliverable — `isHumanActionBlockedTask`
+    // accepts `waiting_dependency` tasks, which already carry a dependency Hold — so releasing runs
+    // the task only when this was the last thing holding it (ADR 0020 amendment).
+    const answeredHold = findOpenTaskHold(
+      input.repositories,
+      task.id,
+      "awaiting_human_action",
+      humanAction.id,
+    );
+    releaseTaskHold({
+      repositories: input.repositories,
+      task,
+      holdId: answeredHold?.id ?? "",
+      executionSummary: {
+        latestFailureReason: null,
+        latestFailureMessage: null,
+        dependencyNote: null,
+      },
+      now: input.now,
+      createId,
     });
 
     const refreshed = input.repositories.getTask(task.id);
@@ -1216,9 +1386,11 @@ async function confirmHumanAction(input: {
       companyId: refreshed.companyId,
       taskId: refreshed.id,
       type: "dependency_ready",
-      message: `Human Action confirmed; task queued: ${refreshed.title}.`,
+      message: refreshed.status === "queued"
+        ? `Human Action confirmed; task queued: ${refreshed.title}.`
+        : `Human Action confirmed; ${refreshed.title} is still waiting on something else.`,
       createdAt: verifiedAt,
-      status: "queued",
+      status: refreshed.status,
       failureReason: null,
       failureMessage: null,
       executionProfileName: null,
@@ -1282,11 +1454,24 @@ function applyPendingHumanActionBlocks(input: {
         continue;
       }
 
-      input.repositories.updateTaskStatus(task.id, "blocked");
-      input.repositories.updateTaskExecutionSummary(task.id, {
-        latestFailureReason: "missing_deliverable",
-        latestFailureMessage: `Human Action required: ${humanAction.label}`,
-        dependencyNote,
+      applyTaskTransition({
+        repositories: input.repositories,
+        task,
+        status: "blocked",
+        executionSummary: {
+          latestFailureReason: "missing_deliverable",
+          latestFailureMessage: `Human Action required: ${humanAction.label}`,
+          dependencyNote,
+        },
+        hold: {
+          kind: "awaiting_human_action",
+          resolver: "founder",
+          subjectKind: "human_action",
+          subjectId: humanAction.id,
+          reason: `Human Action required: ${humanAction.label}`,
+        },
+        now: input.now,
+        createId: input.createId,
       });
 
       const refreshed = input.repositories.getTask(task.id);
@@ -1340,11 +1525,24 @@ function applyWaitStateRouting(input: {
 
       const dependencyNote = waitStateDependencyNote(waitState);
       if (waitState.status === "waiting" && task.status === "queued") {
-        input.repositories.updateTaskStatus(task.id, "waiting_dependency");
-        input.repositories.updateTaskExecutionSummary(task.id, {
-          latestFailureReason: null,
-          latestFailureMessage: null,
-          dependencyNote,
+        applyTaskTransition({
+          repositories: input.repositories,
+          task,
+          status: "waiting_dependency",
+          executionSummary: {
+            latestFailureReason: null,
+            latestFailureMessage: null,
+            dependencyNote,
+          },
+          hold: {
+            kind: "awaiting_external_wait",
+            resolver: "time",
+            subjectKind: "wait_state",
+            subjectId: waitState.id,
+            reason: `Wait State active until ${waitState.nextCheckAt}: ${waitState.label}.`,
+          },
+          now: input.now,
+          createId,
         });
 
         const refreshed = input.repositories.getTask(task.id);
@@ -1367,11 +1565,24 @@ function applyWaitStateRouting(input: {
       }
 
       if (waitState.status === "ready_for_check_in" && task.status === "waiting_dependency" && task.dependencyNote === dependencyNote) {
-        input.repositories.updateTaskStatus(task.id, "queued");
-        input.repositories.updateTaskExecutionSummary(task.id, {
-          latestFailureReason: null,
-          latestFailureMessage: null,
-          dependencyNote: null,
+        // The wait elapsing answers the wait Hold, not every Hold on the task.
+        const elapsedHold = findOpenTaskHold(
+          input.repositories,
+          task.id,
+          "awaiting_external_wait",
+          waitState.id,
+        );
+        releaseTaskHold({
+          repositories: input.repositories,
+          task,
+          holdId: elapsedHold?.id ?? "",
+          executionSummary: {
+            latestFailureReason: null,
+            latestFailureMessage: null,
+            dependencyNote: null,
+          },
+          now: input.now,
+          createId,
         });
 
         const refreshed = input.repositories.getTask(task.id);
@@ -1383,9 +1594,11 @@ function applyWaitStateRouting(input: {
           createId,
           task: refreshed,
           type: "dependency_ready",
-          message: `Wait State check-in is due; task queued: ${refreshed.title}.`,
+          message: refreshed.status === "queued"
+            ? `Wait State check-in is due; task queued: ${refreshed.title}.`
+            : `Wait State check-in is due; ${refreshed.title} is still waiting on something else.`,
           createdAt: timestamp,
-          status: "queued",
+          status: refreshed.status,
           dependencyNote: null,
         });
         input.repositories.appendTaskEvent(event);
@@ -1471,7 +1684,8 @@ function waitStateTaskEvent(input: {
   type: "dependency_waiting" | "dependency_ready";
   message: string;
   createdAt: string;
-  status: "waiting_dependency" | "queued";
+  /** The task's actual status after the change — a released wait may leave it parked on another Hold. */
+  status: TaskStatus;
   dependencyNote: string | null;
 }): TaskEvent {
   return {
@@ -1535,7 +1749,11 @@ type CeoReviewDecisionResult =
       dependencyCascade?: DependencyCascadeResult;
     }
   | { kind: "not_found" }
-  | { kind: "not_in_review" }
+  /**
+   * The task is no longer held for CEO review. Carries the affordances it *does* have, so the
+   * founder is redirected to the real next action instead of being told only what they cannot do.
+   */
+  | { kind: "not_offered"; state: TaskAffordanceState; task: Task }
   | { kind: "missing_proof" }
   | { kind: "invalid_business_artifact" };
 
@@ -1555,8 +1773,12 @@ function createCeoReviewDecision(input: {
     return { kind: "not_found" };
   }
 
-  if (task.status !== "review") {
-    return { kind: "not_in_review" };
+  // Guarded on the Resume Affordance, not on `task.status`: the same computation CEO Office used to
+  // decide whether to offer the decision, so an offered decision is always accepted and a withdrawn
+  // one is never offered (ADR 0020).
+  const affordance = checkTaskAffordance(input.repositories, task, "ceo_review_decision");
+  if (!affordance.ok) {
+    return { kind: "not_offered", state: affordance.state, task };
   }
 
   const proofs = input.repositories.listProofsForTask(task.id);
@@ -1620,7 +1842,16 @@ function createCeoReviewDecision(input: {
     );
   }
 
-  input.repositories.updateTaskStatus(task.id, "queued");
+  // CEO Office answered the review Hold. Releasing rather than forcing `queued` keeps the task
+  // parked if anything else still holds it (ADR 0020 amendment).
+  const reviewHold = findOpenTaskHold(input.repositories, task.id, "awaiting_ceo_review");
+  const returned = releaseTaskHold({
+    repositories: input.repositories,
+    task,
+    holdId: reviewHold?.id ?? "",
+    now: input.now,
+    createId: input.createId,
+  });
 
   const event: TaskEvent = {
     id: input.createId?.("task_event") ?? createDefaultId("task_event"),
@@ -1634,7 +1865,7 @@ function createCeoReviewDecision(input: {
       taskTitleText: task.titleText,
     }),
     createdAt: timestamp,
-    status: "queued",
+    status: returned.task.status,
     failureReason: null,
     failureMessage: null,
     executionProfileName: task.latestExecutionProfileName ?? null,
@@ -1669,10 +1900,7 @@ function createCeoReviewDecision(input: {
   return {
     kind: "created",
     decision,
-    task: {
-      ...task,
-      status: "queued",
-    },
+    task: returned.task,
     event,
     progressEvent,
   };
@@ -2036,6 +2264,7 @@ function summarizeDependencyCascade(
       summarizeTask(
         update.task,
         repositories.listTaskDependencies(update.task.id).map((dependency) => dependency.dependsOnTaskId),
+        repositories,
       ),
     ),
     events: cascade.updatedTasks
@@ -2059,6 +2288,7 @@ function summarizeParentAggregation(
       summarizeTask(
         update.task,
         repositories.listTaskDependencies(update.task.id).map((dependency) => dependency.dependsOnTaskId),
+        repositories,
       ),
     ),
     events: aggregation.updatedTasks
@@ -2150,7 +2380,11 @@ function summarizeKeyResult(keyResult: KeyResult) {
   };
 }
 
-function summarizeTasks(tasks: Task[], dependencies: Array<{ taskId: string; dependsOnTaskId: string }>) {
+function summarizeTasks(
+  tasks: Task[],
+  dependencies: Array<{ taskId: string; dependsOnTaskId: string }>,
+  repositories: ReturnType<typeof createRepositories>,
+) {
   const dependenciesByTask = new Map<string, string[]>();
   for (const dependency of dependencies) {
     dependenciesByTask.set(dependency.taskId, [
@@ -2159,11 +2393,24 @@ function summarizeTasks(tasks: Task[], dependencies: Array<{ taskId: string; dep
     ]);
   }
 
-  return tasks.map((task) => summarizeTask(task, dependenciesByTask.get(task.id) ?? []));
+  return tasks.map((task) => summarizeTask(task, dependenciesByTask.get(task.id) ?? [], repositories));
 }
 
-function summarizeTask(task: Task, dependsOnTaskIds: string[]) {
+/**
+ * Every task summary carries its open Task Holds and its Resume Affordances, because the client must
+ * never re-derive either: the dashboard used to keep its own `isRecoverableTask` predicate, which
+ * drifted from the server's and left blocked tasks with no offered way forward (ADR 0020).
+ */
+function summarizeTask(
+  task: Task,
+  dependsOnTaskIds: string[],
+  repositories: ReturnType<typeof createRepositories>,
+) {
+  const { holds, affordances } = resolveTaskAffordanceState(repositories, task);
+
   return {
+    holds: holds.map(summarizeTaskHold),
+    affordances,
     id: task.id,
     title: task.title,
     titleText: localizedSummaryText(task.titleText, task.title),
@@ -2185,6 +2432,40 @@ function summarizeTask(task: Task, dependsOnTaskIds: string[]) {
     parentTaskId: task.parentTaskId ?? undefined,
     taskKind: task.taskKind ?? "parent",
     source: task.source ?? "ceo",
+  };
+}
+
+/**
+ * The body every affordance refusal carries. A stale action is a routine race — the founder was
+ * looking at a view the runtime has since moved past — so the refusal hands back the task as it is
+ * now, with what can be done to it, and the client re-renders instead of dead-ending (ADR 0020).
+ */
+function staleAffordanceBody(
+  task: Task,
+  state: TaskAffordanceState,
+  repositories: ReturnType<typeof createRepositories>,
+) {
+  return {
+    task: summarizeTask(
+      task,
+      repositories.listTaskDependencies(task.id).map((dependency) => dependency.dependsOnTaskId),
+      repositories,
+    ),
+    holds: state.holds.map(summarizeTaskHold),
+    affordances: state.affordances,
+  };
+}
+
+function summarizeTaskHold(hold: TaskHold) {
+  return {
+    id: hold.id,
+    kind: hold.kind,
+    resolver: hold.resolver,
+    subjectKind: hold.subjectKind ?? undefined,
+    subjectId: hold.subjectId ?? undefined,
+    reason: hold.reason,
+    reasonText: localizedSummaryText(hold.reasonText, hold.reason),
+    openedAt: hold.openedAt,
   };
 }
 

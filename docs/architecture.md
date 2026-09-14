@@ -75,17 +75,42 @@ The workspace layer rejects paths that escape the project root.
 
 The local API server currently exposes:
 
+Reads:
+
 - `GET /api/agents`
-- `POST /api/companies`
-- `POST /api/companies/:id/activate`
+- `GET /api/companies`
+- `GET /api/companies/:id/state` — the full company snapshot the dashboard renders
 - `GET /api/companies/:id/reviews`
 - `GET /api/tasks/:id/proof`
-- `POST /api/tasks/:id/cancel`
-- `POST /api/approvals/:id`
-- `POST /api/kill-switch`
 - `GET /api/events` for Server-Sent Events
 
+Company lifecycle:
+
+- `POST /api/companies`
+- `POST /api/companies/:id/activate`
+- `POST /api/companies/:id/retry-creation`
+- `POST /api/companies/:id/ceo-intakes`
+- `POST /api/kill-switch`
+
+Moving a stopped task forward — each of these is a Resume Affordance, and each is guarded by one:
+
+- `POST /api/ceo-review-decisions` — approve or return work awaiting CEO Office
+- `POST /api/founder-decisions` — resolve a Founder Decision
+- `POST /api/approvals/:id` — grant or deny Founder Approval before dispatch
+- `POST /api/companies/:id/human-actions/:actionId/confirm` — submit evidence a Human Action was done
+- `POST /api/tasks/:id/refresh` — re-derive dependency readiness, or recapture proof from the workspace
+- `POST /api/tasks/:id/recover` — re-run the work, or continue it from Partial Output
+- `POST /api/tasks/:id/replan-proposals` — ask the CEO Agent for a replan
+- `POST /api/replan-proposals/:id/confirm` — accept a replan and rewire dependencies
+- `POST /api/tasks/:id/cancel`
+
 SSE is used for task logs and status updates.
+
+### Task summaries carry their own affordances
+
+Every task the API serializes includes `holds` (why it is stopped, who owns it, what it waits on) and `affordances` (what can be done to it right now). Clients render actions from that list and never re-derive eligibility from status and failure reason — see ADR 0020 and `apps/server/CONTEXT.md`.
+
+The route that performs an action checks the same affordance before doing it. A stale request is answered `409` with the task's current `holds` and `affordances` in the body, not with a bare error, so a client looking at a view the runtime has moved past can show the real next action instead of a dead end.
 
 ## Agents
 
@@ -119,6 +144,8 @@ The OKR system stores objectives, key results, task priorities, and review outpu
 ## Scheduler
 
 The scheduler claims queued tasks from SQLite with locks, creates isolated task workspaces, dispatches work to a matching agent, writes logs, emits SSE events, captures proof, and moves tasks to review, failed, or blocked states.
+
+Every one of those state moves goes through `applyTaskTransition`, the single writer of task status. A task that stops carries a Task Hold saying why it stopped and who can restart it; a task the runtime is carrying carries none. Before dispatch the scheduler also checks the company's Permission Mode, and a task needing Founder Approval is held on its Approval record rather than run. See `apps/server/CONTEXT.md`.
 
 ## Proof And Review
 

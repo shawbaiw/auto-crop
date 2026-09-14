@@ -12,7 +12,7 @@ describe("triggerKillSwitch", () => {
     const { client, repositories } = createKillSwitchFixture();
     const cancelled: string[] = [];
     repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T00:00:00.000Z");
-    repositories.updateTaskStatus("task_1", "running");
+    repositories.writeTaskStatusUnchecked("task_1", "running");
     repositories.createAgentRun({
       id: "agent_run_1",
       taskId: "task_1",

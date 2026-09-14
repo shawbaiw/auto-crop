@@ -2,6 +2,7 @@ import type {
   AgentRun,
   AgentFailureReason,
   Approval,
+  ApprovalStatus,
   BusinessArtifact,
   CompanyEvent,
   CeoIntake,
@@ -25,6 +26,11 @@ import type {
   TaskDependency,
   TaskEvent,
   TaskEventType,
+  TaskHold,
+  TaskHoldKind,
+  TaskHoldResolution,
+  TaskHoldResolver,
+  TaskHoldSubjectKind,
   TaskKind,
   TaskProgressEvent,
   TaskProgressStatus,
@@ -352,8 +358,110 @@ export function createRepositories(database: DatabaseClient) {
       return row ? mapTask(row as TaskRow) : null;
     },
 
-    updateTaskStatus(id: string, status: TaskStatus): void {
+    /**
+     * Raw task-status write. `applyTaskTransition` is the only legal caller: it is what keeps a
+     * task's status and its open Task Holds in step (ADR 0020), and a direct write here parks a task
+     * with nobody able to move it. `taskTransition.seam.test.ts` fails the build on a new caller.
+     */
+    writeTaskStatusUnchecked(id: string, status: TaskStatus): void {
       database.prepare("UPDATE tasks SET status = ? WHERE id = ?").run(status, id);
+    },
+
+    openTaskHold(hold: TaskHold): void {
+      database
+        .prepare(
+          `INSERT INTO task_holds (
+            id, company_id, task_id, kind, resolver, subject_kind, subject_id,
+            reason, reason_text, opened_at, resolved_at, resolution
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          hold.id,
+          hold.companyId,
+          hold.taskId,
+          hold.kind,
+          hold.resolver,
+          hold.subjectKind ?? null,
+          hold.subjectId ?? null,
+          hold.reason,
+          stringifyLocalizedText(hold.reasonText),
+          hold.openedAt,
+          hold.resolvedAt ?? null,
+          hold.resolution ?? null,
+        );
+    },
+
+    listOpenTaskHolds(taskId: string): TaskHold[] {
+      return (
+        database
+          .prepare("SELECT * FROM task_holds WHERE task_id = ? AND resolved_at IS NULL ORDER BY opened_at ASC, id ASC")
+          .all(taskId) as TaskHoldRow[]
+      ).map(mapTaskHold);
+    },
+
+    listOpenTaskHoldsForCompany(companyId: string): TaskHold[] {
+      return (
+        database
+          .prepare(
+            "SELECT * FROM task_holds WHERE company_id = ? AND resolved_at IS NULL ORDER BY opened_at ASC, id ASC",
+          )
+          .all(companyId) as TaskHoldRow[]
+      ).map(mapTaskHold);
+    },
+
+    listTaskHoldsForTask(taskId: string): TaskHold[] {
+      return (
+        database
+          .prepare("SELECT * FROM task_holds WHERE task_id = ? ORDER BY opened_at ASC, id ASC")
+          .all(taskId) as TaskHoldRow[]
+      ).map(mapTaskHold);
+    },
+
+    /** Close one specific open Hold. Used when an actor answered that Hold in particular. */
+    resolveTaskHoldById(id: string, resolution: TaskHoldResolution, resolvedAt: string): TaskHold | null {
+      const row = database
+        .prepare("SELECT * FROM task_holds WHERE id = ? AND resolved_at IS NULL")
+        .get(id) as TaskHoldRow | undefined;
+
+      if (!row) {
+        return null;
+      }
+
+      database
+        .prepare("UPDATE task_holds SET resolved_at = ?, resolution = ? WHERE id = ?")
+        .run(resolvedAt, resolution, id);
+
+      return { ...mapTaskHold(row), resolvedAt, resolution };
+    },
+
+    /**
+     * Close the open Holds on a task, optionally only those of the given kinds, and return what was
+     * actually closed so the caller can emit exactly the state changes that happened.
+     */
+    resolveOpenTaskHolds(
+      taskId: string,
+      resolution: TaskHoldResolution,
+      resolvedAt: string,
+      kinds?: readonly TaskHoldKind[],
+    ): TaskHold[] {
+      const open = (
+        database
+          .prepare("SELECT * FROM task_holds WHERE task_id = ? AND resolved_at IS NULL ORDER BY opened_at ASC, id ASC")
+          .all(taskId) as TaskHoldRow[]
+      )
+        .map(mapTaskHold)
+        .filter((hold) => !kinds || kinds.includes(hold.kind));
+
+      if (open.length === 0) {
+        return [];
+      }
+
+      const update = database.prepare("UPDATE task_holds SET resolved_at = ?, resolution = ? WHERE id = ?");
+      for (const hold of open) {
+        update.run(resolvedAt, resolution, hold.id);
+      }
+
+      return open.map((hold) => ({ ...hold, resolvedAt, resolution }));
     },
 
     updateTaskExecutionSummary(
@@ -954,8 +1062,8 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO approvals (
-            id, company_id, task_id, action_type, risk_level, status, requested_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            id, company_id, task_id, action_type, risk_level, status, requested_at, decided_at, note
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           approval.id,
@@ -965,7 +1073,29 @@ export function createRepositories(database: DatabaseClient) {
           approval.riskLevel,
           approval.status,
           approval.requestedAt,
+          approval.decidedAt ?? null,
+          approval.note ?? null,
         );
+    },
+
+    getApproval(id: string): Approval | null {
+      const row = database.prepare("SELECT * FROM approvals WHERE id = ?").get(id);
+      return row ? mapApproval(row as ApprovalRow) : null;
+    },
+
+    listApprovalsForTask(taskId: string): Approval[] {
+      return (
+        database
+          .prepare("SELECT * FROM approvals WHERE task_id = ? ORDER BY requested_at ASC, id ASC")
+          .all(taskId) as ApprovalRow[]
+      ).map(mapApproval);
+    },
+
+    /** Records the founder's answer. The Task Hold it clears is resolved by the caller's transition. */
+    recordApprovalDecision(id: string, status: ApprovalStatus, decidedAt: string, note: string | null): void {
+      database
+        .prepare("UPDATE approvals SET status = ?, decided_at = ?, note = ? WHERE id = ?")
+        .run(status, decidedAt, note, id);
     },
 
     createAgentRun(agentRun: AgentRun): void {
@@ -1624,6 +1754,64 @@ function mapTask(row: TaskRow): Task {
     parentTaskId: row.parent_task_id,
     taskKind: row.task_kind,
     source: row.source,
+  };
+}
+
+type ApprovalRow = {
+  id: string;
+  company_id: string;
+  task_id: string | null;
+  action_type: string;
+  risk_level: Approval["riskLevel"];
+  status: ApprovalStatus;
+  requested_at: string;
+  decided_at: string | null;
+  note: string | null;
+};
+
+function mapApproval(row: ApprovalRow): Approval {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    taskId: row.task_id,
+    actionType: row.action_type,
+    riskLevel: row.risk_level,
+    status: row.status,
+    requestedAt: row.requested_at,
+    decidedAt: row.decided_at,
+    note: row.note,
+  };
+}
+
+type TaskHoldRow = {
+  id: string;
+  company_id: string;
+  task_id: string;
+  kind: TaskHoldKind;
+  resolver: TaskHoldResolver;
+  subject_kind: TaskHoldSubjectKind | null;
+  subject_id: string | null;
+  reason: string;
+  reason_text: string | null;
+  opened_at: string;
+  resolved_at: string | null;
+  resolution: TaskHoldResolution | null;
+};
+
+function mapTaskHold(row: TaskHoldRow): TaskHold {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    taskId: row.task_id,
+    kind: row.kind,
+    resolver: row.resolver,
+    subjectKind: row.subject_kind,
+    subjectId: row.subject_id,
+    reason: row.reason,
+    reasonText: parseLocalizedText(row.reason_text),
+    openedAt: row.opened_at,
+    resolvedAt: row.resolved_at,
+    resolution: row.resolution,
   };
 }
 

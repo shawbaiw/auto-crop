@@ -47,8 +47,13 @@ export function CompanyOperations({
     [events, tasksById, language, t],
   );
   const replanSourceTaskIds = useMemo(() => new Set(replanProposals.map((proposal) => proposal.sourceTaskId)), [replanProposals]);
+  // Read from the server's Resume Affordances, not from a status rule of our own. The old rule —
+  // `status === "needs_replan"` — missed every task whose only way forward is a replan without ever
+  // reaching that status, most importantly one at the Bounded Recovery ceiling (ADR 0020).
   const tasksAwaitingReplanProposal = tasks.filter(
-    (task) => task.status === "needs_replan" && !replanSourceTaskIds.has(task.id),
+    (task) =>
+      (task.affordances ?? []).some((affordance) => affordance.kind === "request_replan")
+      && !replanSourceTaskIds.has(task.id),
   );
   const taskCounts = countTaskStates(tasks);
 

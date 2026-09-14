@@ -1,4 +1,5 @@
 import type { createRepositories } from "../db/repositories";
+import { applyTaskTransition } from "./taskTransition";
 
 export type TriggerKillSwitchInput = {
   companyId: string;
@@ -24,7 +25,15 @@ export function triggerKillSwitch(input: TriggerKillSwitchInput): TriggerKillSwi
 
   for (const taskId of cancelledTasks) {
     input.cancelActiveRun(taskId);
-    input.repositories.updateTaskStatus(taskId, "cancelled");
+    // Cancelling is terminal, so the seam closes every open Hold: a stopped company must not leave
+    // the founder a queue of Holds on tasks that will never run again.
+    applyTaskTransition({
+      repositories: input.repositories,
+      task: taskId,
+      status: "cancelled",
+      resolution: "cancelled",
+      now: input.now,
+    });
   }
 
   for (const run of runningRuns) {

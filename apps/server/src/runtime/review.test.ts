@@ -77,7 +77,7 @@ describe("runCompanyReview", () => {
       summary: "Tests passed.",
       verifiedAt: null,
     };
-    repositories.updateTaskStatus(task.id, "review");
+    repositories.writeTaskStatusUnchecked(task.id, "review");
     repositories.appendProof(proof);
 
     const result = runCompanyReview({
@@ -100,7 +100,7 @@ describe("runCompanyReview", () => {
 
   it("keeps missing-proof tasks in review and raises objective priority", () => {
     const { projectRoot, repositories, task } = createReviewFixture();
-    repositories.updateTaskStatus(task.id, "review");
+    repositories.writeTaskStatusUnchecked(task.id, "review");
 
     const result = runCompanyReview({
       projectRoot,

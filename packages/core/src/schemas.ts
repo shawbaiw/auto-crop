@@ -31,6 +31,41 @@ export const taskStatusSchema = z.enum([
 export const taskKindSchema = z.enum(["parent", "department_subtask"]);
 export const taskSourceSchema = z.enum(["ceo", "department", "user"]);
 
+export const taskHoldKindSchema = z.enum([
+  "awaiting_ceo_review",
+  "awaiting_founder_approval",
+  "awaiting_human_action",
+  "awaiting_founder_decision",
+  "awaiting_dependency_artifact",
+  "awaiting_external_wait",
+  "invalid_business_artifact",
+  "recovery_exhausted",
+  "needs_replan",
+  "runtime_interrupted",
+]);
+export const taskHoldResolverSchema = z.enum(["ceo_office", "founder", "upstream_task", "runtime", "time"]);
+export const taskHoldSubjectKindSchema = z.enum([
+  "business_artifact",
+  "human_action",
+  "founder_decision",
+  "approval",
+  "task",
+  "wait_state",
+  "agent_run",
+]);
+export const taskHoldResolutionSchema = z.enum(["cleared", "superseded", "cancelled"]);
+export const taskAffordanceKindSchema = z.enum([
+  "ceo_review_decision",
+  "decide_founder_approval",
+  "confirm_human_action",
+  "resolve_founder_decision",
+  "refresh_task",
+  "recover_task",
+  "request_replan",
+  "confirm_replan",
+  "cancel_task",
+]);
+
 export const agentFailureReasonSchema = z.enum([
   "timeout",
   "agent_failed",
@@ -49,6 +84,7 @@ export const taskEventTypeSchema = z.enum([
   "automatic_acceptance",
   "ceo_review_decision",
   "founder_decision",
+  "founder_approval",
   "proof_recovered",
   "task_failed",
   "task_blocked",

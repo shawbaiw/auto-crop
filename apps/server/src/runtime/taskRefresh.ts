@@ -8,11 +8,13 @@ import type {
   TaskProgressEvent,
   TaskStatus,
 } from "@auto-crop/core";
+import { isAffordanceApplicable } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhausted } from "./boundedRecovery";
 import { captureBusinessArtifact, isReviewableBusinessArtifact } from "./businessArtifact";
 import { refreshDependencyTasks } from "./dependencyCascade";
 import { refreshParentTaskAggregationTask } from "./parentTaskAggregation";
+import { applyTaskTransition } from "./taskTransition";
 import { captureProofs } from "./proof";
 
 export type RefreshTaskDependencyStateInput = {
@@ -157,11 +159,23 @@ export function recoverProofIfPossible(
     const failureReason = businessArtifactFailureReason(businessArtifact);
     const failureMessage = businessArtifactFailureMessage(task, businessArtifact);
 
-    input.repositories.updateTaskStatus(task.id, "blocked");
-    input.repositories.updateTaskExecutionSummary(task.id, {
-      latestFailureReason: failureReason,
-      latestFailureMessage: failureMessage,
-      dependencyNote: null,
+    applyTaskTransition({
+      repositories: input.repositories,
+      task,
+      status: "blocked",
+      executionSummary: {
+        latestFailureReason: failureReason,
+        latestFailureMessage: failureMessage,
+        dependencyNote: null,
+      },
+      hold: {
+        kind: "invalid_business_artifact",
+        subjectKind: "business_artifact",
+        subjectId: businessArtifact.id,
+        reason: failureMessage,
+      },
+      now: input.now,
+      createId: input.createId,
     });
 
     const event: TaskEvent = {
@@ -217,15 +231,29 @@ export function recoverProofIfPossible(
     };
   }
 
-  input.repositories.updateTaskStatus(task.id, "review");
+  // Entering `review` opens the Hold CEO Office reads to offer the decision. That Hold — not the
+  // artifact's `reviewStatus` — is what makes the approval offerable, so the two can never disagree.
+  applyTaskTransition({
+    repositories: input.repositories,
+    task,
+    status: "review",
+    executionSummary: {
+      latestFailureReason: null,
+      latestFailureMessage: null,
+      dependencyNote: null,
+    },
+    hold: {
+      kind: "awaiting_ceo_review",
+      subjectKind: "business_artifact",
+      subjectId: businessArtifact.id,
+      reason: `Recovered proof for ${task.title} is waiting for a CEO Office review decision.`,
+    },
+    now: input.now,
+    createId: input.createId,
+  });
   if (task.artifactWorkspacePath && task.artifactWorkspacePath !== workspacePath) {
     input.repositories.updateTaskArtifactWorkspacePath(task.id, workspacePath);
   }
-  input.repositories.updateTaskExecutionSummary(task.id, {
-    latestFailureReason: null,
-    latestFailureMessage: null,
-    dependencyNote: null,
-  });
 
   const now = input.now ?? (() => new Date());
   const createId = input.createId ?? defaultCreateId;
@@ -333,8 +361,9 @@ function isProofRecoveryEligible(task: Task): boolean {
   );
 }
 
+/** One declaration, shared with the offer: `isAffordanceApplicable` in `@auto-crop/core`. */
 function isRefreshableStatus(status: TaskStatus): boolean {
-  return status === "blocked" || status === "failed" || status === "waiting_dependency";
+  return isAffordanceApplicable("refresh_task", status);
 }
 
 function proofRecoveryNotFoundMessage(task: Task): string {
