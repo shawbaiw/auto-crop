@@ -11,10 +11,15 @@ import {
  * Strategic Decision Kind. Produced by {@link parseOpenDecisions} for entries that are kept (known
  * `decisionKind`, more than one option, all required fields present and well-shaped).
  *
- * `recommendation`, `rationale`, `briefing`, and each option's `label` / `tradeoffs` are stored as
- * the company-locale plain string: the agent authors them in the company's canonical locale
- * (ADR 0013 → single canonical locale), and a bare string or an `{ en, zh }` object are both
- * accepted and collapsed to that locale's value.
+ * The recommendation is stored as the selected option's label for downstream display, but the
+ * normalized contract is structural: a `recommended_option_index` points at `options[]`. Legacy
+ * artifacts that name an option by exact `recommendation` label are still accepted so old valid
+ * completions keep reading.
+ *
+ * `rationale`, `briefing`, and each option's `label` / `tradeoffs` are stored as the company-locale
+ * plain string: the agent authors them in the company's canonical locale (ADR 0013 → single
+ * canonical locale), and a bare string or an `{ en, zh }` object are both accepted and collapsed to
+ * that locale's value.
  */
 export type FounderDecisionDeclaration = {
   decisionKind: StrategicDecisionKind;
@@ -31,17 +36,17 @@ export type FounderDecisionDeclaration = {
 /**
  * Read the completing agent's `open_decisions` array out of a Business Artifact payload.
  *
- * Contract (ADR 0017, amended 2026-09-09): each entry declares `{ decisionKind, options,
- * recommendation, rationale, briefing }`.
+ * Contract (ADR 0017, amended 2026-09-15): each entry declares `{ decisionKind, options,
+ * recommended_option_index, rationale, briefing }`.
  * - An entry whose `decisionKind` is in the {@link StrategicDecisionKind} enum and that carries more
  *   than one well-formed option is **kept** and returned in `kept`.
  * - An entry whose `decisionKind` is not a recognized kind (or is missing / not a string) is
  *   **dropped silently** — that choice is the agent's own call.
  * - An entry on a recognized `decisionKind` that is otherwise malformed (too few options, an option
- *   missing its label or trade-offs, a `recommendation` that names no option, a missing `rationale`,
- *   a missing `briefing`) is a **structural validation failure**: its error strings are returned in
- *   `errors`, exactly like any other missing-required-field failure. The runtime does not judge the
- *   choice's meaning.
+ *   missing its label or trade-offs, a `recommended_option_index` outside `options`, a legacy
+ *   `recommendation` that names no option, a missing `rationale`, a missing `briefing`) is a
+ *   **structural validation failure**: its error strings are returned in `errors`, exactly like any
+ *   other missing-required-field failure. The runtime does not judge the choice's meaning.
  *
  * `locale` is the company's canonical content locale: it is the key a localized-object field is
  * collapsed on.
@@ -122,12 +127,7 @@ function parseKnownEntry(
     });
   }
 
-  const recommendation = requireField(entry.recommendation, `${prefix}.recommendation`, locale, errors, {
-    hint: "naming one of the options",
-  });
-  if (recommendation && options.length > 0 && !options.some((option) => option.label === recommendation)) {
-    errors.push(`${prefix}.recommendation: Must name one of the declared options.`);
-  }
+  const recommendedOptionIndex = parseRecommendedOptionIndex(entry, options, prefix, locale, errors);
 
   const rationale = requireField(entry.rationale, `${prefix}.rationale`, locale, errors);
   const briefing = requireField(entry.briefing, `${prefix}.briefing`, locale, errors);
@@ -143,13 +143,44 @@ function parseKnownEntry(
       options: options.map((option) => ({
         label: option.label,
         tradeoffs: option.tradeoffs,
-        recommended: option.label === recommendation,
+        recommended: option === options[recommendedOptionIndex],
       })),
-      recommendation: recommendation!,
+      recommendation: options[recommendedOptionIndex]!.label,
       rationale: rationale!,
       briefing: briefing!,
     },
   };
+}
+
+function parseRecommendedOptionIndex(
+  entry: Record<string, unknown>,
+  options: { label: string; tradeoffs: string }[],
+  prefix: string,
+  locale: Locale,
+  errors: string[],
+): number {
+  const rawIndex = entry.recommended_option_index ?? entry.recommendedOptionIndex;
+  if (rawIndex !== undefined && rawIndex !== null) {
+    if (!Number.isInteger(rawIndex)) {
+      errors.push(`${prefix}.recommended_option_index: Expected an integer index into options.`);
+      return 0;
+    }
+    const index = rawIndex as number;
+    if (index < 0 || index >= options.length) {
+      errors.push(`${prefix}.recommended_option_index: Must refer to one of the declared options.`);
+      return 0;
+    }
+    return index;
+  }
+
+  const recommendation = requireField(entry.recommendation, `${prefix}.recommendation`, locale, errors, {
+    hint: "naming one of the options",
+  });
+  const index = recommendation ? options.findIndex((option) => option.label === recommendation) : -1;
+  if (recommendation && options.length > 0 && index < 0) {
+    errors.push(`${prefix}.recommendation: Must name one of the declared options.`);
+  }
+  return Math.max(index, 0);
 }
 
 /**

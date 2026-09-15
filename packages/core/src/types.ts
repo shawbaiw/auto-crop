@@ -308,7 +308,7 @@ export type HumanAction = {
 };
 export type FounderDecisionStatus = "pending" | "resolved" | "returned";
 export type FounderDecisionOption = {
-  /** The display label the agent gave this option; also how `recommendation` and a resolved pick refer to it. */
+  /** The display label the agent gave this option; resolved founder picks still store this label. */
   label: string;
   /** The option's trade-offs, in the agent's words. */
   tradeoffs: string;

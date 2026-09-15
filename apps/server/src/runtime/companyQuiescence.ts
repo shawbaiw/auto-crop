@@ -24,11 +24,11 @@ const ACTIVE_TASK_STATUSES: ReadonlySet<Task["status"]> = new Set([
 ]);
 
 /**
- * Task statuses with no forward move at all — the "terminal state" an Objective Stage Change waits
- * for. `review` and `needs_replan` are deliberately excluded: a task in either still has a next move
- * (manual review, an open replan).
+ * Task statuses where the runtime will not advance the task on its own. This is deliberately broader
+ * than core's true terminal statuses (`complete` / `cancelled`): `blocked` and `failed` still have
+ * Holds and affordances, but they require an actor to choose a next move.
  */
-const TERMINAL_TASK_STATUSES: ReadonlySet<Task["status"]> = new Set([
+const RUNTIME_SETTLED_TASK_STATUSES: ReadonlySet<Task["status"]> = new Set([
   "complete",
   "blocked",
   "failed",
@@ -36,8 +36,8 @@ const TERMINAL_TASK_STATUSES: ReadonlySet<Task["status"]> = new Set([
 ]);
 
 /** True when a task has reached a state the runtime will not move it out of on its own. */
-export function isTerminalTaskStatus(status: Task["status"]): boolean {
-  return TERMINAL_TASK_STATUSES.has(status);
+export function isRuntimeSettledTaskStatus(status: Task["status"]): boolean {
+  return RUNTIME_SETTLED_TASK_STATUSES.has(status);
 }
 
 export type CompanyQuiescenceInput = {
@@ -67,7 +67,7 @@ function founderParkedTaskIds(input: CompanyQuiescenceInput): Set<string> {
  * Company Quiescence: the company has no forward move left. Computed, never persisted. True when no
  * task is `queued` / `running` / `waiting_dependency` / `retrying` / `needs_replan` (unless that task
  * is only parked on the founder), no Wait State checks in within the near horizon, and every
- * remaining task is terminal or parked on a pending Human Action or Founder Decision.
+ * remaining task is runtime-settled or parked on a pending Human Action or Founder Decision.
  */
 export function isCompanyQuiescent(input: CompanyQuiescenceInput): boolean {
   const parkedTaskIds = founderParkedTaskIds(input);

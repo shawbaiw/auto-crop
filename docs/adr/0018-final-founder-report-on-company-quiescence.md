@@ -1,6 +1,6 @@
 # Final Founder Report Is Produced When A Company Goes Quiescent
 
-Auto-Crop will detect when a company has no forward move left — nothing queued, running, or waiting on the runtime, every remaining task terminal or parked on the founder — and treat that moment as the cue to produce a **Final Founder Report**: a CEO-Agent-authored Business Artifact that states, in business language, what the vision was, what the company actually achieved, how each department contributed, the remaining gaps, and a recommended next step, classified as **achieved**, **stalled**, or **waiting-on-you**. Between the whole-company report and the silent per-task completion, a middle signal is added: when the last task under an objective reaches a terminal state, a runtime-assembled **Objective Stage Change** rolls that objective's outcomes up as a single CEO Attention Item. Routine per-task completions stay silent, as ADR 0014 and ADR 0017 decided.
+Auto-Crop will detect when a company has no forward move left — nothing queued, running, or waiting on the runtime, every remaining task complete, cancelled, stopped on a Hold, or parked on the founder — and treat that moment as the cue to produce a **Final Founder Report**: a CEO-Agent-authored Business Artifact that states, in business language, what the vision was, what the company actually achieved, how each department contributed, the remaining gaps, and a recommended next step, classified as **achieved**, **stalled**, or **waiting-on-you**. Between the whole-company report and the silent per-task completion, a middle signal is added: when the last task under an objective is complete or runtime-settled, a runtime-assembled **Objective Stage Change** rolls that objective's outcomes up as a single CEO Attention Item. Routine per-task completions stay silent, as ADR 0014 and ADR 0017 decided.
 
 ## Context
 
@@ -29,7 +29,7 @@ A company is **quiescent** when all of the following hold:
 
 - no task is `queued`, `running`, or `waiting_dependency`;
 - no live Wait State has a check-in within a near horizon (a short, spec-tuned window — scheduled work is still work);
-- every remaining task is terminal: `complete`; `retry_exhausted` / `blocked` with no path back to `queued`; or parked on a Human Action or Founder Decision, which wait on the founder indefinitely.
+- every remaining task is runtime-settled: `complete`, `cancelled`, `blocked`, or `failed`; or parked on a Human Action or Founder Decision, which wait on the founder indefinitely.
 
 Quiescence is computed, not a persisted company status. A company that is quiescent only because its remaining Wait States check in **beyond** the near horizon is still quiescent — weeks of dashboard silence is the problem being solved, and the report's next-step section names each pending Wait State and its check-in date.
 
@@ -44,7 +44,7 @@ Quiescence is computed, not a persisted company status. A company that is quiesc
 
 ### Objective Stage Change
 
-- When the last task whose `keyResultId` rolls up to an objective reaches a terminal state, the runtime emits one **Objective Stage Change**: a CEO Attention Item, new `CeoAttentionRollupReason` value `goal_stage_change` (already named in the `CEO Attention Item` glossary entry, never implemented), grouped by that objective.
+- When the last task whose `keyResultId` rolls up to an objective is complete or runtime-settled, the runtime emits one **Objective Stage Change**: a CEO Attention Item, new `CeoAttentionRollupReason` value `goal_stage_change` (already named in the `CEO Attention Item` glossary entry, never implemented), grouped by that objective. Runtime-settled is deliberately not the core Terminal status class: `blocked` and `failed` still carry Holds and affordances, so the rollup must read as "complete or stopped", not "finished successfully".
 - **Runtime-assembled, no agent.** It condenses the objective's child Task Outcome Summaries and its key-result status. There can be many objectives; the CEO Agent call is reserved for the whole-company report.
 - Tasks with no `keyResultId` do not trigger one. The upgrade regeneration produces only the company-level report, not historical Objective Stage Changes.
 

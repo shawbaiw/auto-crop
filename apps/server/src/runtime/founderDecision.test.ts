@@ -11,7 +11,7 @@ const wellFormed = {
     { label: "Flat monthly fee", tradeoffs: "Predictable revenue; underprices heavy users." },
     { label: "Usage-based", tradeoffs: "Scales with value; harder to forecast." },
   ],
-  recommendation: "Flat monthly fee",
+  recommended_option_index: 0,
   rationale: "Early buyers want a predictable bill.",
   briefing: "Explored flat, usage-based, and tiered against interviewed buyers; the opportunity is predictable billing for solo buyers.",
 };
@@ -20,6 +20,35 @@ const wellFormed = {
 // Business Artifact path in businessArtifact.test.ts. These cover only what is specific to the
 // locale-collapse rule the parser adds.
 describe("parseOpenDecisions briefing / locale collapse", () => {
+  it("uses a structural recommended option index instead of asking the agent to repeat a label", () => {
+    const result = parseOpenDecisions(payloadWith({ ...wellFormed, recommended_option_index: 1 }), "en");
+
+    expect(result.errors).toEqual([]);
+    expect(result.kept[0]!.recommendation).toBe("Usage-based");
+    expect(result.kept[0]!.options.map((option) => option.recommended)).toEqual([false, true]);
+  });
+
+  it("fails when the structural recommendation points outside the options array", () => {
+    const result = parseOpenDecisions(payloadWith({ ...wellFormed, recommended_option_index: 2 }), "en");
+
+    expect(result.kept).toEqual([]);
+    expect(result.errors).toContain("payload.open_decisions[0].recommended_option_index: Must refer to one of the declared options.");
+  });
+
+  it("still accepts a legacy recommendation that exactly names an option", () => {
+    const result = parseOpenDecisions(
+      payloadWith({
+        ...wellFormed,
+        recommended_option_index: undefined,
+        recommendation: "Flat monthly fee",
+      }),
+      "en",
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.kept[0]!.recommendation).toBe("Flat monthly fee");
+  });
+
   it("treats a whitespace-only briefing as missing, like an empty rationale", () => {
     const result = parseOpenDecisions(payloadWith({ ...wellFormed, briefing: "   " }), "en");
 

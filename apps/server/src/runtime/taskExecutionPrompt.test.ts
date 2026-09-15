@@ -87,8 +87,9 @@ describe("buildTaskExecutionPrompt", () => {
     expect(zhPrompt).toContain("Write each one in 简体中文 (Simplified Chinese)");
     expect(zhPrompt).toContain("Also include `outcome_summary`, written in 简体中文 (Simplified Chinese)");
     expect(zhPrompt).toContain(
-      "Write every `label`, `tradeoffs`, `recommendation`, `rationale`, and `briefing` in 简体中文 (Simplified Chinese)",
+      "Write every `label`, `tradeoffs`, `rationale`, and `briefing` in 简体中文 (Simplified Chinese)",
     );
+    expect(zhPrompt).toContain("set `recommended_option_index` to the zero-based index");
     expect(zhPrompt).toContain("`briefing` is required");
     expect(zhPrompt).toContain("An entry missing `briefing` fails validation, exactly like a missing `rationale`.");
     // The "string or {en, zh} object" escape hatch is gone.

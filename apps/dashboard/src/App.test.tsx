@@ -498,7 +498,7 @@ describe("Dashboard App", () => {
           titleText: null,
           actionBearing: false,
           data: {
-            summary: { en: "The objective reached a terminal state after validation." },
+            summary: { en: "The objective is complete or stopped after validation." },
             recommendedNextAction: { en: "Prepare the closing summary." },
             affectedTaskIds: ["task_1"],
           },
@@ -560,7 +560,7 @@ describe("Dashboard App", () => {
     const timeline = within(screen.getByRole("region", { name: "CEO Intake Report" })).getByRole("region", { name: "Timeline" });
     // Each item is a summary card: type tag + title + one key line.
     expect(timeline).toHaveTextContent("Stage Change");
-    expect(timeline).toHaveTextContent("The objective reached a terminal state after validation.");
+    expect(timeline).toHaveTextContent("The objective is complete or stopped after validation.");
     expect(timeline).toHaveTextContent("Decision Resolution");
     expect(timeline).toHaveTextContent("Start where urgency is clearest.");
     expect(timeline).toHaveTextContent("Final Report");
@@ -742,7 +742,7 @@ describe("Dashboard App", () => {
     api.createCompany = vi.fn(async () => ({
       ...created,
       tasks: [
-        { ...created.tasks[0], id: "task_1", title: "Choose pricing path", status: "review" },
+        { ...created.tasks[0], id: "task_1", title: "Choose pricing path", status: "review", affordances: offered("ceo_review_decision") },
         { ...created.tasks[0], id: "task_2", title: "Connect Stripe", status: "blocked" },
         { ...created.tasks[0], id: "task_3", title: "Monitor first import", status: "queued" },
         { ...created.tasks[0], id: "task_4", title: "Recover launch proof", status: "failed" },
@@ -1121,6 +1121,7 @@ describe("Dashboard App", () => {
             ...created.tasks[0],
             title: "Validate the prototype",
             status: "review" as const,
+            affordances: offered("ceo_review_decision"),
           },
         ],
         taskProgressEvents: [
@@ -1245,6 +1246,7 @@ describe("Dashboard App", () => {
       id: "review_subtask",
       title: "Execute Provide local prototype access",
       status: "review" as const,
+      affordances: offered("ceo_review_decision"),
       taskKind: "department_subtask" as const,
       parentTaskId: parentTask.id,
     };
@@ -1315,6 +1317,7 @@ describe("Dashboard App", () => {
           ...created.tasks[0],
           title: "Find the first overseas keyword opportunity",
           status: "review" as const,
+          affordances: offered("ceo_review_decision"),
         },
       ],
       taskProgressEvents: [
@@ -1639,6 +1642,52 @@ describe("Dashboard App", () => {
     expect(within(pendingAfterApproval).getByText("No CEO pending items.")).toBeInTheDocument();
   });
 
+  it("does not render CEO review decisions when a stale review item no longer offers the review affordance", async () => {
+    const api = createMockApiClient();
+    api.createCompany = vi.fn(async () => {
+      const created = createReviewReadyCompanyResponse();
+      return {
+        ...created,
+        tasks: [
+          {
+            ...created.tasks[0],
+            status: "blocked" as const,
+            failureReason: "invalid_business_artifact",
+            failureMessage: "Task blocked: invalid business artifact.",
+            affordances: offered("request_replan"),
+            holds: [
+              {
+                id: "hold_1",
+                kind: "invalid_business_artifact",
+                resolver: "runtime" as const,
+                subjectKind: "business_artifact",
+                subjectId: "business_artifact_1",
+                reason: "The business artifact is not reviewable.",
+                openedAt: "2026-08-17T00:02:00.000Z",
+              },
+            ],
+          },
+        ],
+      };
+    });
+    api.createReplanProposal = vi.fn(async () => ({ proposal: createReplanProposalSummary() }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const ceoPending = screen.getByRole("region", { name: "CEO Pending" });
+    await user.click(within(ceoPending).getByRole("button", { name: "View Task Validate the prototype" }));
+
+    const taskReview = screen.getByRole("region", { name: "Task Review" });
+    expect(within(taskReview).getByText("This task is not waiting for CEO review. Use the currently offered task action.")).toBeInTheDocument();
+    expect(within(taskReview).queryByRole("button", { name: "Approve, mark complete" })).not.toBeInTheDocument();
+    expect(within(taskReview).queryByRole("button", { name: "Return to department" })).not.toBeInTheDocument();
+
+    await user.click(within(taskReview).getByRole("button", { name: "Request Replan Validate the prototype" }));
+    expect(api.createReplanProposal).toHaveBeenCalledWith("task_1");
+  });
+
   it("applies dependency cascade updates returned by CEO approval", async () => {
     const api = createMockApiClient();
     const created = createDependencyGraphCompanyResponse();
@@ -1647,7 +1696,7 @@ describe("Dashboard App", () => {
       tasks: [
         ...created.tasks.map((task) =>
           task.id === "task_4"
-            ? { ...task, status: "review" as const }
+            ? { ...task, status: "review" as const, affordances: offered("ceo_review_decision") }
             : task.id === "task_5"
               ? {
                   ...task,
@@ -2586,12 +2635,14 @@ describe("Dashboard App", () => {
           ...created.tasks[0],
           title: "Parent proof summary",
           status: "review" as const,
+          affordances: offered("ceo_review_decision"),
         },
         {
           ...created.tasks[0],
           id: "department_subtask_1",
           title: "Internal prototype slice",
           status: "review" as const,
+          affordances: offered("ceo_review_decision"),
           parentTaskId: "task_1",
           taskKind: "department_subtask" as const,
           source: "department" as const,
@@ -2795,6 +2846,7 @@ describe("Dashboard App", () => {
         {
           ...created.tasks[0],
           status: "review" as const,
+          affordances: offered("ceo_review_decision"),
         },
       ],
       businessArtifacts: [createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1")],
@@ -4010,6 +4062,7 @@ function createCeoOfficeAttentionCompanyResponse(): Awaited<ReturnType<ApiClient
         id: "task_4",
         title: "Review gated launch artifact",
         status: "review",
+        affordances: offered("ceo_review_decision"),
         departmentId: "department_1",
       },
     ],
@@ -4044,6 +4097,7 @@ function createReviewReadyCompanyResponse(): Awaited<ReturnType<ApiClient["creat
         ...created.tasks[0],
         title: "Validate the prototype",
         status: "review",
+        affordances: offered("ceo_review_decision"),
         executionProfileName: "short",
         requestedTimeoutMs: 120_000,
         effectiveTimeoutMs: 120_000,

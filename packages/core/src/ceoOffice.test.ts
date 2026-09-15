@@ -175,7 +175,7 @@ describe("projectCeoOfficeItems", () => {
       id: "rollup_stage_change", companyId: company.id,
       group: { type: "objective", objectiveId: objective.id },
       title: "Objective complete",
-      summary: "The objective reached a terminal state after buyer validation.",
+      summary: "The objective is complete or stopped after buyer validation.",
       ownerDepartmentId: "product",
       downstreamDepartmentIds: ["growth"],
       affectedTaskIds: ["task"],
@@ -209,7 +209,7 @@ describe("projectCeoOfficeItems", () => {
       occurredAt: "2026-09-01T10:30:00Z",
       actionBearing: false,
       data: {
-        summary: { en: "The objective reached a terminal state after buyer validation.", zh: "The objective reached a terminal state after buyer validation." },
+        summary: { en: "The objective is complete or stopped after buyer validation.", zh: "The objective is complete or stopped after buyer validation." },
         recommendedNextAction: { en: "Prepare the closing company summary.", zh: "Prepare the closing company summary." },
         affectedTaskIds: ["task"],
       },

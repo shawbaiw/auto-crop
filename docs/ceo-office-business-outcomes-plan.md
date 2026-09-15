@@ -39,9 +39,9 @@ See ADR 0017 for the reasoning. Summary:
 - `NextStepItemType`: add `"founder_decision"`. Update `nextStepItemTypeSchema` in `schemas.ts`.
 - `TaskAcceptanceProvenance`: add `"founder_decision"`. Add a dedicated zod schema if one is introduced.
 - New `StrategicDecisionKind` union + zod schema. Seed values: `target_market`, `product_direction`, `mvp_type`, `pricing_model`, `launch_target`.
-- New `FounderDecision` type (projected object): id, companyId, sourceTaskCompletionEventId, taskId, departmentId, `decisionKind`, `options` (each with label, tradeoffs, and whether it is the recommendation), `rationale`, `status` (`pending` / `resolved` / `returned`), `resolvedOption`, `resolvedAt`, blockedTaskIds, createdAt. Mirror the `HumanAction` shape.
+- New `FounderDecision` type (projected object): id, companyId, sourceTaskCompletionEventId, taskId, departmentId, `decisionKind`, `options` (each with label, tradeoffs, and whether it is the recommendation derived from `recommended_option_index`), `rationale`, `status` (`pending` / `resolved` / `returned`), `resolvedOption`, `resolvedAt`, blockedTaskIds, createdAt. Mirror the `HumanAction` shape.
 - `TaskCompletionEvent`: add `outcomeSummaryText: LocalizedText | null` (and any structured `resolvedFounderDecisions` record needed for the handoff payload).
-- `NextStepItem`: the `founder_decision` item carries `decisionKind`, `options`, `recommendation`, `rationale` (via existing `dependencyImpact` / new fields as fits the existing pattern).
+- `NextStepItem`: the `founder_decision` item carries `decisionKind`, `options` with one derived `recommended: true`, and `rationale` (via existing `dependencyImpact` / new fields as fits the existing pattern).
 
 ## Phase A — Acceptance
 
@@ -55,8 +55,8 @@ See ADR 0017 for the reasoning. Summary:
 ### A2. Strategic Decision Kind + `open_decisions` parsing
 
 - Add `StrategicDecisionKind` to core (above).
-- `apps/server/src/runtime/businessArtifact.ts`: parse an optional `open_decisions` array from the artifact JSON. Validate each entry: `decisionKind` in the enum, `options.length > 1`, each option has a label, exactly one option flagged as the recommendation, non-empty `rationale`. Entries with an unknown `decisionKind` are dropped (not an error). Malformed entries on a known `decisionKind` are a structural validation failure, like other required-field failures.
-- `apps/server/src/runtime/scheduler.ts` `buildAgentPrompt`: add an `## Open Decisions` instruction block telling the agent to declare, in `open_decisions`, any choice it is making on a Strategic Decision Kind, with options / tradeoffs / recommendation / rationale — and that such a choice is the founder's to make.
+- `apps/server/src/runtime/businessArtifact.ts`: parse an optional `open_decisions` array from the artifact JSON. Validate each entry: `decisionKind` in the enum, `options.length > 1`, each option has a label, `recommended_option_index` points into `options`, and `rationale` is non-empty. Entries with an unknown `decisionKind` are dropped (not an error). Malformed entries on a known `decisionKind` are a structural validation failure, like other required-field failures.
+- `apps/server/src/runtime/scheduler.ts` `buildAgentPrompt`: add an `## Open Decisions` instruction block telling the agent to declare, in `open_decisions`, any choice it is making on a Strategic Decision Kind, with options / tradeoffs / `recommended_option_index` / rationale — and that such a choice is the founder's to make.
 
 ### A3. Founder Decision Next Step Item + projection
 
