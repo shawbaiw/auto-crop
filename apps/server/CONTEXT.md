@@ -68,6 +68,8 @@ Three rules follow:
 
 The same principle governs what comes back. A run whose reply the runtime parses declares a **Structured Output Contract** — a JSON Schema on the request, which Claude Code takes inline via `--json-schema` and Codex takes as a file via `--output-schema`. The prompt still explains the shape; it no longer guarantees it. A reply that misses the contract fails as `invalid_agent_output`, not `agent_failed`, because the process answered and the expectation was the runtime's. See ADR 0022, and add a contract to any new runtime-parsed reply.
 
+Do not ask an agent to repeat one generated field as another generated field. Founder Decisions use `recommended_option_index` to point into `open_decisions[].options`; the runtime derives the display recommendation label from that index. A string `recommendation` is legacy compatibility only. This is the same design rule as capability grants and structured output: turn prompt obligations into structure when the runtime can express them.
+
 `approvalRequired` decides whether a task needs Founder Approval before dispatch. It resolves the **company's** Permission Mode through `resolvePolicyForPermissionMode`, not a hardcoded default — a company set to `safe` must actually ask — and asks when any capability the run needs carries an `ask` decision.
 
 A task blocked this way gets an `awaiting_founder_approval` Hold naming its Approval record, and `POST /api/approvals/:id` is what clears it. Denying moves the task to `needs_replan`, because a task whose required action the founder refuses cannot run as specified. Granting goes through `releaseTaskHold`, not a direct transition — see below.
@@ -103,6 +105,7 @@ The granularity is deliberately coarse: one pre-dispatch question for the whole 
 
 - **Task Transition Seam**: `applyTaskTransition`. The only writer of task status. _Avoid_: status update, state setter.
 - **Held Task Status**: A status meaning "stopped, waiting on something". See the table above. _Avoid_: blocked, paused.
+- **Runtime-settled**: A task status the runtime will not advance on its own (`complete`, `blocked`, `failed`, `cancelled`). Used by quiescence and Objective Stage Change. It is not the same as core Terminal (`complete`, `cancelled`): `blocked` and `failed` still carry Holds and affordances.
 - **Resume Affordance**: An action an actor can take right now to move a stopped task forward, computed server-side and checked by the route that performs it. _Avoid_: button, enabled action, recovery eligibility.
 - **Standing Reconciliation**: A repair pass that runs on every read and is never marked as done, because the drift it repairs can recur. Contrast with the one-time, marker-guarded migration passes. _Avoid_: migration, backfill.
 - **Hold Release**: Answering one Task Hold and letting the remaining open Holds decide whether the task may move. Distinct from unblocking a task, which only happens when the released Hold was the last one. _Avoid_: unblock, resume.

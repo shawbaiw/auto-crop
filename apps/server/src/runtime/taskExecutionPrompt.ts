@@ -60,7 +60,7 @@ type PromptExamples = {
   outcomeSummary: string;
   openDecision: {
     options: { label: string; tradeoffs: string }[];
-    recommendation: string;
+    recommended_option_index: number;
     rationale: string;
     briefing: string;
   };
@@ -83,7 +83,7 @@ const LOCALE_PROMPT_EXAMPLES: Record<Locale, PromptExamples> = {
         { label: "Flat monthly fee", tradeoffs: "Predictable revenue; leaves heavy users underpriced." },
         { label: "Usage-based", tradeoffs: "Scales with value delivered; harder for buyers to forecast." },
       ],
-      recommendation: "Flat monthly fee",
+      recommended_option_index: 0,
       rationale: "Early buyers want a predictable bill and the usage spread is still narrow.",
       briefing:
         "We explored three pricing shapes against the resume-tool buyers we interviewed. The opportunity is solo job seekers who convert on a single polished output; what is differentiated is same-session turnaround with no account setup. Monetization is a low-friction paid unlock at the moment of value, and a flat fee is the only shape those buyers could forecast.",
@@ -102,7 +102,7 @@ const LOCALE_PROMPT_EXAMPLES: Record<Locale, PromptExamples> = {
         { label: "统一月费", tradeoffs: "收入可预测；重度用户定价偏低。" },
         { label: "按用量计费", tradeoffs: "随交付价值扩展；买方难以预估费用。" },
       ],
-      recommendation: "统一月费",
+      recommended_option_index: 0,
       rationale: "早期买家希望账单可预测，且当前用量差异仍然较小。",
       briefing:
         "我们针对访谈过的简历工具买家评估了三种定价形态。机会点在于以单份高质量成品完成转化的个人求职者；差异化在于无需注册、当次会话即可交付。变现方式是在价值兑现的节点提供低摩擦的付费解锁，而只有统一月费这种形态是这些买家能够预估的。",
@@ -178,7 +178,7 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
       {
         decisionKind: "pricing_model",
         options: examples.openDecision.options,
-        recommendation: examples.openDecision.recommendation,
+        recommended_option_index: examples.openDecision.recommended_option_index,
         rationale: examples.openDecision.rationale,
         briefing: examples.openDecision.briefing,
       },
@@ -186,11 +186,13 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
       2,
     ),
     "`decisionKind` must be one of the five kinds above (any other choice is your own call and is ignored).",
-    "Give more than one option, each with its trade-offs; name the recommended option and give your rationale.",
+    "Give more than one option, each with its trade-offs; set `recommended_option_index` to the zero-based index",
+    "of the option you recommend, and give your rationale. Do not repeat the option label as the reference;",
+    "the index is the reference.",
     "`briefing` is required: the substance the founder needs to decide from the card alone — what you",
     "explored, where the opportunity is, what is differentiated, the monetization angle and why these",
     "options exist. An entry missing `briefing` fails validation, exactly like a missing `rationale`.",
-    `Write every \`label\`, \`tradeoffs\`, \`recommendation\`, \`rationale\`, and \`briefing\` in ${languageName}.`,
+    `Write every \`label\`, \`tradeoffs\`, \`rationale\`, and \`briefing\` in ${languageName}.`,
     "A choice on one of these kinds is the founder's to make, not yours.",
   ];
   const proofInstructions = buildProofContractInstructions(task);

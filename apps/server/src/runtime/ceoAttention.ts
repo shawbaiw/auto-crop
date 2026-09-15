@@ -19,7 +19,7 @@ import type {
   WaitState,
 } from "@auto-crop/core";
 import { resolveLocalizedText, strategicDecisionKindSchema } from "@auto-crop/core";
-import { isCompanyQuiescent, isTerminalTaskStatus } from "./companyQuiescence";
+import { isCompanyQuiescent, isRuntimeSettledTaskStatus } from "./companyQuiescence";
 
 type AttentionCandidate = {
   event: TaskCompletionEvent;
@@ -132,8 +132,8 @@ export function projectCeoAttention(input: {
 }
 
 /**
- * Objective Stage Change: once every task whose `keyResultId` rolls up to an objective has reached a
- * terminal state, yield one `goal_stage_change` rollup for that objective. Runtime-assembled, no
+ * Objective Stage Change: once every task whose `keyResultId` rolls up to an objective is complete
+ * or runtime-settled, yield one `goal_stage_change` rollup for that objective. Runtime-assembled, no
  * agent — it condenses the objective's child Task Outcome Summaries and its key-result status. Tasks
  * with no `keyResultId` never contribute, and an objective with a still-running child task gets
  * nothing. Grouped by the existing `objective` rollup group but with its own id so it sits alongside
@@ -168,7 +168,7 @@ function collectObjectiveStageChanges(input: {
     if (childTasks.length === 0) {
       return [];
     }
-    if (!childTasks.every((task) => isTerminalTaskStatus(task.status))) {
+    if (!childTasks.every((task) => isRuntimeSettledTaskStatus(task.status))) {
       return [];
     }
 
@@ -231,7 +231,7 @@ function summarizeObjectiveStageChange(
     outcomeLine = ` ${outcomeSummaries.length} task outcome(s): ${sampled.join(" ")}${more}`;
   }
 
-  return `Every task under "${objective.title}" has reached a terminal state. Key results — ${keyResultLine}.${outcomeLine}`;
+  return `Every task under "${objective.title}" is complete or stopped. Key results — ${keyResultLine}.${outcomeLine}`;
 }
 
 function firstSentence(text: string): string {

@@ -54,7 +54,7 @@ export const taskAffordanceControls: Record<TaskAffordanceKind, TaskAffordanceCo
     handler: "requestReplan",
     buttons: [{ labelKey: "department.requestReplan" }],
   },
-  ceo_review_decision: { render: "surface", surface: "CEO Office approval card" },
+  ceo_review_decision: { render: "surface", surface: "CEO Office review detail, gated by the affordance" },
   resolve_founder_decision: { render: "surface", surface: "CEO Office decision card" },
   confirm_human_action: { render: "surface", surface: "Human Action panel" },
   confirm_replan: { render: "surface", surface: "Company Operations replan proposals" },

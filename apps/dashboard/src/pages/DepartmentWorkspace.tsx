@@ -258,6 +258,9 @@ export function DepartmentWorkspace({
                   onCreateCeoReviewDecision={onCreateCeoReviewDecision}
                   onResolveFounderDecision={onResolveFounderDecision}
                   onConfirmHumanAction={onConfirmHumanAction}
+                  onRefreshTask={onRefreshTask}
+                  onCreateReplanProposal={onCreateReplanProposal}
+                  onRecoverTask={onRecoverTask}
                   onSelectDepartment={setSelectedRoleId}
                   onSubmit={onCreateCeoIntake}
                   pendingItems={ceoPendingItems}
@@ -360,6 +363,9 @@ function CeoIntakeWorkspace({
   onCreateCeoReviewDecision,
   onResolveFounderDecision,
   onConfirmHumanAction,
+  onRefreshTask,
+  onCreateReplanProposal,
+  onRecoverTask,
   onDraftChange,
   onSelectDepartment,
   onSubmit,
@@ -387,6 +393,9 @@ function CeoIntakeWorkspace({
   onCreateCeoReviewDecision?: DepartmentWorkspaceProps["onCreateCeoReviewDecision"];
   onResolveFounderDecision?: DepartmentWorkspaceProps["onResolveFounderDecision"];
   onConfirmHumanAction?: DepartmentWorkspaceProps["onConfirmHumanAction"];
+  onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
+  onCreateReplanProposal?: DepartmentWorkspaceProps["onCreateReplanProposal"];
+  onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
   onDraftChange: (value: string) => void;
   onSelectDepartment: (departmentId: string) => void;
   onSubmit?: (body: string) => Promise<void> | void;
@@ -507,6 +516,9 @@ function CeoIntakeWorkspace({
         <CeoTaskReviewDetail
           item={selectedPendingItem}
           onDecision={handleDecision}
+          onRefreshTask={onRefreshTask}
+          onCreateReplanProposal={onCreateReplanProposal}
+          onRecoverTask={onRecoverTask}
           proofs={proofsByTask.get(selectedPendingItem.task.id) ?? []}
           businessArtifacts={artifactsByTask.get(selectedPendingItem.task.id) ?? []}
         />
@@ -1699,6 +1711,9 @@ function CeoPendingQueue({
 function CeoTaskReviewDetail({
   item,
   onDecision,
+  onRefreshTask,
+  onCreateReplanProposal,
+  onRecoverTask,
   proofs,
   businessArtifacts,
 }: {
@@ -1709,6 +1724,9 @@ function CeoTaskReviewDetail({
     returnReason?: CeoReviewReturnReason;
     note?: string;
   }) => Promise<void>;
+  onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
+  onCreateReplanProposal?: DepartmentWorkspaceProps["onCreateReplanProposal"];
+  onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
   proofs: ProofSummary[];
   businessArtifacts: BusinessArtifactSummary[];
 }) {
@@ -1724,7 +1742,12 @@ function CeoTaskReviewDetail({
     currentArtifact.validationStatus === "valid" &&
     currentArtifact.reviewStatus === "unreviewed" &&
     (currentArtifact.artifactKind === "deliverable" || currentArtifact.artifactKind === "final_report");
-  const canApprove = hasProof && hasValidArtifact;
+  const reviewAffordanceOffered = hasTaskAffordance(item.task, "ceo_review_decision");
+  const canApprove = reviewAffordanceOffered && hasProof && hasValidArtifact;
+  const canReturn = reviewAffordanceOffered;
+  const reviewMessage = reviewAffordanceOffered
+    ? canApprove ? t("department.ceoReviewCanPass") : t("department.ceoReviewMissingProof")
+    : t("department.ceoReviewNoLongerOffered");
   const outcomeSummary = readOutcomeSummary(currentArtifact?.payload);
 
   const handleApprove = async () => {
@@ -1744,7 +1767,7 @@ function CeoTaskReviewDetail({
   };
 
   const handleReturn = async () => {
-    if (submittingAction) {
+    if (!canReturn || submittingAction) {
       return;
     }
 
@@ -1773,7 +1796,7 @@ function CeoTaskReviewDetail({
     <section className="ceo-task-review-detail" aria-label={t("department.ceoTaskReview")}>
       <h3>{t("department.ceoTaskReview")}</h3>
       <p className={canApprove ? "system-message" : "warning-message"}>
-        {canApprove ? t("department.ceoReviewCanPass") : t("department.ceoReviewMissingProof")}
+        {reviewMessage}
       </p>
       <section className="ceo-task-review-detail__outcome">
         <h4>{t("department.ceoReviewOutcomeSummary")}</h4>
@@ -1828,36 +1851,48 @@ function CeoTaskReviewDetail({
         </section>
         <section>
           <h4>{t("department.ceoReviewDecision")}</h4>
-          <CeoReturnReasonFields
-            note={note}
-            noteClassName="ceo-task-review-detail__note"
-            noteLabel={t("department.ceoReviewNextStepNote")}
-            onNoteChange={setNote}
-            onReturnReasonChange={setReturnReason}
-            reasonLabel={t("department.ceoReviewReturnReason")}
-            returnReason={returnReason}
-          />
-          {error ? <p role="alert" className="warning-message">{error}</p> : null}
-          <div className="ceo-task-review-detail__actions">
-            {canApprove ? (
-              <RetroButton
-                aria-busy={submittingAction === "approve"}
-                className={submittingAction === "approve" ? "ceo-task-review-detail__action--submitting" : undefined}
-                disabled={submittingAction !== null}
-                onClick={handleApprove}
-              >
-                {t("department.ceoReviewApprove")}
-              </RetroButton>
-            ) : null}
-            <RetroButton
-              aria-busy={submittingAction === "return"}
-              className={submittingAction === "return" ? "ceo-task-review-detail__action--submitting" : undefined}
-              disabled={submittingAction !== null}
-              onClick={handleReturn}
-            >
-              {t("department.ceoReviewReturn")}
-            </RetroButton>
-          </div>
+          {reviewAffordanceOffered ? (
+            <>
+              <CeoReturnReasonFields
+                note={note}
+                noteClassName="ceo-task-review-detail__note"
+                noteLabel={t("department.ceoReviewNextStepNote")}
+                onNoteChange={setNote}
+                onReturnReasonChange={setReturnReason}
+                reasonLabel={t("department.ceoReviewReturnReason")}
+                returnReason={returnReason}
+              />
+              {error ? <p role="alert" className="warning-message">{error}</p> : null}
+              <div className="ceo-task-review-detail__actions">
+                {canApprove ? (
+                  <RetroButton
+                    aria-busy={submittingAction === "approve"}
+                    className={submittingAction === "approve" ? "ceo-task-review-detail__action--submitting" : undefined}
+                    disabled={submittingAction !== null}
+                    onClick={handleApprove}
+                  >
+                    {t("department.ceoReviewApprove")}
+                  </RetroButton>
+                ) : null}
+                <RetroButton
+                  aria-busy={submittingAction === "return"}
+                  className={submittingAction === "return" ? "ceo-task-review-detail__action--submitting" : undefined}
+                  disabled={submittingAction !== null}
+                  onClick={handleReturn}
+                >
+                  {t("department.ceoReviewReturn")}
+                </RetroButton>
+              </div>
+            </>
+          ) : (
+            <TaskStatusAction
+              onRefreshTask={onRefreshTask}
+              onCreateReplanProposal={onCreateReplanProposal}
+              onRecoverTask={onRecoverTask}
+              showStatusBadge={false}
+              task={item.task}
+            />
+          )}
         </section>
       </div>
     </section>
@@ -1880,6 +1915,10 @@ function readOutcomeSummary(payload: unknown): LocalizedText | string | null {
     }
   }
   return null;
+}
+
+function hasTaskAffordance(task: TaskSummary, kind: TaskAffordanceKind): boolean {
+  return (task.affordances ?? []).some((affordance) => affordance.kind === kind);
 }
 
 /**

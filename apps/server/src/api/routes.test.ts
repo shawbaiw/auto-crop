@@ -1791,7 +1791,7 @@ describe("API routes", () => {
     await fixture.close();
   });
 
-  it("emits an Objective Stage Change rollup once every task rolling up to the objective is terminal", async () => {
+  it("emits an Objective Stage Change rollup once every task rolling up to the objective is complete or runtime-settled", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
@@ -1882,7 +1882,7 @@ describe("API routes", () => {
     for (const task of tasks.slice(2)) {
       fixture.repositories.writeTaskStatusUnchecked(task.id, "complete");
     }
-    // tasks[0] stays queued; tasks[1] sits in review — review is not a terminal state.
+    // tasks[0] stays queued; tasks[1] sits in review — review is not runtime-settled.
     fixture.repositories.writeTaskStatusUnchecked(tasks[1]!.id, "review");
 
     const queuedAndReview = await getJson<{ ceoAttentionRollups: Array<{ reasons: string[] }> }>(
