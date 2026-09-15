@@ -14,6 +14,7 @@ const sessionKey: AgentSessionKey = {
   companyId: "company_1",
   agentId: "codex",
   permissionMode: "balanced",
+  grantId: "workspace_read+workspace_write+web_research",
 };
 
 describe("AgentSessionManager", () => {

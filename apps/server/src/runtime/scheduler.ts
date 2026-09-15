@@ -4,7 +4,12 @@ import { join } from "node:path";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import { resolvePolicyForPermissionMode } from "../policies/defaults";
-import { decideAction } from "../policies/policy";
+import {
+  grantNeedsFounderApproval,
+  resolveAgentCapabilityGrant,
+  resolveTaskCapabilityNeeds,
+  type AgentCapabilityGrant,
+} from "../policies/capabilityGrant";
 import type {
   AgentFailureReason,
   BusinessArtifact,
@@ -246,13 +251,17 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             return;
           }
 
+          const grant = resolveTaskAgentGrant(input.repositories, task);
+
           // Reached the recovery ceiling without a qualifying reset (a new accepted upstream
           // Business Artifact or a CEO replan): terminate instead of dispatching another run.
-          if (endedAtRetryCeiling(input, result, task, null, resolveEffectiveTimeout(task), now, createId)) {
+          if (
+            endedAtRetryCeiling(input, result, task, null, resolveEffectiveTimeout(task, process.env, grant), now, createId)
+          ) {
             return;
           }
 
-          const initialTimeoutResolution = resolveEffectiveTimeout(task);
+          const initialTimeoutResolution = resolveEffectiveTimeout(task, process.env, grant);
           // Dispatch resolves whatever parked this task: the runtime owns it again.
           applyTaskTransition({
             repositories: input.repositories,
@@ -326,6 +335,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               workspacePath: runWorkspacePath,
               metadata: { departmentId: task.departmentId, proofSchemaId: task.proofSchemaId },
               timeoutMs: timeoutResolution.effectiveTimeoutMs,
+              grant,
             };
             const preparationStartedAt = now().getTime();
             const preparation = await prepareExecutionBrief({ adapter, request: { ...request, timeoutMs: Math.min(request.timeoutMs, 60_000) }, company, task, handoffs });
@@ -346,7 +356,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               agentResult = await adapter.run({
                 ...request,
                 timeoutMs: remainingMs,
-                prompt: buildTaskExecutionPrompt({ task, company, handoffs }) +
+                prompt: buildTaskExecutionPrompt({ task, company, handoffs, grant }) +
                   `\n\n## Your announced execution plan\n${JSON.stringify(preparation.brief)}\nCarry out this plan. Explain material deviations in the final report.`,
               });
             } else {
@@ -473,6 +483,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           }
           let businessArtifact: BusinessArtifact | null = null;
           let environmentBlockerDegraded = false;
+          let refutedCapability: string | null = null;
           const hasBusinessArtifactFile = existsSync(
             join(runWorkspacePath, ".auto-crop", "business-artifact.json"),
           );
@@ -487,8 +498,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               ? await verifyEnvironmentBlockerClaim({
                   claim: environmentBlockerClaim,
                   fetchImpl: input.environmentBlockerFetch,
+                  grant,
                 })
               : undefined;
+            if (environmentBlockerVerification?.reason === "refuted_by_grant") {
+              refutedCapability = environmentBlockerVerification.capability;
+            }
             businessArtifact = captureBusinessArtifact({
               requireExecutionDetails: true,
               task: { ...task, workspacePath: runWorkspacePath },
@@ -559,7 +574,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
               return;
             }
-            const failure = failureMessage(task, failureReason, timeoutResolution.effectiveTimeoutMs);
+            const failure = failureMessage(
+              task,
+              failureReason,
+              timeoutResolution.effectiveTimeoutMs,
+              refutedCapability,
+            );
             applyTaskTransition({
               repositories: input.repositories,
               task,
@@ -1391,10 +1411,28 @@ export function requiresFounderApproval(
   repositories: ReturnType<typeof createRepositories>,
   task: Task,
 ): boolean {
-  const company = repositories.getCompany(task.companyId);
-  const policy = resolvePolicyForPermissionMode(company?.permissionMode ?? null);
+  return grantNeedsFounderApproval({
+    needs: resolveTaskCapabilityNeeds(task),
+    policy: policyForTask(repositories, task),
+  });
+}
 
-  return decideAction(policy, "run_safe_command") === "ask";
+/**
+ * What this task's Agent Run is permitted to do: what the deliverable needs, narrowed by the
+ * company's Permission Mode. Resolved here, once, so no adapter has to look at a task (ADR 0021).
+ */
+export function resolveTaskAgentGrant(
+  repositories: ReturnType<typeof createRepositories>,
+  task: Task,
+): AgentCapabilityGrant {
+  return resolveAgentCapabilityGrant({
+    needs: resolveTaskCapabilityNeeds(task),
+    policy: policyForTask(repositories, task),
+  });
+}
+
+function policyForTask(repositories: ReturnType<typeof createRepositories>, task: Task) {
+  return resolvePolicyForPermissionMode(repositories.getCompany(task.companyId)?.permissionMode ?? null);
 }
 
 function blockTaskForDependency(
@@ -1693,7 +1731,18 @@ function replanMessage(task: Task, timeoutMs: number): string {
   return `Task needs replanning: ${task.title} / exceeded long budget ${formatExecutionBudget(timeoutMs)}.`;
 }
 
-function failureMessage(task: Task, failureReason: SchedulerFailureReason, timeoutMs: number): string {
+function failureMessage(
+  task: Task,
+  failureReason: SchedulerFailureReason,
+  timeoutMs: number,
+  refutedCapability?: string | null,
+): string {
+  // A refuted capability claim explains the failure better than the generic reason does: the agent
+  // reported an environment limit the runtime knows it did not impose (ADR 0021).
+  if (refutedCapability) {
+    return `Task failed: ${task.title} / ${failureReason} / the run reported \`${refutedCapability}\` as unavailable, but it was granted.`;
+  }
+
   if (failureReason === "timeout") {
     return `Task failed: ${task.title} / timeout after ${formatExecutionBudget(timeoutMs)}.`;
   }
@@ -1707,6 +1756,10 @@ function failureMessage(task: Task, failureReason: SchedulerFailureReason, timeo
 
   if (failureReason === "proof_capture_failed") {
     return `Task failed: ${task.title} / proof_capture_failed.`;
+  }
+
+  if (failureReason === "invalid_agent_output") {
+    return `Task failed: ${task.title} / invalid_agent_output / the agent replied but the runtime could not read it; substantive work was not dispatched.`;
   }
 
   return `Task failed: ${task.title} / agent_failed.`;

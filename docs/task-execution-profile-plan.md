@@ -25,12 +25,15 @@ Fix the current one-size-fits-all agent timeout by introducing Task Execution Pr
 | `landing-page-file` | `long` | 600s |
 | fallback | `medium` | 300s |
 
+Amended by ADR 0021: this table is the starting point, not the answer. The resolved profile is then raised to a floor set by the run's Agent Capability Grant — a grant carrying `web_research` means at least `medium`, because the deliverable's shape does not predict the wall-clock cost of live web round-trips. A `research-report` task therefore starts at `short` only when it was granted no web, which in practice means a company whose Permission Mode denies it.
+
 ## Failure Reasons
 
 First-version scheduler events should distinguish:
 
 - `timeout`: the agent process exceeded its budget.
 - `agent_failed`: the adapter returned failed for a non-timeout reason.
+- `invalid_agent_output`: the agent answered and exited 0, but the reply missed the run's Structured Output Contract, so the runtime could not read it (ADR 0022). Distinct from `agent_failed` on purpose — the failing expectation is the runtime's, and labelling it an agent failure sends diagnosis the wrong way.
 - `no_proof`: the agent completed but no matching Proof was captured.
 - `proof_capture_failed`: Proof collection threw for the current task.
 

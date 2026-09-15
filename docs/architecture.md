@@ -122,7 +122,9 @@ Agents implement a small adapter interface:
 - `detect()`
 - `run()`
 
-Built-in command-template adapter factories exist for Claude Code and Codex. Custom command-template agents can be added with capability tags and command interpolation for `{workspace}` and `{promptPath}`.
+Built-in adapter factories exist for Claude Code and Codex. Custom agents can still be added as command templates with capability tags and interpolation for `{workspace}` and `{promptPath}`.
+
+The built-in two no longer use a fixed command template. Each Agent Run carries an **Agent Capability Grant** — what the task needs (`workspace_read`, `workspace_write`, `run_command`, `web_research`), intersected with what the company's Permission Mode allows — and the adapter turns that grant into launch flags. The launch is fail-closed: shell and code-running tools removed, user/project/local settings files ignored, host MCP servers skipped, file tools confined to the working directory, and anything that would prompt denied. Capabilities come back only because the grant named them. A run therefore behaves the same on every machine, and a research task can actually search the web. See ADR 0021.
 
 ## Playbooks
 
@@ -163,8 +165,10 @@ Proof is validated against the task proof schema before a task can be treated as
 ## Permission Modes
 
 - Safe: most conservative local execution.
-- Balanced: default. Workspace reads/writes and safe commands are automatic; install/deploy ask; outside-workspace writes and paid actions are denied.
+- Balanced: default. Workspace reads/writes, safe commands, and public web reads are automatic; install/deploy ask; outside-workspace writes and paid actions are denied.
 - Autonomous: broader automatic execution for trusted local use, while destructive or paid actions remain policy-controlled.
+
+Permission Mode decides two things: whether a task needs Founder Approval before it is dispatched, and which Runtime Capabilities its Agent Capability Grant may contain. It can only narrow a grant — a task never receives a capability it did not need, however permissive the mode.
 
 ## Kill Switch
 

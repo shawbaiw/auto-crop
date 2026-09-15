@@ -69,6 +69,7 @@ export const taskAffordanceKindSchema = z.enum([
 export const agentFailureReasonSchema = z.enum([
   "timeout",
   "agent_failed",
+  "invalid_agent_output",
   "no_proof",
   "proof_capture_failed",
   "dependency_failed",

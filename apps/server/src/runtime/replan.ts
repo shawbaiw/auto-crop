@@ -3,6 +3,8 @@ import type { ReplanProposal, Task, TaskEvent } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { Playbook } from "../playbooks/types";
+import { planningCapabilityNeeds, resolveAgentCapabilityGrant } from "../policies/capabilityGrant";
+import { resolvePolicyForPermissionMode } from "../policies/defaults";
 import { defaultAgentSessionManager, type AgentSessionManager, type AgentSessionRunEvent } from "./agentSessions";
 import { resetTaskAttempts } from "./boundedRecovery";
 import { applyTaskTransition } from "./taskTransition";
@@ -127,6 +129,10 @@ async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: 
   const companyWorkspace = createCompanyWorkspace(input.projectRoot, task.companyId);
   const promptPath = `${companyWorkspace.companyRoot}/replan-${task.id}-prompt.md`;
   writeFileSync(promptPath, prompt, "utf8");
+  const plannerGrant = resolveAgentCapabilityGrant({
+    needs: planningCapabilityNeeds,
+    policy: resolvePolicyForPermissionMode(company.permissionMode),
+  });
   const agentRequest = {
     taskId: `${task.id}_replan_planner`,
     prompt,
@@ -138,12 +144,14 @@ async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: 
       playbookId: input.playbook.id,
       purpose: "replan_proposal",
     },
+    grant: plannerGrant,
   };
   const sessionPolicy = resolveAgentSessionPolicy({
     companyId: task.companyId,
     agentId: input.plannerAgent.id,
     permissionMode: company.permissionMode,
     purpose: "replan_planner",
+    grantId: plannerGrant.id,
     env: input.agentSessionEnv,
   });
   const run = await (input.agentSessionManager ?? defaultAgentSessionManager).run({

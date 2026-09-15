@@ -24,6 +24,8 @@ import {
 } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
+import { planningCapabilityNeeds, resolveAgentCapabilityGrant } from "../policies/capabilityGrant";
+import { resolvePolicyForPermissionMode } from "../policies/defaults";
 import { defaultAgentSessionManager, type AgentSessionManager } from "./agentSessions";
 import { resolveEffectiveTimeoutForProfileName } from "./executionProfile";
 import { summarizeFounderReport, type FounderReportProjection } from "./founderReportProjection";
@@ -156,11 +158,16 @@ async function authorFinalFounderReportSections(
   const promptPath = `${companyWorkspace.companyRoot}/final-founder-report-prompt.md`;
   writeFileSync(promptPath, prompt, "utf8");
 
+  const grant = resolveAgentCapabilityGrant({
+    needs: planningCapabilityNeeds,
+    policy: resolvePolicyForPermissionMode(input.company.permissionMode),
+  });
   const sessionPolicy = resolveAgentSessionPolicy({
     companyId: input.company.id,
     agentId: input.ceoAgent.id,
     permissionMode: input.company.permissionMode,
     purpose: "ceo_blueprint",
+    grantId: grant.id,
     env: input.agentSessionEnv,
   });
   const agentRun = await (input.agentSessionManager ?? defaultAgentSessionManager).run({
@@ -172,6 +179,7 @@ async function authorFinalFounderReportSections(
       workspacePath: companyWorkspace.companyRoot,
       metadata: { classification: input.classification },
       timeoutMs: resolveEffectiveTimeoutForProfileName("long").effectiveTimeoutMs,
+      grant,
     },
     sessionKey: sessionPolicy.status === "enabled" ? sessionPolicy.key : null,
   });

@@ -79,7 +79,9 @@ Built-in adapters:
 - Codex.
 - Mock agent for tests.
 
-Custom agents are represented by command templates with capability tags. Command templates can interpolate:
+Claude Code and Codex build their launch from the run's Agent Capability Grant rather than a fixed template, so a research task gets web search and an engineering task gets a shell, and neither inherits your own `.claude` / `$CODEX_HOME` configuration, skills, hooks, or MCP servers. See ADR 0021.
+
+Custom agents are still represented by command templates with capability tags. Command templates can interpolate:
 
 - `{workspace}`: the task workspace path.
 - `{promptPath}`: the prompt file path.

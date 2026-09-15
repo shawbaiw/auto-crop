@@ -123,6 +123,7 @@ Use a small shared enum for persisted failure reasons:
 
 - `timeout`: the agent process exceeded the effective timeout.
 - `agent_failed`: the agent process returned a non-zero exit or adapter-level failure.
+- `invalid_agent_output`: the agent process exited 0 and answered, but the reply missed the run's Structured Output Contract and the runtime could not read it (ADR 0022). Keep it separate from `agent_failed`: this reason exists so a reader is not sent to inspect an agent run that did what it was asked.
 - `no_proof`: the agent finished but the Proof collector could not find required proof.
 - `proof_capture_failed`: proof collection itself errored.
 - `dependency_failed`: a direct dependency failed, was blocked, or was cancelled before this task ran.

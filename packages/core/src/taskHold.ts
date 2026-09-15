@@ -366,6 +366,12 @@ export function deriveTaskHold(input: {
     case "no_proof":
     case "proof_capture_failed":
       return { kind: "invalid_business_artifact", resolver: "runtime" };
+    // Unreadable output is not an artifact problem — nothing got as far as producing one — and the
+    // only way forward is to run it again, which is what this Hold offers. Stated explicitly rather
+    // than left to the catch-all below: this stop is modelled, and `runtime_interrupted` should keep
+    // meaning "nobody modelled this" (ADR 0020).
+    case "invalid_agent_output":
+      return { kind: "runtime_interrupted", resolver: "runtime" };
     default:
       return { kind: "runtime_interrupted", resolver: "runtime" };
   }

@@ -598,6 +598,59 @@ describe("captureBusinessArtifact", () => {
     ).toBe("no_verifiable_url");
   });
 
+  /**
+   * The mirror of the confirmation paths: runtime-held evidence that *refutes* a claim. The runtime
+   * is the authority on what it granted, so "the environment did not allow the web" from a run that
+   * held `web_research` is checkable, not testimony (ADR 0021).
+   */
+  it("verifyEnvironmentBlockerClaim refutes a claim naming a capability the run was granted", async () => {
+    const grant = {
+      granted: ["workspace_read", "workspace_write", "web_research"] as const,
+      withheld: [],
+      id: "workspace_read+workspace_write+web_research",
+    };
+
+    for (const capability of ["web_research", "web search", "Internet-Access", "network"]) {
+      const result = await verifyEnvironmentBlockerClaim({
+        claim: { capability, url: null, reachabilitySnapshot: null },
+        grant: { ...grant, granted: [...grant.granted] },
+      });
+      expect(result.verified, capability).toBe(false);
+      expect(result.reason, capability).toBe("refuted_by_grant");
+    }
+  });
+
+  it("verifyEnvironmentBlockerClaim leaves a capability the runtime does not grant alone", async () => {
+    const grant = {
+      granted: ["workspace_read", "workspace_write", "web_research"] as ("workspace_read" | "workspace_write" | "web_research")[],
+      withheld: [],
+      id: "workspace_read+workspace_write+web_research",
+    };
+
+    // Not refutable: the runtime grants neither, so the agent's report stands and the existing
+    // confirmation path decides.
+    expect(
+      (await verifyEnvironmentBlockerClaim({ claim: { capability: "keyword_data", url: null, reachabilitySnapshot: null }, grant })).reason,
+    ).toBe("unsupported_capability");
+    expect(
+      (
+        await verifyEnvironmentBlockerClaim({
+          claim: { capability: "browser_screenshot", url: "http://localhost:4173/", reachabilitySnapshot: null },
+          fetchImpl: async () => new Response("ok", { status: 200 }),
+          grant,
+        })
+      ).verified,
+    ).toBe(true);
+  });
+
+  it("verifyEnvironmentBlockerClaim refutes nothing without a grant to check against", async () => {
+    const result = await verifyEnvironmentBlockerClaim({
+      claim: { capability: "web_research", url: null, reachabilitySnapshot: null },
+    });
+
+    expect(result.reason).toBe("unsupported_capability");
+  });
+
   it("verifyEnvironmentBlockerClaim falls back to the reachability snapshot when the server is gone", async () => {
     const result = await verifyEnvironmentBlockerClaim({
       claim: {

@@ -31,14 +31,19 @@ export function buildProofContractInstructions(task: Pick<Task, "id" | "proofSch
   }
 
   if (task.proofSchemaId === "research-report") {
-    return [...instructions, "Before finishing, leave a research-report.md file in the task workspace."];
+    return [
+      ...instructions,
+      "Before finishing, leave a research-report.md file in the task workspace.",
+      "When this run holds `web_research`, findings must rest on pages you actually retrieved, and the report must cite their URLs.",
+      "A figure you recalled rather than retrieved belongs in `payload.validationLimits`, named as an estimate, not in the findings.",
+    ];
   }
 
   if (task.proofSchemaId === "screenshot") {
     return [
       ...instructions,
       "A real screenshot PNG saved in the task workspace is the proof. Capture the running result and save it.",
-      "If every browser and screenshot path is blocked by the sandbox, do not fabricate a screenshot. Instead write `.auto-crop/business-artifact.json` as a `blocker` with `payload.blocker_class: \"environment_blocked\"`, `payload.capability: \"browser_screenshot\"`, and `payload.target_url` set to the running prototype URL the runtime can fetch.",
+      "If every browser and screenshot path is unavailable, do not fabricate a screenshot. Instead write `.auto-crop/business-artifact.json` as a `blocker` with `payload.blocker_class: \"environment_blocked\"`, `payload.capability: \"browser_screenshot\"`, and `payload.target_url` set to the running prototype URL the runtime can fetch.",
       "Also record `payload.server_validation.http_status` with the status code you got when you fetched that URL yourself. The runtime falls back to it if the prototype server has stopped by the time it checks.",
       "On a 2xx response from that URL, or a 2xx `server_validation.http_status` you recorded, the runtime accepts the task with a validation-limits caveat instead of failing it.",
     ];

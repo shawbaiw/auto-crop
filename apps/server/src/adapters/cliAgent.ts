@@ -1,11 +1,35 @@
 import { spawn } from "node:child_process";
-import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "./types";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
+import type { AgentAdapter, AgentRunRequest, AgentRunResult, AgentSessionProbeResult } from "./types";
+
+export type CommandValues = {
+  prompt: string;
+  workspace: string;
+  promptPath: string;
+  grant: AgentCapabilityGrant;
+  /** The run's Structured Output Contract, when it has one. */
+  outputSchema?: Record<string, unknown>;
+  /**
+   * The same schema written to disk, for a CLI that takes a path rather than inline JSON. Present
+   * only during `run()`: `commandPreview` creates no files, so a path-taking adapter's preview omits
+   * the flag. See `createCodexAdapter`.
+   */
+  outputSchemaPath?: string;
+};
 
 export type CliAgentOptions = {
   id: string;
   name: string;
   capabilities: string[];
-  commandTemplate: string;
+  /** Grant-blind template, for generic adapters. Exactly one of this or `buildCommand` is required. */
+  commandTemplate?: string;
+  /** Grant-driven launch construction. Takes precedence over `commandTemplate` when both are given. */
+  buildCommand?: (values: CommandValues) => InterpolatedCommand;
+  /** Optional persistent-session availability check. See `docs/persistent-agent-sessions-plan.md` Task 7. */
+  probeSession?: () => Promise<AgentSessionProbeResult>;
   timeoutMs?: number;
   log?: (line: string) => void;
 };
@@ -22,54 +46,145 @@ export type CliAgentAdapter = AgentAdapter & {
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 
 export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter {
+  const build = (values: CommandValues): InterpolatedCommand => {
+    if (options.buildCommand) {
+      return options.buildCommand(values);
+    }
+    if (!options.commandTemplate) {
+      throw new Error(`Agent adapter ${options.id} needs a commandTemplate or a buildCommand.`);
+    }
+    return interpolateCommandTemplate(options.commandTemplate, values);
+  };
+
   return {
     id: options.id,
     name: options.name,
     capabilities: options.capabilities,
+    ...(options.probeSession ? { session: { probe: options.probeSession, getOrStart: async () => null } } : {}),
 
     async detect(): Promise<boolean> {
-      const { command } = interpolateCommandTemplate(options.commandTemplate, {
+      const { command } = build({
         prompt: "",
         workspace: ".",
         promptPath: "",
+        grant: WORKSPACE_ONLY_GRANT,
       });
 
       return commandExists(command);
     },
 
     async run(request: AgentRunRequest): Promise<AgentRunResult> {
-      const { command, args } = interpolateCommandTemplate(options.commandTemplate, {
-        prompt: request.prompt,
-        workspace: request.workspacePath,
-        promptPath: request.promptPath,
-      });
+      // Materialized outside the workspace so it can never be mistaken for Proof, and removed after
+      // the run whatever its outcome.
+      const schemaDir = request.outputSchema
+        ? mkdtempSync(join(tmpdir(), "auto-crop-output-schema-"))
+        : null;
+      const outputSchemaPath = schemaDir ? join(schemaDir, "schema.json") : undefined;
+      if (outputSchemaPath && request.outputSchema) {
+        writeFileSync(outputSchemaPath, JSON.stringify(request.outputSchema), "utf8");
+      }
 
-      options.log?.(`Agent ${options.name} starting task ${request.taskId}`);
-      const result = await runCommand(command, args, request.workspacePath, {
-        timeoutMs: resolveTimeoutMs(request.timeoutMs, options.timeoutMs),
-        log: options.log,
-        agentName: options.name,
-      });
-      options.log?.(`Agent ${options.name} finished task ${request.taskId} with status ${result.status}`);
-      return result;
+      try {
+        const { command, args } = build({ ...commandValues(request), outputSchemaPath });
+
+        options.log?.(`Agent ${options.name} starting task ${request.taskId}`);
+        const result = await runCommand(command, args, request.workspacePath, {
+          timeoutMs: resolveTimeoutMs(request.timeoutMs, options.timeoutMs),
+          log: options.log,
+          agentName: options.name,
+        });
+        options.log?.(`Agent ${options.name} finished task ${request.taskId} with status ${result.status}`);
+        return result;
+      } finally {
+        if (schemaDir) {
+          rmSync(schemaDir, { recursive: true, force: true });
+        }
+      }
     },
 
     commandPreview(request: AgentRunRequest): InterpolatedCommand {
-      return interpolateCommandTemplate(options.commandTemplate, {
-        prompt: request.prompt,
-        workspace: request.workspacePath,
-        promptPath: request.promptPath,
-      });
+      return build(commandValues(request));
     },
   };
 }
 
+/**
+ * The grant an adapter assumes when a caller resolved none. Deliberately the minimum a run needs to
+ * produce Proof at all — never the host machine's own defaults, which is what the launch constant
+ * this replaced effectively granted.
+ */
+const WORKSPACE_ONLY_GRANT: AgentCapabilityGrant = {
+  granted: ["workspace_read", "workspace_write"],
+  withheld: [],
+  id: "workspace_read+workspace_write",
+};
+
+function commandValues(request: AgentRunRequest): CommandValues {
+  return {
+    prompt: request.prompt,
+    workspace: request.workspacePath,
+    promptPath: request.promptPath,
+    outputSchema: request.outputSchema,
+    grant: request.grant ?? WORKSPACE_ONLY_GRANT,
+  };
+}
+
+/** Built-in Claude Code tools each Runtime Capability unlocks. Exhaustive over the union. */
+const CLAUDE_TOOLS_BY_CAPABILITY: Record<RuntimeCapability, string[]> = {
+  workspace_read: ["Read", "Glob", "Grep"],
+  workspace_write: ["Write", "Edit"],
+  run_command: ["Bash"],
+  web_research: ["WebSearch", "WebFetch"],
+};
+
+export function claudeToolsForGrant(grant: AgentCapabilityGrant): string[] {
+  return grant.granted.flatMap((capability) => CLAUDE_TOOLS_BY_CAPABILITY[capability]);
+}
+
+/**
+ * Launch Claude Code fail-closed, then grant capabilities back (ADR 0021).
+ *
+ * - `--restricted` removes the shell and code-running tools, ignores user, project and local settings
+ *   files, confines the file tools to the working directory, and refuses `bypassPermissions`. It is
+ *   what stops a run from inheriting the operator's machine.
+ * - `--strict-mcp-config` keeps host MCP servers out.
+ * - `--permission-prompts none` makes an unanswerable prompt a deterministic denial rather than an
+ *   accidental one.
+ * - `--tools` says which built-in tools exist; `--allowedTools` pre-answers the prompt for the ones
+ *   that would otherwise ask. Both are needed — `--tools WebSearch` alone still asks, which is the
+ *   exact denial that produced the "sandbox environment" deliverable.
+ */
 export function createClaudeCodeAdapter(options: Pick<CliAgentOptions, "timeoutMs" | "log"> = {}): CliAgentAdapter {
   return createCliAgentAdapter({
     id: "claude-code",
     name: "Claude Code",
     capabilities: ["code", "frontend", "research", "writing"],
-    commandTemplate: "claude -p --permission-mode acceptEdits --no-session-persistence -- {prompt}",
+    buildCommand: ({ prompt, grant, outputSchema }) => {
+      const tools = claudeToolsForGrant(grant);
+      return {
+        command: "claude",
+        args: [
+          "-p",
+          "--restricted",
+          "--strict-mcp-config",
+          "--permission-prompts",
+          "none",
+          // `--tools ""` is the CLI's "no built-in tools at all", which is what an empty grant means.
+          "--tools",
+          tools.join(","),
+          // Nothing to pre-approve when nothing exists; the flag would be meaningless.
+          ...(tools.length > 0 ? ["--allowedTools", tools.join(",")] : []),
+          // Inline JSON only — this flag rejects a file path.
+          ...(outputSchema ? ["--json-schema", JSON.stringify(outputSchema)] : []),
+          "--permission-mode",
+          "acceptEdits",
+          "--no-session-persistence",
+          "--",
+          prompt,
+        ],
+      };
+    },
+    probeSession: () => probeCliSession("claude", ["--help"], "--input-format"),
     ...options,
   });
 }
@@ -83,9 +198,55 @@ export function createCodexAdapter(
     id: "codex",
     name: "Codex",
     capabilities: ["code", "frontend", "test", "refactor"],
-    commandTemplate: `codex exec -m ${model} -C {workspace} --skip-git-repo-check --sandbox workspace-write --ephemeral {prompt}`,
+    buildCommand: ({ prompt, workspace, grant, outputSchemaPath }) => ({
+      command: "codex",
+      args: [
+        "exec",
+        "-m",
+        model,
+        "-C",
+        workspace,
+        // File path only — this flag rejects inline JSON, the mirror of Claude Code's constraint. The
+        // file exists only during a run, so a preview shows the launch without it.
+        ...(outputSchemaPath ? ["--output-schema", outputSchemaPath] : []),
+        // The config-isolation half: do not read `$CODEX_HOME/config.toml` or user/project `.rules`.
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--skip-git-repo-check",
+        "--sandbox",
+        grant.granted.includes("run_command") ? "workspace-write" : "read-only",
+        "--ephemeral",
+        "-c",
+        `tools.web_search=${grant.granted.includes("web_research")}`,
+        prompt,
+      ],
+    }),
     ...options,
   });
+}
+
+/**
+ * Cheap availability check for a CLI's persistent-session path: does its help text name the flag the
+ * session transport needs. A failure means "run one-shot", never "adapter unavailable" — the one-shot
+ * path is the default execution model and must not be gated on a session feature.
+ */
+async function probeCliSession(
+  command: string,
+  args: string[],
+  requiredFlag: string,
+): Promise<AgentSessionProbeResult> {
+  const result = await runCommand(command, args, process.cwd(), {
+    timeoutMs: 15_000,
+    agentName: command,
+  });
+
+  if (result.status !== "complete") {
+    return { status: "unavailable", reason: `${command} help probe failed` };
+  }
+
+  return result.stdout.includes(requiredFlag)
+    ? { status: "available" }
+    : { status: "unavailable", reason: `${command} does not expose ${requiredFlag}` };
 }
 
 export function interpolateCommandTemplate(

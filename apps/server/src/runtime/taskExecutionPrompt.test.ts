@@ -34,6 +34,43 @@ describe("buildTaskExecutionPrompt", () => {
     expect(prompt).toContain("Also include `outcome_summary`, written in English, for compatibility");
   });
 
+  /**
+   * The run that produced the reported failure met a silent `WebSearch` denial, had no vocabulary
+   * for it, called it "a sandbox environment with no live keyword tooling", and delivered estimates
+   * as a deliverable. Stating the grant is what makes "file a blocker instead" followable, and what
+   * makes runtime refutation of a false capability claim fair (ADR 0021).
+   */
+  it("states the run's capability grant and forbids substituting priors for it", () => {
+    const prompt = buildTaskExecutionPrompt({
+      company: createCompanyRecord({}),
+      task: createTaskRecord({ proofSchemaId: "research-report" }),
+      handoffs: [],
+      grant: {
+        granted: ["workspace_read", "workspace_write", "web_research"],
+        withheld: ["run_command"],
+        id: "workspace_read+workspace_write+web_research",
+      },
+    });
+
+    expect(prompt).toContain("## Granted Capabilities");
+    expect(prompt).toContain("web_research — search the public web and fetch pages");
+    expect(prompt).toContain("Refused by this company's Permission Mode:");
+    expect(prompt).toContain("run_command — run shell commands");
+    expect(prompt).toContain("the runtime knows what it granted");
+    expect(prompt).toContain('`payload.blocker_class: "environment_blocked"`');
+    expect(prompt).toContain("Claiming a capability you were granted was unavailable fails the task.");
+  });
+
+  it("omits the capability section entirely when no grant was resolved", () => {
+    const prompt = buildTaskExecutionPrompt({
+      company: createCompanyRecord({}),
+      task: createTaskRecord({}),
+      handoffs: [],
+    });
+
+    expect(prompt).not.toContain("## Granted Capabilities");
+  });
+
   it("tells the agent to author founder-facing prose in the company language, exempting machine text", () => {
     const zhPrompt = buildTaskExecutionPrompt({
       company: createCompanyRecord({ locale: "zh" }),

@@ -2,7 +2,14 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProofSchema, Task } from "@auto-crop/core";
-import { captureProofs, createClaudeCodeAdapter, createCodexAdapter } from "@auto-crop/server";
+import {
+  balancedPolicy,
+  captureProofs,
+  createClaudeCodeAdapter,
+  createCodexAdapter,
+  resolveAgentCapabilityGrant,
+  resolveTaskCapabilityNeeds,
+} from "@auto-crop/server";
 
 const requestedAgentId = process.env.AUTO_CROP_REAL_AGENT ?? "claude-code";
 const adapter = requestedAgentId === "codex" ? createCodexAdapter() : createClaudeCodeAdapter();
@@ -19,6 +26,9 @@ try {
   const detected = await adapter.detect();
   assert(detected, `${adapter.name} should be detected before running real-agent smoke.`);
 
+  // Launch the way the scheduler does, through a resolved Agent Capability Grant, so the smoke
+  // exercises the real fail-closed launch rather than the adapter's fallback grant (ADR 0021).
+  const smokeTaskShape = { proofSchemaId: "real-agent-smoke-proof", requiredCapabilities: ["code"] };
   const result = await adapter.run({
     taskId: "task_real_agent_smoke",
     prompt,
@@ -28,6 +38,10 @@ try {
       departmentName: "Engineering",
       proofSchemaId: "real-agent-smoke-proof",
     },
+    grant: resolveAgentCapabilityGrant({
+      needs: resolveTaskCapabilityNeeds(smokeTaskShape),
+      policy: balancedPolicy,
+    }),
   });
   writeFileSync(logPath, [result.stdout, result.stderr].join("\n"), "utf8");
 

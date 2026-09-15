@@ -56,6 +56,8 @@ export function formatTaskFailureReason(reason: string, t: (key: TranslationKey)
       return t("taskStatus.failureTimeout");
     case "agent_failed":
       return t("taskStatus.failureAgentFailed");
+    case "invalid_agent_output":
+      return t("taskStatus.failureInvalidAgentOutput");
     case "no_proof":
       return t("taskStatus.failureNoProof");
     case "proof_capture_failed":

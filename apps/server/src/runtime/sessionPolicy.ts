@@ -8,6 +8,12 @@ export type AgentSessionPolicyInput = {
   agentId: string;
   permissionMode?: PolicyMode | null;
   purpose: AgentSessionPurpose;
+  /**
+   * The Agent Capability Grant this run will execute under. Part of the session's identity for the
+   * same reason Permission Mode is: a session started under one grant must not serve a run that was
+   * granted something else (ADR 0021).
+   */
+  grantId?: string | null;
   env?: Record<string, string | undefined>;
 };
 
@@ -18,7 +24,7 @@ export type AgentSessionPolicyDecision =
     }
   | {
       status: "disabled";
-      reason: "env_disabled" | "purpose_not_eligible" | "missing_permission_mode";
+      reason: "env_disabled" | "purpose_not_eligible" | "missing_permission_mode" | "missing_grant";
     };
 
 const enabledPurposes = new Set<AgentSessionPurpose>(["ceo_blueprint", "replan_planner"]);
@@ -37,12 +43,17 @@ export function resolveAgentSessionPolicy(input: AgentSessionPolicyInput): Agent
     return { status: "disabled", reason: "missing_permission_mode" };
   }
 
+  if (!input.grantId) {
+    return { status: "disabled", reason: "missing_grant" };
+  }
+
   return {
     status: "enabled",
     key: {
       companyId: input.companyId,
       agentId: input.agentId,
       permissionMode: input.permissionMode,
+      grantId: input.grantId,
     },
   };
 }

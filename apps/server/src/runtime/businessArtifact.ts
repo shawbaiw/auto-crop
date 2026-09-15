@@ -11,6 +11,7 @@ import {
   type Proof,
   type Task,
 } from "@auto-crop/core";
+import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
 import { parseOpenDecisions } from "./founderDecision";
 
 const BUSINESS_ARTIFACT_PATH = join(".auto-crop", "business-artifact.json");
@@ -80,7 +81,7 @@ export type EnvironmentBlockerVerification = {
   status?: number;
   /** Which evidence path confirmed the claim. Absent when the claim was not confirmed. */
   verifiedVia?: "runtime_url_check" | "capture_time_snapshot";
-  reason?: "unsupported_capability" | "no_verifiable_url" | "fetch_failed" | "non_2xx";
+  reason?: "unsupported_capability" | "no_verifiable_url" | "fetch_failed" | "non_2xx" | "refuted_by_grant";
 };
 
 export type CaptureBusinessArtifactInput = {
@@ -520,6 +521,46 @@ function isOkStatus(status: number): boolean {
 }
 
 /**
+ * Names an agent is likely to use for a capability the runtime can actually grant. Claims arrive as
+ * free text, so the runtime has to recognize the capability before it can say whether it granted it.
+ *
+ * Deliberately narrow: a name outside this table is a capability the runtime does not grant
+ * (`browser_screenshot`, `keyword_data`), and those claims must still be believed. Widening it by
+ * guessing would start refuting honest blockers, which is the more expensive mistake.
+ */
+const GRANTABLE_CAPABILITY_ALIASES: Record<string, RuntimeCapability> = {
+  web_research: "web_research",
+  web_search: "web_research",
+  websearch: "web_research",
+  web_access: "web_research",
+  network: "web_research",
+  network_access: "web_research",
+  internet: "web_research",
+  internet_access: "web_research",
+  live_web: "web_research",
+  run_command: "run_command",
+  shell: "run_command",
+  bash: "run_command",
+  command_execution: "run_command",
+};
+
+/**
+ * True when the agent claims a capability was unavailable that this run was in fact granted.
+ *
+ * Without a grant to check against (an older caller, or a path that launches no agent), nothing is
+ * refuted — absence of evidence must not become evidence.
+ */
+function isRefutedByGrant(capability: string, grant: AgentCapabilityGrant | undefined): boolean {
+  if (!grant) {
+    return false;
+  }
+
+  const normalized = capability.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const resolved = GRANTABLE_CAPABILITY_ALIASES[normalized];
+  return resolved !== undefined && grant.granted.includes(resolved);
+}
+
+/**
  * Confirm an Environment-Blocked Blocker's claim, in order of evidence strength (ADR 0016). For
  * `browser_screenshot`:
  *
@@ -536,8 +577,17 @@ function isOkStatus(status: number): boolean {
 export async function verifyEnvironmentBlockerClaim(input: {
   claim: EnvironmentBlockerClaim;
   fetchImpl?: typeof fetch;
+  /** What the runtime actually handed this run. A claim contradicting it is refuted (ADR 0021). */
+  grant?: AgentCapabilityGrant;
 }): Promise<EnvironmentBlockerVerification> {
   const { capability, url, reachabilitySnapshot } = input.claim;
+
+  // The mirror of the confirmation paths below. There, runtime-held evidence confirms a claim the
+  // agent could not prove; here it refutes one the agent should not have filed. The runtime is the
+  // authority on what it granted, so "the environment did not allow X" is checkable, not testimony.
+  if (isRefutedByGrant(capability, input.grant)) {
+    return { capability, verified: false, checkedUrl: url, reason: "refuted_by_grant" };
+  }
 
   if (!VERIFIABLE_ENVIRONMENT_BLOCKER_CAPABILITIES.has(capability)) {
     return { capability, verified: false, checkedUrl: url, reason: "unsupported_capability" };
