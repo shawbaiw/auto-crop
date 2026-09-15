@@ -105,8 +105,8 @@ function resolveEffectiveTimeoutForProfile(
   const requestedTimeoutMs = executionProfile.timeoutMs;
   const warnings: string[] = [];
   let effectiveTimeoutMs = requestedTimeoutMs;
-  const normalOverride = parseTimeoutEnv("AUTO_CROP_AGENT_TIMEOUT_MS", env.AUTO_CROP_AGENT_TIMEOUT_MS);
-  const forceOverride = parseTimeoutEnv("AUTO_CROP_FORCE_AGENT_TIMEOUT_MS", env.AUTO_CROP_FORCE_AGENT_TIMEOUT_MS);
+  const normalOverride = parseTimeoutEnv(env.AUTO_CROP_AGENT_TIMEOUT_MS);
+  const forceOverride = parseTimeoutEnv(env.AUTO_CROP_FORCE_AGENT_TIMEOUT_MS);
 
   if (normalOverride.kind === "invalid") {
     warnings.push(`Ignored invalid AUTO_CROP_AGENT_TIMEOUT_MS: ${normalOverride.raw}.`);
@@ -179,7 +179,6 @@ function nextExecutionProfile(profileName: TaskExecutionProfileName): TaskExecut
 }
 
 function parseTimeoutEnv(
-  name: string,
   raw: string | undefined,
 ): { kind: "unset" } | { kind: "invalid"; raw: string } | { kind: "valid"; value: number } {
   if (raw === undefined || raw.trim() === "") {

@@ -58,9 +58,6 @@ export const englishTranslations = {
   "onboarding.balanced": "Balanced",
   "onboarding.autonomous": "Autonomous",
   "onboarding.creating": "Creating...",
-  "onboarding.blueprintReview": "Blueprint Review",
-  "onboarding.objectives": "Objectives",
-  "onboarding.firstTasks": "First Tasks",
   "onboarding.executionPolicy": "execution policy",
 
   "companyPicker.eyebrow": "Company Select",
@@ -598,9 +595,6 @@ export const chineseTranslations: Record<TranslationKey, string> = {
   "onboarding.balanced": "平衡",
   "onboarding.autonomous": "自主",
   "onboarding.creating": "正在创建...",
-  "onboarding.blueprintReview": "蓝图审查",
-  "onboarding.objectives": "目标",
-  "onboarding.firstTasks": "首批任务",
   "onboarding.executionPolicy": "执行策略",
 
   "companyPicker.eyebrow": "公司选择",

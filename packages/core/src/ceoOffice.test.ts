@@ -760,7 +760,6 @@ describe("projectCeoOfficeItems", () => {
 
   it("does not project an Execution Report for an accepted completion that carries no conclusion or outcome summary", () => {
     const state = scenario("Record the implementation diff", "unused");
-    const [task] = state.tasks;
     // An accepted completion with a business artifact but no authored narrative — the shape older
     // completions have. There is nothing to broadcast, so no Report card; the completion row and its
     // artifact still exist as durable facts.

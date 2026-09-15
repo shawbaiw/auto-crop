@@ -162,8 +162,6 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
     };
   }
   const artifactValue = normalizeParsedArtifactForCapturedProof(
-    input.task,
-    input.proofs,
     parsed.value,
     input.environmentBlockerVerification,
   );
@@ -356,8 +354,6 @@ function outcomeSummaryFieldError(payload: unknown): string | null {
 }
 
 function normalizeParsedArtifactForCapturedProof(
-  task: Task,
-  proofs: Proof[],
   artifact: DeclaredBusinessArtifact,
   environmentBlockerVerification: EnvironmentBlockerVerification | undefined,
 ): DeclaredBusinessArtifact {

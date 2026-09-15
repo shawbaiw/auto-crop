@@ -312,20 +312,6 @@ function getCeoPendingItems(
     });
 }
 
-function currentArtifactForTask(taskId: string, businessArtifacts: BusinessArtifactSummary[]): BusinessArtifactSummary | null {
-  return businessArtifacts.find((artifact) => artifact.taskId === taskId && artifact.isCurrent) ?? null;
-}
-
-function isReviewableArtifact(artifact: BusinessArtifactSummary | null): boolean {
-  return (
-    artifact !== null &&
-    artifact.isCurrent &&
-    artifact.validationStatus === "valid" &&
-    artifact.reviewStatus === "unreviewed" &&
-    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
-  );
-}
-
 function departmentIcon(departmentName: string): ReactNode {
   const normalizedName = departmentName.toLowerCase();
 
@@ -406,7 +392,7 @@ function CeoIntakeWorkspace({
   visionGaps: VisionGapSummary[];
   waitStates: WaitStateSummary[];
 }) {
-  const { language, t } = useLanguage();
+  const { t } = useLanguage();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [highlightedOfficeItemId, setHighlightedOfficeItemId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -476,7 +462,6 @@ function CeoIntakeWorkspace({
       <CeoExecutiveOverview
         companyTaskCount={tasks.length}
         founderVision={founderVision}
-        outcomesLastSeen={outcomesLastSeen}
         departmentsById={departmentsById}
         humanActions={humanActions}
         objectives={objectives}
@@ -1598,7 +1583,6 @@ function CeoExecutiveOverview({
   founderVision,
   humanActions,
   objectives,
-  outcomesLastSeen,
   tasksById,
   visionGaps,
   waitStates,
@@ -1608,7 +1592,6 @@ function CeoExecutiveOverview({
   founderVision: string;
   humanActions: HumanActionSummary[];
   objectives: ObjectiveSummary[];
-  outcomesLastSeen: string | null;
   tasksById: Map<string, TaskSummary>;
   visionGaps: VisionGapSummary[];
   waitStates: WaitStateSummary[];
@@ -2299,7 +2282,7 @@ function formatGraphTaskStatus(task: TaskSummary, t: ReturnType<typeof useLangua
 }
 
 function CeoIntakeFlows({ intakes }: { intakes: CeoIntakeSummary[] }) {
-  const { language, t } = useLanguage();
+  const { t } = useLanguage();
 
   return (
     <section className="department-progress-flows ceo-intake-flows" aria-label={t("department.ceoIntakeProgress")}>
@@ -2640,8 +2623,6 @@ function taskProgressStatusForTask(task: TaskSummary): TaskProgressEventSummary[
 }
 
 function progressEventsAlreadyReflectTaskStatus(events: TaskProgressEventSummary[], task: TaskSummary): boolean {
-  const currentProgressStatus = taskProgressStatusForTask(task);
-
   return events.some((event) => {
     if (task.status === "review") {
       return event.step === "awaiting_review" || (event.step === "executing" && /\sreview$/i.test(event.label));
@@ -2852,7 +2833,7 @@ function CeoIntakeMessageBox({
   onDraftChange: (value: string) => void;
   onSubmit?: (body: string) => Promise<void> | void;
 }) {
-  const { language, t } = useLanguage();
+  const { t } = useLanguage();
   const messageInputId = useId();
   const [sent, setSent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -3079,21 +3060,4 @@ function taskTitle(task: TaskSummary, language: "en" | "zh"): string {
 
 function taskDescription(task: TaskSummary, language: "en" | "zh"): string {
   return resolveLocalizedValue(task.descriptionText, language, task.description ?? "");
-}
-
-/**
- * Whether the server currently offers this action on this task. The dashboard never decides that for
- * itself: an eligibility rule kept on both sides is a rule that drifts, and when it drifted the
- * founder was shown either an action the API refused or no action at all (ADR 0020).
- */
-function hasAffordance(task: TaskSummary, kind: TaskAffordanceKind): boolean {
-  return (task.affordances ?? []).some((affordance) => affordance.kind === kind);
-}
-
-/**
- * The record an affordance acts on, carried from the Task Hold that produced it — an Approval id, a
- * Human Action id, an upstream task id. The UI needs no lookup of its own to act on it.
- */
-function affordanceSubjectId(task: TaskSummary, kind: TaskAffordanceKind): string | null {
-  return (task.affordances ?? []).find((affordance) => affordance.kind === kind)?.subjectId ?? null;
 }

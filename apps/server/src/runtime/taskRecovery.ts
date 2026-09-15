@@ -133,7 +133,6 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
 
 export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
   const now = input.now ?? (() => new Date());
-  const createId = input.createId ?? defaultCreateId;
   const timestamp = now().toISOString();
   const task = input.repositories.getTask(input.taskId);
 

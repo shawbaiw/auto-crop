@@ -12,7 +12,6 @@ import type {
   FounderDecision,
   HumanAction,
   HumanActionConfirmation,
-  KeyResult,
   Objective,
   Proof,
   ReplanProposal,
@@ -23,7 +22,6 @@ import type {
   TaskHold,
   TaskProgressEvent,
   TaskStatus,
-  VisionGap,
   WaitState,
 } from "@auto-crop/core";
 import type { CompleteLocalizedText, Locale, LocalizedText } from "@auto-crop/core";
@@ -2362,21 +2360,6 @@ function summarizeObjective(objective: Objective) {
     title: objective.title,
     titleText: localizedSummaryText(objective.titleText, objective.title),
     priority: objective.priority,
-  };
-}
-
-function summarizeKeyResult(keyResult: KeyResult) {
-  return {
-    id: keyResult.id,
-    objectiveId: keyResult.objectiveId,
-    title: keyResult.title,
-    titleText: localizedSummaryText(keyResult.titleText, keyResult.title),
-    metricName: keyResult.metricName,
-    targetValue: keyResult.targetValue,
-    targetValueText: localizedSummaryText(keyResult.targetValueText, keyResult.targetValue),
-    currentValue: keyResult.currentValue,
-    currentValueText: localizedSummaryText(keyResult.currentValueText, keyResult.currentValue),
-    status: keyResult.status,
   };
 }
 
