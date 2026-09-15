@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -180,6 +180,45 @@ describe("CLI command template adapter", () => {
     expect(createCodexAdapter().commandPreview({ ...request, grant: undefined }).args).toContain(
       "tools.web_search=false",
     );
+  });
+
+  /**
+   * A prompt asking for JSON is a request; this is a constraint. The two CLIs take it in opposite
+   * shapes — Claude Code rejects a file path, Codex rejects inline JSON — so the runtime holds the
+   * schema as an object and each adapter converts (ADR 0022).
+   */
+  it("passes an output contract to Claude Code inline", () => {
+    const schema = { type: "object", properties: { purpose: { type: "string" } }, required: ["purpose"] };
+    const args = createClaudeCodeAdapter().commandPreview({ ...request, outputSchema: schema }).args;
+
+    expect(args[args.indexOf("--json-schema") + 1]).toBe(JSON.stringify(schema));
+  });
+
+  it("writes the contract to a file for Codex and removes it after the run", async () => {
+    const schema = { type: "object", properties: { purpose: { type: "string" } }, required: ["purpose"] };
+    let seenPath: string | undefined;
+    let contentDuringRun: string | undefined;
+
+    const adapter = createCliAgentAdapter({
+      id: "fake-codex",
+      name: "Fake Codex",
+      capabilities: ["code"],
+      buildCommand: ({ outputSchemaPath }) => {
+        seenPath = outputSchemaPath;
+        contentDuringRun = outputSchemaPath ? readFileSync(outputSchemaPath, "utf8") : undefined;
+        return { command: "node", args: ["--version"] };
+      },
+    });
+
+    await adapter.run({ ...request, workspacePath: process.cwd(), outputSchema: schema });
+
+    expect(contentDuringRun).toBe(JSON.stringify(schema));
+    expect(seenPath && existsSync(seenPath)).toBe(false);
+  });
+
+  it("omits the contract flag entirely when the run declares none", () => {
+    expect(createClaudeCodeAdapter().commandPreview(request).args).not.toContain("--json-schema");
+    expect(createCodexAdapter().commandPreview(request).args).not.toContain("--output-schema");
   });
 
   it("gives a no-tool grant an empty toolset and nothing to pre-approve", () => {

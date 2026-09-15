@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
 import type { AgentAdapter, AgentRunRequest, AgentRunResult, AgentSessionProbeResult } from "./types";
 
@@ -7,6 +10,14 @@ export type CommandValues = {
   workspace: string;
   promptPath: string;
   grant: AgentCapabilityGrant;
+  /** The run's Structured Output Contract, when it has one. */
+  outputSchema?: Record<string, unknown>;
+  /**
+   * The same schema written to disk, for a CLI that takes a path rather than inline JSON. Present
+   * only during `run()`: `commandPreview` creates no files, so a path-taking adapter's preview omits
+   * the flag. See `createCodexAdapter`.
+   */
+  outputSchemaPath?: string;
 };
 
 export type CliAgentOptions = {
@@ -63,16 +74,32 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
     },
 
     async run(request: AgentRunRequest): Promise<AgentRunResult> {
-      const { command, args } = build(commandValues(request));
+      // Materialized outside the workspace so it can never be mistaken for Proof, and removed after
+      // the run whatever its outcome.
+      const schemaDir = request.outputSchema
+        ? mkdtempSync(join(tmpdir(), "auto-crop-output-schema-"))
+        : null;
+      const outputSchemaPath = schemaDir ? join(schemaDir, "schema.json") : undefined;
+      if (outputSchemaPath && request.outputSchema) {
+        writeFileSync(outputSchemaPath, JSON.stringify(request.outputSchema), "utf8");
+      }
 
-      options.log?.(`Agent ${options.name} starting task ${request.taskId}`);
-      const result = await runCommand(command, args, request.workspacePath, {
-        timeoutMs: resolveTimeoutMs(request.timeoutMs, options.timeoutMs),
-        log: options.log,
-        agentName: options.name,
-      });
-      options.log?.(`Agent ${options.name} finished task ${request.taskId} with status ${result.status}`);
-      return result;
+      try {
+        const { command, args } = build({ ...commandValues(request), outputSchemaPath });
+
+        options.log?.(`Agent ${options.name} starting task ${request.taskId}`);
+        const result = await runCommand(command, args, request.workspacePath, {
+          timeoutMs: resolveTimeoutMs(request.timeoutMs, options.timeoutMs),
+          log: options.log,
+          agentName: options.name,
+        });
+        options.log?.(`Agent ${options.name} finished task ${request.taskId} with status ${result.status}`);
+        return result;
+      } finally {
+        if (schemaDir) {
+          rmSync(schemaDir, { recursive: true, force: true });
+        }
+      }
     },
 
     commandPreview(request: AgentRunRequest): InterpolatedCommand {
@@ -97,6 +124,7 @@ function commandValues(request: AgentRunRequest): CommandValues {
     prompt: request.prompt,
     workspace: request.workspacePath,
     promptPath: request.promptPath,
+    outputSchema: request.outputSchema,
     grant: request.grant ?? WORKSPACE_ONLY_GRANT,
   };
 }
@@ -131,7 +159,7 @@ export function createClaudeCodeAdapter(options: Pick<CliAgentOptions, "timeoutM
     id: "claude-code",
     name: "Claude Code",
     capabilities: ["code", "frontend", "research", "writing"],
-    buildCommand: ({ prompt, grant }) => {
+    buildCommand: ({ prompt, grant, outputSchema }) => {
       const tools = claudeToolsForGrant(grant);
       return {
         command: "claude",
@@ -146,6 +174,8 @@ export function createClaudeCodeAdapter(options: Pick<CliAgentOptions, "timeoutM
           tools.join(","),
           // Nothing to pre-approve when nothing exists; the flag would be meaningless.
           ...(tools.length > 0 ? ["--allowedTools", tools.join(",")] : []),
+          // Inline JSON only — this flag rejects a file path.
+          ...(outputSchema ? ["--json-schema", JSON.stringify(outputSchema)] : []),
           "--permission-mode",
           "acceptEdits",
           "--no-session-persistence",
@@ -168,7 +198,7 @@ export function createCodexAdapter(
     id: "codex",
     name: "Codex",
     capabilities: ["code", "frontend", "test", "refactor"],
-    buildCommand: ({ prompt, workspace, grant }) => ({
+    buildCommand: ({ prompt, workspace, grant, outputSchemaPath }) => ({
       command: "codex",
       args: [
         "exec",
@@ -176,6 +206,9 @@ export function createCodexAdapter(
         model,
         "-C",
         workspace,
+        // File path only — this flag rejects inline JSON, the mirror of Claude Code's constraint. The
+        // file exists only during a run, so a preview shows the launch without it.
+        ...(outputSchemaPath ? ["--output-schema", outputSchemaPath] : []),
         // The config-isolation half: do not read `$CODEX_HOME/config.toml` or user/project `.rules`.
         "--ignore-user-config",
         "--ignore-rules",

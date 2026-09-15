@@ -17,6 +17,15 @@ export type AgentRunRequest = {
    * whatever the host machine would have allowed.
    */
   grant?: AgentCapabilityGrant;
+  /**
+   * A JSON Schema the reply must satisfy — the run's **Structured Output Contract**.
+   *
+   * A prompt asking for JSON is a request; this is a constraint the CLI enforces. The difference is
+   * not theoretical: an Execution Brief written in Chinese put a quoted phrase in a prose field, the
+   * model emitted a bare `"` inside a JSON string, `JSON.parse` threw, and the task failed before
+   * any substantive work was dispatched (ADR 0022).
+   */
+  outputSchema?: Record<string, unknown>;
 };
 
 export type AgentRunResult = {

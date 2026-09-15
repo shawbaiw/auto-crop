@@ -52,7 +52,7 @@ Derived from the task, in `resolveTaskCapabilityNeeds`:
 
 `product-brief` is deliberately absent from the web row. A brief synthesizing accepted upstream handoffs needs no web, and granting it one on schema alone would push every brief past the `short` budget for a capability most never use — leaving `short` unreachable. A brief that does need the web says so by declaring `research`.
 
-CEO blueprint, replan planner, and Final Founder Report runs are not tasks. They get a fixed planning grant: workspace read/write plus `web_research`, no `run_command`. An Execution Brief run, which only reasons and returns JSON, gets a grant of nothing — "do not use tools" becomes a property of the launch rather than an instruction.
+CEO blueprint, replan planner, and Final Founder Report runs are not tasks. They get a fixed planning grant: workspace read/write plus `web_research`, no `run_command`. An Execution Brief run, which only reasons and returns JSON, gets a grant of nothing — "do not use tools" becomes a property of the launch rather than an instruction. ADR 0022 later did the same to that run's other prompt rule: "return only JSON" became a Structured Output Contract the CLI enforces.
 
 ## Permission Mode Mapping
 

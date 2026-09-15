@@ -1758,6 +1758,10 @@ function failureMessage(
     return `Task failed: ${task.title} / proof_capture_failed.`;
   }
 
+  if (failureReason === "invalid_agent_output") {
+    return `Task failed: ${task.title} / invalid_agent_output / the agent replied but the runtime could not read it; substantive work was not dispatched.`;
+  }
+
   return `Task failed: ${task.title} / agent_failed.`;
 }
 

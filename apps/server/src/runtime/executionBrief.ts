@@ -3,6 +3,24 @@ import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "../adapters/
 import { noToolGrant } from "../policies/capabilityGrant";
 import type { TaskHandoff } from "./dependencyReadiness";
 
+const EXECUTION_BRIEF_FIELDS = ["purpose", "approach", "expectedOutcome"] as const;
+
+/**
+ * The Structured Output Contract for an Execution Brief.
+ *
+ * Asking for JSON in the prompt was not enough. A Chinese-locale brief quoted a phrase inside a
+ * prose field — `支持"做哪个网站"的决策` — the model emitted a bare `"` inside a JSON string, and
+ * `JSON.parse` threw. The task failed as `agent_failed` on a run that exited 0, and the substantive
+ * research was never dispatched. Chinese prose quotes phrases routinely, so this was not bad luck;
+ * the previous run survived only because it happened to reach for `'` instead. See ADR 0022.
+ */
+export const executionBriefOutputSchema: Record<string, unknown> = {
+  type: "object",
+  properties: Object.fromEntries(EXECUTION_BRIEF_FIELDS.map((field) => [field, { type: "string" }])),
+  required: [...EXECUTION_BRIEF_FIELDS],
+  additionalProperties: false,
+};
+
 /** Preparation is a separate run: a brief is durable before the work prompt is dispatched. */
 export async function prepareExecutionBrief(input: {
   adapter: AgentAdapter;
@@ -16,6 +34,8 @@ export async function prepareExecutionBrief(input: {
     ...input.request,
     // "Do not use tools" below is enforced, not requested: this run is launched holding none.
     grant: noToolGrant,
+    // Likewise "Return only JSON": the CLI enforces the shape, the prompt only explains it.
+    outputSchema: executionBriefOutputSchema,
     metadata: { ...input.request.metadata, phase: "execution_brief", locale: input.company.locale },
     prompt: [
       "Prepare a founder-facing execution brief. This is a planning-only run.",
@@ -31,12 +51,25 @@ export async function prepareExecutionBrief(input: {
     ].join("\n\n"),
   });
   if (result.status !== "complete") return { result, brief: null };
+  // The contract makes this parse reliable rather than redundant: it still has to run, and a CLI
+  // that silently ignored the schema must not be read as a valid brief.
   try {
     const value = JSON.parse(result.stdout.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] ?? result.stdout.trim());
-    const fields = ["purpose", "approach", "expectedOutcome"] as const;
+    const fields = EXECUTION_BRIEF_FIELDS;
     if (fields.some(key => typeof value?.[key] !== "string" || !value[key].trim())) throw new Error("Incomplete brief");
     return { result, brief: Object.fromEntries(fields.map(key => [key, { [input.company.locale]: value[key].trim() }])) as ExecutionBrief };
-  } catch {
-    return { brief: null, result: { ...result, status: "failed", failureReason: "agent_failed", stderr: "The agent did not return a valid execution brief; substantive work was not dispatched." } };
+  } catch (error) {
+    // `invalid_agent_output`, not `agent_failed`: the process exited 0 and did what it was asked.
+    // What broke is the runtime's own contract, and naming it that way is what stops the next
+    // person reading this failure from going to look at the agent.
+    return {
+      brief: null,
+      result: {
+        ...result,
+        status: "failed",
+        failureReason: "invalid_agent_output",
+        stderr: `The agent's execution brief did not satisfy the runtime's output contract (${(error as Error).message}); substantive work was not dispatched.`,
+      },
+    };
   }
 }

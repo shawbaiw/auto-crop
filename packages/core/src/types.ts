@@ -87,6 +87,12 @@ export type CeoReviewReturnReason = "needs_changes" | "unclear_task_definition" 
 export type AgentFailureReason =
   | "timeout"
   | "agent_failed"
+  /**
+   * The agent ran fine and returned something the runtime could not read — a Structured Output
+   * Contract the reply did not satisfy. Distinct from `agent_failed`, which blames the agent for a
+   * run that in fact exited 0: the contract is the runtime's, and so is the failure.
+   */
+  | "invalid_agent_output"
   | "no_proof"
   | "proof_capture_failed"
   | "dependency_failed"

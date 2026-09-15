@@ -365,6 +365,8 @@ function formatFailureDetail(reason: string | undefined, t: (key: TranslationKey
       return t("operations.needsReplanDetail");
     case "agent_failed":
       return t("operations.failureAgent");
+    case "invalid_agent_output":
+      return t("operations.failureInvalidAgentOutput");
     default:
       return t("operations.failureDefault");
   }
