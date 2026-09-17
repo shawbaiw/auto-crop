@@ -207,6 +207,24 @@ describe("verification planned by the CEO blueprint", () => {
         }
       });
     }
+
+    it(`${business.name}: a defect the producer fixes on rework passes re-verification`, async () => {
+      const run = await runBusiness(business, "until_rework");
+
+      const verifier = run.taskByKey(business.verifier.key);
+      const producer = run.taskByKey(business.producer.key);
+      expect(run.repositories.getTask(verifier.id)?.status).toBe("complete");
+      expect(run.repositories.getCurrentBusinessArtifactForTask(verifier.id)?.verification).toMatchObject({
+        outcome: "passed",
+        targets: [{ taskId: producer.id, artifactId: run.repositories.getCurrentBusinessArtifactForTask(producer.id)!.id }],
+      });
+      // Some verifier in the plan — the planned one, or a department's Validate stage — sent work back once.
+      const reworks = run.repositories
+        .listTasksForCompany(verifier.companyId)
+        .flatMap((task) => run.repositories.listVerificationReworksForVerifier(task.id));
+      expect(reworks.map((rework) => rework.decision)).toEqual(["rework_producers"]);
+      expect(reworks[0]!.redeliveredTaskIds).toEqual(reworks[0]!.producerTaskIds);
+    });
   }
 
   it("keeps verification duty when a planned verifier is replaced through a replan", async () => {
@@ -350,7 +368,7 @@ async function createOnly(business: Business) {
   return { repositories, projectRoot, created };
 }
 
-async function runBusiness(business: Business, defective: boolean) {
+async function runBusiness(business: Business, defective: boolean | "until_rework") {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-planned-"));
   createdDirs.push(projectRoot);
   const client = createDatabaseClient(":memory:");
@@ -397,7 +415,9 @@ async function runBusiness(business: Business, defective: boolean) {
           },
         });
       } else {
-        const delivered = business.produce(request.workspacePath, defective);
+        // "until_rework": defective until a verifier's feedback reaches this producer, then fixed.
+        const isDefective = defective === "until_rework" ? !request.prompt.includes("## Rework Requested") : defective;
+        const delivered = business.produce(request.workspacePath, isDefective);
         writeArtifact(request.workspacePath, "implementation", {
           ...delivered,
           ...(request.prompt.includes("## Verification Requirements") ? { verification_requirements: business.requirements } : {}),
@@ -409,7 +429,7 @@ async function runBusiness(business: Business, defective: boolean) {
 
   // A tick that only assesses or splits a task reports nothing, so stop after two quiet ticks in a row.
   let quietTicks = 0;
-  for (let tick = 0; tick < 24 && quietTicks < 2; tick += 1) {
+  for (let tick = 0; tick < 40 && quietTicks < 2; tick += 1) {
     const result = await runSchedulerOnce({
       projectRoot,
       repositories,

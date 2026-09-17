@@ -3,6 +3,7 @@ import type {
   DependencyInputRole,
   VerificationInputs,
   VerificationRequirement,
+  VerificationRework,
   AgentRun,
   AgentFailureReason,
   Approval,
@@ -1193,6 +1194,58 @@ export function createRepositories(database: DatabaseClient) {
         .run(taskAttemptsResetKey(taskId), at);
     },
 
+    /** Record what was done about one failed verdict. A report already recorded is left as it is. */
+    recordVerificationRework(rework: VerificationRework): void {
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO verification_reworks (
+            id, company_id, verifier_task_id, failed_artifact_id, round, decision,
+            producer_task_ids, redelivered_task_ids, failed_checks, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          rework.id,
+          rework.companyId,
+          rework.verifierTaskId,
+          rework.failedArtifactId,
+          rework.round,
+          rework.decision,
+          JSON.stringify(rework.producerTaskIds),
+          JSON.stringify(rework.redeliveredTaskIds),
+          JSON.stringify(rework.failedChecks),
+          rework.createdAt,
+        );
+    },
+
+    listVerificationReworksForVerifier(verifierTaskId: string): VerificationRework[] {
+      const rows = database
+        .prepare("SELECT * FROM verification_reworks WHERE verifier_task_id = ? ORDER BY round ASC, created_at ASC")
+        .all(verifierTaskId) as VerificationReworkRow[];
+      return rows.map(mapVerificationRework);
+    },
+
+    /** Reworks still waiting on this producer to deliver again. */
+    listPendingReworksForProducer(producerTaskId: string): VerificationRework[] {
+      const rows = database
+        .prepare("SELECT * FROM verification_reworks WHERE decision = 'rework_producers' ORDER BY created_at ASC, round ASC")
+        .all() as VerificationReworkRow[];
+      return rows
+        .map(mapVerificationRework)
+        .filter((rework) => rework.producerTaskIds.includes(producerTaskId) && !rework.redeliveredTaskIds.includes(producerTaskId));
+    },
+
+    markReworkRedelivered(reworkId: string, producerTaskId: string): void {
+      const row = database.prepare("SELECT * FROM verification_reworks WHERE id = ?").get(reworkId) as VerificationReworkRow | undefined;
+      if (!row) {
+        return;
+      }
+      const redelivered = new Set(JSON.parse(row.redelivered_task_ids) as string[]);
+      redelivered.add(producerTaskId);
+      database
+        .prepare("UPDATE verification_reworks SET redelivered_task_ids = ? WHERE id = ?")
+        .run(JSON.stringify([...redelivered]), reworkId);
+    },
+
     /** The inputs the runtime handed a verifying task's latest dispatch. One row per task, replaced on each dispatch. */
     saveVerificationInputs(taskId: string, inputs: VerificationInputs, preparedAt: string): void {
       database
@@ -1529,6 +1582,34 @@ type BusinessArtifactRow = {
   created_at: string;
   updated_at: string;
 };
+
+type VerificationReworkRow = {
+  id: string;
+  company_id: string;
+  verifier_task_id: string;
+  failed_artifact_id: string;
+  round: number;
+  decision: VerificationRework["decision"];
+  producer_task_ids: string;
+  redelivered_task_ids: string;
+  failed_checks: string;
+  created_at: string;
+};
+
+function mapVerificationRework(row: VerificationReworkRow): VerificationRework {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    verifierTaskId: row.verifier_task_id,
+    failedArtifactId: row.failed_artifact_id,
+    round: row.round,
+    decision: row.decision,
+    producerTaskIds: JSON.parse(row.producer_task_ids) as string[],
+    redeliveredTaskIds: JSON.parse(row.redelivered_task_ids) as string[],
+    failedChecks: JSON.parse(row.failed_checks) as VerificationRework["failedChecks"],
+    createdAt: row.created_at,
+  };
+}
 
 type TaskLockRow = {
   task_id: string;

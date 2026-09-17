@@ -10,12 +10,40 @@ export type BuildTaskExecutionPromptInput = {
   handoffs: TaskHandoff[];
   /** What this run may actually do. Omitted only by callers that do not launch an agent. */
   grant?: AgentCapabilityGrant;
+  /** Failed checks a verifier sent back to this task, to fix in this run. */
+  rework?: Array<{
+    round: number;
+    verifierTitle: string;
+    failedChecks: Array<{ requirementId: string; description: string; outcome: string; evidence: string }>;
+  }>;
   /** This task's Verification Contract obligations, resolved by the runtime before dispatch. */
   verification?: {
     producesRequirements: boolean;
     inputs: VerificationInputs | null;
   };
 };
+
+/**
+ * Tell a producer what its verifier found. The previous delivery was judged and failed; this run exists
+ * to fix exactly those checks, so they lead the prompt's task-specific instructions.
+ */
+function buildReworkInstructions(rework: BuildTaskExecutionPromptInput["rework"]): string[] {
+  if (!rework || rework.length === 0) {
+    return [];
+  }
+  return [
+    "## Rework Requested",
+    "",
+    "Your previous delivery was verified and did not pass. Fix every check below in the existing work, then deliver again;",
+    "the verifier will check a fresh snapshot of your new output against the same requirements.",
+    ...rework.flatMap((entry) => [
+      "",
+      `${entry.verifierTitle}, verification round ${entry.round}:`,
+      ...entry.failedChecks.map((check) => `- \`${check.requirementId}\` (${check.outcome}): ${check.description} — evidence: ${check.evidence}`),
+    ]),
+    "",
+  ];
+}
 
 /**
  * State the Verification Contract a run is under. A requirements producer declares the checks its
@@ -59,6 +87,9 @@ function buildVerificationInstructions(
       "Report `payload.verification.checks` with exactly one entry per requirement:",
       JSON.stringify({ requirement_id: verification.inputs.requirements[0]?.id ?? "requirement-id", outcome: "passed", evidence: "..." }),
       "`outcome` is `passed`, `failed`, or `not_run`. `evidence` names the command output, file, or observation behind the outcome.",
+      ...(verification.inputs.targets.length > 1
+        ? ["When a check fails because of one target, add `target_task_id` naming it, so only that target is sent back for rework."]
+        : []),
       "Use `not_run` when you could not perform a check — never `passed`. Leaving a requirement out fails validation.",
       "The runtime derives the overall verdict from these checks; do not state one of your own.",
       "",
@@ -254,10 +285,12 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
   const proofInstructions = buildProofContractInstructions(task);
   const grantInstructions = buildCapabilityGrantInstructions(grant);
   const verificationInstructions = buildVerificationInstructions(input.verification, languageName);
+  const reworkInstructions = buildReworkInstructions(input.rework);
   const basePrompt = [
     ...companyContext,
     task.description,
     "",
+    ...reworkInstructions,
     ...(grantInstructions.length > 0 ? [...grantInstructions, ""] : []),
     ...artifactInstructions,
     "",

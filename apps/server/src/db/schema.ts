@@ -149,6 +149,20 @@ export function migrate(database: DatabaseClient): void {
       acquired_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS verification_reworks (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      verifier_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      failed_artifact_id TEXT NOT NULL,
+      round INTEGER NOT NULL,
+      decision TEXT NOT NULL,
+      producer_task_ids TEXT NOT NULL,
+      redelivered_task_ids TEXT NOT NULL,
+      failed_checks TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (verifier_task_id, failed_artifact_id)
+    );
+
     CREATE TABLE IF NOT EXISTS verification_handoffs (
       task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
       inputs TEXT NOT NULL,

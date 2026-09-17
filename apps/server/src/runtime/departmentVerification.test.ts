@@ -16,6 +16,7 @@ import { resolveTaskAffordanceState } from "./taskAffordances";
 import { reconcileTaskHolds } from "./taskHoldReconciliation";
 import { refreshTaskDependencyState } from "./taskRefresh";
 import { evaluateVerificationReport, prepareVerificationInputs } from "./verificationContract";
+import { applyVerificationRework, pendingReworkFeedback } from "./verificationRework";
 
 /**
  * A department split runs as a declared chain: Define declares verification requirements, Execute
@@ -129,7 +130,7 @@ describe("department subtask verification", () => {
     expect(harness.repositories.getTask(harness.parent.id)?.status).toBe("queued");
   });
 
-  it("keeps a well-formed failed verification out of every success path", async () => {
+  it("keeps a verification that keeps failing out of every success path once its rounds are spent", async () => {
     const harness = createHarness({
       // The original report: structurally valid, every check failed, and prose naming Search Console.
       validate: () => [
@@ -144,13 +145,19 @@ describe("department subtask verification", () => {
     const validateTask = harness.repositories.getTask(validate.id)!;
     const artifact = harness.repositories.getCurrentBusinessArtifactForTask(validate.id)!;
 
+    // Each failure sent Execute back for rework; the third failed round spends the budget.
+    expect(harness.runOrder).toEqual(["define", "execute", "validate", "execute", "validate", "execute", "validate"]);
     expect(validateTask).toMatchObject({ status: "blocked", latestFailureReason: "verification_failed" });
+    expect(validateTask.latestFailureMessage).toContain("3 of 3 rounds");
     expect(artifact).toMatchObject({ validationStatus: "valid", reviewStatus: "unreviewed" });
     expect(artifact.verification?.outcome).toBe("failed");
-    expect(harness.agentRunStatuses(validate.id)).toEqual(["complete"]);
-    expect(harness.repositories.listOpenTaskHolds(validate.id).map((hold) => hold.kind)).toEqual(["verification_failed"]);
+    expect(harness.agentRunStatuses(validate.id)).toEqual(["complete", "complete", "complete"]);
+    expect(harness.repositories.listOpenTaskHolds(validate.id).map((hold) => hold.kind)).toEqual(["recovery_exhausted"]);
+    // Only a replan starts a new budget; nothing offers re-running the same verification again.
     expect(resolveTaskAffordanceState(harness.repositories, validateTask).affordances.map((affordance) => affordance.kind))
-      .toEqual(expect.arrayContaining(["recover_task", "request_replan"]));
+      .toEqual(["request_replan", "cancel_task"]);
+    expect(harness.repositories.listVerificationReworksForVerifier(validate.id).map((rework) => rework.decision))
+      .toEqual(["rework_producers", "rework_producers", "exhausted"]);
 
     // Not offered to CEO Office, not acceptable through the shared seam, and the parent does not summarize it.
     const officeItems = projectCeoOfficeItems({
@@ -367,6 +374,62 @@ describe("department subtask verification", () => {
     expect(verification?.outcome).toBe("inconclusive");
     expect(verification?.issues.join(" ")).toContain("was modified or removed during verification");
     expect(harness.repositories.getTask(validate.id)?.status).toBe("blocked");
+    // Nothing failed, so nothing is reworked: the verifier re-verifies until its rounds are spent.
+    expect(harness.repositories.listVerificationReworksForVerifier(validate.id).map((rework) => rework.decision))
+      .toEqual(["reverify", "reverify", "exhausted"]);
+    expect(harness.runOrder).toEqual(["define", "execute", "validate", "validate", "validate"]);
+  });
+
+  it("reworks the producer with the failed checks as feedback, then passes on re-verification", async () => {
+    let validations = 0;
+    const harness = createHarness({
+      validate: () => {
+        validations += 1;
+        return [
+          { requirement_id: "home-page", outcome: "passed", evidence: "index.html present." },
+          validations === 1
+            ? { requirement_id: "app-script", outcome: "failed", evidence: "app.js throws on load." }
+            : { requirement_id: "app-script", outcome: "passed", evidence: "app.js loads." },
+        ];
+      },
+    });
+
+    await harness.runUntilIdle();
+
+    const { execute, validate } = harness.subtasks();
+    expect(harness.runOrder).toEqual(["define", "execute", "validate", "execute", "validate"]);
+    const executePrompts = harness.promptHistory.filter((entry) => entry.stage === "execute").map((entry) => entry.prompt);
+    expect(executePrompts[0]).not.toContain("## Rework Requested");
+    expect(executePrompts[1]).toContain("## Rework Requested");
+    expect(executePrompts[1]).toContain("`app-script` (failed)");
+    expect(executePrompts[1]).toContain("app.js throws on load.");
+    expect(executePrompts[1]).not.toContain("`home-page`");
+
+    expect(harness.repositories.getCurrentBusinessArtifactForTask(validate.id)?.verification?.outcome).toBe("passed");
+    expect(harness.repositories.listVerificationReworksForVerifier(validate.id)).toEqual([
+      expect.objectContaining({ round: 1, decision: "rework_producers", producerTaskIds: [execute.id], redeliveredTaskIds: [execute.id] }),
+    ]);
+    expect(harness.repositories.getTask(harness.parent.id)?.status).toBe("queued");
+
+    // The budget lives in the database, so a restarted runtime reads the same rounds.
+    const restarted = createRepositories(harness.client);
+    expect(restarted.listVerificationReworksForVerifier(validate.id)).toHaveLength(1);
+  });
+
+  it("escalates a check that could not be run instead of reworking the producer", async () => {
+    const harness = createHarness({
+      validate: () => [
+        { requirement_id: "home-page", outcome: "passed", evidence: "index.html present." },
+        { requirement_id: "app-script", outcome: "not_run", evidence: "No JavaScript runtime was available." },
+      ],
+    });
+
+    await harness.runUntilIdle();
+
+    const { validate } = harness.subtasks();
+    expect(harness.runOrder).toEqual(["define", "execute", "validate"]);
+    expect(harness.repositories.listVerificationReworksForVerifier(validate.id).map((rework) => rework.decision)).toEqual(["escalated"]);
+    expect(harness.repositories.listOpenTaskHolds(validate.id).map((hold) => hold.kind)).toEqual(["verification_failed"]);
   });
 
   it("refuses to accept a verifier's artifact that records no verdict, or a verdict on a superseded output", async () => {
@@ -453,7 +516,7 @@ describe("verification contract", () => {
     expect(result.verification?.issues[0]).toContain("changed since it was snapshotted");
   });
 
-  it("routes a failed verification recovered from a workspace to a verification Hold, not CEO review", () => {
+  it("sends a failed verification recovered from a workspace to rework, not CEO review", () => {
     const harness = createHarness({ validate: () => [] });
     const { repositories } = harness;
     const producerWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-producer-"));
@@ -485,11 +548,87 @@ describe("verification contract", () => {
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
     });
 
-    expect(result.task).toMatchObject({ status: "blocked", latestFailureReason: "verification_failed" });
-    expect(repositories.listOpenTaskHolds(verifier.id).map((hold) => hold.kind)).toEqual(["verification_failed"]);
+    // A recovered failed verdict gets the same rework policy as a finished run's.
+    expect(result.task).toMatchObject({ status: "waiting_dependency" });
+    expect(repositories.getTask(producer.id)?.status).toBe("queued");
+    expect(repositories.getCurrentBusinessArtifactForTask(producer.id)?.reviewStatus).toBe("returned");
+    expect(repositories.listVerificationReworksForVerifier(verifier.id)).toEqual([
+      expect.objectContaining({ decision: "rework_producers", round: 1, producerTaskIds: [producer.id] }),
+    ]);
     const artifact = repositories.getCurrentBusinessArtifactForTask(verifier.id)!;
     expect(artifact.verification?.outcome).toBe("failed");
     expect(isReviewableBusinessArtifact(artifact)).toBe(false);
+  });
+
+  it("counts one failed report once, reworks only the faulted target, and escalates a producer held by a decision", () => {
+    const harness = createHarness({ validate: () => [] });
+    const { repositories } = harness;
+    const faulted = { ...baseTask("producer_a", "complete", "landing-page-file") };
+    const sound = { ...baseTask("producer_b", "complete", "landing-page-file") };
+    const verifier = { ...baseTask("verifier_1", "running", "test-output") };
+    for (const task of [faulted, sound, verifier]) {
+      repositories.createTask(task);
+    }
+    repositories.createBusinessArtifact(artifactRecord("artifact_a", faulted.id, {}));
+    repositories.createBusinessArtifact(artifactRecord("artifact_b", sound.id, {}));
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: faulted.id, inputRole: "verification_target" });
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: sound.id, inputRole: "verification_target" });
+    const report = {
+      ...artifactRecord("report_1", verifier.id, {}),
+      reviewStatus: "unreviewed" as const,
+      verification: {
+        outcome: "failed" as const,
+        requirementsArtifactId: null,
+        requirements: [{ id: "r1", description: "works" }, { id: "r2", description: "styled" }],
+        targets: [
+          { taskId: faulted.id, artifactId: "artifact_a", revision: "a" },
+          { taskId: sound.id, artifactId: "artifact_b", revision: "b" },
+        ],
+        checks: [
+          { requirementId: "r1", outcome: "failed" as const, evidence: "broken", targetTaskId: faulted.id },
+          { requirementId: "r2", outcome: "passed" as const, evidence: "fine", targetTaskId: sound.id },
+        ],
+        issues: [],
+      },
+    };
+    repositories.createBusinessArtifact(report);
+
+    let sequence = 0;
+    const createId = (prefix: string) => `${prefix}_rework_${++sequence}`;
+    const results = [0, 1].map(() =>
+      applyVerificationRework({ repositories, verifier: repositories.getTask(verifier.id)!, artifact: report, now: () => new Date(), createId }),
+    );
+    // Finalizing the same failed report again answers with the recorded decision, not a new round.
+    expect(results.map((result) => [result.rework.round, result.rework.decision])).toEqual([
+      [1, "rework_producers"],
+      [1, "rework_producers"],
+    ]);
+
+    expect(repositories.listVerificationReworksForVerifier(verifier.id)).toEqual([
+      expect.objectContaining({ round: 1, decision: "rework_producers", producerTaskIds: [faulted.id] }),
+    ]);
+    expect(repositories.getTask(faulted.id)?.status).toBe("queued");
+    expect(repositories.getTask(sound.id)?.status).toBe("complete");
+    expect(pendingReworkFeedback(repositories, repositories.getTask(faulted.id)!)[0]?.failedChecks.map((check) => check.requirementId)).toEqual(["r1"]);
+
+    // A producer parked on a Founder Decision is not the verifier's to send back.
+    const decided = { ...baseTask("producer_c", "review", "landing-page-file") };
+    const secondVerifier = { ...baseTask("verifier_2", "running", "test-output") };
+    repositories.createTask(decided);
+    repositories.createTask(secondVerifier);
+    repositories.openTaskHold({
+      id: "hold_decision", companyId: "company_1", taskId: decided.id, kind: "awaiting_founder_decision", resolver: "founder",
+      subjectKind: null, subjectId: null, reason: "decision", reasonText: null, openedAt: "2026-09-17T00:00:00.000Z", resolvedAt: null, resolution: null,
+    });
+    const secondReport = {
+      ...report,
+      id: "report_2",
+      taskId: secondVerifier.id,
+      verification: { ...report.verification, targets: [{ taskId: decided.id, artifactId: "none", revision: "c" }], checks: [{ requirementId: "r1", outcome: "failed" as const, evidence: "broken" }] },
+    };
+    const escalated = applyVerificationRework({ repositories, verifier: secondVerifier, artifact: secondReport, now: () => new Date(), createId });
+    expect(escalated.rework.decision).toBe("escalated");
+    expect(repositories.getTask(decided.id)?.status).toBe("review");
   });
 
   it("refuses to hand over a symbolic link out of the producer workspace", () => {
@@ -540,6 +679,7 @@ function createHarness(behaviour: StageBehaviour) {
 
   const runOrder: Stage[] = [];
   const prompts = new Map<Stage, string>();
+  const promptHistory: Array<{ stage: Stage; prompt: string }> = [];
 
   const stageOf = (taskId: string): Stage | null => {
     const title = repositories.getTask(taskId)?.title ?? "";
@@ -566,6 +706,7 @@ function createHarness(behaviour: StageBehaviour) {
       const stage = stageOf(request.taskId)!;
       runOrder.push(stage);
       prompts.set(stage, request.prompt);
+      promptHistory.push({ stage, prompt: request.prompt });
       const workspace = request.workspacePath;
       if (stage === "define") {
         writeArtifact(workspace, "plan", behaviour.requirements === null ? {} : {
@@ -629,6 +770,8 @@ function createHarness(behaviour: StageBehaviour) {
     parent,
     runOrder,
     prompts,
+    promptHistory,
+    client,
     runUntilIdle,
     subtasks: () => {
       const subtasks = repositories.listTasksForCompany("company_1").filter((task) => task.parentTaskId === parent.id);

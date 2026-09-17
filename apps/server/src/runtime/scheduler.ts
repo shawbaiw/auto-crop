@@ -48,6 +48,7 @@ import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
 import { applyTaskTransition } from "./taskTransition";
+import { pendingReworkFeedback } from "./verificationRework";
 import {
   isVerifyingTask,
   prepareVerificationInputs,
@@ -381,7 +382,14 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               agentResult = await adapter.run({
                 ...request,
                 timeoutMs: remainingMs,
-                prompt: buildTaskExecutionPrompt({ task, company, handoffs, grant, verification: verificationPromptContext }) +
+                prompt: buildTaskExecutionPrompt({
+                  task,
+                  company,
+                  handoffs,
+                  grant,
+                  verification: verificationPromptContext,
+                  rework: pendingReworkFeedback(input.repositories, task),
+                }) +
                   `\n\n## Your announced execution plan\n${JSON.stringify(preparation.brief)}\nCarry out this plan. Explain material deviations in the final report.`,
               });
             } else {

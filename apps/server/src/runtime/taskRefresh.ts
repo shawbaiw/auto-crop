@@ -303,6 +303,8 @@ function recoveryMessage(outcome: DeliveryOutcome): string {
       return "Found checkable proof and delivered it to the department.";
     case "verification_failed":
       return "Found a verification report whose verdict did not pass.";
+    case "verification_rework":
+      return "Found a verification report whose verdict did not pass; rework was requested.";
     case "held":
       return "Found checkable proof, but the task is still held for another reason.";
   }

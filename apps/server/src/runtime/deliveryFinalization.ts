@@ -1,5 +1,6 @@
 import {
   isVerificationSatisfied,
+  MAX_VERIFICATION_ROUNDS,
   type BusinessArtifact,
   type Task,
   type TaskCompletionOutcome,
@@ -16,6 +17,7 @@ import { parseOpenDecisions, type FounderDecisionDeclaration } from "./founderDe
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { applyTaskTransition } from "./taskTransition";
 import { verificationFailureMessage } from "./verificationContract";
+import { applyVerificationRework, markReworkRedelivered } from "./verificationRework";
 
 type Repositories = ReturnType<typeof createRepositories>;
 
@@ -24,7 +26,9 @@ type Repositories = ReturnType<typeof createRepositories>;
  *
  * - `held` — something the delivery does not answer (an approval, a Human Action, an upstream) still
  *   holds the task; it stays where it is.
- * - `verification_failed` — a verifier's verdict is not `passed`.
+ * - `verification_rework` — a verifier's verdict is not `passed`, and the runtime sent the work back for
+ *   rework or re-verification within the round budget.
+ * - `verification_failed` — a verifier's verdict is not `passed`, and no automatic path is left.
  * - `awaiting_founder_decision` — the artifact declares a Founder Decision.
  * - `internal_delivery` — a department subtask delivered to its parent and siblings.
  * - `accepted` — Automatic Acceptance accepted it.
@@ -32,6 +36,7 @@ type Repositories = ReturnType<typeof createRepositories>;
  */
 export type DeliveryOutcome =
   | "held"
+  | "verification_rework"
   | "verification_failed"
   | "awaiting_founder_decision"
   | "internal_delivery"
@@ -99,14 +104,41 @@ export function finalizeDelivery(input: {
     return { outcome: "held", task, events: [event], progressEvent: null };
   }
 
+  // This delivery answers any rework a verifier asked of this task.
+  markReworkRedelivered(repositories, task);
+
   if (artifact.verification && !isVerificationSatisfied(artifact)) {
-    const failure = verificationFailureMessage(task, artifact.verification);
+    const rework = applyVerificationRework({
+      repositories,
+      verifier: task,
+      artifact: { ...artifact, verification: artifact.verification },
+      now,
+      createId,
+    });
+    if (rework.rework.decision === "rework_producers" || rework.rework.decision === "reverify") {
+      const progressEvent = appendProgress(context, rework.verifier, {
+        step: "executing",
+        status: "current",
+        label: rework.rework.decision === "rework_producers" ? "Verification failed; rework requested" : "Re-verifying current output",
+        detail: verificationFailureMessage(task, artifact.verification),
+      });
+      return { outcome: "verification_rework", task: rework.verifier, events: rework.events, progressEvent };
+    }
+
+    // No automatic path left: a check that could not be run, a producer held by something the verdict
+    // does not answer, or the round budget spent. Only a replan starts a new budget.
+    const exhausted = rework.rework.decision === "exhausted";
+    const failure = exhausted
+      ? `${verificationFailureMessage(task, artifact.verification)} Verification failed in ${rework.rework.round} of ${MAX_VERIFICATION_ROUNDS} rounds; a replan is required.`
+      : verificationFailureMessage(task, artifact.verification);
     const parked = applyTaskTransition({
       repositories,
       task,
       status: "blocked",
       executionSummary: { latestFailureReason: "verification_failed", latestFailureMessage: failure, dependencyNote: null },
-      hold: { kind: "verification_failed", resolver: "runtime", subjectKind: "business_artifact", subjectId: artifact.id, reason: failure },
+      hold: exhausted
+        ? { kind: "recovery_exhausted", resolver: "founder", subjectKind: "business_artifact", subjectId: artifact.id, reason: failure }
+        : { kind: "verification_failed", resolver: "runtime", subjectKind: "business_artifact", subjectId: artifact.id, reason: failure },
       now,
       createId,
     }).task;

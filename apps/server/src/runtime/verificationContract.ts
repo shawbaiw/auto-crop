@@ -412,6 +412,7 @@ export function evaluateVerificationReport(input: {
     const requirementId = isRecord(entry) ? (entry.requirement_id ?? entry.requirementId) : undefined;
     const outcome = isRecord(entry) ? entry.outcome : undefined;
     const evidence = isRecord(entry) && typeof entry.evidence === "string" ? entry.evidence.trim() : "";
+    const targetTaskId = isRecord(entry) ? (entry.target_task_id ?? entry.targetTaskId ?? null) : null;
     if (typeof requirementId !== "string" || !requirementIds.has(requirementId)) {
       errors.push(`payload.verification.checks[${index}].requirement_id: Expected one of the handed-over requirement ids.`);
       return;
@@ -428,8 +429,17 @@ export function evaluateVerificationReport(input: {
       errors.push(`payload.verification.checks[${index}].evidence: Expected a non-empty string.`);
       return;
     }
+    if (targetTaskId !== null && (typeof targetTaskId !== "string" || !inputs.targets.some((target) => target.taskId === targetTaskId))) {
+      errors.push(`payload.verification.checks[${index}].target_task_id: Expected one of the handed-over target task ids.`);
+      return;
+    }
     checked.add(requirementId);
-    checks.push({ requirementId, outcome: outcome as VerificationCheckOutcome, evidence });
+    checks.push({
+      requirementId,
+      outcome: outcome as VerificationCheckOutcome,
+      evidence,
+      ...(typeof targetTaskId === "string" ? { targetTaskId } : {}),
+    });
   });
   for (const requirement of inputs.requirements) {
     if (!checked.has(requirement.id) && !errors.some((error) => error.includes(requirement.id))) {

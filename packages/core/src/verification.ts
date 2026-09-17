@@ -43,6 +43,41 @@ export type VerificationCheck = {
   requirementId: string;
   outcome: VerificationCheckOutcome;
   evidence: string;
+  /** The target this check found at fault, when a verifier checks more than one. */
+  targetTaskId?: string | null;
+};
+
+/**
+ * Verification rounds a verifying task gets, the first included: a failed verdict is reworked
+ * automatically at most `MAX_VERIFICATION_ROUNDS - 1` times before it needs a replan. A runtime policy
+ * default, not a per-company setting (ADR 0026).
+ */
+export const MAX_VERIFICATION_ROUNDS = 3;
+
+/**
+ * What the runtime did about one verdict that did not pass, recorded once per failed report:
+ *
+ * - `rework_producers` — failed checks were sent back to the producers they fault, with the failures
+ *   as feedback, and the verifier waits to re-verify their new output.
+ * - `reverify` — nothing failed, but the verdict no longer described current output (a target changed,
+ *   a snapshot was modified), so the verifier runs again.
+ * - `escalated` — a check could not be run; re-producing the output would not change that.
+ * - `exhausted` — the verification round budget is spent.
+ */
+export type VerificationReworkDecision = "rework_producers" | "reverify" | "escalated" | "exhausted";
+
+export type VerificationRework = {
+  id: string;
+  companyId: string;
+  verifierTaskId: string;
+  failedArtifactId: string;
+  round: number;
+  decision: VerificationReworkDecision;
+  producerTaskIds: string[];
+  /** Producers that have delivered again since this rework was requested. */
+  redeliveredTaskIds: string[];
+  failedChecks: Array<VerificationCheck & { description: string }>;
+  createdAt: string;
 };
 
 /** One producer output a verification is bound to. `revision` is computed by the runtime from the snapshot. */
