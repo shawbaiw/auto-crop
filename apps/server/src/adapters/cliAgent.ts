@@ -3,6 +3,18 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
+import {
+  CLAUDE_CODE_LAUNCH_PROBE,
+  CODEX_LAUNCH_PROBE,
+  DEFAULT_LAUNCH_POLICY,
+  flagSpelling,
+  probeLaunchSupport,
+  supportsFlag,
+  type AdapterLaunchSupport,
+  type CliHelpProbe,
+  type LaunchPlan,
+  type ReadCliHelp,
+} from "./launchPolicy";
 import type { AgentAdapter, AgentRunRequest, AgentRunResult, AgentSessionProbeResult } from "./types";
 
 export type CommandValues = {
@@ -18,6 +30,11 @@ export type CommandValues = {
    * the flag. See `createCodexAdapter`.
    */
   outputSchemaPath?: string;
+  /**
+   * What the installed CLI can enforce, for an adapter with a `launchProbe`. A builder passes only
+   * flags this declares; it is never called with an `unavailable` support.
+   */
+  launchSupport?: AdapterLaunchSupport;
 };
 
 export type CliAgentOptions = {
@@ -30,6 +47,13 @@ export type CliAgentOptions = {
   buildCommand?: (values: CommandValues) => InterpolatedCommand;
   /** Optional persistent-session availability check. See `docs/persistent-agent-sessions-plan.md` Task 7. */
   probeSession?: () => Promise<AgentSessionProbeResult>;
+  /**
+   * Reads the installed CLI's help to decide its launch support before dispatch. Without one the
+   * adapter makes no launch-isolation claim and is detected by its executable alone.
+   */
+  launchProbe?: CliHelpProbe;
+  /** Injectable help reader, so tests can supply help text without spawning a real CLI. */
+  readHelp?: ReadCliHelp;
   timeoutMs?: number;
   log?: (line: string) => void;
 };
@@ -40,7 +64,8 @@ export type InterpolatedCommand = {
 };
 
 export type CliAgentAdapter = AgentAdapter & {
-  commandPreview(request: AgentRunRequest): InterpolatedCommand;
+  /** The command `run` would spawn for this request, under the probed launch support. */
+  commandPreview(request: AgentRunRequest): Promise<InterpolatedCommand>;
 };
 
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
@@ -56,13 +81,41 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
     return interpolateCommandTemplate(options.commandTemplate, values);
   };
 
+  const launchProbe = options.launchProbe;
+  const readHelp = options.readHelp ?? readCliHelp;
+  // A probe whose help text was read is cached for the adapter's lifetime: the installed CLI does not
+  // change under a running server (restart to pick up an upgrade). A probe that could not run the CLI
+  // at all is retried, so installing the CLI later is noticed.
+  let cachedLaunchPlan: LaunchPlan | undefined;
+  const resolveLaunchPlan = async (probe: CliHelpProbe): Promise<LaunchPlan> => {
+    if (cachedLaunchPlan) {
+      return cachedLaunchPlan;
+    }
+    let helpWasRead = false;
+    const support = await probeLaunchSupport(options.id, probe, async (command, args) => {
+      const output = await readHelp(command, args);
+      helpWasRead = output !== null;
+      return output;
+    });
+    const plan: LaunchPlan = { policy: DEFAULT_LAUNCH_POLICY, support };
+    if (helpWasRead) {
+      cachedLaunchPlan = plan;
+    }
+    return plan;
+  };
+
   return {
     id: options.id,
     name: options.name,
     capabilities: options.capabilities,
     ...(options.probeSession ? { session: { probe: options.probeSession, getOrStart: async () => null } } : {}),
+    ...(launchProbe ? { launchPlan: () => resolveLaunchPlan(launchProbe) } : {}),
 
     async detect(): Promise<boolean> {
+      if (launchProbe) {
+        return (await resolveLaunchPlan(launchProbe)).support.isolationLevel !== "unavailable";
+      }
+
       const { command } = build({
         prompt: "",
         workspace: ".",
@@ -74,6 +127,19 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
     },
 
     async run(request: AgentRunRequest): Promise<AgentRunResult> {
+      const launchSupport = launchProbe ? (await resolveLaunchPlan(launchProbe)).support : undefined;
+      if (launchSupport?.isolationLevel === "unavailable") {
+        // The scheduler does not dispatch here; this guards every other caller from spawning a launch
+        // the CLI would reject with an unknown-option error.
+        return {
+          status: "failed",
+          exitCode: null,
+          stdout: "",
+          stderr: `Agent ${options.name} is unavailable for task runs: ${launchSupport.warnings.join(" ")}`,
+          failureReason: "agent_failed",
+        };
+      }
+
       // Materialized outside the workspace so it can never be mistaken for Proof, and removed after
       // the run whatever its outcome.
       const schemaDir = request.outputSchema
@@ -85,7 +151,7 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
       }
 
       try {
-        const { command, args } = build({ ...commandValues(request), outputSchemaPath });
+        const { command, args } = build({ ...commandValues(request), outputSchemaPath, launchSupport });
 
         options.log?.(`Agent ${options.name} starting task ${request.taskId}`);
         const result = await runCommand(command, args, request.workspacePath, {
@@ -102,8 +168,9 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
       }
     },
 
-    commandPreview(request: AgentRunRequest): InterpolatedCommand {
-      return build(commandValues(request));
+    async commandPreview(request: AgentRunRequest): Promise<InterpolatedCommand> {
+      const launchSupport = launchProbe ? (await resolveLaunchPlan(launchProbe)).support : undefined;
+      return build({ ...commandValues(request), launchSupport });
     },
   };
 }
@@ -142,11 +209,13 @@ export function claudeToolsForGrant(grant: AgentCapabilityGrant): string[] {
 }
 
 /**
- * Launch Claude Code fail-closed, then grant capabilities back (ADR 0021).
+ * Launch Claude Code fail-closed, then grant capabilities back (ADR 0021). Each flag is passed only
+ * when the installed CLI declares it (see `CLAUDE_CODE_LAUNCH_PROBE`).
  *
  * - `--restricted` removes the shell and code-running tools, ignores user, project and local settings
  *   files, confines the file tools to the working directory, and refuses `bypassPermissions`. It is
- *   what stops a run from inheriting the operator's machine.
+ *   what stops a run from inheriting the operator's machine. A CLI without it still launches with
+ *   explicit grants, at `compatible` isolation.
  * - `--strict-mcp-config` keeps host MCP servers out.
  * - `--permission-prompts none` makes an unanswerable prompt a deterministic denial rather than an
  *   accidental one.
@@ -154,31 +223,35 @@ export function claudeToolsForGrant(grant: AgentCapabilityGrant): string[] {
  *   that would otherwise ask. Both are needed — `--tools WebSearch` alone still asks, which is the
  *   exact denial that produced the "sandbox environment" deliverable.
  */
-export function createClaudeCodeAdapter(options: Pick<CliAgentOptions, "timeoutMs" | "log"> = {}): CliAgentAdapter {
+export function createClaudeCodeAdapter(
+  options: Pick<CliAgentOptions, "timeoutMs" | "log" | "readHelp"> = {},
+): CliAgentAdapter {
   return createCliAgentAdapter({
     id: "claude-code",
     name: "Claude Code",
     capabilities: ["code", "frontend", "research", "writing"],
-    buildCommand: ({ prompt, grant, outputSchema }) => {
+    launchProbe: CLAUDE_CODE_LAUNCH_PROBE,
+    buildCommand: ({ prompt, grant, outputSchema, launchSupport }) => {
+      const support = requireLaunchSupport("claude-code", launchSupport);
       const tools = claudeToolsForGrant(grant);
+      const when = (flag: string, ...args: string[]) => (supportsFlag(support, flag) ? [flag, ...args] : []);
       return {
         command: "claude",
         args: [
-          "-p",
-          "--restricted",
+          flagSpelling(support, "-p", "--print"),
+          ...when("--restricted"),
           "--strict-mcp-config",
-          "--permission-prompts",
-          "none",
+          ...when("--permission-prompts", "none"),
           // `--tools ""` is the CLI's "no built-in tools at all", which is what an empty grant means.
           "--tools",
           tools.join(","),
           // Nothing to pre-approve when nothing exists; the flag would be meaningless.
-          ...(tools.length > 0 ? ["--allowedTools", tools.join(",")] : []),
+          ...(tools.length > 0 ? [flagSpelling(support, "--allowedTools", "--allowed-tools"), tools.join(",")] : []),
           // Inline JSON only — this flag rejects a file path.
           ...(outputSchema ? ["--json-schema", JSON.stringify(outputSchema)] : []),
           "--permission-mode",
           "acceptEdits",
-          "--no-session-persistence",
+          ...when("--no-session-persistence"),
           "--",
           prompt,
         ],
@@ -190,7 +263,7 @@ export function createClaudeCodeAdapter(options: Pick<CliAgentOptions, "timeoutM
 }
 
 export function createCodexAdapter(
-  options: Pick<CliAgentOptions, "timeoutMs" | "log"> & { model?: string } = {},
+  options: Pick<CliAgentOptions, "timeoutMs" | "log" | "readHelp"> & { model?: string } = {},
 ): CliAgentAdapter {
   const model = options.model ?? process.env.AUTO_CROP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL;
 
@@ -198,31 +271,47 @@ export function createCodexAdapter(
     id: "codex",
     name: "Codex",
     capabilities: ["code", "frontend", "test", "refactor"],
-    buildCommand: ({ prompt, workspace, grant, outputSchemaPath }) => ({
-      command: "codex",
-      args: [
-        "exec",
-        "-m",
-        model,
-        "-C",
-        workspace,
-        // File path only — this flag rejects inline JSON, the mirror of Claude Code's constraint. The
-        // file exists only during a run, so a preview shows the launch without it.
-        ...(outputSchemaPath ? ["--output-schema", outputSchemaPath] : []),
-        // The config-isolation half: do not read `$CODEX_HOME/config.toml` or user/project `.rules`.
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--skip-git-repo-check",
-        "--sandbox",
-        grant.granted.includes("run_command") ? "workspace-write" : "read-only",
-        "--ephemeral",
-        "-c",
-        `tools.web_search=${grant.granted.includes("web_research")}`,
-        prompt,
-      ],
-    }),
+    launchProbe: CODEX_LAUNCH_PROBE,
+    buildCommand: ({ prompt, workspace, grant, outputSchemaPath, launchSupport }) => {
+      const support = requireLaunchSupport("codex", launchSupport);
+      return {
+        command: "codex",
+        args: [
+          "exec",
+          flagSpelling(support, "-m", "--model"),
+          model,
+          flagSpelling(support, "-C", "--cd"),
+          workspace,
+          // File path only — this flag rejects inline JSON, the mirror of Claude Code's constraint. The
+          // file exists only during a run, so a preview shows the launch without it.
+          ...(outputSchemaPath ? ["--output-schema", outputSchemaPath] : []),
+          // The config-isolation half: do not read `$CODEX_HOME/config.toml` or user/project `.rules`.
+          "--ignore-user-config",
+          "--ignore-rules",
+          "--skip-git-repo-check",
+          flagSpelling(support, "--sandbox", "-s"),
+          grant.granted.includes("run_command") ? "workspace-write" : "read-only",
+          "--ephemeral",
+          flagSpelling(support, "-c", "--config"),
+          `tools.web_search=${grant.granted.includes("web_research")}`,
+          prompt,
+        ],
+      };
+    },
     ...options,
   });
+}
+
+function requireLaunchSupport(adapterId: string, support: AdapterLaunchSupport | undefined): AdapterLaunchSupport {
+  if (!support || support.isolationLevel === "unavailable") {
+    throw new Error(`Agent adapter ${adapterId} built a launch without an available launch support profile.`);
+  }
+  return support;
+}
+
+async function readCliHelp(command: string, args: string[]): Promise<string | null> {
+  const result = await runCommand(command, args, process.cwd(), { timeoutMs: 15_000, agentName: command });
+  return result.status === "complete" ? [result.stdout, result.stderr].join("\n") : null;
 }
 
 /**
