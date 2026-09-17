@@ -27,6 +27,7 @@ const taskTemplates: TaskTemplate[] = [
       "Produce a concise product brief with target customer, wedge, MVP scope, and first revenue path.",
       "产出一份简洁的产品简报，包含目标客户、切入点、MVP 范围和第一条收入路径。",
     ),
+    verification: null,
   },
   {
     key: "market_research",
@@ -49,6 +50,7 @@ const taskTemplates: TaskTemplate[] = [
       "Produce a research report covering comparable products, positioning, pricing, and customer pain.",
       "产出一份研究报告，覆盖可比产品、定位、定价和客户痛点。",
     ),
+    verification: null,
   },
   {
     key: "growth_assets",
@@ -71,6 +73,7 @@ const taskTemplates: TaskTemplate[] = [
       "Produce launch copy, positioning notes, and an initial channel list for the prototype and launch plan.",
       "产出发布文案、定位说明，以及用于原型和发布计划的初始渠道清单。",
     ),
+    verification: null,
   },
   {
     key: "landing_page_prototype",
@@ -93,6 +96,7 @@ const taskTemplates: TaskTemplate[] = [
       "Produce runnable prototype files that implement the approved wedge, research-informed positioning, and launch copy.",
       "产出可运行的原型文件，落实已批准的切入点、基于研究的定位和发布文案。",
     ),
+    verification: null,
   },
   {
     key: "prototype_validation",
@@ -115,6 +119,13 @@ const taskTemplates: TaskTemplate[] = [
       "Produce validation output that proves the prototype can run and be inspected locally.",
       "产出验证结果，证明原型可以在本地运行并被检查。",
     ),
+    verification: {
+      targetTaskKeys: ["landing_page_prototype"],
+      requirements: [
+        { id: "runs-locally", description: "The prototype starts and renders its main page locally without errors." },
+        { id: "core-flow", description: "The core user flow described in the product brief works end to end." },
+      ],
+    },
   },
 ];
 
@@ -309,6 +320,7 @@ export const aiSaasPlaybook = {
         dependsOnTaskKeys: template.dependsOnTaskKeys,
         handoffContract: template.handoffContract,
         handoffContractText: template.handoffContractText,
+        verification: template.verification,
       })),
     };
   },

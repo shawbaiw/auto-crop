@@ -87,6 +87,7 @@ const validBlueprint = {
       riskLevel: "low",
       dependsOnTaskKeys: [],
       handoffContract: "Produce a competitor research brief for prototype positioning.",
+      verification: null,
     },
     {
       key: "landing_page_prototype",
@@ -99,6 +100,7 @@ const validBlueprint = {
       riskLevel: "medium",
       dependsOnTaskKeys: ["competitor_research"],
       handoffContract: "Produce runnable landing page files for downstream validation.",
+      verification: null,
     },
   ],
 };
@@ -235,6 +237,48 @@ describe("companyBlueprintSchema", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  const verifierTask = {
+    ...validBlueprint.tasks[1],
+    key: "verify_prototype",
+    title: "Verify the prototype",
+    dependsOnTaskKeys: ["landing_page_prototype"],
+    verification: {
+      targetTaskKeys: ["landing_page_prototype"],
+      requirements: [{ id: "renders", description: "The landing page renders." }],
+    },
+  };
+
+  it("requires every task to declare verification, even as null", () => {
+    const { verification: _omitted, ...undeclared } = validBlueprint.tasks[0];
+    const result = companyBlueprintSchema.safeParse({ ...validBlueprint, tasks: [undeclared, validBlueprint.tasks[1]] });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a verifying task that targets an earlier task with requirements", () => {
+    const result = companyBlueprintSchema.safeParse({ ...validBlueprint, tasks: [...validBlueprint.tasks, verifierTask] });
+
+    expect(result.success).toBe(true);
+  });
+
+  it.each([
+    ["no targets", { ...verifierTask.verification, targetTaskKeys: [] }],
+    ["a missing target", { ...verifierTask.verification, targetTaskKeys: ["nowhere"] }],
+    ["a later target", { ...verifierTask.verification, targetTaskKeys: ["verify_prototype"] }],
+    ["no requirements", { ...verifierTask.verification, requirements: [] }],
+    ["duplicate requirement ids", {
+      ...verifierTask.verification,
+      requirements: [{ id: "renders", description: "a" }, { id: "renders", description: "b" }],
+    }],
+  ])("rejects a verification plan with %s", (_label, verification) => {
+    const result = companyBlueprintSchema.safeParse({
+      ...validBlueprint,
+      tasks: [...validBlueprint.tasks, { ...verifierTask, verification }],
+    });
+
+    expect(result.success).toBe(false);
   });
 });
 

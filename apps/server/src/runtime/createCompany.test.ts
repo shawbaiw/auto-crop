@@ -365,6 +365,7 @@ describe("createCompany", () => {
         riskLevel: "medium",
         dependsOnTaskKeys: [],
         handoffContract: "Produce runnable prototype files that implement the accepted product direction.",
+        verification: null,
       },
     ];
     const ceoAgent = createMockAgentAdapter({

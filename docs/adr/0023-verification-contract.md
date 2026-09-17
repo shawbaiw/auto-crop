@@ -50,6 +50,6 @@ Introduce a **Verification Contract**, carried by declared dependency roles and 
   - Whether a task is split, and into which three stages, is still decided by `isLargeDepartmentTask`, which matches title and description text. The stages are now structural once created; the trigger is not.
   - ~~Subtask deliverables still go through automatic acceptance and can land in CEO review.~~ Resolved by ADR 0024.
   - A failed verification stops; it does not yet trigger bounded automatic rework of the producer.
-  - Only dependencies declared with verification roles are under the contract. Validation tasks the CEO blueprint plans directly have no such roles yet, so a company whose plan verifies through them is not protected. The runtime cannot infer the duty: the same `test-output` proof schema is used by verification tasks and by unrelated ones. Declaring roles and requirement lists in the blueprint is a required follow-up, not an optional one.
+  - ~~Validation tasks the CEO blueprint plans directly are outside the contract.~~ Resolved by ADR 0025: every planned task declares its verification duty.
   - Currency is checked by artifact id after capture, not by re-reading bytes. A context consumer that later runs in the producer's workspace (the parent's summarization, a CEO-planned diff capture) can change files without a new artifact, and a passed verdict will not notice. Moving every consumer onto snapshots is a larger change.
   - Existing companies are not migrated: their subtasks keep the dependencies they were created with.

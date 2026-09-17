@@ -430,6 +430,21 @@ export const objectiveBlueprintSchema = z.object({
   keyResults: z.array(keyResultBlueprintSchema).min(1),
 });
 
+export const verificationRequirementSchema = z.object({
+  id: taskKeySchema,
+  description: nonEmptyString,
+});
+
+/**
+ * What a planned task verifies. Required on every task as either null or an object, so a plan states
+ * verification duty explicitly: the runtime cannot infer it — the same proof schema serves verifying and
+ * non-verifying tasks alike (ADR 0025).
+ */
+export const blueprintTaskVerificationSchema = z.object({
+  targetTaskKeys: z.array(taskKeySchema).min(1),
+  requirements: z.array(verificationRequirementSchema).min(1),
+});
+
 export const taskSchema = z.object({
   key: taskKeySchema,
   departmentKey: taskKeySchema.optional(),
@@ -445,6 +460,7 @@ export const taskSchema = z.object({
   dependsOnTaskKeys: z.array(taskKeySchema).default([]),
   handoffContract: nonEmptyString,
   handoffContractText: localizedTextSchema.optional(),
+  verification: blueprintTaskVerificationSchema.nullable(),
 });
 
 export const companyBlueprintSchema = z
@@ -518,6 +534,29 @@ export const companyBlueprintSchema = z
             message: `Task dependencies must reference earlier task keys: ${dependencyKey}`,
           });
         }
+      });
+
+      // A verification with no real target or no requirements cannot be enforced at run time; it is a
+      // planning error here rather than a verifier that later reports on nothing.
+      task.verification?.targetTaskKeys.forEach((targetKey, targetIndex) => {
+        const targetPath = ["tasks", index, "verification", "targetTaskKeys", targetIndex];
+        const targetTaskIndex = taskIndexesByKey.get(targetKey);
+        if (targetTaskIndex === undefined) {
+          context.addIssue({ code: "custom", path: targetPath, message: `Verification references missing task key: ${targetKey}` });
+        } else if (targetTaskIndex >= index) {
+          context.addIssue({ code: "custom", path: targetPath, message: `Verification must target earlier task keys: ${targetKey}` });
+        }
+      });
+      const requirementIds = new Set<string>();
+      task.verification?.requirements.forEach((requirement, requirementIndex) => {
+        if (requirementIds.has(requirement.id)) {
+          context.addIssue({
+            code: "custom",
+            path: ["tasks", index, "verification", "requirements", requirementIndex, "id"],
+            message: `Duplicate verification requirement id: ${requirement.id}`,
+          });
+        }
+        requirementIds.add(requirement.id);
       });
     });
   });

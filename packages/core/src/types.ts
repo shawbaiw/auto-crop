@@ -1,5 +1,5 @@
 import type { Locale, LocalizedText } from "./localizedText";
-import type { ArtifactVerification, DependencyInputRole } from "./verification";
+import type { ArtifactVerification, DependencyInputRole, VerificationRequirement } from "./verification";
 
 export type CompanyStatus = "creating" | "creation_failed" | "draft" | "active" | "paused" | "review";
 export type PermissionMode = "safe" | "balanced" | "autonomous";
@@ -547,6 +547,11 @@ export type Task = {
   parentTaskId?: string | null;
   taskKind?: TaskKind;
   source?: TaskSource;
+  /**
+   * Requirements planned onto a verifying task itself, when no upstream artifact declares them — a
+   * verification task the CEO blueprint plans directly. Null for every other task (ADR 0025).
+   */
+  verificationRequirements?: VerificationRequirement[] | null;
 };
 
 export type TaskProgressEvent = {
@@ -732,6 +737,13 @@ export type BlueprintTask = {
   dependsOnTaskKeys: string[];
   handoffContract: string;
   handoffContractText?: LocalizedText;
+  /** Declared for every planned task: null, or what it verifies and against which requirements. */
+  verification: BlueprintTaskVerification | null;
+};
+
+export type BlueprintTaskVerification = {
+  targetTaskKeys: string[];
+  requirements: VerificationRequirement[];
 };
 
 export type CompanyBlueprint = {

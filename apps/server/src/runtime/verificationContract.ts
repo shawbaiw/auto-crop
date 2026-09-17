@@ -135,10 +135,21 @@ export function prepareVerificationInputs(input: {
   rmSync(inputsRoot, { force: true, recursive: true });
   mkdirSync(inputsRoot, { recursive: true });
 
+  // Requirements have exactly one source: an upstream artifact (a department's Define stage), or the
+  // plan itself (a verification task the CEO blueprint planned). Two would leave it undecided which
+  // the verifier is judged against.
   const requirementDependencies = dependenciesWithRole(input.repositories, input.task.id, "verification_requirements");
+  const plannedRequirements = input.task.verificationRequirements ?? [];
   let requirementsTaskId: string | null = null;
   let requirementsArtifactId: string | null = null;
-  const requirements: VerificationRequirement[] = [];
+  const requirements: VerificationRequirement[] = [...plannedRequirements];
+  if (plannedRequirements.length > 0 && requirementDependencies.length > 0) {
+    return {
+      kind: "handoff_failed",
+      producer: input.task,
+      message: `Handoff failed: ${input.task.title} has both planned verification requirements and an upstream requirements source.`,
+    };
+  }
   if (requirementDependencies.length > 1) {
     return {
       kind: "handoff_failed",

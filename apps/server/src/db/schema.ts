@@ -419,6 +419,7 @@ function migrateLocalizedBusinessContentFields(database: DatabaseClient): void {
   addColumnIfMissing(database, taskColumns, "tasks", "department_key TEXT");
   addColumnIfMissing(database, taskColumns, "tasks", "title_text TEXT");
   addColumnIfMissing(database, taskColumns, "tasks", "description_text TEXT");
+  addColumnIfMissing(database, taskColumns, "tasks", "verification_requirements TEXT");
 
   const dependencyColumns = getColumnNames(database, "task_dependencies");
   addColumnIfMissing(database, dependencyColumns, "task_dependencies", "handoff_contract_text TEXT");

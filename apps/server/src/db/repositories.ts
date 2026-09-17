@@ -2,6 +2,7 @@ import type {
   ArtifactVerification,
   DependencyInputRole,
   VerificationInputs,
+  VerificationRequirement,
   AgentRun,
   AgentFailureReason,
   Approval,
@@ -323,8 +324,8 @@ export function createRepositories(database: DatabaseClient) {
             assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, artifact_workspace_path,
             status, risk_level, position, latest_failure_reason, latest_failure_message,
             latest_execution_profile_name, latest_requested_timeout_ms, latest_effective_timeout_ms,
-            dependency_note, parent_task_id, task_kind, source
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            dependency_note, parent_task_id, task_kind, source, verification_requirements
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           task.id,
@@ -353,7 +354,16 @@ export function createRepositories(database: DatabaseClient) {
           task.parentTaskId ?? null,
           task.taskKind ?? "parent",
           task.source ?? "ceo",
+          task.verificationRequirements && task.verificationRequirements.length > 0
+            ? JSON.stringify(task.verificationRequirements)
+            : null,
         );
+    },
+
+    updateTaskVerificationRequirements(id: string, requirements: VerificationRequirement[] | null): void {
+      database
+        .prepare("UPDATE tasks SET verification_requirements = ? WHERE id = ?")
+        .run(requirements && requirements.length > 0 ? JSON.stringify(requirements) : null, id);
     },
 
     getTask(id: string): Task | null {
@@ -1485,6 +1495,7 @@ type TaskRow = {
   parent_task_id: string | null;
   task_kind: TaskKind;
   source: TaskSource;
+  verification_requirements?: string | null;
 };
 
 type ProofRow = {
@@ -1784,6 +1795,9 @@ function mapTask(row: TaskRow): Task {
     parentTaskId: row.parent_task_id,
     taskKind: row.task_kind,
     source: row.source,
+    ...(row.verification_requirements
+      ? { verificationRequirements: JSON.parse(row.verification_requirements) as VerificationRequirement[] }
+      : {}),
   };
 }
 

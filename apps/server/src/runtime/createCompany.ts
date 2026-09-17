@@ -299,6 +299,7 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
       parentTaskId: null,
       taskKind: "parent",
       source: "ceo",
+      verificationRequirements: taskBlueprint.verification?.requirements ?? null,
     };
     repositories.createTask(task);
     repositories.appendTaskProgressEvent({
@@ -543,7 +544,11 @@ function createBlueprintDependencies(
       throw new Error(`Task references unknown key after parse: ${taskBlueprint.key}`);
     }
 
-    return taskBlueprint.dependsOnTaskKeys.map((dependencyKey) => {
+    // A verification target is a dependency in the `verification_target` role whether or not the plan
+    // also listed it in dependsOnTaskKeys: the verifier consumes it as a snapshot, never as context.
+    const targetKeys = new Set(taskBlueprint.verification?.targetTaskKeys ?? []);
+    const dependencyKeys = [...new Set([...taskBlueprint.dependsOnTaskKeys, ...targetKeys])];
+    return dependencyKeys.map((dependencyKey) => {
       const dependsOnTaskId = taskIdsByBlueprintKey.get(dependencyKey);
 
       if (!dependsOnTaskId) {
@@ -555,6 +560,7 @@ function createBlueprintDependencies(
         dependsOnTaskId,
         handoffContract: handoffContractsByBlueprintKey.get(dependencyKey) ?? null,
         handoffContractText: handoffContractTextsByBlueprintKey.get(dependencyKey) ?? null,
+        ...(targetKeys.has(dependencyKey) ? { inputRole: "verification_target" as const } : {}),
       };
     });
   });

@@ -1062,7 +1062,9 @@ function assessDepartmentTask(input: RunSchedulerOnceInput, task: Task): "ready"
     subjectTaskId: null,
   });
 
-  if (!isLargeDepartmentTask(task)) {
+  // A verifying task is never split: its targets and requirements belong to it, and a split template
+  // would hand them to subtasks as plain context.
+  if (!isLargeDepartmentTask(task) || isVerifyingTask(input.repositories, task)) {
     appendTaskProgressEvent(input, {
       task,
       step: "no_split_needed",
