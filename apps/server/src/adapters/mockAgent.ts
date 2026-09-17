@@ -1,3 +1,4 @@
+import { DEFAULT_LAUNCH_POLICY, type AdapterLaunchSupport } from "./launchPolicy";
 import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "./types";
 
 export type MockAgentOptions = {
@@ -8,16 +9,22 @@ export type MockAgentOptions = {
   output?: string;
   status?: AgentRunResult["status"];
   failureReason?: AgentRunResult["failureReason"];
+  /** Launch support to report. Omitted: the mock makes no launch-isolation claim. */
+  launchSupport?: Omit<AdapterLaunchSupport, "adapterId">;
 };
 
 export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter {
+  const launchSupport = options.launchSupport;
   return {
     id: options.id,
     name: options.name,
     capabilities: options.capabilities,
     async detect(): Promise<boolean> {
-      return options.detected ?? true;
+      return (options.detected ?? true) && launchSupport?.isolationLevel !== "unavailable";
     },
+    ...(launchSupport
+      ? { launchPlan: async () => ({ policy: DEFAULT_LAUNCH_POLICY, support: { adapterId: options.id, ...launchSupport } }) }
+      : {}),
     async run(request: AgentRunRequest): Promise<AgentRunResult> {
       if (request.metadata.phase === "execution_brief") {
         return { status: "complete", exitCode: 0, stderr: "", stdout: JSON.stringify({
