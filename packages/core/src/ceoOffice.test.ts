@@ -685,6 +685,38 @@ describe("projectCeoOfficeItems", () => {
     expect(withResolvedHold.map((item) => item.type)).not.toContain("approval_request");
   });
 
+  it("never offers approval of a verification report whose verdict is not passed, even under an open review Hold", () => {
+    const state = scenario("Validate onboarding", "Onboarding evidence is ready");
+    const [task] = state.tasks;
+    const failedReport: BusinessArtifact = {
+      id: "artifact_failed_verification", companyId: company.id, taskId: task!.id, sourceProofId: "proof_1",
+      artifactKind: "deliverable", artifactRole: "validation", artifactSubtype: "onboarding_evidence",
+      artifactType: "validation_result", taskType: "validation.onboarding",
+      payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "unreviewed",
+      isCurrent: true, supersedesArtifactId: null,
+      verification: {
+        outcome: "failed", requirementsArtifactId: "requirements", requirements: [{ id: "r1", description: "works" }],
+        targets: [], checks: [{ requirementId: "r1", outcome: "failed", evidence: "does not work" }], issues: [],
+      },
+      createdAt: "2026-09-01T10:05:00Z", updatedAt: "2026-09-01T10:05:00Z",
+    };
+    const reviewHold: TaskHold = {
+      id: "hold_review", companyId: company.id, taskId: task!.id, kind: "awaiting_ceo_review",
+      resolver: "ceo_office", subjectKind: "business_artifact", subjectId: failedReport.id,
+      reason: "Waiting for a CEO Office review decision.", reasonText: null,
+      openedAt: "2026-09-01T10:05:00Z", resolvedAt: null, resolution: null,
+    };
+
+    const items = projectCeoOfficeItems({
+      ...state,
+      tasks: [{ ...task!, status: "review" }],
+      businessArtifacts: [failedReport],
+      taskHolds: [reviewHold],
+    });
+
+    expect(items.map((item) => item.type)).not.toContain("approval_request");
+  });
+
   it.each([
     ["blocked", "blocked", null, "task_blocked"],
     ["retry-exhausted", "failed", "retry_exhausted", "task_failed"],

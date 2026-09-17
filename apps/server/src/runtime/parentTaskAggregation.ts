@@ -1,6 +1,16 @@
-import type { AgentFailureReason, Proof, Task, TaskEvent, TaskProgressEvent, TaskStatus } from "@auto-crop/core";
+import {
+  isVerificationSatisfied,
+  type AgentFailureReason,
+  type BusinessArtifact,
+  type Proof,
+  type Task,
+  type TaskEvent,
+  type TaskProgressEvent,
+  type TaskStatus,
+} from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { applyTaskTransition } from "./taskTransition";
+import { isVerificationCurrent } from "./verificationContract";
 
 export type ParentTaskAggregationUpdate = {
   task: Task;
@@ -184,7 +194,13 @@ function resolveParentDependencyReadiness(
 
     const dependencyProofs = repositories.listProofsForTask(upstream.id);
     if ((upstream.taskKind ?? "parent") === "department_subtask") {
-      const subtaskReadiness = resolveDepartmentSubtaskReadiness(upstream, dependencyProofs);
+      const subtaskArtifact = repositories.getCurrentBusinessArtifactForTask(upstream.id);
+      const subtaskReadiness = resolveDepartmentSubtaskReadiness(
+        upstream,
+        dependencyProofs,
+        subtaskArtifact,
+        subtaskArtifact ? isVerificationCurrent(repositories, subtaskArtifact) : true,
+      );
       if (subtaskReadiness.kind !== "ready") {
         return subtaskReadiness;
       }
@@ -202,8 +218,17 @@ function resolveParentDependencyReadiness(
   return { kind: "ready", proofs };
 }
 
-function resolveDepartmentSubtaskReadiness(task: Task, proofs: Proof[]): ParentDependencyReadiness {
-  if ((task.status === "review" || task.status === "complete") && proofs.length > 0) {
+function resolveDepartmentSubtaskReadiness(
+  task: Task,
+  proofs: Proof[],
+  artifact: BusinessArtifact | null,
+  verificationCurrent: boolean,
+): ParentDependencyReadiness {
+  // Proof shows the subtask produced something; a failed verification report is still proof, so the
+  // verdict — and whether it still covers the current output — has to be asked separately before the
+  // parent may summarize it as done.
+  const verificationSatisfied = (!artifact || isVerificationSatisfied(artifact)) && verificationCurrent;
+  if ((task.status === "review" || task.status === "complete") && proofs.length > 0 && verificationSatisfied) {
     return { kind: "ready", proofs };
   }
 

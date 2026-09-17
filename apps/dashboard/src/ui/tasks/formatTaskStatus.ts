@@ -84,6 +84,8 @@ export function formatTaskFailureReason(reason: string, t: (key: TranslationKey)
       return t("taskStatus.needsReplan");
     case "rate_limited":
       return t("taskStatus.failureRateLimited");
+    case "verification_failed":
+      return t("taskStatus.failureVerificationFailed");
     default:
       return reason;
   }

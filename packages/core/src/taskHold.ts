@@ -42,6 +42,11 @@ export type TaskHoldKind =
   /** The plan itself is wrong for the goal; the task needs replanning before it can run again. */
   | "needs_replan"
   /**
+   * A verifying task produced a well-formed report whose Verification Contract verdict is not `passed`.
+   * The report stays as diagnostic evidence; it cannot stand as a successful delivery.
+   */
+  | "verification_failed"
+  /**
    * Execution stopped for a reason the runtime could not attribute to any of the above — a timed-out
    * or crashed run, a restart mid-flight, or a status transition that declared no Hold of its own.
    * The deliberate catch-all: it keeps rule 1 true for situations nobody modelled in advance, at the
@@ -59,6 +64,7 @@ export const taskHoldKinds = [
   "invalid_business_artifact",
   "recovery_exhausted",
   "needs_replan",
+  "verification_failed",
   "runtime_interrupted",
 ] as const satisfies readonly TaskHoldKind[];
 
@@ -82,6 +88,7 @@ export const taskHoldStatusBinding: Record<TaskHoldKind, TaskStatus | null> = {
   awaiting_external_wait: null,
   invalid_business_artifact: null,
   recovery_exhausted: null,
+  verification_failed: null,
   runtime_interrupted: null,
 };
 
@@ -296,6 +303,12 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
         }
         offer(hold, "request_replan", "founder");
         break;
+      case "verification_failed":
+        // Running the verification again is the way forward when its input was wrong (a handoff
+        // repaired since); replanning is the way out when the verified work itself must change.
+        offer(hold, "recover_task", "runtime");
+        offer(hold, "request_replan", "founder");
+        break;
       case "runtime_interrupted":
         // Nothing is known about why the run stopped, so the way back is to run it again; a refresh
         // would only re-derive state that is not what went wrong.
@@ -372,6 +385,8 @@ export function deriveTaskHold(input: {
     // meaning "nobody modelled this" (ADR 0020).
     case "invalid_agent_output":
       return { kind: "runtime_interrupted", resolver: "runtime" };
+    case "verification_failed":
+      return { kind: "verification_failed", resolver: "runtime" };
     default:
       return { kind: "runtime_interrupted", resolver: "runtime" };
   }

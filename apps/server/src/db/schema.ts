@@ -149,6 +149,12 @@ export function migrate(database: DatabaseClient): void {
       acquired_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS verification_handoffs (
+      task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+      inputs TEXT NOT NULL,
+      prepared_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS runtime_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -416,6 +422,7 @@ function migrateLocalizedBusinessContentFields(database: DatabaseClient): void {
 
   const dependencyColumns = getColumnNames(database, "task_dependencies");
   addColumnIfMissing(database, dependencyColumns, "task_dependencies", "handoff_contract_text TEXT");
+  addColumnIfMissing(database, dependencyColumns, "task_dependencies", "input_role TEXT NOT NULL DEFAULT 'context'");
 
   const ceoReviewDecisionColumns = getColumnNames(database, "ceo_review_decisions");
   addColumnIfMissing(database, ceoReviewDecisionColumns, "ceo_review_decisions", "note_text TEXT");
@@ -530,6 +537,7 @@ function migrateBusinessArtifactClassificationFields(database: DatabaseClient): 
   addColumnIfMissing(database, columns, "business_artifacts", "artifact_kind TEXT NOT NULL DEFAULT 'deliverable'");
   addColumnIfMissing(database, columns, "business_artifacts", "artifact_role TEXT NOT NULL DEFAULT 'none'");
   addColumnIfMissing(database, columns, "business_artifacts", "artifact_subtype TEXT NOT NULL DEFAULT 'legacy'");
+  addColumnIfMissing(database, columns, "business_artifacts", "verification TEXT");
 }
 
 function addColumnIfMissing(

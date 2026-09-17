@@ -300,6 +300,7 @@ function defaultResolverForKind(kind: TaskHoldKind): TaskHoldResolver {
     case "awaiting_external_wait":
       return "time";
     case "invalid_business_artifact":
+    case "verification_failed":
     case "runtime_interrupted":
       return "runtime";
     default:
@@ -327,6 +328,8 @@ function defaultReasonForKind(kind: TaskHoldKind, task: Task): string {
       return `${task.title} reached the Bounded Recovery ceiling and needs a replan.`;
     case "needs_replan":
       return `${task.title} needs replanning before it can run again.`;
+    case "verification_failed":
+      return `${task.title} verified its target and the verification did not pass.`;
     case "runtime_interrupted":
       return `${task.title} stopped without an attributed reason and needs a decision.`;
     default: {

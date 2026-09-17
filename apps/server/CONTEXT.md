@@ -101,6 +101,14 @@ The event a released path emits must report the task's **actual** resulting stat
 
 The granularity is deliberately coarse: one pre-dispatch question for the whole run, not one per action. That is also why an `ask` decision *grants* the capability rather than withholding it — the consent was already collected, once, before dispatch. Per-action approval during execution, and the per-action grant narrowing that belongs with it, are a separate and larger change.
 
+## A Verdict Is Asked Of One Predicate
+
+A Business Artifact can be `valid` and still record a Verification Verdict that is not `passed` — a well-formed report that the verified work failed. `isVerificationSatisfied` (core) is the only question every success path asks: `isReviewableBusinessArtifact`, CEO Office's pending projection, CEO approval, dependency readiness, parent aggregation, and `acceptTaskBusinessArtifact`, which throws rather than accept. A new acceptance or readiness path must ask it too. Checking `validationStatus` alone is how a failed verification report was one click from approval (ADR 0023).
+
+A verifier never runs in a producer's workspace. `resolveRunWorkspace` follows only `context` dependencies; `prepareVerificationInputs` gives the verifier snapshots in its own workspace, and a snapshot that cannot be made blocks the run before it starts.
+
+Never read a runtime fact back from an agent's workspace. What a verifier was handed lives in `verification_handoffs`; a manifest in the workspace is a file the agent can rewrite. And decide verification duty from the task's dependencies, never from the artifact kind the agent filed — both were real bypasses (ADR 0023).
+
 ## Glossary
 
 - **Task Transition Seam**: `applyTaskTransition`. The only writer of task status. _Avoid_: status update, state setter.

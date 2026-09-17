@@ -33,6 +33,7 @@ import type { PolicyMode } from "../policies/policy";
 import { generateCompanyBlueprint, writeCompanyBlueprintRecords } from "../runtime/createCompany";
 import { defaultAgentSessionManager } from "../runtime/agentSessions";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
+import { isReviewableBusinessArtifact } from "../runtime/businessArtifact";
 import { founderDecisionSourceEventId, projectCeoAttention } from "../runtime/ceoAttention";
 import { decideFounderApproval } from "../runtime/founderApproval";
 import { createDefaultId } from "../runtime/ids";
@@ -2174,14 +2175,10 @@ function writeResolvedDecisionIntoPayload(payload: unknown, decisionKind: string
   return next;
 }
 
-function isApprovableBusinessArtifact(artifact: BusinessArtifact | null): boolean {
-  return (
-    artifact !== null &&
-    artifact.isCurrent &&
-    artifact.validationStatus === "valid" &&
-    artifact.reviewStatus === "unreviewed" &&
-    (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
-  );
+function isApprovableBusinessArtifact(artifact: BusinessArtifact | null): artifact is BusinessArtifact {
+  // The same predicate the runtime used to decide the task was reviewable, so CEO approval cannot
+  // accept what automatic acceptance refused — a failed verification report included.
+  return artifact !== null && isReviewableBusinessArtifact(artifact);
 }
 
 function isCeoReviewReturnReason(reason: unknown): reason is CeoReviewReturnReason {

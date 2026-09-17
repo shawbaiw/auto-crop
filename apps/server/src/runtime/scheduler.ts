@@ -10,15 +10,17 @@ import {
   resolveTaskCapabilityNeeds,
   type AgentCapabilityGrant,
 } from "../policies/capabilityGrant";
-import type {
-  AgentFailureReason,
-  BusinessArtifact,
-  Company,
-  Proof,
-  Task,
-  TaskEvent,
-  TaskProgressEvent,
-  TaskStatus,
+import {
+  isVerificationSatisfied,
+  type AgentFailureReason,
+  type BusinessArtifact,
+  type Company,
+  type DependencyInputRole,
+  type Proof,
+  type Task,
+  type TaskEvent,
+  type TaskProgressEvent,
+  type TaskStatus,
 } from "@auto-crop/core";
 import { evaluateAutomaticAcceptance } from "./automaticAcceptance";
 import {
@@ -49,6 +51,13 @@ import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
 import { applyTaskTransition } from "./taskTransition";
+import {
+  isVerifyingTask,
+  prepareVerificationInputs,
+  producesVerificationRequirements,
+  resolveCaptureVerificationContext,
+  verificationFailureMessage,
+} from "./verificationContract";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
 
 export type SchedulerFailureReason = AgentFailureReason;
@@ -299,7 +308,27 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           if (!task.workspacePath) {
             input.repositories.updateTaskWorkspacePath(task.id, taskWorkspace.root);
           }
-          const runWorkspacePath = resolveRunWorkspace(input.repositories, task) ?? taskWorkspace.root;
+          const verifying = isVerifyingTask(input.repositories, task);
+          const runWorkspacePath = verifying
+            ? taskWorkspace.root
+            : resolveRunWorkspace(input.repositories, task) ?? taskWorkspace.root;
+          const verificationPreparation = prepareVerificationInputs({
+            repositories: input.repositories,
+            task,
+            workspacePath: runWorkspacePath,
+            now,
+          });
+          if (verificationPreparation.kind === "handoff_failed") {
+            // A verifier started on missing input would report on an empty directory and exit cleanly.
+            // Stop before the run, naming the producer whose output could not be handed over.
+            blockTaskForMissingDeliverable(input, task, verificationPreparation.producer, verificationPreparation.message);
+            result.blocked.push(task.id);
+            return;
+          }
+          const verificationPromptContext = {
+            producesRequirements: producesVerificationRequirements(input.repositories, task),
+            inputs: verificationPreparation.kind === "ready" ? verificationPreparation.inputs : null,
+          };
 
           const adapter = selectAdapter(input.adapters, task);
           const logPath = createLogPath(input.projectRoot, task);
@@ -356,7 +385,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               agentResult = await adapter.run({
                 ...request,
                 timeoutMs: remainingMs,
-                prompt: buildTaskExecutionPrompt({ task, company, handoffs, grant }) +
+                prompt: buildTaskExecutionPrompt({ task, company, handoffs, grant, verification: verificationPromptContext }) +
                   `\n\n## Your announced execution plan\n${JSON.stringify(preparation.brief)}\nCarry out this plan. Explain material deviations in the final report.`,
               });
             } else {
@@ -511,6 +540,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               workspacePath: runWorkspacePath,
               locale: input.repositories.getCompany(task.companyId)?.locale ?? "en",
               environmentBlockerVerification,
+              verificationContext: resolveCaptureVerificationContext(input.repositories, task, runWorkspacePath),
               now,
               createId,
             });
@@ -623,6 +653,64 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             }
             emitParentTaskAggregationEvents(input, task);
             result.failed.push(task.id);
+            return;
+          }
+
+          if (businessArtifact?.verification && businessArtifact.validationStatus === "valid" && !isVerificationSatisfied(businessArtifact)) {
+            // The run did its job — it verified and reported. What failed is the work it verified, so
+            // the run stays `complete`, the report stays as evidence, and nothing downstream may treat
+            // it as a successful delivery.
+            const failure = verificationFailureMessage(task, businessArtifact.verification);
+            applyTaskTransition({
+              repositories: input.repositories,
+              task,
+              status: "blocked",
+              executionSummary: {
+                latestFailureReason: "verification_failed",
+                latestFailureMessage: failure,
+              },
+              hold: {
+                kind: "verification_failed",
+                resolver: "runtime",
+                subjectKind: "business_artifact",
+                subjectId: businessArtifact.id,
+                reason: failure,
+              },
+              now,
+              createId,
+            });
+            input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
+            appendAndEmitTaskEvent(input, {
+              task,
+              type: "task_blocked",
+              failureReason: "verification_failed",
+              failureMessage: failure,
+              message: failure,
+              status: "blocked",
+              executionProfileName: timeoutResolution.executionProfile.name,
+              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+            });
+            appendTaskProgressEvent(input, {
+              task,
+              step: "blocked",
+              status: "blocked",
+              label: "Verification did not pass",
+              detail: failure,
+              subjectTaskId: task.id,
+            });
+            const blockedConsumerIds = blockDirectDependencyConsumers(input, task);
+            recordTaskCompletionEvent({
+              repositories: input.repositories,
+              task,
+              businessArtifact,
+              outcome: "blocked",
+              dependencyImpact: { blockedTaskIds: blockedConsumerIds, reason: "verification_failed" },
+              now,
+              createId,
+            });
+            result.blocked.push(task.id, ...blockedConsumerIds);
+            emitParentTaskAggregationEvents(input, task);
             return;
           }
 
@@ -1182,28 +1270,56 @@ function isLargeDepartmentTask(task: Task): boolean {
   );
 }
 
+/**
+ * The department split template. Each stage declares the sibling outputs it consumes and in what role,
+ * so the execution order and the verification handoff are dependency edges — not array order, titles,
+ * or whichever stage happens to be dispatched first. Every stage also inherits the parent's own
+ * upstream dependencies as context.
+ */
+type DepartmentSubtaskStage = "define" | "execute" | "validate";
+
+type DepartmentSubtaskBlueprint = {
+  stage: DepartmentSubtaskStage;
+  title: string;
+  description: string;
+  proofSchemaId: string;
+  inputs: Array<{ stage: DepartmentSubtaskStage; role: DependencyInputRole; handoffContract: string }>;
+};
+
 function createDepartmentSubtasks(input: RunSchedulerOnceInput, parentTask: Task): Task[] {
   const createId = input.createId ?? defaultCreateId;
   const inheritedDependencies = input.repositories.listTaskDependencies(parentTask.id);
-  const subtaskBlueprints = [
+  const subtaskBlueprints: DepartmentSubtaskBlueprint[] = [
     {
+      stage: "define",
       title: `Define executable slice for ${parentTask.title}`,
       description: `Assess scope, dependencies, and proof criteria for the parent task: ${parentTask.title}.`,
       proofSchemaId: "product-brief",
+      inputs: [],
     },
     {
+      stage: "execute",
       title: `Execute ${parentTask.title}`,
       description: parentTask.description,
       proofSchemaId: parentTask.proofSchemaId,
+      inputs: [
+        { stage: "define", role: "context", handoffContract: "Implement the executable slice and scope defined upstream." },
+      ],
     },
     {
+      stage: "validate",
       title: `Validate proof for ${parentTask.title}`,
       description: `Validate the output and prepare parent-task proof for: ${parentTask.title}.`,
       proofSchemaId: "test-output",
+      inputs: [
+        { stage: "define", role: "verification_requirements", handoffContract: "Verify every requirement declared upstream." },
+        { stage: "execute", role: "verification_target", handoffContract: "Verify the snapshot of the executed output." },
+      ],
     },
   ];
 
-  return subtaskBlueprints.map((blueprint) => {
+  const subtasksByStage = new Map<DepartmentSubtaskStage, Task>();
+  for (const blueprint of subtaskBlueprints) {
     const subtaskId = createId("department_subtask");
     const taskWorkspace = createTaskWorkspace(input.projectRoot, subtaskId);
     const subtask: Task = {
@@ -1240,13 +1356,27 @@ function createDepartmentSubtasks(input: RunSchedulerOnceInput, parentTask: Task
         handoffContractText: dependency.handoffContractText,
       });
     }
+    for (const declared of blueprint.inputs) {
+      const producer = subtasksByStage.get(declared.stage);
+      if (!producer) {
+        throw new Error(`Department subtask ${blueprint.stage} consumes ${declared.stage}, which is not created before it.`);
+      }
+      input.repositories.createTaskDependency({
+        taskId: subtask.id,
+        dependsOnTaskId: producer.id,
+        handoffContract: declared.handoffContract,
+        inputRole: declared.role,
+      });
+    }
     input.repositories.createTaskDependency({
       taskId: parentTask.id,
       dependsOnTaskId: subtask.id,
       handoffContract: "Contribute to the parent task proof summary.",
     });
-    return subtask;
-  });
+    subtasksByStage.set(blueprint.stage, subtask);
+  }
+
+  return [...subtasksByStage.values()];
 }
 
 function appendTaskProgressEvent(
@@ -1291,7 +1421,11 @@ function appendTaskProgressEvent(
 }
 
 function resolveRunWorkspace(repositories: ReturnType<typeof createRepositories>, task: Task): string | null {
-  const dependencies = repositories.listTaskDependencies(task.id);
+  // Only context inputs continue in a producer's workspace. A verifier works on a runtime snapshot in
+  // its own workspace (see prepareVerificationInputs), so it cannot alter the output it judges.
+  const dependencies = repositories
+    .listTaskDependencies(task.id)
+    .filter((dependency) => (dependency.inputRole ?? "context") === "context");
   const producer = dependencies
     .map((dependency) => repositories.getTask(dependency.dependsOnTaskId))
     .find((dependency): dependency is Task => Boolean(dependency?.artifactWorkspacePath));

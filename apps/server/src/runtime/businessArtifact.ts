@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  isVerificationSatisfied,
   localizedTextSchema,
   parseExecutionReportInput,
+  type ArtifactVerification,
   type BusinessArtifact,
   type BusinessArtifactKind,
   type BusinessArtifactRole,
@@ -13,6 +15,11 @@ import {
 } from "@auto-crop/core";
 import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
 import { parseOpenDecisions } from "./founderDecision";
+import {
+  evaluateVerificationReport,
+  parseVerificationRequirements,
+  type CaptureVerificationContext,
+} from "./verificationContract";
 
 const BUSINESS_ARTIFACT_PATH = join(".auto-crop", "business-artifact.json");
 const BUSINESS_ARTIFACT_KINDS = new Set<BusinessArtifactKind>([
@@ -97,6 +104,11 @@ export type CaptureBusinessArtifactInput = {
   locale?: Locale;
   /** Result of independently checking an Environment-Blocked Blocker's claim. A verified claim degrades the blocker to a deliverable. */
   environmentBlockerVerification?: EnvironmentBlockerVerification;
+  /**
+   * The Verification Contract obligations of this task: declaring requirements for a consumer, or
+   * verifying upstream output. Omitted by callers that capture outside that contract.
+   */
+  verificationContext?: CaptureVerificationContext;
   now?: () => Date;
   createId?: (prefix: string) => string;
 };
@@ -165,6 +177,29 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
     parsed.value,
     input.environmentBlockerVerification,
   );
+  const contract = evaluateVerificationObligations(artifactValue, input.verificationContext);
+  if (contract.errors.length > 0) {
+    return {
+      id,
+      companyId: input.task.companyId,
+      taskId: input.task.id,
+      sourceProofId: artifactValue.sourceProofId ?? input.proofs[0]?.id ?? null,
+      artifactKind: artifactValue.artifactKind,
+      artifactRole: artifactValue.artifactRole,
+      artifactSubtype: artifactValue.artifactSubtype,
+      artifactType: artifactValue.artifactType,
+      taskType: artifactValue.taskType,
+      payload: artifactValue.payload,
+      lineage: artifactValue.lineage,
+      validationStatus: "invalid_schema",
+      validationErrors: contract.errors,
+      reviewStatus: "not_reviewable",
+      isCurrent: true,
+      supersedesArtifactId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+  }
 
   return {
     id,
@@ -183,9 +218,33 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
     reviewStatus: "unreviewed",
     isCurrent: true,
     supersedesArtifactId: null,
+    ...(contract.verification ? { verification: contract.verification } : {}),
     createdAt: timestamp,
     updatedAt: timestamp,
   };
+}
+
+/**
+ * Apply the Verification Contract to a captured artifact. The obligation follows the task's declared
+ * duty, not the artifact kind its agent chose: a verifier filing a `final_report` instead of a
+ * `deliverable` is still judged, or it could skip the contract by relabelling a failed report. Only a
+ * blocker is exempt — it says the work could not be done and is never reviewable.
+ */
+function evaluateVerificationObligations(
+  artifact: DeclaredBusinessArtifact,
+  context: CaptureVerificationContext | undefined,
+): { errors: string[]; verification: ArtifactVerification | null } {
+  if (!context || artifact.artifactKind === "blocker") {
+    return { errors: [], verification: null };
+  }
+
+  const errors = context.producesRequirements ? parseVerificationRequirements(artifact.payload).errors : [];
+  if (!context.verifier) {
+    return { errors, verification: null };
+  }
+
+  const report = evaluateVerificationReport({ payload: artifact.payload, context: context.verifier });
+  return { errors: [...errors, ...report.errors], verification: report.verification };
 }
 
 function parseDeclaredBusinessArtifact(raw: string, task: Task, locale: Locale, requireDetails: boolean):
@@ -434,6 +493,9 @@ export function isReviewableBusinessArtifact(artifact: BusinessArtifact): boolea
     artifact.isCurrent &&
     artifact.validationStatus === "valid" &&
     artifact.reviewStatus === "unreviewed" &&
+    // A well-formed verification report whose verdict is not `passed` is diagnostic evidence, not a
+    // delivery anyone may accept.
+    isVerificationSatisfied(artifact) &&
     (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
   );
 }

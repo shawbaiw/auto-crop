@@ -1,11 +1,12 @@
-import type {
-  BusinessArtifact,
-  KeyResult,
-  LocalizedText,
-  Task,
-  TaskAcceptanceProvenance,
-  TaskEvent,
-  TaskEventType,
+import {
+  isVerificationSatisfied,
+  type BusinessArtifact,
+  type KeyResult,
+  type LocalizedText,
+  type Task,
+  type TaskAcceptanceProvenance,
+  type TaskEvent,
+  type TaskEventType,
 } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { propagateDependencyCascade, type DependencyCascadeResult } from "./dependencyCascade";
@@ -13,6 +14,7 @@ import { applyTaskTransition } from "./taskTransition";
 import type { FounderDecisionDeclaration } from "./founderDecision";
 import { createDefaultId } from "./ids";
 import { recordTaskCompletionEvent } from "./taskCompletion";
+import { isVerificationCurrent, isVerifyingTask } from "./verificationContract";
 
 export type BusinessAcceptanceResult = {
   dependencyCascade?: DependencyCascadeResult;
@@ -50,6 +52,21 @@ export function acceptTaskBusinessArtifact(input: {
   now?: () => Date;
   createId?: (prefix: string) => string;
 }): BusinessAcceptanceResult {
+  // Every acceptance path — automatic, CEO review, Founder Decision, reconciliation — lands here, so
+  // this is where a failed or inconclusive verification is refused, whichever caller forgot to check.
+  if (!isVerificationSatisfied(input.artifact)) {
+    throw new Error(
+      `Business artifact ${input.artifact.id} cannot be accepted: verification is ${input.artifact.verification?.outcome}.`,
+    );
+  }
+  // "No verdict" only means "not under the contract" for a task without verification duty. A verifier's
+  // artifact without one was never judged, whatever kind it was filed as.
+  if (isVerifyingTask(input.repositories, input.task) && !input.artifact.verification) {
+    throw new Error(`Business artifact ${input.artifact.id} cannot be accepted: ${input.task.title} verifies upstream output and recorded no verdict.`);
+  }
+  if (!isVerificationCurrent(input.repositories, input.artifact)) {
+    throw new Error(`Business artifact ${input.artifact.id} cannot be accepted: the output it verified has since been superseded.`);
+  }
   const timestamp = (input.now ?? (() => new Date()))().toISOString();
 
   input.repositories.updateBusinessArtifactReviewStatus(input.artifact.id, "accepted", timestamp);

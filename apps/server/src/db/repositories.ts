@@ -1,4 +1,7 @@
 import type {
+  ArtifactVerification,
+  DependencyInputRole,
+  VerificationInputs,
   AgentRun,
   AgentFailureReason,
   Approval,
@@ -718,24 +721,26 @@ export function createRepositories(database: DatabaseClient) {
     createTaskDependency(dependency: TaskDependency): void {
       database
         .prepare(
-          `INSERT INTO task_dependencies (task_id, depends_on_task_id, handoff_contract, handoff_contract_text)
-           VALUES (?, ?, ?, ?)
+          `INSERT INTO task_dependencies (task_id, depends_on_task_id, handoff_contract, handoff_contract_text, input_role)
+           VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(task_id, depends_on_task_id) DO UPDATE SET
              handoff_contract = COALESCE(excluded.handoff_contract, task_dependencies.handoff_contract),
-             handoff_contract_text = COALESCE(excluded.handoff_contract_text, task_dependencies.handoff_contract_text)`,
+             handoff_contract_text = COALESCE(excluded.handoff_contract_text, task_dependencies.handoff_contract_text),
+             input_role = CASE WHEN excluded.input_role = 'context' THEN task_dependencies.input_role ELSE excluded.input_role END`,
         )
         .run(
           dependency.taskId,
           dependency.dependsOnTaskId,
           dependency.handoffContract ?? null,
           stringifyLocalizedText(dependency.handoffContractText),
+          dependency.inputRole ?? "context",
         );
     },
 
     listTaskDependencies(taskId: string): TaskDependency[] {
       const rows = database
         .prepare(
-          `SELECT task_id, depends_on_task_id, handoff_contract, handoff_contract_text
+          `SELECT task_id, depends_on_task_id, handoff_contract, handoff_contract_text, input_role
            FROM task_dependencies
            WHERE task_id = ?
            ORDER BY depends_on_task_id ASC`,
@@ -763,7 +768,7 @@ export function createRepositories(database: DatabaseClient) {
     listTaskDependenciesForCompany(companyId: string): TaskDependency[] {
       const rows = database
         .prepare(
-          `SELECT task_dependencies.task_id, task_dependencies.depends_on_task_id, task_dependencies.handoff_contract, task_dependencies.handoff_contract_text
+          `SELECT task_dependencies.task_id, task_dependencies.depends_on_task_id, task_dependencies.handoff_contract, task_dependencies.handoff_contract_text, task_dependencies.input_role
            FROM task_dependencies
            INNER JOIN tasks ON tasks.id = task_dependencies.task_id
            WHERE tasks.company_id = ?
@@ -888,8 +893,8 @@ export function createRepositories(database: DatabaseClient) {
             id, company_id, task_id, source_proof_id, artifact_kind, artifact_role,
             artifact_subtype, artifact_type, task_type,
             payload, lineage, validation_status, validation_errors, review_status,
-            is_current, supersedes_artifact_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            is_current, supersedes_artifact_id, verification, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           artifact.id,
@@ -908,6 +913,7 @@ export function createRepositories(database: DatabaseClient) {
           artifact.reviewStatus,
           artifact.isCurrent ? 1 : 0,
           artifact.supersedesArtifactId,
+          artifact.verification ? JSON.stringify(artifact.verification) : null,
           artifact.createdAt,
           artifact.updatedAt,
         );
@@ -1175,6 +1181,28 @@ export function createRepositories(database: DatabaseClient) {
            ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
         )
         .run(taskAttemptsResetKey(taskId), at);
+    },
+
+    /** The inputs the runtime handed a verifying task's latest dispatch. One row per task, replaced on each dispatch. */
+    saveVerificationInputs(taskId: string, inputs: VerificationInputs, preparedAt: string): void {
+      database
+        .prepare(
+          `INSERT INTO verification_handoffs (task_id, inputs, prepared_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(task_id) DO UPDATE SET inputs = excluded.inputs, prepared_at = excluded.prepared_at`,
+        )
+        .run(taskId, JSON.stringify(inputs), preparedAt);
+    },
+
+    getVerificationInputs(taskId: string): VerificationInputs | null {
+      const row = database
+        .prepare("SELECT inputs FROM verification_handoffs WHERE task_id = ?")
+        .get(taskId) as { inputs: string } | undefined;
+      return row ? (JSON.parse(row.inputs) as VerificationInputs) : null;
+    },
+
+    clearVerificationInputs(taskId: string): void {
+      database.prepare("DELETE FROM verification_handoffs WHERE task_id = ?").run(taskId);
     },
 
     hasReviewReconciliationRun(companyId: string): boolean {
@@ -1486,6 +1514,7 @@ type BusinessArtifactRow = {
   review_status: BusinessArtifact["reviewStatus"];
   is_current: number;
   supersedes_artifact_id: string | null;
+  verification?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1540,6 +1569,7 @@ type TaskDependencyRow = {
   depends_on_task_id: string;
   handoff_contract: string | null;
   handoff_contract_text: string | null;
+  input_role?: DependencyInputRole | null;
 };
 
 type TaskEventRow = {
@@ -1893,6 +1923,7 @@ function mapBusinessArtifact(row: BusinessArtifactRow): BusinessArtifact {
     reviewStatus: row.review_status,
     isCurrent: row.is_current === 1,
     supersedesArtifactId: row.supersedes_artifact_id,
+    ...(row.verification ? { verification: JSON.parse(row.verification) as ArtifactVerification } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1949,6 +1980,7 @@ function mapTaskDependency(row: TaskDependencyRow): TaskDependency {
     dependsOnTaskId: row.depends_on_task_id,
     ...(row.handoff_contract ? { handoffContract: row.handoff_contract } : {}),
     ...(row.handoff_contract_text ? { handoffContractText: parseLocalizedText(row.handoff_contract_text) } : {}),
+    ...(row.input_role && row.input_role !== "context" ? { inputRole: row.input_role } : {}),
   };
 }
 

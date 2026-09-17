@@ -41,6 +41,7 @@ export const taskHoldKindSchema = z.enum([
   "invalid_business_artifact",
   "recovery_exhausted",
   "needs_replan",
+  "verification_failed",
   "runtime_interrupted",
 ]);
 export const taskHoldResolverSchema = z.enum(["ceo_office", "founder", "upstream_task", "runtime", "time"]);
@@ -77,6 +78,7 @@ export const agentFailureReasonSchema = z.enum([
   "retry_exhausted",
   "needs_replan",
   "rate_limited",
+  "verification_failed",
 ]);
 
 export const taskEventTypeSchema = z.enum([

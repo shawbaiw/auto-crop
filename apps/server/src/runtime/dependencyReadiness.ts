@@ -1,7 +1,8 @@
-import type { BusinessArtifact, Proof, Task } from "@auto-crop/core";
+import { isVerificationSatisfied, type BusinessArtifact, type Proof, type Task } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { collectFounderDecisions } from "./ceoAttention";
 import { getHandoffPackageManifestPath } from "./proof";
+import { isVerificationCurrent } from "./verificationContract";
 
 export type TaskHandoff = {
   upstreamTaskId: string;
@@ -101,6 +102,14 @@ export function resolveDependencyReadiness(
       };
     }
 
+    if (!isVerificationCurrent(repositories, artifact)) {
+      return {
+        kind: "missing_deliverable",
+        note: `Verification by ${upstream.title} covers an output that has since been superseded.`,
+        dependency: upstream,
+      };
+    }
+
     const sourceProof = artifact.sourceProofId ? repositories.listProofsForTask(upstream.id).find((proof) => proof.id === artifact.sourceProofId) : null;
     handoffs.push(createTaskHandoff(upstream, artifact, sourceProof ?? null, dependency.handoffContract ?? null));
   }
@@ -153,6 +162,7 @@ function isAcceptedBusinessArtifact(artifact: BusinessArtifact | null): artifact
     artifact.isCurrent &&
     artifact.validationStatus === "valid" &&
     artifact.reviewStatus === "accepted" &&
+    isVerificationSatisfied(artifact) &&
     (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
   );
 }

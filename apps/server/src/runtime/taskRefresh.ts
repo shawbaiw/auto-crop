@@ -8,10 +8,11 @@ import type {
   TaskProgressEvent,
   TaskStatus,
 } from "@auto-crop/core";
-import { isAffordanceApplicable } from "@auto-crop/core";
+import { isAffordanceApplicable, isVerificationSatisfied } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhausted } from "./boundedRecovery";
 import { captureBusinessArtifact, isReviewableBusinessArtifact } from "./businessArtifact";
+import { resolveCaptureVerificationContext, verificationFailureMessage } from "./verificationContract";
 import { refreshDependencyTasks } from "./dependencyCascade";
 import { refreshParentTaskAggregationTask } from "./parentTaskAggregation";
 import { applyTaskTransition } from "./taskTransition";
@@ -147,6 +148,7 @@ export function recoverProofIfPossible(
     proofs: proof,
     workspacePath,
     locale: input.repositories.getCompany(task.companyId)?.locale ?? "en",
+    verificationContext: resolveCaptureVerificationContext(input.repositories, task, workspacePath),
     now: input.now,
     createId: input.createId,
   });
@@ -156,8 +158,16 @@ export function recoverProofIfPossible(
     const now = input.now ?? (() => new Date());
     const createId = input.createId ?? defaultCreateId;
     const timestamp = now().toISOString();
-    const failureReason = businessArtifactFailureReason(businessArtifact);
-    const failureMessage = businessArtifactFailureMessage(task, businessArtifact);
+    // A recovered report can be well formed and still say its target failed; that is a verification
+    // outcome to act on, not an artifact to recapture.
+    const failedVerification =
+      businessArtifact.validationStatus === "valid" && !isVerificationSatisfied(businessArtifact)
+        ? businessArtifact.verification ?? null
+        : null;
+    const failureReason = failedVerification ? "verification_failed" : businessArtifactFailureReason(businessArtifact);
+    const failureMessage = failedVerification
+      ? verificationFailureMessage(task, failedVerification)
+      : businessArtifactFailureMessage(task, businessArtifact);
 
     applyTaskTransition({
       repositories: input.repositories,
@@ -169,7 +179,7 @@ export function recoverProofIfPossible(
         dependencyNote: null,
       },
       hold: {
-        kind: "invalid_business_artifact",
+        kind: failedVerification ? "verification_failed" : "invalid_business_artifact",
         subjectKind: "business_artifact",
         subjectId: businessArtifact.id,
         reason: failureMessage,
