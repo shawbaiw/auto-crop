@@ -11,7 +11,6 @@ import {
   type AgentCapabilityGrant,
 } from "../policies/capabilityGrant";
 import {
-  isVerificationSatisfied,
   type AgentFailureReason,
   type BusinessArtifact,
   type Company,
@@ -22,14 +21,12 @@ import {
   type TaskProgressEvent,
   type TaskStatus,
 } from "@auto-crop/core";
-import { evaluateAutomaticAcceptance } from "./automaticAcceptance";
 import {
   MAX_TASK_ATTEMPTS,
   retryExhaustedFailureMessage,
   taskAttemptCount,
   terminateAsRetryExhausted as terminateTaskAsRetryExhausted,
 } from "./boundedRecovery";
-import { acceptDeliverableAutomatically } from "./businessAcceptance";
 import {
   captureBusinessArtifact,
   isReviewableBusinessArtifact,
@@ -41,8 +38,8 @@ import { projectCeoAttention } from "./ceoAttention";
 import { classifyFinalFounderReport, isCompanyQuiescent } from "./companyQuiescence";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { generateFinalFounderReport, hasWorkCompletedSinceReport } from "./finalFounderReport";
-import { parseOpenDecisions } from "./founderDecision";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
+import { finalizeDelivery } from "./deliveryFinalization";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { buildProofContractInstructions } from "./proofContract";
@@ -56,7 +53,6 @@ import {
   prepareVerificationInputs,
   producesVerificationRequirements,
   resolveCaptureVerificationContext,
-  verificationFailureMessage,
 } from "./verificationContract";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
 
@@ -656,65 +652,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             return;
           }
 
-          if (businessArtifact?.verification && businessArtifact.validationStatus === "valid" && !isVerificationSatisfied(businessArtifact)) {
-            // The run did its job — it verified and reported. What failed is the work it verified, so
-            // the run stays `complete`, the report stays as evidence, and nothing downstream may treat
-            // it as a successful delivery.
-            const failure = verificationFailureMessage(task, businessArtifact.verification);
-            applyTaskTransition({
-              repositories: input.repositories,
-              task,
-              status: "blocked",
-              executionSummary: {
-                latestFailureReason: "verification_failed",
-                latestFailureMessage: failure,
-              },
-              hold: {
-                kind: "verification_failed",
-                resolver: "runtime",
-                subjectKind: "business_artifact",
-                subjectId: businessArtifact.id,
-                reason: failure,
-              },
-              now,
-              createId,
-            });
-            input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
-            appendAndEmitTaskEvent(input, {
-              task,
-              type: "task_blocked",
-              failureReason: "verification_failed",
-              failureMessage: failure,
-              message: failure,
-              status: "blocked",
-              executionProfileName: timeoutResolution.executionProfile.name,
-              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-            });
-            appendTaskProgressEvent(input, {
-              task,
-              step: "blocked",
-              status: "blocked",
-              label: "Verification did not pass",
-              detail: failure,
-              subjectTaskId: task.id,
-            });
-            const blockedConsumerIds = blockDirectDependencyConsumers(input, task);
-            recordTaskCompletionEvent({
-              repositories: input.repositories,
-              task,
-              businessArtifact,
-              outcome: "blocked",
-              dependencyImpact: { blockedTaskIds: blockedConsumerIds, reason: "verification_failed" },
-              now,
-              createId,
-            });
-            result.blocked.push(task.id, ...blockedConsumerIds);
-            emitParentTaskAggregationEvents(input, task);
-            return;
-          }
-
-          if (!businessArtifact || !isReviewableBusinessArtifact(businessArtifact)) {
+          // A valid report whose verification verdict did not pass is a delivery with an outcome, not an
+          // artifact to recapture: it goes to finalization like any other delivery.
+          const deliveredWithVerdict = Boolean(
+            businessArtifact?.verification && businessArtifact.validationStatus === "valid",
+          );
+          if (!businessArtifact || (!isReviewableBusinessArtifact(businessArtifact) && !deliveredWithVerdict)) {
             if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
               return;
             }
@@ -779,115 +722,25 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           if (task.artifactWorkspacePath && task.artifactWorkspacePath !== runWorkspacePath) {
             input.repositories.updateTaskArtifactWorkspacePath(task.id, runWorkspacePath);
           }
+          // The run did its job whatever the delivery's outcome — a failed verdict included.
           input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
-          const automaticAcceptance = evaluateAutomaticAcceptance({ task, artifact: businessArtifact });
-          if (automaticAcceptance.kind === "accept") {
-            // A deliverable that would otherwise auto-accept but declares one or more kept Founder
-            // Decisions is not accepted and is not routed to manual CEO review: the choice is the
-            // founder's to make. Record the Task Completion Event (carrying the founder_decision
-            // items and the Task Outcome Summary) and stop. Downstream dependency readiness keeps
-            // blocking on the non-accepted upstream. A risk-pattern hit takes precedence — it lands
-            // in the `requires_review` branch below before this check runs.
-            const founderDecisions = parseOpenDecisions(
-              businessArtifact.payload,
-              input.repositories.getCompany(task.companyId)?.locale ?? "en",
-            ).kept;
-            if (founderDecisions.length > 0) {
-              // Parked in `review` but owned by the founder, not CEO Office: the Hold says so, which
-              // is why this task is not offered as an approvable review item.
-              applyTaskTransition({
-                repositories: input.repositories,
-                task,
-                status: "review",
-                hold: {
-                  kind: "awaiting_founder_decision",
-                  resolver: "founder",
-                  subjectKind: "business_artifact",
-                  subjectId: businessArtifact.id,
-                  reason: `${task.title} declares a Founder Decision that must be made before it can be accepted.`,
-                },
-                now,
-                createId,
-              });
-              recordTaskCompletionEvent({
-                repositories: input.repositories,
-                task,
-                businessArtifact,
-                outcome: "awaiting_founder_decision",
-                founderDecisions,
-                founderDecisionBlockedTaskIds: input.repositories
-                  .listDependencyConsumers(task.id)
-                  .map((consumer) => consumer.id),
-                now,
-                createId,
-              });
-              appendTaskProgressEvent(input, {
-                task,
-                step: "awaiting_review",
-                status: "current",
-                label: "Awaiting founder decision",
-                subjectTaskId: task.id,
-              });
-              emitParentTaskAggregationEvents(input, task);
-              result.completed.push(task.id);
-              return;
-            }
-
-            const accepted = acceptDeliverableAutomatically({
-              repositories: input.repositories,
-              task,
-              artifact: businessArtifact,
-              eventMessage: `Automatic Acceptance accepted task: ${task.title}.`,
-              requestSchedulerWake: () => undefined,
-              now,
-              createId,
-            });
-            for (const event of accepted.events) {
-              emitTaskEvent(input, event);
-            }
-            appendTaskProgressEvent(input, {
-              task,
-              step: "complete",
-              status: "complete",
-              label: "Automatically accepted",
-              subjectTaskId: task.id,
-            });
-            emitParentTaskAggregationEvents(input, task);
-            result.completed.push(task.id);
-            return;
-          }
-
-          // The Hold opened here is what CEO Office reads to offer the decision, and what the
-          // approve/return guard checks. One fact, so the offer and the guard cannot disagree.
-          applyTaskTransition({
+          const finalized = finalizeDelivery({
             repositories: input.repositories,
             task,
-            status: "review",
-            hold: {
-              kind: "awaiting_ceo_review",
-              resolver: "ceo_office",
-              subjectKind: "business_artifact",
-              subjectId: businessArtifact.id,
-              reason: `${task.title} is waiting for a CEO Office review decision.`,
-            },
+            artifact: businessArtifact,
+            source: "agent_run",
             now,
             createId,
           });
-          appendTaskProgressEvent(input, {
-            task,
-            step: "awaiting_review",
-            status: "current",
-            label: "Awaiting review",
-            subjectTaskId: task.id,
-          });
-          appendAndEmitTaskEvent(input, {
-            task,
-            type: "task_review",
-            message: "Task is ready for review.",
-            status: "review",
-          });
+          for (const event of finalized.events) {
+            emitTaskEvent(input, event);
+          }
+          if (finalized.outcome === "verification_failed") {
+            result.blocked.push(task.id, ...blockDirectDependencyConsumers(input, task));
+          } else {
+            result.completed.push(task.id);
+          }
           emitParentTaskAggregationEvents(input, task);
-          result.completed.push(task.id);
         } finally {
           try {
             if (taskWorkspaceRoot) {

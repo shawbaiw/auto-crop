@@ -66,16 +66,38 @@ describe("propagateParentTaskAggregation", () => {
       createId: createSequentialIdFactory(),
     });
 
+    // An ordinary dependency in `review` has not been accepted: the parent waits on it, exactly as
+    // dispatch would, instead of aggregation reading the same facts differently.
     expect(result.updatedTasks).toHaveLength(1);
     expect(result.updatedTasks[0]?.task).toMatchObject({
       id: "task_parent",
+      status: "waiting_dependency",
+      dependencyNote: "Waiting for dependency acceptance: Ordinary Dependency (review).",
+    });
+    client.close();
+  });
+
+  it("does not treat review plus Proof as delivered without a current valid artifact", () => {
+    const { repositories, client } = createFixture([
+      parentTask("task_parent", "waiting_dependency"),
+      departmentSubtask("subtask_1", "review"),
+    ]);
+    repositories.createTaskDependency({ taskId: "task_parent", dependsOnTaskId: "subtask_1" });
+    repositories.appendProof({
+      id: "proof_only",
+      taskId: "subtask_1",
+      type: "file",
+      uri: "proof.md",
+      summary: "Proof without an artifact.",
+      verifiedAt: null,
+    });
+
+    const result = propagateParentTaskAggregation({ repositories, sourceSubtaskId: "subtask_1", now: fixedNow, createId: createSequentialIdFactory() });
+
+    expect(result.updatedTasks[0]?.task).toMatchObject({
       status: "blocked",
       latestFailureReason: "missing_deliverable",
-      dependencyNote: "Missing consumable proof from dependency: Ordinary Dependency.",
-    });
-    expect(result.updatedTasks[0]?.event).toMatchObject({
-      type: "deliverable_missing",
-      failureReason: "missing_deliverable",
+      dependencyNote: "Missing department subtask proof: Ready Department Subtask.",
     });
     client.close();
   });
@@ -282,6 +304,7 @@ function createTaskRecord(id: string, status: Task["status"], taskKind: Task["ta
   };
 }
 
+/** A subtask's delivery: Proof plus the current, valid Business Artifact it filed. */
 function appendProof(repositories: ReturnType<typeof createRepositories>, id: string, taskId: string) {
   repositories.appendProof({
     id,
@@ -291,6 +314,26 @@ function appendProof(repositories: ReturnType<typeof createRepositories>, id: st
     summary: `Proof for ${taskId}.`,
     verifiedAt: null,
   } satisfies Proof);
+  repositories.createBusinessArtifact({
+    id: `artifact_${taskId}`,
+    companyId: "company_1",
+    taskId,
+    sourceProofId: id,
+    artifactKind: "deliverable",
+    artifactRole: "implementation",
+    artifactSubtype: "prototype_slice",
+    artifactType: "implementation_summary",
+    taskType: "engineering.prototype_slice",
+    payload: {},
+    lineage: {},
+    validationStatus: "valid",
+    validationErrors: [],
+    reviewStatus: "unreviewed",
+    isCurrent: true,
+    supersedesArtifactId: null,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+  });
 }
 
 function fixedNow(): Date {

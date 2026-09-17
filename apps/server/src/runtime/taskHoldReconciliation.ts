@@ -97,6 +97,7 @@ export function reconcileTaskHoldsForTask(
 
   const derived = deriveTaskHold({
     status: task.status,
+    taskKind: task.taskKind,
     failureReason: task.latestFailureReason,
     dependencyNote: task.dependencyNote,
   });

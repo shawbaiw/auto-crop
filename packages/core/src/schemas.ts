@@ -33,6 +33,7 @@ export const taskSourceSchema = z.enum(["ceo", "department", "user"]);
 
 export const taskHoldKindSchema = z.enum([
   "awaiting_ceo_review",
+  "awaiting_parent_aggregation",
   "awaiting_founder_approval",
   "awaiting_human_action",
   "awaiting_founder_decision",

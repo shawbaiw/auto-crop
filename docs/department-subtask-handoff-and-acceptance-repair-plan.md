@@ -17,7 +17,8 @@
 | 切片 | 状态 | 记录 |
 | --- | --- | --- |
 | ① 验证闸门 | 已实现，未提交；已补两处绕过（按报告类型跳过契约、从工作区读回 manifest） | ADR 0023；`verificationContract.ts`；`departmentVerification.test.ts` |
-| ②、②b、③–⑥ | 未开始 | |
+| ② 内部就绪与共享就绪判定 | 已实现；补齐恢复路径漏决策、共享交付收尾策略、幂等验收、创始人退回 | ADR 0024；`dependencyReadiness.ts`；`deliveryFinalization.ts`；两入口结果矩阵与决策生命周期测试 |
+| ②b、③–⑥ | 未开始 | |
 
 ## 1. 目标与范围
 

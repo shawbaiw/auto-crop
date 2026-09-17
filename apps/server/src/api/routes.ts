@@ -20,6 +20,7 @@ import type {
   TaskDependency,
   TaskEvent,
   TaskHold,
+  TaskHoldKind,
   TaskProgressEvent,
   TaskStatus,
   WaitState,
@@ -1833,21 +1834,74 @@ function createCeoReviewDecision(input: {
     };
   }
 
-  if (artifact) {
-    input.repositories.updateBusinessArtifactReviewStatus(
-      artifact.id,
-      "returned",
-      timestamp,
-    );
-  }
-
-  // CEO Office answered the review Hold. Releasing rather than forcing `queued` keeps the task
-  // parked if anything else still holds it (ADR 0020 amendment).
-  const reviewHold = findOpenTaskHold(input.repositories, task.id, "awaiting_ceo_review");
-  const returned = releaseTaskHold({
+  const returned = returnDeliveryForRework({
     repositories: input.repositories,
     task,
-    holdId: reviewHold?.id ?? "",
+    artifact,
+    answeredHoldKinds: ["awaiting_ceo_review"],
+    eventType: "ceo_review_decision",
+    message: `CEO Office returned task: ${task.title}.`,
+    messageText: ceoReviewDecisionMessageText({
+      decision: input.decision,
+      taskTitle: task.title,
+      taskTitleText: task.titleText,
+    }),
+    progressLabel: "CEO Office returned this, waiting for the department to rework it.",
+    progressLabelText: ceoReturnProgressLabelText(),
+    returnReason: input.returnReason,
+    note: input.note,
+    timestamp,
+    now: input.now,
+    createId: input.createId,
+  });
+
+  return {
+    kind: "created",
+    decision,
+    task: returned.task,
+    event: returned.event,
+    progressEvent: returned.progressEvent,
+  };
+}
+
+/**
+ * Send a delivery back to its department for rework: mark the artifact returned, release the Hold the
+ * returning actor answered, and record the return. Shared by CEO Office returning a review and the
+ * founder returning a Founder Decision, which park the task under different Holds — the founder's path
+ * once borrowed the CEO review guard and was refused for every task actually parked on a decision.
+ * Releasing rather than forcing `queued` keeps the task parked if anything else still holds it.
+ */
+function returnDeliveryForRework(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  task: Task;
+  artifact: BusinessArtifact | null;
+  answeredHoldKinds: readonly TaskHoldKind[];
+  eventType: TaskEvent["type"];
+  message: string;
+  messageText?: TaskEvent["messageText"];
+  progressLabel: string;
+  progressLabelText?: TaskProgressEvent["labelText"];
+  returnReason: CeoReviewReturnReason | null;
+  note: string | null;
+  timestamp: string;
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+}): { task: Task; event: TaskEvent; progressEvent: TaskProgressEvent } {
+  const { task, timestamp } = input;
+  if (input.artifact) {
+    input.repositories.updateBusinessArtifactReviewStatus(input.artifact.id, "returned", timestamp);
+  }
+
+  const answered = input.repositories
+    .listOpenTaskHolds(task.id)
+    .filter((hold) => input.answeredHoldKinds.includes(hold.kind))
+    .map((hold) => hold.id);
+  const returned = applyTaskTransition({
+    repositories: input.repositories,
+    task,
+    status: "queued",
+    resolution: "cleared",
+    resolvesHoldIds: answered,
     now: input.now,
     createId: input.createId,
   });
@@ -1856,13 +1910,9 @@ function createCeoReviewDecision(input: {
     id: input.createId?.("task_event") ?? createDefaultId("task_event"),
     companyId: task.companyId,
     taskId: task.id,
-    type: "ceo_review_decision",
-    message: `CEO Office returned task: ${task.title}.`,
-    messageText: ceoReviewDecisionMessageText({
-      decision: input.decision,
-      taskTitle: task.title,
-      taskTitleText: task.titleText,
-    }),
+    type: input.eventType,
+    message: input.message,
+    ...(input.messageText ? { messageText: input.messageText } : {}),
     createdAt: timestamp,
     status: returned.task.status,
     failureReason: null,
@@ -1875,8 +1925,7 @@ function createCeoReviewDecision(input: {
   };
   input.repositories.appendTaskEvent(event);
 
-  let progressEvent: TaskProgressEvent | undefined;
-  progressEvent = {
+  const progressEvent: TaskProgressEvent = {
     id: input.createId?.("task_progress") ?? createDefaultId("task_progress"),
     companyId: task.companyId,
     departmentId: task.departmentId,
@@ -1884,8 +1933,8 @@ function createCeoReviewDecision(input: {
     subjectTaskId: task.id,
     step: "blocked",
     status: "current",
-    label: "CEO Office returned this, waiting for the department to rework it.",
-    labelText: ceoReturnProgressLabelText(),
+    label: input.progressLabel,
+    ...(input.progressLabelText ? { labelText: input.progressLabelText } : {}),
     detail: formatCeoReturnProgressDetail(input.returnReason, input.note),
     detailText: ceoReturnProgressDetailText({
       reason: input.returnReason ? formatCeoReturnReason(input.returnReason) : null,
@@ -1896,13 +1945,7 @@ function createCeoReviewDecision(input: {
   };
   input.repositories.appendTaskProgressEvent(progressEvent);
 
-  return {
-    kind: "created",
-    decision,
-    task: returned.task,
-    event,
-    progressEvent,
-  };
+  return { task: returned.task, event, progressEvent };
 }
 
 type FounderDecisionResult =
@@ -2040,19 +2083,29 @@ function returnTaskForFounderDecision(
   note: string | null,
 ): FounderDecisionResult {
   const { repositories, company, task, completionEvent, founderDecision } = context;
-  const returned = createCeoReviewDecision({
-    repositories,
-    taskId: task.id,
-    decision: "return",
-    returnReason,
-    note,
-    now: context.now,
-    createId: context.createId,
-    requestSchedulerWake: context.requestSchedulerWake,
-  });
-  if (returned.kind !== "created") {
+  // The founder answers the decision Hold. A task seeded or reconciled into plain `review` carries the
+  // CEO review Hold instead; either one is the "decision owed on this delivery" being answered.
+  const decisionHolds = repositories
+    .listOpenTaskHolds(task.id)
+    .filter((hold) => hold.kind === "awaiting_founder_decision" || hold.kind === "awaiting_ceo_review");
+  if (decisionHolds.length === 0) {
     return { kind: "stale" };
   }
+  const returned = returnDeliveryForRework({
+    repositories,
+    task,
+    artifact: repositories.getCurrentBusinessArtifactForTask(task.id),
+    answeredHoldKinds: ["awaiting_founder_decision", "awaiting_ceo_review"],
+    eventType: "founder_decision",
+    message: `Founder returned task: ${task.title}.`,
+    progressLabel: "The founder returned this, waiting for the department to rework it.",
+    returnReason,
+    note,
+    timestamp: context.timestamp,
+    now: context.now,
+    createId: context.createId,
+  });
+  context.requestSchedulerWake?.();
 
   // Discard every recorded pick for the task, then mark all of the returned event's Founder
   // Decisions `returned` so none keep raising a CEO Attention Item after the task is sent back.

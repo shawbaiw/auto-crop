@@ -101,6 +101,16 @@ The event a released path emits must report the task's **actual** resulting stat
 
 The granularity is deliberately coarse: one pre-dispatch question for the whole run, not one per action. That is also why an `ask` decision *grants* the capability rather than withholding it — the consent was already collected, once, before dispatch. Per-action approval during execution, and the per-action grant narrowing that belongs with it, are a separate and larger change.
 
+## Readiness Is Asked Of One Resolver
+
+`resolveDependencyReadiness` is the only answer to "can this task consume its upstream?". Dispatch, parent aggregation, the dependency cascade and Hold reconciliation all call it; a second copy is how aggregation once queued a parent the scheduler parked four seconds later. It classifies each dependency as internal (a subtask consumed by its parent or a sibling) or ordinary, and applies that relation's rule (ADR 0024).
+
+A department subtask never goes through acceptance. Its delivery parks in `review` under `awaiting_parent_aggregation`, and `deriveTaskHold` maps a subtask in `review` to that kind so reconciliation cannot rebuild a CEO review. The parent's acceptance ends those Holds.
+
+## A Delivery Is Finalized In One Place
+
+`finalizeDelivery` (`src/runtime/deliveryFinalization.ts`) decides where a valid delivered artifact leaves its task: held, verification failed, CEO review, Founder Decision, internal delivery, or accepted. The scheduler and proof recovery both call it. A path that delivers an artifact and then chooses a status or Hold itself is a second copy of this policy — the shape of the bug where a recovered subtask skipped its Founder Decision (ADR 0024). Acceptance and completion recording are idempotent, so reaching the same delivery twice writes nothing twice.
+
 ## A Verdict Is Asked Of One Predicate
 
 A Business Artifact can be `valid` and still record a Verification Verdict that is not `passed` — a well-formed report that the verified work failed. `isVerificationSatisfied` (core) is the only question every success path asks: `isReviewableBusinessArtifact`, CEO Office's pending projection, CEO approval, dependency readiness, parent aggregation, and `acceptTaskBusinessArtifact`, which throws rather than accept. A new acceptance or readiness path must ask it too. Checking `validationStatus` alone is how a failed verification report was one click from approval (ADR 0023).

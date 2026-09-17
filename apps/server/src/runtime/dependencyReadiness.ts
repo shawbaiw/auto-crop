@@ -49,6 +49,24 @@ export function resolveDependencyReadiness(
       continue;
     }
 
+    const relation = classifyDependency(task, upstream);
+    if (relation === "cross_company") {
+      return {
+        kind: "blocked",
+        reason: "dependency_failed",
+        note: `Refused dependency across companies: ${upstream.title}.`,
+        dependency: upstream,
+      };
+    }
+    if (relation === "internal") {
+      const internal = resolveInternalDependency(repositories, upstream, dependency.handoffContract ?? null);
+      if (internal.kind !== "ready") {
+        return internal;
+      }
+      handoffs.push(internal.handoff);
+      continue;
+    }
+
     if (isWaitingStatus(upstream.status)) {
       const pendingDecision = waitingOnFounderDecision(repositories, upstream);
       if (pendingDecision) {
@@ -115,6 +133,111 @@ export function resolveDependencyReadiness(
   }
 
   return { kind: "ready", handoffs };
+}
+
+/**
+ * Whether a dependency is department-internal consumption or ordinary consumption.
+ *
+ * A department subtask's output is internal: its siblings under the same parent and the parent itself
+ * consume it without CEO Office acceptance, because CEO Office reviews the parent's summarized result
+ * (ADR 0007). Everything else — including a subtask consumed from outside its parent — is ordinary and
+ * needs an accepted artifact. Kept in this one resolver so dispatch, parent aggregation, the dependency
+ * cascade and Hold reconciliation cannot answer "is it ready?" differently for the same facts.
+ */
+export function classifyDependency(consumer: Task, upstream: Task): "internal" | "ordinary" | "cross_company" {
+  if (consumer.companyId !== upstream.companyId) {
+    return "cross_company";
+  }
+  if ((upstream.taskKind ?? "parent") !== "department_subtask" || !upstream.parentTaskId) {
+    return "ordinary";
+  }
+  const consumerIsParent = consumer.id === upstream.parentTaskId;
+  const consumerIsSibling =
+    (consumer.taskKind ?? "parent") === "department_subtask" && consumer.parentTaskId === upstream.parentTaskId;
+  return consumerIsParent || consumerIsSibling ? "internal" : "ordinary";
+}
+
+/**
+ * Internal readiness: the subtask delivered a current, valid artifact with Proof, any verification it
+ * carries passed against still-current targets, and nothing but the parent's own aggregation holds it.
+ * `review` plus Proof alone is not enough — a genuine Founder Decision, a CEO review Hold, or a failed
+ * verification still stops consumption.
+ */
+function resolveInternalDependency(
+  repositories: ReturnType<typeof createRepositories>,
+  upstream: Task,
+  handoffContract: string | null,
+): { kind: "ready"; handoff: TaskHandoff } | Exclude<DependencyReadiness, { kind: "ready" }> {
+  if (upstream.status === "needs_replan") {
+    return {
+      kind: "blocked",
+      reason: "needs_replan",
+      note: `Waiting for department subtask to be replanned: ${upstream.title}.`,
+      dependency: upstream,
+    };
+  }
+  if (isFailedDependencyStatus(upstream.status)) {
+    return {
+      kind: "blocked",
+      reason: "dependency_failed",
+      note: `Blocked by department subtask: ${upstream.title} (${upstream.status}).`,
+      dependency: upstream,
+    };
+  }
+  if (upstream.status !== "review" && upstream.status !== "complete") {
+    return {
+      kind: "waiting",
+      note: `Waiting for department subtask deliverable: ${upstream.title} (${upstream.status}).`,
+      dependency: upstream,
+    };
+  }
+
+  const pendingDecision = waitingOnFounderDecision(repositories, upstream);
+  if (pendingDecision) {
+    return {
+      kind: "waiting",
+      note: pendingDecision.note,
+      dependency: upstream,
+      waitingOnDecision: true,
+      founderDecisionId: pendingDecision.founderDecisionId,
+    };
+  }
+  const otherHold = repositories
+    .listOpenTaskHolds(upstream.id)
+    .find((hold) => hold.kind !== "awaiting_parent_aggregation");
+  if (otherHold) {
+    return {
+      kind: "waiting",
+      note: `Waiting for department subtask: ${upstream.title} (${otherHold.kind}).`,
+      dependency: upstream,
+    };
+  }
+
+  const artifact = repositories.getCurrentBusinessArtifactForTask(upstream.id);
+  const proofs = repositories.listProofsForTask(upstream.id);
+  if (
+    !artifact ||
+    proofs.length === 0 ||
+    !artifact.isCurrent ||
+    artifact.validationStatus !== "valid" ||
+    (artifact.artifactKind !== "deliverable" && artifact.artifactKind !== "final_report")
+  ) {
+    return {
+      kind: "missing_deliverable",
+      note: `Missing department subtask proof: ${upstream.title}.`,
+      dependency: upstream,
+    };
+  }
+  if (!isVerificationSatisfied(artifact) || !isVerificationCurrent(repositories, artifact)) {
+    return {
+      kind: "missing_deliverable",
+      note: `Department subtask verification does not cover the current output: ${upstream.title}.`,
+      dependency: upstream,
+    };
+  }
+
+  const sourceProof = artifact.sourceProofId ? proofs.find((proof) => proof.id === artifact.sourceProofId) : null;
+  return { kind: "ready", handoff: createTaskHandoff(upstream, artifact, sourceProof ?? proofs[0] ?? null, handoffContract) };
 }
 
 /**

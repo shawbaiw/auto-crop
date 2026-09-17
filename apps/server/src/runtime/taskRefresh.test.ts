@@ -61,6 +61,26 @@ describe("refreshTaskDependencyState proof recovery", () => {
       summary: "Review proof.",
       verifiedAt: null,
     });
+    fixture.repositories.createBusinessArtifact({
+      id: "artifact_review",
+      companyId: reviewSubtask.companyId,
+      taskId: reviewSubtask.id,
+      sourceProofId: "proof_review",
+      artifactKind: "deliverable",
+      artifactRole: "validation",
+      artifactSubtype: "prototype_validation",
+      artifactType: "validation_result",
+      taskType: "engineering.prototype_validation",
+      payload: {},
+      lineage: {},
+      validationStatus: "valid",
+      validationErrors: [],
+      reviewStatus: "unreviewed",
+      isCurrent: true,
+      supersedesArtifactId: null,
+      createdAt: "2026-08-25T00:00:00.000Z",
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    });
 
     const result = refreshTaskDependencyState({
       repositories: fixture.repositories,
@@ -80,7 +100,9 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
   });
 
-  it("recovers controlled repo-diff output from failed no-proof tasks and submits them to review", () => {
+  // Recovered proof gets the scheduler's delivery policy, so an eligible ordinary deliverable is accepted
+  // automatically rather than always sent to CEO review (see deliveryFinalization).
+  it("recovers controlled repo-diff output from failed no-proof tasks and finalizes it like a finished run", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);
     writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
@@ -106,10 +128,10 @@ describe("refreshTaskDependencyState proof recovery", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(result.task.status).toBe("review");
+    expect(result.task.status).toBe("complete");
     expect(result.recovery).toEqual({
       status: "recovered",
-      message: "Found checkable proof and submitted it to CEO Office for review.",
+      message: "Found checkable proof; Automatic Acceptance accepted it.",
     });
     expect(result.proof).toHaveLength(1);
     expect(fixture.repositories.listProofsForTask("task_1")[0]).toMatchObject({
@@ -117,20 +139,20 @@ describe("refreshTaskDependencyState proof recovery", () => {
       summary: "Diff proof recovered from prototype-audit-trail.patch.",
     });
     expect(result.event).toMatchObject({
-      type: "proof_recovered",
-      status: "review",
-      message: "Proof recovered: Record implementation changes submitted to CEO Office for review.",
+      type: "automatic_acceptance",
+      status: "complete",
+      message: "Automatic Acceptance accepted recovered proof: Record implementation changes.",
     });
     expect(result.progressEvent).toMatchObject({
-      step: "awaiting_review",
-      status: "current",
-      label: "Found checkable proof and submitted it to CEO Office for review.",
+      step: "complete",
+      status: "complete",
+      label: "Automatically accepted",
     });
     expect(result.businessArtifacts).toHaveLength(1);
     expect(fixture.repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
       artifactKind: "deliverable",
       artifactRole: "implementation",
-      reviewStatus: "unreviewed",
+      reviewStatus: "accepted",
       validationStatus: "valid",
     });
   });
@@ -160,10 +182,10 @@ describe("refreshTaskDependencyState proof recovery", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(result.task.status).toBe("review");
+    expect(result.task.status).toBe("complete");
     expect(result.recovery).toEqual({
       status: "recovered",
-      message: "Found checkable proof and submitted it to CEO Office for review.",
+      message: "Found checkable proof; Automatic Acceptance accepted it.",
     });
     expect(fixture.repositories.listProofsForTask("task_1")[0]).toMatchObject({
       type: "diff",
@@ -172,7 +194,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     expect(fixture.repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
       artifactKind: "deliverable",
       artifactRole: "implementation",
-      reviewStatus: "unreviewed",
+      reviewStatus: "accepted",
       validationStatus: "valid",
     });
   });
@@ -221,20 +243,16 @@ describe("refreshTaskDependencyState proof recovery", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(result.task.status).toBe("review");
+    expect(result.task.status).toBe("complete");
     expect(fixture.repositories.listProofsForTask("task_1")[0]).toMatchObject({
       type: "diff",
       uri: join(upstreamWorkspacePath, ".auto-crop-proof", "task_1.diff"),
       summary: "Diff proof recovered from implementation-changes.diff.",
     });
-    expect(result.event).toMatchObject({
-      type: "proof_recovered",
-      status: "review",
-      artifactWorkspacePath: upstreamWorkspacePath,
-    });
+    expect(result.event).toMatchObject({ type: "automatic_acceptance", status: "complete" });
     expect(fixture.repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
       artifactKind: "deliverable",
-      reviewStatus: "unreviewed",
+      reviewStatus: "accepted",
       validationStatus: "valid",
     });
   });

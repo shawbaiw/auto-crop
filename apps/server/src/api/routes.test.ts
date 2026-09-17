@@ -10,6 +10,8 @@ import { createRepositories, type ReviewRecord } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
+import { finalizeDelivery } from "../runtime/deliveryFinalization";
+import { resolveDependencyReadiness } from "../runtime/dependencyReadiness";
 import { applyTaskTransition } from "../runtime/taskTransition";
 import { createApiServer, type SchedulerWakeReason } from "./routes";
 
@@ -3503,6 +3505,171 @@ describe("API routes", () => {
 
     await fixture.close();
   });
+});
+
+/**
+ * A Founder Decision declared by a department subtask, through its whole lifecycle, from both delivery
+ * entry points. The setup uses the production delivery policy — never a hand-built `review` task — so
+ * the Holds are the ones a real run or recovery leaves behind.
+ */
+describe("department subtask Founder Decision lifecycle", () => {
+  const decisionPayload = {
+    result: "Slice defined.",
+    open_decisions: [{
+      decisionKind: "pricing_model",
+      options: [
+        { label: "Flat", tradeoffs: "Predictable." },
+        { label: "Usage", tradeoffs: "Scales." },
+      ],
+      recommended_option_index: 0,
+      rationale: "Buyers want a predictable bill.",
+      briefing: "Two pricing shapes fit the slice; the founder picks.",
+    }],
+    execution_report: {
+      work_summary: "Defined the slice.",
+      evidence: "Recorded the scope.",
+      conclusion: "The slice is defined.",
+      vision_impact: "It moves the prototype forward.",
+      remaining_gap: "Pricing is open.",
+      recommendation: "Pick a pricing model.",
+    },
+    outcome_summary: "The slice is defined; pricing is open.",
+  };
+
+  async function seed(entry: "agent_run" | "proof_recovery") {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const { repositories } = fixture;
+    const template = repositories.fetchQueuedTasks(1)[0]!;
+    const parent = { ...createIsolatedTask(template, "lifecycle_parent", "Build the prototype", "waiting_dependency", 300), taskKind: "parent" as const };
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-lifecycle-"));
+    createdDirs.push(workspacePath);
+    const define = {
+      ...createIsolatedTask(template, "lifecycle_define", "Define the slice", entry === "agent_run" ? "running" : "failed", 301),
+      parentTaskId: parent.id,
+      taskKind: "department_subtask" as const,
+      source: "department" as const,
+      proofSchemaId: "repo-diff",
+      workspacePath,
+    };
+    const execute = {
+      ...createIsolatedTask(template, "lifecycle_execute", "Execute the slice", "waiting_dependency", 302),
+      parentTaskId: parent.id,
+      taskKind: "department_subtask" as const,
+      source: "department" as const,
+    };
+    for (const task of [parent, define, execute]) {
+      repositories.createTask(task);
+    }
+    repositories.createTaskDependency({ taskId: parent.id, dependsOnTaskId: define.id });
+    repositories.createTaskDependency({ taskId: parent.id, dependsOnTaskId: execute.id });
+    repositories.createTaskDependency({ taskId: execute.id, dependsOnTaskId: define.id });
+    const keyResultBefore = repositories.listKeyResults(created.company.id).find((keyResult) => keyResult.id === template.keyResultId);
+
+    if (entry === "agent_run") {
+      repositories.appendProof({ id: "lifecycle_proof", taskId: define.id, type: "file", uri: "slice.md", summary: "Slice.", verifiedAt: null });
+      repositories.createBusinessArtifact({
+        ...createBusinessArtifactRecord("lifecycle_artifact", define.id, "lifecycle_proof"),
+        companyId: created.company.id,
+        payload: decisionPayload,
+      });
+      let sequence = 0;
+      finalizeDelivery({
+        repositories,
+        task: repositories.getTask(define.id)!,
+        artifact: repositories.getCurrentBusinessArtifactForTask(define.id)!,
+        source: "agent_run",
+        createId: (prefix) => `${prefix}_lifecycle_${++sequence}`,
+      });
+    } else {
+      repositories.updateTaskExecutionSummary(define.id, { latestFailureReason: "no_proof", latestFailureMessage: "no proof" });
+      writeFileSync(join(workspacePath, "slice.diff"), "diff --git a/slice.md b/slice.md\n", "utf8");
+      mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+      writeFileSync(join(workspacePath, ".auto-crop", "business-artifact.json"), JSON.stringify({
+        artifactKind: "deliverable",
+        artifactRole: "plan",
+        artifactSubtype: "slice_definition",
+        taskType: "engineering.slice_definition",
+        payload: decisionPayload,
+        lineage: {},
+      }), "utf8");
+      await postJson(`${fixture.baseUrl}/api/tasks/${define.id}/refresh`, {});
+    }
+
+    const completion = repositories
+      .listTaskCompletionEventsForTask(define.id)
+      .find((event) => event.outcome === "awaiting_founder_decision");
+    return {
+      fixture,
+      companyId: created.company.id,
+      parent,
+      define,
+      execute,
+      keyResultBefore,
+      decisionId: completion ? `${completion.id}_founder_decision_1` : null,
+    };
+  }
+
+  for (const entry of ["agent_run", "proof_recovery"] as const) {
+    it(`surfaces and blocks on a subtask's decision delivered through ${entry}`, async () => {
+      const seeded = await seed(entry);
+      const { repositories } = seeded.fixture;
+
+      expect(seeded.decisionId).not.toBeNull();
+      expect(repositories.getTask(seeded.define.id)?.status).toBe("review");
+      expect(repositories.listOpenTaskHolds(seeded.define.id).map((hold) => hold.kind)).toEqual(["awaiting_founder_decision"]);
+      expect(resolveDependencyReadiness(repositories, repositories.getTask(seeded.execute.id)!)).toMatchObject({
+        kind: "waiting",
+        waitingOnDecision: true,
+      });
+      const state = await getJson<{ ceoOfficeItems: CEOOfficeItem[] }>(`${seeded.fixture.baseUrl}/api/companies/${seeded.companyId}/state`);
+      expect(deriveCeoPendingItems(state.ceoOfficeItems).map((item) => `${item.type}:${item.taskId}`)).toContain(
+        `decision_request:${seeded.define.id}`,
+      );
+
+      await seeded.fixture.close();
+    });
+
+    it(`resumes the sibling after the founder picks, without moving the key result (${entry})`, async () => {
+      const seeded = await seed(entry);
+      const { repositories } = seeded.fixture;
+
+      await postJson(`${seeded.fixture.baseUrl}/api/founder-decisions`, { founderDecisionId: seeded.decisionId, chosenOption: "Flat" });
+
+      expect(repositories.getTask(seeded.define.id)?.status).toBe("complete");
+      expect(resolveDependencyReadiness(repositories, repositories.getTask(seeded.execute.id)!).kind).toBe("ready");
+      expect(repositories.listKeyResults(seeded.companyId).find((keyResult) => keyResult.id === seeded.keyResultBefore?.id))
+        .toMatchObject({ currentValue: seeded.keyResultBefore?.currentValue, status: seeded.keyResultBefore?.status });
+
+      await seeded.fixture.close();
+    });
+
+    it(`sends the subtask back for rework when the founder returns the decision (${entry})`, async () => {
+      const seeded = await seed(entry);
+      const { repositories } = seeded.fixture;
+
+      const response = await fetch(`${seeded.fixture.baseUrl}/api/founder-decisions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ founderDecisionId: seeded.decisionId, action: "return", returnReason: "wrong_direction", note: "Cheaper options." }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(repositories.getTask(seeded.define.id)?.status).toBe("queued");
+      expect(repositories.listOpenTaskHolds(seeded.define.id)).toEqual([]);
+      expect(repositories.getCurrentBusinessArtifactForTask(seeded.define.id)?.reviewStatus).toBe("returned");
+      expect(resolveDependencyReadiness(repositories, repositories.getTask(seeded.execute.id)!).kind).toBe("waiting");
+
+      await seeded.fixture.close();
+    });
+  }
 });
 
 async function startFixtureServer(options: {

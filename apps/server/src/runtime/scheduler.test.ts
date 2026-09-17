@@ -735,6 +735,10 @@ describe("runSchedulerOnce", () => {
       summary: "ready proof",
       verifiedAt: null,
     });
+    repositories.createBusinessArtifact({
+      ...createBusinessArtifactRecord("business_artifact_ready", readySubtask.id, "proof_ready"),
+      reviewStatus: "unreviewed",
+    });
 
     const result = await runSchedulerOnce({
       projectRoot,

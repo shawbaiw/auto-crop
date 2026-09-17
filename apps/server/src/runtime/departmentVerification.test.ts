@@ -13,6 +13,7 @@ import { isReviewableBusinessArtifact } from "./businessArtifact";
 import { resolveDependencyReadiness } from "./dependencyReadiness";
 import { runSchedulerOnce } from "./scheduler";
 import { resolveTaskAffordanceState } from "./taskAffordances";
+import { reconcileTaskHolds } from "./taskHoldReconciliation";
 import { refreshTaskDependencyState } from "./taskRefresh";
 import { evaluateVerificationReport, prepareVerificationInputs } from "./verificationContract";
 
@@ -41,6 +42,8 @@ type StageBehaviour = {
   validateKind?: string;
   /** Omit `payload.verification` entirely. */
   validateWithoutVerification?: boolean;
+  /** Extra payload fields Define delivers, such as a genuine Founder Decision. */
+  defineExtra?: Record<string, unknown>;
 };
 
 describe("department subtask verification", () => {
@@ -93,7 +96,36 @@ describe("department subtask verification", () => {
       outcome: "passed",
       targets: [{ taskId: execute.id, artifactId: executeArtifact.id, revision: expect.stringMatching(/^[0-9a-f]{64}$/) }],
     });
-    expect(harness.repositories.getTask(validate.id)?.status).toBe("complete");
+    // Internal deliveries: held for the parent's aggregation, never offered to CEO Office, never accepted,
+    // and the key result untouched until the parent's own result is accepted.
+    for (const subtask of [define, execute, validate]) {
+      expect(harness.repositories.getTask(subtask.id)?.status).toBe("review");
+      expect(harness.repositories.listOpenTaskHolds(subtask.id).map((hold) => hold.kind)).toEqual(["awaiting_parent_aggregation"]);
+      expect(harness.repositories.listTaskHoldsForTask(subtask.id).some((hold) => hold.kind === "awaiting_ceo_review")).toBe(false);
+      expect(harness.repositories.getCurrentBusinessArtifactForTask(subtask.id)?.reviewStatus).toBe("unreviewed");
+    }
+    expect(harness.repositories.listKeyResults("company_1")[0]).toMatchObject({ currentValue: "not_started", status: "active" });
+    expect(harness.repositories.getTask(harness.parent.id)?.status).toBe("queued");
+  });
+
+  it("does not put a subtask delivery through the risk scan or CEO review", async () => {
+    // "Search Console" in a delivered slice used to route every subtask of an SEO company to CEO review.
+    const harness = createHarness({
+      requirements: [
+        { id: "home-page", description: "The prototype has an index.html entry page, ready for Google Search Console later." },
+        { id: "app-script", description: "The prototype ships its app.js behaviour." },
+      ],
+      validate: () => [
+        { requirement_id: "home-page", outcome: "passed", evidence: "index.html present; Search Console is not connected yet." },
+        { requirement_id: "app-script", outcome: "passed", evidence: "app.js present." },
+      ],
+    });
+
+    await harness.runUntilIdle();
+
+    const holds = harness.repositories.listOpenTaskHoldsForCompany("company_1");
+    expect(holds.filter((hold) => hold.kind === "awaiting_ceo_review")).toEqual([]);
+    expect(harness.runOrder).toEqual(["define", "execute", "validate"]);
     expect(harness.repositories.getTask(harness.parent.id)?.status).toBe("queued");
   });
 
@@ -183,6 +215,94 @@ describe("department subtask verification", () => {
     expect(harness.repositories.getCurrentBusinessArtifactForTask(define.id)?.validationStatus).toBe("invalid_schema");
     expect(harness.runOrder).not.toContain("validate");
     expect(harness.repositories.getTask(validate.id)?.status).not.toBe("complete");
+  });
+
+  it("lets dispatch and aggregation agree, then archives the subtasks once the parent is accepted", async () => {
+    const harness = createHarness({
+      validate: () => [
+        { requirement_id: "home-page", outcome: "passed", evidence: "index.html present." },
+        { requirement_id: "app-script", outcome: "passed", evidence: "app.js present." },
+      ],
+    });
+    await harness.runUntilIdle();
+    const { repositories, parent } = harness;
+    const subtasks = Object.values(harness.subtasks());
+
+    // Aggregation queued the parent; dispatch's own readiness check reaches the same answer, so the
+    // parent does not flip back to waiting on the next tick.
+    expect(repositories.getTask(parent.id)?.status).toBe("queued");
+    expect(resolveDependencyReadiness(repositories, repositories.getTask(parent.id)!).kind).toBe("ready");
+
+    repositories.appendProof({ id: "proof_parent", taskId: parent.id, type: "file", uri: "summary.md", summary: "summary", verifiedAt: null });
+    repositories.createBusinessArtifact(artifactRecord("artifact_parent", parent.id, {}));
+    acceptTaskBusinessArtifact({
+      repositories,
+      task: repositories.getTask(parent.id)!,
+      artifact: { ...repositories.getCurrentBusinessArtifactForTask(parent.id)!, reviewStatus: "unreviewed" },
+      acceptanceProvenance: "manual_ceo_review",
+      eventType: "ceo_review_decision",
+      eventMessage: "CEO Office approved task.",
+      keyResultProgress: { currentValue: "verified", status: "met" },
+    });
+
+    for (const subtask of subtasks) {
+      expect(repositories.getTask(subtask.id)?.status).toBe("complete");
+      expect(repositories.listOpenTaskHolds(subtask.id)).toEqual([]);
+      expect(repositories.getCurrentBusinessArtifactForTask(subtask.id)?.reviewStatus).toBe("unreviewed");
+    }
+    expect(repositories.listKeyResults("company_1")[0]).toMatchObject({ currentValue: "verified", status: "met" });
+  });
+
+  it("keeps a genuine Founder Decision in a subtask blocking the siblings that consume it", async () => {
+    const harness = createHarness({
+      defineExtra: {
+        open_decisions: [{
+          decisionKind: "pricing_model",
+          options: [
+            { label: "Flat fee", tradeoffs: "Predictable." },
+            { label: "Usage based", tradeoffs: "Scales with value." },
+          ],
+          recommended_option_index: 0,
+          rationale: "Buyers want a predictable bill.",
+          briefing: "Two pricing shapes fit the prototype; the founder picks.",
+        }],
+      },
+      validate: () => [],
+    });
+
+    await harness.runUntilIdle();
+
+    const { define, execute } = harness.subtasks();
+    expect(harness.runOrder).toEqual(["define"]);
+    expect(harness.repositories.listOpenTaskHolds(define.id).map((hold) => hold.kind)).toEqual(["awaiting_founder_decision"]);
+    expect(harness.repositories.getTask(execute.id)?.status).not.toBe("running");
+    expect(resolveDependencyReadiness(harness.repositories, harness.repositories.getTask(execute.id)!)).toMatchObject({
+      kind: "waiting",
+      waitingOnDecision: true,
+    });
+  });
+
+  it("never re-derives a CEO review for a subtask parked in review, and keeps internal output from outside consumers", async () => {
+    const harness = createHarness({
+      validate: () => [
+        { requirement_id: "home-page", outcome: "passed", evidence: "index.html present." },
+        { requirement_id: "app-script", outcome: "passed", evidence: "app.js present." },
+      ],
+    });
+    await harness.runUntilIdle();
+    const { repositories } = harness;
+    const { execute } = harness.subtasks();
+
+    // A read-time repair of a subtask left in `review` without a Hold must not rebuild a CEO review.
+    repositories.resolveOpenTaskHolds(execute.id, "superseded", "2026-09-17T00:00:00.000Z");
+    reconcileTaskHolds({ repositories, companyId: "company_1" });
+    expect(repositories.listOpenTaskHolds(execute.id).map((hold) => hold.kind)).toEqual(["awaiting_parent_aggregation"]);
+
+    // A task outside the parent consuming the subtask is ordinary consumption: it needs acceptance.
+    const outsider = { ...baseTask("outsider_1", "queued", "test-output"), position: 99 };
+    repositories.createTask(outsider);
+    repositories.createTaskDependency({ taskId: outsider.id, dependsOnTaskId: execute.id });
+    expect(resolveDependencyReadiness(repositories, outsider)).toMatchObject({ kind: "waiting" });
   });
 
   it("judges a verifier by its duty, not by the artifact kind it files", async () => {
@@ -281,14 +401,10 @@ describe("department subtask verification", () => {
     });
     expect(accept(passed)).toThrow(/has since been superseded/);
 
-    // Downstream readiness asks the same question: the accepted verdict no longer covers the current output.
-    const consumer = { ...baseTask("downstream_1", "queued", "test-output"), position: 99 };
-    repositories.createTask(consumer);
-    repositories.createTaskDependency({ taskId: consumer.id, dependsOnTaskId: validate.id });
-    expect(repositories.getTask(validate.id)?.status).toBe("complete");
-    expect(resolveDependencyReadiness(repositories, consumer)).toMatchObject({
+    // The parent's readiness asks the same question: the verdict no longer covers Execute's current output.
+    expect(resolveDependencyReadiness(repositories, repositories.getTask(harness.parent.id)!)).toMatchObject({
       kind: "missing_deliverable",
-      note: expect.stringContaining("has since been superseded"),
+      note: `Department subtask verification does not cover the current output: ${validate.title}.`,
     });
   });
 
@@ -296,7 +412,7 @@ describe("department subtask verification", () => {
     const harness = createHarness({ validate: () => [] });
     await harness.runUntilIdle({
       until: () => harness.repositories.listTasksForCompany("company_1").some(
-        (task) => task.title.startsWith("Execute") && task.status === "complete",
+        (task) => task.title.startsWith("Execute") && task.status === "review",
       ),
     });
 
@@ -453,6 +569,7 @@ function createHarness(behaviour: StageBehaviour) {
       const workspace = request.workspacePath;
       if (stage === "define") {
         writeArtifact(workspace, "plan", behaviour.requirements === null ? {} : {
+          ...behaviour.defineExtra,
           verification_requirements: behaviour.requirements ?? [
             { id: "home-page", description: "The prototype has an index.html entry page." },
             { id: "app-script", description: "The prototype ships its app.js behaviour." },

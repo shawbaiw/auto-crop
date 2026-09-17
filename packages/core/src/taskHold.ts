@@ -25,6 +25,11 @@ import type { AgentFailureReason, TaskStatus } from "./types";
 export type TaskHoldKind =
   /** A reviewable Business Artifact is waiting for a CEO Office approve/return decision. */
   | "awaiting_ceo_review"
+  /**
+   * A department subtask delivered and is ready for its siblings and parent to consume. It is held for
+   * the parent's aggregation, not for anyone's approval: CEO Office reviews the parent's result.
+   */
+  | "awaiting_parent_aggregation"
   /** A risk policy requires Founder Approval before the task may be dispatched. */
   | "awaiting_founder_approval"
   /** A person must act outside the runtime before the task can proceed. */
@@ -56,6 +61,7 @@ export type TaskHoldKind =
 
 export const taskHoldKinds = [
   "awaiting_ceo_review",
+  "awaiting_parent_aggregation",
   "awaiting_founder_approval",
   "awaiting_human_action",
   "awaiting_founder_decision",
@@ -78,6 +84,7 @@ export const taskHoldKinds = [
  */
 export const taskHoldStatusBinding: Record<TaskHoldKind, TaskStatus | null> = {
   awaiting_ceo_review: "review",
+  awaiting_parent_aggregation: "review",
   needs_replan: "needs_replan",
   // The rest survive a change of status: an unanswered approval, an unconfirmed Human Action or an
   // upstream that still owes a deliverable stays true however the task itself was re-parked.
@@ -263,6 +270,11 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
       case "awaiting_ceo_review":
         offer(hold, "ceo_review_decision", "ceo_office");
         break;
+      case "awaiting_parent_aggregation":
+        // The runtime advances this on its own once the parent aggregates. The founder's way out, if the
+        // delivered slice is wrong for the parent, is replanning it.
+        offer(hold, "request_replan", "founder");
+        break;
       case "awaiting_founder_approval":
         offer(hold, "decide_founder_approval", "founder");
         break;
@@ -343,6 +355,8 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
  */
 export function deriveTaskHold(input: {
   status: TaskStatus;
+  /** A department subtask parked in `review` is held for its parent's aggregation, never for CEO review. */
+  taskKind?: "parent" | "department_subtask" | null;
   failureReason?: AgentFailureReason | null;
   dependencyNote?: string | null;
 }): { kind: TaskHoldKind; resolver: TaskHoldResolver } | null {
@@ -351,7 +365,9 @@ export function deriveTaskHold(input: {
   }
 
   if (input.status === "review") {
-    return { kind: "awaiting_ceo_review", resolver: "ceo_office" };
+    return input.taskKind === "department_subtask"
+      ? { kind: "awaiting_parent_aggregation", resolver: "runtime" }
+      : { kind: "awaiting_ceo_review", resolver: "ceo_office" };
   }
 
   if (input.status === "needs_replan") {
