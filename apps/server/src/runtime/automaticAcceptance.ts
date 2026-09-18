@@ -1,4 +1,5 @@
-import type { BusinessArtifact, Task } from "@auto-crop/core";
+import { hasOversightBearingAction, type BusinessArtifact, type Task } from "@auto-crop/core";
+import { parseActionIntents } from "./actionIntent";
 import { isReviewableBusinessArtifact } from "./businessArtifact";
 
 export type AutomaticAcceptanceDecision =
@@ -6,8 +7,9 @@ export type AutomaticAcceptanceDecision =
   | { kind: "requires_review"; reason: string };
 
 /**
- * External-or-sensitive risk patterns. A hit routes a deliverable to manual CEO
- * review and is, since ADR 0017, the only remaining path into that queue.
+ * External-or-sensitive risk patterns, the compatibility path for artifacts written before Action
+ * Intents (ADR 0027): they declare nothing, so their text is all there is to read. A hit routes such a
+ * deliverable to manual CEO review.
  *
  * These are a safety net, not the primary acceptance rule: Business Artifact
  * validation is the semantic gate. The patterns are deliberately precise
@@ -103,6 +105,18 @@ export function evaluateAutomaticAcceptance(input: {
 }): AutomaticAcceptanceDecision {
   if (!input.artifact || !isReviewableBusinessArtifact(input.artifact)) {
     return { kind: "requires_review", reason: "artifact_not_reviewable" };
+  }
+
+  // A delivery that declares its Action Intents is judged on them: what it did, or asks to do now.
+  // Describing a risk — a gap, a limitation, a later step — is not doing one (ADR 0027).
+  const declaration = parseActionIntents(input.artifact.payload);
+  if (declaration.declared) {
+    if (declaration.errors.length > 0) {
+      return { kind: "requires_review", reason: "unreadable_action_declaration" };
+    }
+    return hasOversightBearingAction(declaration.actions)
+      ? { kind: "requires_review", reason: "declared_external_or_sensitive_action" }
+      : { kind: "accept" };
   }
 
   const riskText = [

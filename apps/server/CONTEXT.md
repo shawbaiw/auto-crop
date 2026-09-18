@@ -107,6 +107,10 @@ The granularity is deliberately coarse: one pre-dispatch question for the whole 
 
 A department subtask never goes through acceptance. Its delivery parks in `review` under `awaiting_parent_aggregation`, and `deriveTaskHold` maps a subtask in `review` to that kind so reconciliation cannot rebuild a CEO review. The parent's acceptance ends those Holds.
 
+## Acceptance Reads Declarations, Not Prose
+
+`evaluateAutomaticAcceptance` decides from the delivery's Action Intent declaration (`payload.actions`): `performed` or `requested` goes to CEO Office, `considered` and `[]` do not. The text patterns remain only for artifacts written before the contract, which declare nothing. Do not add a keyword to that list to fix a routing problem — describing a risk is not taking one, which is the bug the list caused (ADR 0027).
+
 ## A Failed Verdict Is Reworked, Not Retried
 
 `applyVerificationRework` decides what follows a verdict that did not pass and records it in `verification_reworks`, one row per failed report. The round budget (`MAX_VERIFICATION_ROUNDS`) counts those rows, not Agent Runs — every run in a rework loop succeeds, so the Bounded Recovery counter never sees it. Rework reaches a producer as prompt feedback read at dispatch, never as a dependency on its verifier (ADR 0026).

@@ -14,6 +14,7 @@ import {
   type Task,
 } from "@auto-crop/core";
 import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
+import { parseActionIntents } from "./actionIntent";
 import { parseOpenDecisions } from "./founderDecision";
 import {
   evaluateVerificationReport,
@@ -225,20 +226,28 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
 }
 
 /**
- * Apply the Verification Contract to a captured artifact. The obligation follows the task's declared
- * duty, not the artifact kind its agent chose: a verifier filing a `final_report` instead of a
+ * Apply the delivery contracts to a captured artifact: its Action Intent declaration, and — when the task
+ * has verification duty — the Verification Contract. The verification obligation follows the task's
+ * declared duty, not the artifact kind its agent chose: a verifier filing a `final_report` instead of a
  * `deliverable` is still judged, or it could skip the contract by relabelling a failed report. Only a
- * blocker is exempt — it says the work could not be done and is never reviewable.
+ * blocker is exempt from both — it says the work could not be done and is never reviewable.
  */
 function evaluateVerificationObligations(
   artifact: DeclaredBusinessArtifact,
   context: CaptureVerificationContext | undefined,
 ): { errors: string[]; verification: ArtifactVerification | null } {
-  if (!context || artifact.artifactKind === "blocker") {
+  if (artifact.artifactKind === "blocker") {
     return { errors: [], verification: null };
   }
 
-  const errors = context.producesRequirements ? parseVerificationRequirements(artifact.payload).errors : [];
+  // A declaration the runtime cannot read is a contract violation, like a malformed Execution Report:
+  // acceptance must never fall back to guessing from prose because the structure was wrong. Checked for
+  // every delivery, with or without verification duty.
+  const errors = parseActionIntents(artifact.payload).errors;
+  if (!context) {
+    return { errors, verification: null };
+  }
+  errors.push(...(context.producesRequirements ? parseVerificationRequirements(artifact.payload).errors : []));
   if (!context.verifier) {
     return { errors, verification: null };
   }

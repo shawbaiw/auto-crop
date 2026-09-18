@@ -135,6 +135,32 @@ describe("captureBusinessArtifact", () => {
     if (!includeDetails) expect(artifact.validationErrors).toContain("payload.execution_report: New execution reports require work_summary and evidence.");
   });
 
+  it.each([
+    ["a readable declaration", [{ category: "deployment", status: "considered", description: "Deploy after review." }], "valid"],
+    ["an empty declaration", [], "valid"],
+    ["an unknown category", [{ category: "whatever", status: "performed", description: "Did a thing." }], "invalid_schema"],
+    ["a declaration that is not a list", { category: "deployment" }, "invalid_schema"],
+  ])("validates the Action Intent declaration: %s", (_label, actions, expected) => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(workspacePath);
+    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+    writeFileSync(join(workspacePath, ".auto-crop", "business-artifact.json"), JSON.stringify({
+      artifact_kind: "deliverable", artifact_role: "findings", artifact_subtype: "comparison", task_type: "research.comparison", lineage: {},
+      payload: {
+        outcome_summary: "A supports the requested use case.",
+        actions,
+        execution_report: {
+          work_summary: "Compared A and B.", evidence: "A passed all three checks.", conclusion: "Select A",
+          vision_impact: "Supports the use case", remaining_gap: "Verify ongoing costs", recommendation: "Run a pilot",
+        },
+      },
+    }));
+
+    const artifact = captureBusinessArtifact({ task: createTaskRecord(), proofs: [createProofRecord()], workspacePath, requireExecutionDetails: true });
+
+    expect(artifact.validationStatus).toBe(expected);
+  });
+
   it("rejects malformed or missing structured Execution Report fields on new deliverables", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);

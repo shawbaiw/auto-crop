@@ -45,6 +45,8 @@ type Case = {
   subtask: boolean;
   risky?: boolean;
   decision?: boolean;
+  /** The delivery's Action Intent declaration, when it makes one. */
+  actions?: unknown;
   expected: Outcome;
 };
 
@@ -79,6 +81,19 @@ const MATRIX: Case[] = [
     subtask: false,
     risky: true,
     decision: true,
+    expected: { status: "review", holds: ["awaiting_ceo_review"], reviewStatus: "unreviewed", keyResult: "not_started", completionOutcomes: [] },
+  },
+  {
+    name: "prose that names a risk while declaring no action is accepted",
+    subtask: false,
+    risky: true,
+    actions: [],
+    expected: { status: "complete", holds: [], reviewStatus: "accepted", keyResult: "accepted_business_artifact", completionOutcomes: ["accepted"] },
+  },
+  {
+    name: "a declared performed action goes to CEO review, whatever the prose says",
+    subtask: false,
+    actions: [{ category: "deployment", status: "performed", description: "Deployed the site to production." }],
     expected: { status: "review", holds: ["awaiting_ceo_review"], reviewStatus: "unreviewed", keyResult: "not_started", completionOutcomes: [] },
   },
   {
@@ -231,6 +246,7 @@ async function deliver(entry: Entry, testCase: Case): Promise<Outcome> {
   const extra = {
     ...(testCase.risky ? { risk_note: RISKY_TEXT } : {}),
     ...(testCase.decision ? { open_decisions: [DECISION] } : {}),
+    ...(testCase.actions === undefined ? {} : { actions: testCase.actions }),
   };
 
   if (entry === "agent_run") {

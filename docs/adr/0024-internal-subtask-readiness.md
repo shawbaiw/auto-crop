@@ -54,4 +54,3 @@ An earlier version of this change had two copies. Recovery parked a subtask as a
 - A normal subtask chain runs to parent aggregation with no CEO involvement, and the parent is not queued and re-parked.
 - Existing subtasks already holding an `awaiting_ceo_review` Hold are not migrated. Internal readiness treats that Hold as blocking, so they stay where they are until the recovery procedure in the repair plan repairs their dependencies and re-verifies them. Approving them in CEO Office is not a recovery path: a pre-contract verification report carries no verdict, so approval would accept a report that says verification failed.
 - Known limitations:
-  - The parent's summarized result still goes through the keyword risk scan and may land in CEO review for words in its prose. Replacing the scan with declared action intent is a later slice.

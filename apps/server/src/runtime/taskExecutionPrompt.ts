@@ -1,4 +1,4 @@
-import type { Company, Locale, Task, VerificationInputs } from "@auto-crop/core";
+import { actionIntentCategories, type Company, type Locale, type Task, type VerificationInputs } from "@auto-crop/core";
 import { describeRuntimeCapability, type AgentCapabilityGrant } from "../policies/capabilityGrant";
 import type { TaskHandoff } from "./dependencyReadiness";
 import { LOCALE_LANGUAGE_NAME } from "./localePromptText";
@@ -254,6 +254,19 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
     "It should be a plain-language string that combines the same conclusion, vision impact, remaining gap, and",
     "recommendation. Missing or malformed `execution_report` fails validation, and a missing `outcome_summary`",
     "still fails validation.",
+    "",
+    "## Actions You Take",
+    "",
+    "Declare `payload.actions`: every external or sensitive action this run performed, or asks approval to perform now.",
+    "Use `[]` when there is none — that is the normal case for research, planning, writing and local implementation work.",
+    JSON.stringify([{ category: "search_engine_submission", status: "performed", description: "Submitted the sitemap.", target: "example.com" }]),
+    `\`category\` is one of: ${actionIntentCategories.join(", ")}.`,
+    "`status` is `performed` (this run did it), `requested` (the work is blocked until someone approves and does it now),",
+    "or `considered` (a later step, a limitation, or something deliberately not done).",
+    "Naming a service in your report is not an action: \"we have no Search Console access yet\" or \"submit the sitemap after launch\"",
+    "is `considered`, or not an entry at all. Only what this run actually did, or needs done now, is `performed` or `requested`.",
+    "This declaration is what routes work to the founder, so an action left undeclared is one nobody was asked about.",
+    "It does not grant anything: an action still needs the capability and the approval it always did.",
     "",
     "## Open Decisions",
     "",
