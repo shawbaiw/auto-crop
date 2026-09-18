@@ -68,7 +68,13 @@ const HOLDS_ANSWERED_BY_DELIVERY: readonly TaskHoldKind[] = ["invalid_business_a
  * declared decision outranks internal delivery; and a subtask never reaches acceptance at all
  * (ADR 0023, ADR 0024).
  */
-export function finalizeDelivery(input: {
+export function finalizeDelivery(input: FinalizeDeliveryInput): FinalizeDeliveryResult {
+  // One unit of work: a delivery that fails halfway through leaves no half-applied acceptance, Hold or
+  // rework record, and the caller's retry starts from the same facts (ADR 0026).
+  return input.repositories.transaction(() => finalizeDeliveryWithinTransaction(input));
+}
+
+type FinalizeDeliveryInput = {
   repositories: Repositories;
   task: Task;
   artifact: BusinessArtifact;
@@ -76,7 +82,9 @@ export function finalizeDelivery(input: {
   source: "agent_run" | "proof_recovery";
   now?: () => Date;
   createId?: (prefix: string) => string;
-}): FinalizeDeliveryResult {
+};
+
+function finalizeDeliveryWithinTransaction(input: FinalizeDeliveryInput): FinalizeDeliveryResult {
   const { repositories, artifact, source } = input;
   const now = input.now ?? (() => new Date());
   const createId = input.createId ?? defaultCreateId;

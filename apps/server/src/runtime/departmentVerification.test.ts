@@ -620,15 +620,164 @@ describe("verification contract", () => {
       id: "hold_decision", companyId: "company_1", taskId: decided.id, kind: "awaiting_founder_decision", resolver: "founder",
       subjectKind: null, subjectId: null, reason: "decision", reasonText: null, openedAt: "2026-09-17T00:00:00.000Z", resolvedAt: null, resolution: null,
     });
+    // Its current delivery is the one the verdict judged, so this is a genuine escalation, not staleness.
+    repositories.createBusinessArtifact(artifactRecord("artifact_c", decided.id, {}));
     const secondReport = {
       ...report,
       id: "report_2",
       taskId: secondVerifier.id,
-      verification: { ...report.verification, targets: [{ taskId: decided.id, artifactId: "none", revision: "c" }], checks: [{ requirementId: "r1", outcome: "failed" as const, evidence: "broken" }] },
+      verification: { ...report.verification, targets: [{ taskId: decided.id, artifactId: "artifact_c", revision: "c" }], checks: [{ requirementId: "r1", outcome: "failed" as const, evidence: "broken" }] },
     };
     const escalated = applyVerificationRework({ repositories, verifier: secondVerifier, artifact: secondReport, now: () => new Date(), createId });
     expect(escalated.rework.decision).toBe("escalated");
     expect(repositories.getTask(decided.id)?.status).toBe("review");
+  });
+
+  it("re-verifies instead of reworking when the verdict judged a superseded version", () => {
+    const harness = createHarness({ validate: () => [] });
+    const { repositories } = harness;
+    const producer = { ...baseTask("producer_v1", "complete", "landing-page-file") };
+    const verifier = { ...baseTask("verifier_v1", "running", "test-output") };
+    repositories.createTask(producer);
+    repositories.createTask(verifier);
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: producer.id, inputRole: "verification_target" });
+    repositories.createBusinessArtifact(artifactRecord("artifact_old", producer.id, {}));
+    const report = {
+      ...artifactRecord("report_stale", verifier.id, {}),
+      reviewStatus: "unreviewed" as const,
+      verification: {
+        outcome: "failed" as const,
+        requirementsArtifactId: null,
+        requirements: [{ id: "r1", description: "works" }],
+        targets: [{ taskId: producer.id, artifactId: "artifact_old", revision: "a" }],
+        checks: [{ requirementId: "r1", outcome: "failed" as const, evidence: "broken" }],
+        issues: [],
+      },
+    };
+    repositories.createBusinessArtifact(report);
+    // The producer has delivered again since the verdict was reached.
+    repositories.createBusinessArtifact(artifactRecord("artifact_new", producer.id, {}));
+
+    const result = applyVerificationRework({
+      repositories,
+      verifier: repositories.getTask(verifier.id)!,
+      artifact: report,
+      now: () => new Date(),
+      createId: sequentialIds("stale"),
+    });
+
+    expect(result.rework.decision).toBe("reverify");
+    expect(repositories.getTask(producer.id)?.status).toBe("complete");
+    expect(repositories.getCurrentBusinessArtifactForTask(producer.id)).toMatchObject({ id: "artifact_new", reviewStatus: "accepted" });
+    expect(repositories.getTask(verifier.id)?.status).toBe("queued");
+  });
+
+  it("applies a rework as one unit, and finishes it when a failed attempt is retried", () => {
+    const harness = createHarness({ validate: () => [] });
+    const { repositories } = harness;
+    const producer = { ...baseTask("producer_tx", "complete", "landing-page-file") };
+    const verifier = { ...baseTask("verifier_tx", "running", "test-output") };
+    repositories.createTask(producer);
+    repositories.createTask(verifier);
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: producer.id, inputRole: "verification_target" });
+    repositories.createBusinessArtifact(artifactRecord("artifact_tx", producer.id, {}));
+    const report = {
+      ...artifactRecord("report_tx", verifier.id, {}),
+      reviewStatus: "unreviewed" as const,
+      verification: {
+        outcome: "failed" as const,
+        requirementsArtifactId: null,
+        requirements: [{ id: "r1", description: "works" }],
+        targets: [{ taskId: producer.id, artifactId: "artifact_tx", revision: "a" }],
+        checks: [{ requirementId: "r1", outcome: "failed" as const, evidence: "broken" }],
+        issues: [],
+      },
+    };
+    repositories.createBusinessArtifact(report);
+
+    // Fail after the rework record is written but before the producer is sent back.
+    let failNextReturn = true;
+    const flaky = {
+      ...repositories,
+      updateBusinessArtifactReviewStatus: (...args: Parameters<typeof repositories.updateBusinessArtifactReviewStatus>) => {
+        if (failNextReturn) {
+          failNextReturn = false;
+          throw new Error("interrupted mid-rework");
+        }
+        repositories.updateBusinessArtifactReviewStatus(...args);
+      },
+    } as typeof repositories;
+
+    expect(() =>
+      applyVerificationRework({ repositories: flaky, verifier: repositories.getTask(verifier.id)!, artifact: report, now: () => new Date(), createId: sequentialIds("tx1") }),
+    ).toThrow(/interrupted mid-rework/);
+
+    // Nothing was applied: no round was spent, and the delivery is untouched.
+    expect(repositories.listVerificationReworksForVerifier(verifier.id)).toEqual([]);
+    expect(repositories.getTask(producer.id)?.status).toBe("complete");
+    expect(repositories.getCurrentBusinessArtifactForTask(producer.id)?.reviewStatus).toBe("accepted");
+    expect(repositories.getTask(verifier.id)?.status).toBe("running");
+
+    const retried = applyVerificationRework({
+      repositories,
+      verifier: repositories.getTask(verifier.id)!,
+      artifact: report,
+      now: () => new Date(),
+      createId: sequentialIds("tx2"),
+    });
+
+    expect(retried.rework).toMatchObject({ round: 1, decision: "rework_producers", producerTaskIds: [producer.id] });
+    expect(repositories.getTask(producer.id)?.status).toBe("queued");
+    expect(repositories.getCurrentBusinessArtifactForTask(producer.id)?.reviewStatus).toBe("returned");
+    expect(repositories.getTask(verifier.id)?.status).toBe("waiting_dependency");
+  });
+
+  it("reworks a split producer through its own stages, not by re-running the parent", async () => {
+    const harness = createHarness({
+      validate: () => [
+        { requirement_id: "home-page", outcome: "passed", evidence: "index.html present." },
+        { requirement_id: "app-script", outcome: "passed", evidence: "app.js present." },
+      ],
+    });
+    await harness.runUntilIdle();
+    const { repositories, parent } = harness;
+    const { execute, validate } = harness.subtasks();
+    repositories.appendProof({ id: "proof_parent_rw", taskId: parent.id, type: "file", uri: "summary.md", summary: "summary", verifiedAt: null });
+    repositories.createBusinessArtifact(artifactRecord("artifact_parent_rw", parent.id, {}));
+
+    const outerVerifier = { ...baseTask("outer_verifier", "running", "test-output"), position: 98 };
+    repositories.createTask(outerVerifier);
+    repositories.createTaskDependency({ taskId: outerVerifier.id, dependsOnTaskId: parent.id, inputRole: "verification_target" });
+    const report = {
+      ...artifactRecord("outer_report", outerVerifier.id, {}),
+      reviewStatus: "unreviewed" as const,
+      verification: {
+        outcome: "failed" as const,
+        requirementsArtifactId: null,
+        requirements: [{ id: "accessible", description: "The page is reachable." }],
+        targets: [{ taskId: parent.id, artifactId: "artifact_parent_rw", revision: "a" }],
+        checks: [{ requirementId: "accessible", outcome: "failed" as const, evidence: "404 on load." }],
+        issues: [],
+      },
+    };
+    repositories.createBusinessArtifact(report);
+
+    const result = applyVerificationRework({
+      repositories,
+      verifier: repositories.getTask(outerVerifier.id)!,
+      artifact: report,
+      now: () => new Date(),
+      createId: sequentialIds("chain"),
+    });
+
+    // The execute stage redoes the work; its own verifier re-verifies the new output; the parent waits to
+    // aggregate again — so no verdict keeps describing output it did not check.
+    expect(result.rework.producerTaskIds).toEqual([execute.id]);
+    expect(repositories.getTask(execute.id)?.status).toBe("queued");
+    expect(repositories.getTask(validate.id)?.status).toBe("waiting_dependency");
+    expect(repositories.getTask(parent.id)).toMatchObject({ status: "waiting_dependency" });
+    expect(repositories.getCurrentBusinessArtifactForTask(parent.id)?.reviewStatus).toBe("returned");
+    expect(pendingReworkFeedback(repositories, repositories.getTask(execute.id)!)[0]?.failedChecks.map((check) => check.requirementId)).toEqual(["accessible"]);
   });
 
   it("refuses to hand over a symbolic link out of the producer workspace", () => {
@@ -781,6 +930,11 @@ function createHarness(behaviour: StageBehaviour) {
     agentRunStatuses: (taskId: string) =>
       (client.prepare("SELECT status FROM agent_runs WHERE task_id = ?").all(taskId) as Array<{ status: string }>).map((row) => row.status),
   };
+}
+
+function sequentialIds(tag: string): (prefix: string) => string {
+  let sequence = 0;
+  return (prefix) => `${prefix}_${tag}_${++sequence}`;
 }
 
 function snapshotFilesFor(workspacePath: string, prompt: string): string {

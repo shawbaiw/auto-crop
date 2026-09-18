@@ -19,7 +19,7 @@
 | ① 验证闸门 | 已实现，未提交；已补两处绕过（按报告类型跳过契约、从工作区读回 manifest） | ADR 0023；`verificationContract.ts`；`departmentVerification.test.ts` |
 | ② 内部就绪与共享就绪判定 | 已实现；补齐恢复路径漏决策、共享交付收尾策略、幂等验收、创始人退回 | ADR 0024；`dependencyReadiness.ts`；`deliveryFinalization.ts`；两入口结果矩阵与决策生命周期测试 |
 | ②b CEO 规划验证任务的契约覆盖 | 已实现 | ADR 0025；blueprint `verification` 必填；`plannedVerification.test.ts`（网站 / 数据清洗 / 中文内容三类，从 `createCompany` 起跑到结论） |
-| ③ 有界自动返工 | 已实现 | ADR 0026；`verificationRework.ts`；`verification_reworks` 表；每个验证任务 3 轮预算 |
+| ③ 有界自动返工 | 已实现；已补版本对应、返工原子性、父任务走内部链路 | ADR 0026；`verificationRework.ts`；`verification_reworks` 表；`repositories.transaction`；每个验证任务 3 轮预算 |
 | ④–⑥ | 未开始 | |
 
 ## 1. 目标与范围

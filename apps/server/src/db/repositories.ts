@@ -55,7 +55,34 @@ export type ReviewRecord = {
 };
 
 export function createRepositories(database: DatabaseClient) {
+  let savepointDepth = 0;
+
   return {
+    /**
+     * Run `work` as one atomic unit: either every write inside lands, or none does.
+     *
+     * Implemented with SAVEPOINTs so it nests — a seam that wraps itself in a transaction stays correct
+     * when a caller already opened one. Without this a runtime path that writes a record and then acts
+     * on it can be interrupted between the two, leaving a record whose actions never happened, which
+     * every idempotence guard then reads as "already done" (ADR 0026).
+     */
+    transaction<T>(work: () => T): T {
+      const name = `auto_crop_sp_${savepointDepth}`;
+      savepointDepth += 1;
+      database.exec(`SAVEPOINT ${name}`);
+      try {
+        const result = work();
+        database.exec(`RELEASE ${name}`);
+        return result;
+      } catch (error) {
+        database.exec(`ROLLBACK TO ${name}`);
+        database.exec(`RELEASE ${name}`);
+        throw error;
+      } finally {
+        savepointDepth -= 1;
+      }
+    },
+
     createCompany(company: Company): void {
       database
         .prepare(
