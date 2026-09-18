@@ -78,6 +78,75 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  /**
+   * The reported failure, pinned: a Chinese delivery quoted a phrase with bare ASCII quotes, its
+   * artifact did not parse, and the whole company blocked on work that had been done. One narrow repair
+   * run fixes the syntax; the runtime keeps it only if the content is unchanged.
+   */
+  describe("business artifact syntax repair", () => {
+    const quoted = 'Mock implementation completed; rivals already offer "no sign-up" access.';
+    const runWithRepair = async (repairEdit: (artifact: string) => string) => {
+      const fixture = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+      const runs: Array<{ phase: string; grant?: string[] }> = [];
+      const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
+      const adapter: AgentAdapter = {
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          if (request.metadata.phase === "execution_brief") {
+            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
+          }
+          const path = artifactPath(request.workspacePath);
+          if (request.prompt.startsWith("## Repair the Business Artifact syntax")) {
+            runs.push({ phase: "repair", grant: request.grant?.granted });
+            writeFileSync(path, repairEdit(readFileSync(path, "utf8")), "utf8");
+          } else {
+            runs.push({ phase: "work" });
+            writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low"), workspacePath: request.workspacePath });
+            writeFileSync(path, readFileSync(path, "utf8").replace("Mock implementation completed.", quoted), "utf8");
+          }
+          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+        },
+      };
+      const events: SchedulerEventRecord[] = [];
+      const result = await runSchedulerOnce({
+        projectRoot: fixture.projectRoot, repositories: fixture.repositories, adapters: [adapter], workerId: "worker", maxTasks: 1,
+        approvalRequired: () => false, proofCollector: ({ task }) => [createProofForTask(task)], emit: (event) => events.push(event),
+      });
+      return { ...fixture, result, runs, events, artifactPath };
+    };
+
+    it("repairs the syntax once and delivers the work without re-running it", async () => {
+      const { repositories, client, result, runs } = await runWithRepair((artifact) => artifact.replace('"no sign-up"', '\\"no sign-up\\"'));
+
+      expect(runs.map((run) => run.phase)).toEqual(["work", "repair"]);
+      expect(runs[1]?.grant).toEqual(["workspace_read", "workspace_write"]);
+      expect(result.completed).toContain("task_1");
+      const artifact = repositories.getCurrentBusinessArtifactForTask("task_1");
+      expect(artifact?.validationStatus).toBe("valid");
+      expect((artifact?.payload as { summary?: string }).summary).toBe(quoted);
+      expect(repositories.listTaskEventsForCompany("company_1").find((event) => event.type === "task_warning")?.message).toContain(
+        "its syntax was repaired without changing content",
+      );
+      client.close();
+    });
+
+    it("discards a repair that changed content, and records the delivery as it was left", async () => {
+      const { repositories, client, result, artifactPath } = await runWithRepair((artifact) =>
+        artifact.replace('"no sign-up"', "free").replace("rivals already offer", "we uniquely offer"),
+      );
+
+      expect(result.failed).toContain("task_1");
+      expect(repositories.getTask("task_1")?.status).toBe("blocked");
+      expect(repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["invalid_business_artifact"]);
+      expect(repositories.getCurrentBusinessArtifactForTask("task_1")?.validationErrors.join(" ")).toContain("Invalid JSON");
+      expect(readFileSync(artifactPath(repositories.getTask("task_1")!.workspacePath!), "utf8")).toContain(quoted);
+      expect(repositories.listTaskEventsForCompany("company_1").find((event) => event.type === "task_warning")?.message).toContain(
+        "changed its content and was discarded",
+      );
+      client.close();
+    });
+  });
+
   it("does not dispatch work or fabricate a brief if preparation is malformed", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
     const phases: string[] = [];

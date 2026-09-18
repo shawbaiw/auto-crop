@@ -1,5 +1,5 @@
 import { prepareExecutionBrief } from "./executionBrief";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
@@ -34,6 +34,7 @@ import {
   verifyEnvironmentBlockerClaim,
 } from "./businessArtifact";
 import type { AgentSessionManager } from "./agentSessions";
+import { repairBusinessArtifactSyntax, type ArtifactSyntaxRepair } from "./artifactSyntaxRepair";
 import { projectCeoAttention } from "./ceoAttention";
 import { classifyFinalFounderReport, isCompanyQuiescent } from "./companyQuiescence";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
@@ -458,6 +459,34 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           if (!agentResult) {
             throw new Error(`No agent result produced for task ${task.id}`);
+          }
+
+          // A delivery whose artifact file does not parse gets one narrow syntax repair before capture,
+          // so everything downstream — proof, validation, finalization — reads the file it leaves.
+          if (agentResult.status === "complete") {
+            const repair = await repairBusinessArtifactSyntax({
+              adapter,
+              request: {
+                taskId: task.id,
+                promptPath: "",
+                workspacePath: runWorkspacePath,
+                metadata: { departmentId: task.departmentId, proofSchemaId: task.proofSchemaId },
+              },
+              grant,
+            });
+            if (repair) {
+              appendFileSync(
+                logPath,
+                ["## Artifact syntax repair", `outcome: ${repair.outcome}`, `syntaxError: ${repair.syntaxError}`, "", repair.result.stdout, repair.result.stderr, ""].join("\n"),
+                "utf8",
+              );
+              appendAndEmitTaskEvent(input, {
+                task,
+                type: "task_warning",
+                message: artifactSyntaxRepairMessage(task, repair),
+                status: "running",
+              });
+            }
           }
 
           let proof: Proof[] = [];
@@ -1585,6 +1614,20 @@ function terminateAsRetryExhausted(
   }
   emitParentTaskAggregationEvents(input, task);
   return blockedConsumerIds;
+}
+
+function artifactSyntaxRepairMessage(task: Task, repair: ArtifactSyntaxRepair): string {
+  const prefix = `Business artifact of ${task.title} was not valid JSON (${repair.syntaxError})`;
+  switch (repair.outcome) {
+    case "repaired":
+      return `${prefix}; its syntax was repaired without changing content.`;
+    case "still_invalid":
+      return `${prefix}; a syntax repair did not make it parse.`;
+    case "content_changed":
+      return `${prefix}; a syntax repair changed its content and was discarded.`;
+    case "run_failed":
+      return `${prefix}; the syntax repair run did not complete.`;
+  }
 }
 
 function appendAndEmitTaskEvent(
