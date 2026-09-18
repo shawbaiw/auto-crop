@@ -7,6 +7,7 @@ import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { refreshTaskDependencyState } from "./taskRefresh";
+import { recoverTask } from "./taskRecovery";
 
 const createdDirs: string[] = [];
 
@@ -255,6 +256,53 @@ describe("refreshTaskDependencyState proof recovery", () => {
       reviewStatus: "accepted",
       validationStatus: "valid",
     });
+  });
+
+  /**
+   * The reported loop, pinned. A task parked on an unreviewable artifact offers refresh and recover.
+   * Recapturing the same unreviewable workspace used to count as "recovered": it re-blocked the task,
+   * opened another Hold on the new capture, and never re-ran the work — so neither exit led out.
+   */
+  it("re-runs a task whose workspace still holds no reviewable artifact instead of recapturing it", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
+    createdDirs.push(workspacePath);
+    writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        workspacePath,
+        status: "failed",
+        proofSchemaId: "repo-diff",
+      },
+    ]);
+    fixture.repositories.updateTaskExecutionSummary("task_1", {
+      latestFailureReason: "no_proof",
+      latestFailureMessage: "Task failed: Record implementation changes / no_proof.",
+    });
+    const proofSchemas = [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff" as const] }];
+    const createId = createSequentialIdFactory();
+    const now = () => new Date("2026-08-25T00:00:00.000Z");
+    const invalidHolds = () =>
+      fixture.repositories.listOpenTaskHolds("task_1").filter((hold) => hold.kind === "invalid_business_artifact");
+
+    // The first capture is news: the task had no proof, now it has proof and no artifact.
+    refreshTaskDependencyState({ repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
+    expect(invalidHolds()).toHaveLength(1);
+    const artifactsAfterFirstCapture = fixture.repositories.listBusinessArtifactsForTask("task_1").length;
+
+    // Refreshing again learns nothing new and says so, without another artifact or Hold.
+    const refreshed = refreshTaskDependencyState({ repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
+    expect(refreshed.recovery?.status).toBe("still_unreviewable");
+    expect(refreshed.task.status).toBe("blocked");
+    expect(invalidHolds()).toHaveLength(1);
+    expect(fixture.repositories.listBusinessArtifactsForTask("task_1")).toHaveLength(artifactsAfterFirstCapture);
+
+    // Recover is the exit that re-runs the work, and re-running answers the Hold.
+    const recovered = recoverTask({ repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
+    expect(recovered.recovery?.status).toBe("queued");
+    expect(recovered.task.status).toBe("queued");
+    expect(invalidHolds()).toHaveLength(0);
+    expect(fixture.repositories.listBusinessArtifactsForTask("task_1")).toHaveLength(artifactsAfterFirstCapture);
   });
 
   it("blocks recovered proof before CEO review when the business artifact is missing", () => {

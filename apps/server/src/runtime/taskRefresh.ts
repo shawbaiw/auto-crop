@@ -34,7 +34,7 @@ export type RefreshTaskDependencyStateResult = {
   proof?: Proof[];
   businessArtifacts?: BusinessArtifact[];
   recovery?: {
-    status: "recovered" | "not_found" | "not_applicable";
+    status: "recovered" | "still_unreviewable" | "not_found" | "not_applicable";
     message: string;
   };
 };
@@ -72,7 +72,9 @@ export function refreshTaskDependencyState(
     ? { status: "not_applicable" as const, message: "Proof recovery does not apply to this task." }
     : recoveryResult.kind === "not_found"
       ? { status: "not_found" as const, message: proofRecoveryNotFoundMessage(task) }
-      : undefined;
+      : recoveryResult.kind === "still_unreviewable"
+        ? { status: "still_unreviewable" as const, message: stillUnreviewableMessage(recoveryResult.validationErrors) }
+        : undefined;
 
   const parentAggregationRefresh = refreshParentTaskAggregationTask({
     repositories: input.repositories,
@@ -122,6 +124,7 @@ export function recoverProofIfPossible(
   task: Task,
 ):
   | { kind: "recovered"; result: RefreshTaskDependencyStateResult }
+  | { kind: "still_unreviewable"; validationErrors: unknown[] }
   | { kind: "not_found" }
   | { kind: "not_applicable" } {
   if (!isProofRecoveryEligible(task)) {
@@ -140,10 +143,6 @@ export function recoverProofIfPossible(
   }
 
   const { proof, workspacePath } = recovered;
-  for (const item of proof) {
-    input.repositories.appendProof(item);
-  }
-
   const businessArtifact = captureBusinessArtifact({
     task,
     proofs: proof,
@@ -153,12 +152,26 @@ export function recoverProofIfPossible(
     now: input.now,
     createId: input.createId,
   });
-  input.repositories.createBusinessArtifact(businessArtifact);
 
   // A valid report whose verification verdict did not pass is a delivery with an outcome, not an
   // artifact to recapture: it goes to finalization like any other delivery.
   const deliveredWithVerdict = Boolean(businessArtifact.verification && businessArtifact.validationStatus === "valid");
-  if (!isReviewableBusinessArtifact(businessArtifact) && !deliveredWithVerdict) {
+  const unreviewable = !isReviewableBusinessArtifact(businessArtifact) && !deliveredWithVerdict;
+
+  // Recovery exists to capture a delivery the run left behind. A task already parked on an
+  // unreviewable artifact that recaptures an unreviewable one has recovered nothing: its Hold already
+  // says so. Reporting that as recovered — re-blocking, opening a second Hold on the new capture —
+  // made `recover_task` loop without ever re-running the work (ADR 0020: a Hold's exits must lead out).
+  if (unreviewable && input.repositories.listOpenTaskHolds(task.id).some((hold) => hold.kind === "invalid_business_artifact")) {
+    return { kind: "still_unreviewable", validationErrors: businessArtifact.validationErrors };
+  }
+
+  for (const item of proof) {
+    input.repositories.appendProof(item);
+  }
+  input.repositories.createBusinessArtifact(businessArtifact);
+
+  if (unreviewable) {
     const now = input.now ?? (() => new Date());
     const createId = input.createId ?? defaultCreateId;
     const timestamp = now().toISOString();
@@ -363,6 +376,11 @@ function isProofRecoveryEligible(task: Task): boolean {
 /** One declaration, shared with the offer: `isAffordanceApplicable` in `@auto-crop/core`. */
 function isRefreshableStatus(status: TaskStatus): boolean {
   return isAffordanceApplicable("refresh_task", status);
+}
+
+function stillUnreviewableMessage(validationErrors: unknown[]): string {
+  const detail = validationErrors.length > 0 ? ` / ${JSON.stringify(validationErrors)}` : "";
+  return `The workspace still holds no reviewable business artifact; recover the task to run it again.${detail}`;
 }
 
 function proofRecoveryNotFoundMessage(task: Task): string {
