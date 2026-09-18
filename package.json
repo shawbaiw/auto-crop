@@ -8,6 +8,7 @@
     "dev": "pnpm -r --parallel --if-present dev",
     "smoke:mock": "tsx scripts/mock-smoke.ts",
     "smoke:real-agent": "tsx scripts/real-agent-smoke.ts",
+    "smoke:real-planning": "tsx scripts/real-planning-contract-smoke.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "pnpm -r --if-present lint"

@@ -30,7 +30,7 @@
 | `52b9354` | ②b 规划声明验证职责（ADR 0025） | 是 |
 | `34f6add` | ③ 有界自动返工（ADR 0026） | 是 |
 | `baf2037` | ③ 补丁：版本对应、原子性、父任务走内部链路 | 是 |
-| `0ef8887` | ④ Action Intent 取代关键词扫描（ADR 0027） | **否，待推送** |
+| `55084f0` | ④ Action Intent 取代关键词扫描（ADR 0027） | 是 |
 
 `pnpm typecheck`、`pnpm lint`、`pnpm test`（725 项）全部通过。
 
@@ -107,8 +107,8 @@ apps/server/src/runtime/
 
 前提：**用户会删除 `.auto-crop` 状态重新创建公司**，因此不需要为旧公司做恢复。
 
-### 1) 取消原计划的 ⑥「旧公司恢复 dry-run」
-把 `docs/department-subtask-handoff-and-acceptance-repair-plan.md` 里的 ⑥ 改为「删除 `.auto-crop` 状态重建」，并删掉 ADR 里与旧公司恢复相关的表述。
+### 1) 取消原计划的 ⑥「旧公司恢复 dry-run」——已完成
+计划文档的 ⑥ 已改为「删除 `.auto-crop` 状态重建」，第 2、10、11 节与 ADR 0024 中的恢复表述已同步删除。
 
 ### 2) 真实 agent 冒烟（建议最先做，成本低、信息量大）
 新契约目前只被 mock agent 验证过。要确认：
@@ -116,6 +116,25 @@ apps/server/src/runtime/
 - 执行 agent 能否稳定输出 `payload.actions` 和 `payload.verification.checks`（逐项、含证据、不漏项）。
 - 参考 `scripts/real-agent-smoke.ts` 与 `pnpm smoke:real-agent`。
 - 如果模型经常漏字段：优先考虑给这些回复加 **Structured Output Contract**（ADR 0022 的 `--json-schema` / `--output-schema` 路子），而不是放宽校验。
+
+#### 真实冒烟结果（2026-09-18，第一轮）
+规划脚本：`pnpm smoke:real-planning`（`scripts/real-planning-contract-smoke.ts`；默认三个用例，可用 `SMOKE_CASES` JSON、`SMOKE_OUT_DIR` 覆盖；任一规划解析失败即退出码 1，语义是否正确仍需人看输出）。执行冒烟：隔离目录 `INIT_CWD=<dir> tsx apps/cli/src/index.ts start`，经 API 建公司，读库观察。
+
+契约本身：
+- CEO 规划 3/3 合规（codex 中文、claude-code 中文、codex 英文）：每个任务都有 `verification`，目标与要求合理。一例语义错误：claude-code 把 `run_local_checks`（test-output，依赖原型）声明为 `null`——即第 8 节「声明 null 却在验证」的限制，真实模型第一次就出现。
+- 执行 agent：每个有效产物都声明了 `payload.actions`；codex 验证者按快照逐项给出 checks 与证据，runtime 汇总 `outcome: passed` 并绑定目标产物 ID 与 revision。
+- 还没走到：原型验证、验证失败、返工。
+
+冒烟发现、已修：
+- codex 沙箱按 `run_command` 选 `workspace-write`，导致「可写不可跑命令」的授权以只读启动，写不出产物文件（`cliAgent.ts` 的 `codexSandboxForGrant`，ADR 0021 已补说明）。
+- **`recover_task` 对无效产物原地打转**：`recoverProofIfPossible` 在任务已停在 `invalid_business_artifact` Hold 上时，重新抓到的产物仍不可审就返回 `still_unreviewable`——不写新产物、不再 block、不开第二个 Hold；`recover` 于是走重跑分支，`refresh` 只报告原因。首次抓取（如 `no_proof` → 缺产物）仍照常 block，那是新信息。已在冒烟库副本上重放：卡住的验证任务从「blocked + 2 个重复 Hold」变为 queued、Hold 全部解除。只影响失败原因为 `missing_business_artifact` / `missing_deliverable` / `non_reviewable_artifact` / `no_proof` 的任务；`invalid_business_artifact`（如 JSON 损坏）本来就会直接重跑。
+
+- **中文 ASCII 引号破坏 `business-artifact.json`**：运行完成后若产物文件不能解析，同一 agent 做一次 Artifact Syntax Repair（只给 workspace 读写、2 分钟、告知解析错误）；runtime 要求修后能解析且去掉引号/转义/标点/空白后内容一致，否则还原原文件、照常停在 `invalid_business_artifact`（ADR 0028）。结构化输出契约走不通：codex `--output-schema` 是 strict 模式，拒绝自由结构的 `payload`（已实测）。真实 claude-code 修复冒烟里那份坏产物：22 秒，只在两处引号前加了反斜杠。
+
+冒烟发现、未修（待讨论）：
+1. **Execution Brief 超时被错记成任务超时**：brief 限 60s，失败时 `agentResult = preparation.result`，记成 `timeout after 5m` 并升级到 10m 档（`main` 上已有）。另见 claude-code 的 brief 回复满足 schema 但内容全是「测试」占位。
+2. **draft 公司的任务被派发**：`fetchQueuedTasks` 不看公司状态，激活前已开始运行（`main` 上已有）。
+3. 联网调研在 medium 档（300s）偏紧：同一任务一次 273s 完成、一次 300s 超时。
 
 ### 3) 收紧契约、删掉兼容层（删库之后就没有旧数据要照顾了）
 - `payload.actions` 改为**必填**（缺失即交付物无效），然后**整段删除** `automaticAcceptance.ts` 里的 `FORBIDDEN_RISK_PATTERNS`（约 70 条正则）与相关测试。代价：十几处测试 fixture / mock agent 要补 `actions: []`。
