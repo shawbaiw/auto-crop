@@ -142,6 +142,17 @@ export function claudeToolsForGrant(grant: AgentCapabilityGrant): string[] {
 }
 
 /**
+ * The Codex sandbox a grant maps to. Codex has no tool list to narrow: its sandbox is the only control,
+ * and it decides whether the workspace is writable, not whether a shell exists — a `read-only` run can
+ * still execute commands, it just cannot write. So `workspace_write` is what selects `workspace-write`.
+ * Keying it on `run_command` instead launched every write-without-shell grant read-only, and the run
+ * could not even write the Business Artifact it was required to deliver.
+ */
+export function codexSandboxForGrant(grant: AgentCapabilityGrant): "workspace-write" | "read-only" {
+  return grant.granted.includes("workspace_write") ? "workspace-write" : "read-only";
+}
+
+/**
  * Launch Claude Code fail-closed, then grant capabilities back (ADR 0021).
  *
  * - `--restricted` removes the shell and code-running tools, ignores user, project and local settings
@@ -214,7 +225,7 @@ export function createCodexAdapter(
         "--ignore-rules",
         "--skip-git-repo-check",
         "--sandbox",
-        grant.granted.includes("run_command") ? "workspace-write" : "read-only",
+        codexSandboxForGrant(grant),
         "--ephemeral",
         "-c",
         `tools.web_search=${grant.granted.includes("web_research")}`,

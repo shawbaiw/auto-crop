@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { noToolGrant } from "../policies/capabilityGrant";
+import { noToolGrant, type AgentCapabilityGrant } from "../policies/capabilityGrant";
 import { createClaudeCodeAdapter, createCliAgentAdapter, createCodexAdapter, interpolateCommandTemplate } from "./cliAgent";
 import { createMockAgentAdapter } from "./mockAgent";
 import { createAgentRegistry } from "./registry";
@@ -128,7 +128,7 @@ describe("CLI command template adapter", () => {
         "--ignore-rules",
         "--skip-git-repo-check",
         "--sandbox",
-        "read-only",
+        "workspace-write",
         "--ephemeral",
         "-c",
         "tools.web_search=true",
@@ -167,6 +167,24 @@ describe("CLI command template adapter", () => {
 
     expect(allowed).toContain("WebSearch");
     expect(allowed).toContain("WebFetch");
+  });
+
+  /**
+   * The reported failure, pinned. A verification task granted workspace read/write and web research —
+   * but not `run_command` — was launched `--sandbox read-only`, could not create
+   * `.auto-crop/business-artifact.json`, and the whole company blocked on a missing artifact.
+   */
+  it("lets a Codex run write its workspace whenever the grant carries workspace_write", () => {
+    const sandboxFor = (granted: AgentCapabilityGrant["granted"]) => {
+      const args = createCodexAdapter().commandPreview({ ...request, grant: { granted, withheld: [], id: granted.join("+") } }).args;
+      return args[args.indexOf("--sandbox") + 1];
+    };
+
+    expect(sandboxFor(["workspace_read", "workspace_write"])).toBe("workspace-write");
+    expect(sandboxFor(["workspace_read", "workspace_write", "web_research"])).toBe("workspace-write");
+    expect(sandboxFor(["workspace_read", "workspace_write", "run_command"])).toBe("workspace-write");
+    expect(sandboxFor(["workspace_read"])).toBe("read-only");
+    expect(createCodexAdapter().commandPreview({ ...request, grant: noToolGrant }).args).toContain("read-only");
   });
 
   it("withholds the shell and the web from a grant that does not carry them", () => {
@@ -241,7 +259,7 @@ describe("CLI command template adapter", () => {
         "--ignore-rules",
         "--skip-git-repo-check",
         "--sandbox",
-        "read-only",
+        "workspace-write",
         "--ephemeral",
         "-c",
         "tools.web_search=true",
