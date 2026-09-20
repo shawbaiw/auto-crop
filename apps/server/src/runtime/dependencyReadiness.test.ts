@@ -177,6 +177,87 @@ describe("resolveDependencyReadiness", () => {
     client.close();
   });
 
+  /**
+   * The reported gap, pinned. A plan declared a verifier for the product brief, and the prototype
+   * depended on the brief alone — so the build ran while the brief's verification was still
+   * inconclusive. A declared verification edge now gates every other consumer too (ADR 0030).
+   */
+  describe("a producer the plan has someone verify", () => {
+    const verifiedFixture = (verdictOverrides?: Partial<BusinessArtifact>, tasks?: Task[]) => {
+      const fixture = createFixture(
+        tasks ?? [createTaskRecord("task_1", "complete"), createTaskRecord("task_verifier", "queued"), createTaskRecord("task_consumer", "queued")],
+      );
+      const { repositories } = fixture;
+      repositories.createTaskDependency({ taskId: "task_verifier", dependsOnTaskId: "task_1", inputRole: "verification_target" });
+      repositories.createTaskDependency({ taskId: "task_consumer", dependsOnTaskId: "task_1" });
+      repositories.appendProof({ id: "proof_1", taskId: "task_1", type: "file", uri: "brief.md", summary: "brief", verifiedAt: null } satisfies Proof);
+      repositories.createBusinessArtifact(createBusinessArtifactRecord({ id: "artifact_1", taskId: "task_1", sourceProofId: "proof_1", payload: {} }));
+      if (verdictOverrides) {
+        repositories.createBusinessArtifact(
+          createBusinessArtifactRecord({ id: "verdict_1", taskId: "task_verifier", sourceProofId: null, payload: {}, ...verdictOverrides }),
+        );
+      }
+      return fixture;
+    };
+    const passedOn = (artifactId: string): Partial<BusinessArtifact> => ({
+      verification: {
+        outcome: "passed",
+        requirementsArtifactId: null,
+        requirements: [{ id: "r1", description: "The brief names one wedge." }],
+        targets: [{ taskId: "task_1", artifactId, revision: "rev" }],
+        checks: [{ requirementId: "r1", outcome: "passed", evidence: "It names one." }],
+        issues: [],
+      },
+    });
+
+    it("keeps an ordinary consumer waiting until the verdict exists, naming the verifier", () => {
+      const { repositories, client } = verifiedFixture();
+
+      expect(resolveDependencyReadiness(repositories, repositories.getTask("task_consumer")!)).toMatchObject({
+        kind: "waiting",
+        note: "Waiting for Task task_verifier to verify Task task_1.",
+        dependency: { id: "task_verifier" },
+      });
+      client.close();
+    });
+
+    it("never makes the verifier wait for its own verdict", () => {
+      const { repositories, client } = verifiedFixture();
+
+      expect(resolveDependencyReadiness(repositories, repositories.getTask("task_verifier")!).kind).toBe("ready");
+      client.close();
+    });
+
+    it("releases the consumer once the verdict passes on the artifact it consumes", () => {
+      const { repositories, client } = verifiedFixture(passedOn("artifact_1"));
+
+      expect(resolveDependencyReadiness(repositories, repositories.getTask("task_consumer")!).kind).toBe("ready");
+      client.close();
+    });
+
+    it("does not release the consumer on a verdict that judged an earlier version", () => {
+      const { repositories, client } = verifiedFixture(passedOn("artifact_superseded"));
+
+      expect(resolveDependencyReadiness(repositories, repositories.getTask("task_consumer")!).kind).toBe("waiting");
+      client.close();
+    });
+
+    it("blocks the consumer by name when the verification itself is blocked", () => {
+      const { repositories, client } = verifiedFixture(undefined, [
+        createTaskRecord("task_1", "complete"),
+        createTaskRecord("task_verifier", "blocked"),
+        createTaskRecord("task_consumer", "queued"),
+      ]);
+
+      expect(resolveDependencyReadiness(repositories, repositories.getTask("task_consumer")!)).toMatchObject({
+        kind: "blocked",
+        reason: "dependency_failed",
+        dependency: { id: "task_verifier" },
+      });
+      client.close();
+    });
+  });
+
   it("returns handoffs when every upstream dependency has an accepted current valid business artifact", () => {
     const { repositories, client } = createFixture([
       { ...createTaskRecord("task_1", "complete"), artifactWorkspacePath: "/tmp/artifact-workspace" },
@@ -301,6 +382,8 @@ function createBusinessArtifactRecord(
     reviewStatus: overrides.reviewStatus ?? "accepted",
     isCurrent: overrides.isCurrent ?? true,
     supersedesArtifactId: overrides.supersedesArtifactId ?? null,
+    ...(overrides.verification ? { verification: overrides.verification } : {}),
+    deliveryWorkspacePath: overrides.deliveryWorkspacePath ?? null,
     createdAt: overrides.createdAt ?? "2026-08-17T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-08-17T00:00:00.000Z",
   };

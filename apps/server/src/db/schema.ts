@@ -149,6 +149,26 @@ export function migrate(database: DatabaseClient): void {
       acquired_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS verification_reworks (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      verifier_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      failed_artifact_id TEXT NOT NULL,
+      round INTEGER NOT NULL,
+      decision TEXT NOT NULL,
+      producer_task_ids TEXT NOT NULL,
+      redelivered_task_ids TEXT NOT NULL,
+      failed_checks TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (verifier_task_id, failed_artifact_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS verification_handoffs (
+      task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+      inputs TEXT NOT NULL,
+      prepared_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS runtime_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -413,9 +433,12 @@ function migrateLocalizedBusinessContentFields(database: DatabaseClient): void {
   addColumnIfMissing(database, taskColumns, "tasks", "department_key TEXT");
   addColumnIfMissing(database, taskColumns, "tasks", "title_text TEXT");
   addColumnIfMissing(database, taskColumns, "tasks", "description_text TEXT");
+  addColumnIfMissing(database, taskColumns, "tasks", "verification_requirements TEXT");
+  addColumnIfMissing(database, taskColumns, "tasks", "decomposition TEXT");
 
   const dependencyColumns = getColumnNames(database, "task_dependencies");
   addColumnIfMissing(database, dependencyColumns, "task_dependencies", "handoff_contract_text TEXT");
+  addColumnIfMissing(database, dependencyColumns, "task_dependencies", "input_role TEXT NOT NULL DEFAULT 'context'");
 
   const ceoReviewDecisionColumns = getColumnNames(database, "ceo_review_decisions");
   addColumnIfMissing(database, ceoReviewDecisionColumns, "ceo_review_decisions", "note_text TEXT");
@@ -530,6 +553,8 @@ function migrateBusinessArtifactClassificationFields(database: DatabaseClient): 
   addColumnIfMissing(database, columns, "business_artifacts", "artifact_kind TEXT NOT NULL DEFAULT 'deliverable'");
   addColumnIfMissing(database, columns, "business_artifacts", "artifact_role TEXT NOT NULL DEFAULT 'none'");
   addColumnIfMissing(database, columns, "business_artifacts", "artifact_subtype TEXT NOT NULL DEFAULT 'legacy'");
+  addColumnIfMissing(database, columns, "business_artifacts", "verification TEXT");
+  addColumnIfMissing(database, columns, "business_artifacts", "delivery_workspace_path TEXT");
 }
 
 function addColumnIfMissing(

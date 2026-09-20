@@ -1,5 +1,6 @@
 import { localizedTextFromString, type Locale, type LocalizedText } from "./localizedText";
 import type { TaskHold } from "./taskHold";
+import { isVerificationSatisfied } from "./verification";
 import type {
   CompanyEvent, CompanyPlanSnapshot, AgentFailureReason, BusinessArtifact, CeoAttentionRollup, CeoReviewDecision, Company, FinalFounderReport,
   FounderDecision, FounderDecisionResolution, HumanAction, KeyResult, Objective, Task, TaskCompletionEvent,
@@ -416,6 +417,7 @@ function isPendingReviewArtifact(artifact: BusinessArtifact): boolean {
     artifact.isCurrent &&
     artifact.validationStatus === "valid" &&
     artifact.reviewStatus === "unreviewed" &&
+    isVerificationSatisfied(artifact) &&
     (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
   );
 }

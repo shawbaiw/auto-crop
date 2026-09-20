@@ -48,6 +48,18 @@ describe("resolveTaskCapabilityNeeds", () => {
     ]);
   });
 
+  /**
+   * A deliverable that only exists if something listens. Codex's sandbox denies every socket by
+   * default, so a local-URL task could not bind a port and a verifier of a served page could only
+   * report that it never ran the check (ADR 0031).
+   */
+  it("gives a task that must serve locally the local network, and no other task", () => {
+    expect(resolveTaskCapabilityNeeds(task("local-url", ["code", "frontend"]))).toContain("local_network");
+    expect(resolveTaskCapabilityNeeds(task("screenshot", ["test"]))).toContain("local_network");
+    expect(resolveTaskCapabilityNeeds(task("landing-page-file", ["code", "frontend"]))).not.toContain("local_network");
+    expect(resolveTaskCapabilityNeeds(task("research-report", ["research"]))).not.toContain("local_network");
+  });
+
   it("never grants a capability the task did not need, whatever the mode allows", () => {
     const grant = resolveAgentCapabilityGrant({
       needs: resolveTaskCapabilityNeeds(task("research-report", ["research"])),

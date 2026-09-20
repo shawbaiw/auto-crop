@@ -12,6 +12,7 @@ export const runtimeCapabilities = [
   "workspace_read",
   "workspace_write",
   "run_command",
+  "local_network",
   "web_research",
 ] as const;
 
@@ -38,6 +39,10 @@ const capabilityGate: Record<RuntimeCapability, ActionType> = {
   workspace_read: "read_workspace",
   workspace_write: "write_workspace",
   run_command: "run_safe_command",
+  // Serving and reaching 127.0.0.1 is a local command, not access to the public web: it gates with the
+  // shell rather than with `read_public_web`, which would let an `autonomous` company's web grant
+  // decide whether a prototype may be served.
+  local_network: "run_safe_command",
   web_research: "read_public_web",
 };
 
@@ -53,6 +58,13 @@ const webResearchAgentCapabilities = new Set(["research"]);
 const webResearchProofSchemas = new Set(["research-report"]);
 const runCommandAgentCapabilities = new Set(["code", "frontend", "test", "refactor"]);
 const runCommandProofSchemas = new Set(["repo-diff", "test-output", "landing-page-file"]);
+/**
+ * Deliverables that exist only if something listens: a local URL to open, a screenshot of a served
+ * page. Without this capability a Codex run cannot bind a port at all — `python3 -m http.server`
+ * fails with `Operation not permitted` — and a verifier asked to check a served page can only report
+ * that it could not run the check (ADR 0031).
+ */
+const localNetworkProofSchemas = new Set(["local-url", "screenshot"]);
 
 /**
  * What this task needs to be doable, derived from the shape of its deliverable.
@@ -79,6 +91,11 @@ export function resolveTaskCapabilityNeeds(
     runCommandProofSchemas.has(task.proofSchemaId)
   ) {
     needs.add("run_command");
+  }
+
+  if (localNetworkProofSchemas.has(task.proofSchemaId)) {
+    needs.add("run_command");
+    needs.add("local_network");
   }
 
   return sortCapabilities([...needs]);
@@ -148,6 +165,7 @@ const capabilityDescriptions: Record<RuntimeCapability, string> = {
   workspace_read: "read files inside this workspace",
   workspace_write: "create and edit files inside this workspace",
   run_command: "run shell commands",
+  local_network: "serve and reach 127.0.0.1 from inside this run",
   web_research: "search the public web and fetch pages (WebSearch, WebFetch)",
 };
 

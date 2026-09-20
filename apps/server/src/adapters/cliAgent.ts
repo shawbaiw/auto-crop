@@ -201,11 +201,25 @@ const CLAUDE_TOOLS_BY_CAPABILITY: Record<RuntimeCapability, string[]> = {
   workspace_read: ["Read", "Glob", "Grep"],
   workspace_write: ["Write", "Edit"],
   run_command: ["Bash"],
+  // Claude Code has no tool for this and no flag that withholds it: its `Bash` tool can already bind a
+  // local port. Granting adds nothing here; withholding is what it cannot express (ADR 0031).
+  local_network: [],
   web_research: ["WebSearch", "WebFetch"],
 };
 
 export function claudeToolsForGrant(grant: AgentCapabilityGrant): string[] {
   return grant.granted.flatMap((capability) => CLAUDE_TOOLS_BY_CAPABILITY[capability]);
+}
+
+/**
+ * The Codex sandbox a grant maps to. Codex has no tool list to narrow: its sandbox is the only control,
+ * and it decides whether the workspace is writable, not whether a shell exists — a `read-only` run can
+ * still execute commands, it just cannot write. So `workspace_write` is what selects `workspace-write`.
+ * Keying it on `run_command` instead launched every write-without-shell grant read-only, and the run
+ * could not even write the Business Artifact it was required to deliver.
+ */
+export function codexSandboxForGrant(grant: AgentCapabilityGrant): "workspace-write" | "read-only" {
+  return grant.granted.includes("workspace_write") ? "workspace-write" : "read-only";
 }
 
 /**
@@ -290,10 +304,14 @@ export function createCodexAdapter(
           "--ignore-rules",
           "--skip-git-repo-check",
           flagSpelling(support, "--sandbox", "-s"),
-          grant.granted.includes("run_command") ? "workspace-write" : "read-only",
+          codexSandboxForGrant(grant),
           "--ephemeral",
           flagSpelling(support, "-c", "--config"),
           `tools.web_search=${grant.granted.includes("web_research")}`,
+          // Codex's workspace-write sandbox denies every socket unless this is on, so a run that must
+          // serve or reach 127.0.0.1 cannot without it — and a run that must not, cannot with it.
+          flagSpelling(support, "-c", "--config"),
+          `sandbox_workspace_write.network_access=${grant.granted.includes("local_network")}`,
           prompt,
         ],
       };
@@ -436,15 +454,36 @@ function runCommand(
       }
       settled = true;
       clearTimeout(timeout);
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
       resolve({
         status: code === 0 ? "complete" : "failed",
         exitCode: code,
-        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf8"),
-        failureReason: code === 0 ? undefined : "agent_failed",
+        stdout,
+        stderr,
+        failureReason:
+          code === 0 ? undefined : isQuotaExhaustedOutput(`${stdout}\n${stderr}`) ? "agent_quota_exhausted" : "agent_failed",
       });
     });
   });
+}
+
+/**
+ * Whether a CLI stopped because its account is out of quota rather than because the work failed.
+ *
+ * This reads the CLI's own operational message, not the agent's reply — the distinction the runtime
+ * keeps everywhere else. There is no exit code or structured field for it on either CLI, and the
+ * alternative is to record a quota outage as a failed attempt by the agent: a wrong cause, and one
+ * that burns the task's recovery ceiling while the account waits to reset (ADR 0032).
+ */
+export function isQuotaExhaustedOutput(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("session limit") ||
+    normalized.includes("usage limit") ||
+    normalized.includes("quota exceeded") ||
+    normalized.includes("rate limit reached")
+  );
 }
 
 function splitCommand(command: string): string[] {

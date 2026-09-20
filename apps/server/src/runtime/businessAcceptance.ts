@@ -1,11 +1,12 @@
-import type {
-  BusinessArtifact,
-  KeyResult,
-  LocalizedText,
-  Task,
-  TaskAcceptanceProvenance,
-  TaskEvent,
-  TaskEventType,
+import {
+  isVerificationSatisfied,
+  type BusinessArtifact,
+  type KeyResult,
+  type LocalizedText,
+  type Task,
+  type TaskAcceptanceProvenance,
+  type TaskEvent,
+  type TaskEventType,
 } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { propagateDependencyCascade, type DependencyCascadeResult } from "./dependencyCascade";
@@ -13,11 +14,14 @@ import { applyTaskTransition } from "./taskTransition";
 import type { FounderDecisionDeclaration } from "./founderDecision";
 import { createDefaultId } from "./ids";
 import { recordTaskCompletionEvent } from "./taskCompletion";
+import { isVerificationCurrent, isVerifyingTask } from "./verificationContract";
 
 export type BusinessAcceptanceResult = {
   dependencyCascade?: DependencyCascadeResult;
   event: TaskEvent;
   task: Task;
+  /** The artifact was already accepted and the task already complete; nothing was written again. */
+  alreadyAccepted?: boolean;
 };
 
 export function acceptTaskBusinessArtifact(input: {
@@ -50,6 +54,35 @@ export function acceptTaskBusinessArtifact(input: {
   now?: () => Date;
   createId?: (prefix: string) => string;
 }): BusinessAcceptanceResult {
+  // Every acceptance path — automatic, CEO review, Founder Decision, reconciliation — lands here, so
+  // this is where a failed or inconclusive verification is refused, whichever caller forgot to check.
+  if (!isVerificationSatisfied(input.artifact)) {
+    throw new Error(
+      `Business artifact ${input.artifact.id} cannot be accepted: verification is ${input.artifact.verification?.outcome}.`,
+    );
+  }
+  // "No verdict" only means "not under the contract" for a task without verification duty. A verifier's
+  // artifact without one was never judged, whatever kind it was filed as.
+  if (isVerifyingTask(input.repositories, input.task) && !input.artifact.verification) {
+    throw new Error(`Business artifact ${input.artifact.id} cannot be accepted: ${input.task.title} verifies upstream output and recorded no verdict.`);
+  }
+  if (!isVerificationCurrent(input.repositories, input.artifact)) {
+    throw new Error(`Business artifact ${input.artifact.id} cannot be accepted: the output it verified has since been superseded.`);
+  }
+  // Idempotent: accepting what is already accepted records nothing a second time — no second event,
+  // Task Completion Event, key-result update or cascade. Two delivery paths can reach the same artifact.
+  const storedArtifact = input.repositories.getCurrentBusinessArtifactForTask(input.task.id);
+  const storedTask = input.repositories.getTask(input.task.id);
+  if (storedArtifact?.id === input.artifact.id && storedArtifact.reviewStatus === "accepted" && storedTask?.status === "complete") {
+    const previous = input.repositories
+      .listTaskEventsForCompany(input.task.companyId)
+      .filter((event) => event.taskId === input.task.id && event.status === "complete")
+      .at(-1);
+    if (previous) {
+      return { event: previous, task: storedTask, alreadyAccepted: true };
+    }
+  }
+
   const timestamp = (input.now ?? (() => new Date()))().toISOString();
 
   input.repositories.updateBusinessArtifactReviewStatus(input.artifact.id, "accepted", timestamp);
@@ -62,7 +95,8 @@ export function acceptTaskBusinessArtifact(input: {
     now: input.now,
     createId: input.createId,
   });
-  if (input.task.keyResultId && input.keyResultProgress) {
+  // An internal delivery never moves a key result on its own; the parent's accepted result does, once.
+  if (input.task.keyResultId && input.keyResultProgress && (input.task.taskKind ?? "parent") !== "department_subtask") {
     input.repositories.updateKeyResultProgress(
       input.task.keyResultId,
       input.keyResultProgress.currentValue,
@@ -87,6 +121,7 @@ export function acceptTaskBusinessArtifact(input: {
     artifactWorkspacePath: input.task.artifactWorkspacePath ?? null,
   };
   input.repositories.appendTaskEvent(event);
+  archiveAggregatedSubtasks(input);
   const dependencyCascade = input.dependencyCascade
     ? propagateDependencyCascade({
       repositories: input.repositories,
@@ -129,6 +164,40 @@ export function acceptTaskBusinessArtifact(input: {
 }
 
 /**
+ * The parent's result is accepted, so the subtasks it aggregated are done. Their internal Hold ends as
+ * `cleared` — the parent aggregating them is the event it waited for. Their artifacts stay unreviewed:
+ * no CEO approval is fabricated for them, and an ordinary consumer still cannot take them.
+ */
+function archiveAggregatedSubtasks(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  task: Task;
+  now?: () => Date;
+  createId?: (prefix: string) => string;
+}): void {
+  if ((input.task.taskKind ?? "parent") !== "parent") {
+    return;
+  }
+  for (const dependency of input.repositories.listTaskDependencies(input.task.id)) {
+    const subtask = input.repositories.getTask(dependency.dependsOnTaskId);
+    if (!subtask || subtask.parentTaskId !== input.task.id || subtask.status !== "review") {
+      continue;
+    }
+    const openHolds = input.repositories.listOpenTaskHolds(subtask.id);
+    if (openHolds.length === 0 || openHolds.some((hold) => hold.kind !== "awaiting_parent_aggregation")) {
+      continue;
+    }
+    applyTaskTransition({
+      repositories: input.repositories,
+      task: subtask,
+      status: "complete",
+      resolution: "cleared",
+      now: input.now,
+      createId: input.createId,
+    });
+  }
+}
+
+/**
  * Accept a deliverable on the Automatic Acceptance path: {@link acceptTaskBusinessArtifact} with
  * provenance and event type `automatic_acceptance`, the key result marked met, and a bounded
  * dependency cascade. Shared by the scheduler's completion branch and the ADR 0017 migration
@@ -160,7 +229,8 @@ export function acceptDeliverableAutomatically(input: {
     now: input.now,
     createId: input.createId,
   });
-  const events: TaskEvent[] = [
+  // An acceptance that was already recorded appends nothing, so there is nothing new to emit.
+  const events: TaskEvent[] = acceptance.alreadyAccepted ? [] : [
     acceptance.event,
     ...(acceptance.dependencyCascade?.updatedTasks ?? []).flatMap((update) =>
       update.event ? [update.event] : [],

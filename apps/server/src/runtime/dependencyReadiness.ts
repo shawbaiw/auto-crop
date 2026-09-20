@@ -1,7 +1,8 @@
-import type { BusinessArtifact, Proof, Task } from "@auto-crop/core";
+import { isVerificationSatisfied, type BusinessArtifact, type Proof, type Task } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { collectFounderDecisions } from "./ceoAttention";
 import { getHandoffPackageManifestPath } from "./proof";
+import { isVerificationCurrent, verifiersOf } from "./verificationContract";
 
 export type TaskHandoff = {
   upstreamTaskId: string;
@@ -45,6 +46,24 @@ export function resolveDependencyReadiness(
     const upstream = repositories.getTask(dependency.dependsOnTaskId);
 
     if (!upstream) {
+      continue;
+    }
+
+    const relation = classifyDependency(task, upstream);
+    if (relation === "cross_company") {
+      return {
+        kind: "blocked",
+        reason: "dependency_failed",
+        note: `Refused dependency across companies: ${upstream.title}.`,
+        dependency: upstream,
+      };
+    }
+    if (relation === "internal") {
+      const internal = resolveInternalDependency(repositories, upstream, dependency.handoffContract ?? null);
+      if (internal.kind !== "ready") {
+        return internal;
+      }
+      handoffs.push(internal.handoff);
       continue;
     }
 
@@ -101,11 +120,171 @@ export function resolveDependencyReadiness(
       };
     }
 
+    if (!isVerificationCurrent(repositories, artifact)) {
+      return {
+        kind: "missing_deliverable",
+        note: `Verification by ${upstream.title} covers an output that has since been superseded.`,
+        dependency: upstream,
+      };
+    }
+
+    // A plan that declares who verifies this output has said the output is not usable until that
+    // verdict exists. Consuming it earlier is what let a prototype be built from a brief whose
+    // verification never passed — the plan's own verification edge, ignored by everyone but the
+    // verifier (ADR 0030).
+    const unverified = pendingVerificationOf(repositories, task, upstream, artifact);
+    if (unverified) {
+      return unverified;
+    }
+
     const sourceProof = artifact.sourceProofId ? repositories.listProofsForTask(upstream.id).find((proof) => proof.id === artifact.sourceProofId) : null;
     handoffs.push(createTaskHandoff(upstream, artifact, sourceProof ?? null, dependency.handoffContract ?? null));
   }
 
   return { kind: "ready", handoffs };
+}
+
+/**
+ * The verdict a consumer still waits on, or null when the output is free to consume.
+ *
+ * Checked against the artifact being consumed, so a verdict on a superseded version does not release
+ * a new one. A verifier consuming its own target is exempt: it is the one being waited for.
+ */
+function pendingVerificationOf(
+  repositories: ReturnType<typeof createRepositories>,
+  consumer: Task,
+  upstream: Task,
+  artifact: BusinessArtifact,
+): Exclude<DependencyReadiness, { kind: "ready" }> | null {
+  for (const verifier of verifiersOf(repositories, upstream.id)) {
+    if (verifier.id === consumer.id) {
+      continue;
+    }
+    const verdict = repositories.getCurrentBusinessArtifactForTask(verifier.id);
+    const judged = verdict?.verification?.targets.some((target) => target.artifactId === artifact.id) ?? false;
+    if (judged && verdict && isVerificationSatisfied(verdict) && isVerificationCurrent(repositories, verdict)) {
+      continue;
+    }
+    if (isFailedDependencyStatus(verifier.status) || verifier.status === "needs_replan") {
+      return {
+        kind: "blocked",
+        reason: verifier.status === "needs_replan" ? "needs_replan" : "dependency_failed",
+        note: `Blocked by verification of ${upstream.title}: ${verifier.title} (${verifier.status}).`,
+        dependency: verifier,
+      };
+    }
+    return {
+      kind: "waiting",
+      note: `Waiting for ${verifier.title} to verify ${upstream.title}.`,
+      dependency: verifier,
+    };
+  }
+  return null;
+}
+
+/**
+ * Whether a dependency is department-internal consumption or ordinary consumption.
+ *
+ * A department subtask's output is internal: its siblings under the same parent and the parent itself
+ * consume it without CEO Office acceptance, because CEO Office reviews the parent's summarized result
+ * (ADR 0007). Everything else — including a subtask consumed from outside its parent — is ordinary and
+ * needs an accepted artifact. Kept in this one resolver so dispatch, parent aggregation, the dependency
+ * cascade and Hold reconciliation cannot answer "is it ready?" differently for the same facts.
+ */
+export function classifyDependency(consumer: Task, upstream: Task): "internal" | "ordinary" | "cross_company" {
+  if (consumer.companyId !== upstream.companyId) {
+    return "cross_company";
+  }
+  if ((upstream.taskKind ?? "parent") !== "department_subtask" || !upstream.parentTaskId) {
+    return "ordinary";
+  }
+  const consumerIsParent = consumer.id === upstream.parentTaskId;
+  const consumerIsSibling =
+    (consumer.taskKind ?? "parent") === "department_subtask" && consumer.parentTaskId === upstream.parentTaskId;
+  return consumerIsParent || consumerIsSibling ? "internal" : "ordinary";
+}
+
+/**
+ * Internal readiness: the subtask delivered a current, valid artifact with Proof, any verification it
+ * carries passed against still-current targets, and nothing but the parent's own aggregation holds it.
+ * `review` plus Proof alone is not enough — a genuine Founder Decision, a CEO review Hold, or a failed
+ * verification still stops consumption.
+ */
+function resolveInternalDependency(
+  repositories: ReturnType<typeof createRepositories>,
+  upstream: Task,
+  handoffContract: string | null,
+): { kind: "ready"; handoff: TaskHandoff } | Exclude<DependencyReadiness, { kind: "ready" }> {
+  if (upstream.status === "needs_replan") {
+    return {
+      kind: "blocked",
+      reason: "needs_replan",
+      note: `Waiting for department subtask to be replanned: ${upstream.title}.`,
+      dependency: upstream,
+    };
+  }
+  if (isFailedDependencyStatus(upstream.status)) {
+    return {
+      kind: "blocked",
+      reason: "dependency_failed",
+      note: `Blocked by department subtask: ${upstream.title} (${upstream.status}).`,
+      dependency: upstream,
+    };
+  }
+  if (upstream.status !== "review" && upstream.status !== "complete") {
+    return {
+      kind: "waiting",
+      note: `Waiting for department subtask deliverable: ${upstream.title} (${upstream.status}).`,
+      dependency: upstream,
+    };
+  }
+
+  const pendingDecision = waitingOnFounderDecision(repositories, upstream);
+  if (pendingDecision) {
+    return {
+      kind: "waiting",
+      note: pendingDecision.note,
+      dependency: upstream,
+      waitingOnDecision: true,
+      founderDecisionId: pendingDecision.founderDecisionId,
+    };
+  }
+  const otherHold = repositories
+    .listOpenTaskHolds(upstream.id)
+    .find((hold) => hold.kind !== "awaiting_parent_aggregation");
+  if (otherHold) {
+    return {
+      kind: "waiting",
+      note: `Waiting for department subtask: ${upstream.title} (${otherHold.kind}).`,
+      dependency: upstream,
+    };
+  }
+
+  const artifact = repositories.getCurrentBusinessArtifactForTask(upstream.id);
+  const proofs = repositories.listProofsForTask(upstream.id);
+  if (
+    !artifact ||
+    proofs.length === 0 ||
+    !artifact.isCurrent ||
+    artifact.validationStatus !== "valid" ||
+    (artifact.artifactKind !== "deliverable" && artifact.artifactKind !== "final_report")
+  ) {
+    return {
+      kind: "missing_deliverable",
+      note: `Missing department subtask proof: ${upstream.title}.`,
+      dependency: upstream,
+    };
+  }
+  if (!isVerificationSatisfied(artifact) || !isVerificationCurrent(repositories, artifact)) {
+    return {
+      kind: "missing_deliverable",
+      note: `Department subtask verification does not cover the current output: ${upstream.title}.`,
+      dependency: upstream,
+    };
+  }
+
+  const sourceProof = artifact.sourceProofId ? proofs.find((proof) => proof.id === artifact.sourceProofId) : null;
+  return { kind: "ready", handoff: createTaskHandoff(upstream, artifact, sourceProof ?? proofs[0] ?? null, handoffContract) };
 }
 
 /**
@@ -153,6 +332,7 @@ function isAcceptedBusinessArtifact(artifact: BusinessArtifact | null): artifact
     artifact.isCurrent &&
     artifact.validationStatus === "valid" &&
     artifact.reviewStatus === "accepted" &&
+    isVerificationSatisfied(artifact) &&
     (artifact.artifactKind === "deliverable" || artifact.artifactKind === "final_report")
   );
 }

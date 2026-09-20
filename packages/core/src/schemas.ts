@@ -33,6 +33,7 @@ export const taskSourceSchema = z.enum(["ceo", "department", "user"]);
 
 export const taskHoldKindSchema = z.enum([
   "awaiting_ceo_review",
+  "awaiting_parent_aggregation",
   "awaiting_founder_approval",
   "awaiting_human_action",
   "awaiting_founder_decision",
@@ -41,6 +42,7 @@ export const taskHoldKindSchema = z.enum([
   "invalid_business_artifact",
   "recovery_exhausted",
   "needs_replan",
+  "verification_failed",
   "runtime_interrupted",
 ]);
 export const taskHoldResolverSchema = z.enum(["ceo_office", "founder", "upstream_task", "runtime", "time"]);
@@ -77,6 +79,7 @@ export const agentFailureReasonSchema = z.enum([
   "retry_exhausted",
   "needs_replan",
   "rate_limited",
+  "verification_failed",
 ]);
 
 export const taskEventTypeSchema = z.enum([
@@ -427,6 +430,30 @@ export const objectiveBlueprintSchema = z.object({
   keyResults: z.array(keyResultBlueprintSchema).min(1),
 });
 
+export const verificationRequirementSchema = z.object({
+  id: taskKeySchema,
+  description: nonEmptyString,
+});
+
+/**
+ * What a planned task verifies. Required on every task as either null or an object, so a plan states
+ * verification duty explicitly: the runtime cannot infer it — the same proof schema serves verifying and
+ * non-verifying tasks alike (ADR 0025).
+ */
+export const blueprintTaskVerificationSchema = z.object({
+  targetTaskKeys: z.array(taskKeySchema).min(1),
+  requirements: z.array(verificationRequirementSchema).min(1),
+});
+
+/**
+ * Whether a department splits this task, and into what. Required on every task as either null or a
+ * template, so the plan says it: the runtime used to decide by matching "prototype" and "validate" in
+ * the title and description, and company creation appended guidance containing those very words.
+ */
+export const blueprintTaskDecompositionSchema = z.object({
+  template: z.literal("define_execute_validate"),
+});
+
 export const taskSchema = z.object({
   key: taskKeySchema,
   departmentKey: taskKeySchema.optional(),
@@ -442,6 +469,8 @@ export const taskSchema = z.object({
   dependsOnTaskKeys: z.array(taskKeySchema).default([]),
   handoffContract: nonEmptyString,
   handoffContractText: localizedTextSchema.optional(),
+  verification: blueprintTaskVerificationSchema.nullable(),
+  decomposition: blueprintTaskDecompositionSchema.nullable(),
 });
 
 export const companyBlueprintSchema = z
@@ -515,6 +544,38 @@ export const companyBlueprintSchema = z
             message: `Task dependencies must reference earlier task keys: ${dependencyKey}`,
           });
         }
+      });
+
+      // A verification with no real target or no requirements cannot be enforced at run time; it is a
+      // planning error here rather than a verifier that later reports on nothing.
+      task.verification?.targetTaskKeys.forEach((targetKey, targetIndex) => {
+        const targetPath = ["tasks", index, "verification", "targetTaskKeys", targetIndex];
+        const targetTaskIndex = taskIndexesByKey.get(targetKey);
+        if (targetTaskIndex === undefined) {
+          context.addIssue({ code: "custom", path: targetPath, message: `Verification references missing task key: ${targetKey}` });
+        } else if (targetTaskIndex >= index) {
+          context.addIssue({ code: "custom", path: targetPath, message: `Verification must target earlier task keys: ${targetKey}` });
+        }
+      });
+      // A verifier is judged against a snapshot of someone else's output; a split turns the task into
+      // three stages with their own delivery. A task cannot be both (ADR 0025).
+      if (task.verification && task.decomposition) {
+        context.addIssue({
+          code: "custom",
+          path: ["tasks", index, "decomposition"],
+          message: "A verification task cannot declare a decomposition.",
+        });
+      }
+      const requirementIds = new Set<string>();
+      task.verification?.requirements.forEach((requirement, requirementIndex) => {
+        if (requirementIds.has(requirement.id)) {
+          context.addIssue({
+            code: "custom",
+            path: ["tasks", index, "verification", "requirements", requirementIndex, "id"],
+            message: `Duplicate verification requirement id: ${requirement.id}`,
+          });
+        }
+        requirementIds.add(requirement.id);
       });
     });
   });

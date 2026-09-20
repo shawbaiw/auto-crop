@@ -1,5 +1,5 @@
-import { prepareExecutionBrief } from "./executionBrief";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { EXECUTION_BRIEF_TIMEOUT_MS, prepareExecutionBrief } from "./executionBrief";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveLaunchableAdapter } from "../adapters/registry";
 import type { AdapterLaunchSupport } from "../adapters/launchPolicy";
@@ -12,24 +12,23 @@ import {
   resolveTaskCapabilityNeeds,
   type AgentCapabilityGrant,
 } from "../policies/capabilityGrant";
-import type {
-  AgentFailureReason,
-  BusinessArtifact,
-  Company,
-  Proof,
-  Task,
-  TaskEvent,
-  TaskProgressEvent,
-  TaskStatus,
+import {
+  type AgentFailureReason,
+  type BusinessArtifact,
+  type Company,
+  type DependencyInputRole,
+  type Proof,
+  type Task,
+  type TaskEvent,
+  type TaskProgressEvent,
+  type TaskStatus,
 } from "@auto-crop/core";
-import { evaluateAutomaticAcceptance } from "./automaticAcceptance";
 import {
   MAX_TASK_ATTEMPTS,
   retryExhaustedFailureMessage,
   taskAttemptCount,
   terminateAsRetryExhausted as terminateTaskAsRetryExhausted,
 } from "./boundedRecovery";
-import { acceptDeliverableAutomatically } from "./businessAcceptance";
 import {
   captureBusinessArtifact,
   isReviewableBusinessArtifact,
@@ -37,12 +36,13 @@ import {
   verifyEnvironmentBlockerClaim,
 } from "./businessArtifact";
 import type { AgentSessionManager } from "./agentSessions";
+import { repairBusinessArtifactSyntax, type ArtifactSyntaxRepair } from "./artifactSyntaxRepair";
 import { projectCeoAttention } from "./ceoAttention";
 import { classifyFinalFounderReport, isCompanyQuiescent } from "./companyQuiescence";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { generateFinalFounderReport, hasWorkCompletedSinceReport } from "./finalFounderReport";
-import { parseOpenDecisions } from "./founderDecision";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
+import { finalizeDelivery } from "./deliveryFinalization";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { buildProofContractInstructions } from "./proofContract";
@@ -51,6 +51,13 @@ import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
 import { applyTaskTransition } from "./taskTransition";
+import { pendingReworkFeedback } from "./verificationRework";
+import {
+  isVerifyingTask,
+  prepareVerificationInputs,
+  producesVerificationRequirements,
+  resolveCaptureVerificationContext,
+} from "./verificationContract";
 import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./workspace";
 
 export type SchedulerFailureReason = AgentFailureReason;
@@ -313,12 +320,34 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           if (!task.workspacePath) {
             input.repositories.updateTaskWorkspacePath(task.id, taskWorkspace.root);
           }
-          const runWorkspacePath = resolveRunWorkspace(input.repositories, task) ?? taskWorkspace.root;
+          const verifying = isVerifyingTask(input.repositories, task);
+          const runWorkspacePath = verifying
+            ? taskWorkspace.root
+            : resolveRunWorkspace(input.repositories, task) ?? taskWorkspace.root;
+          const verificationPreparation = prepareVerificationInputs({
+            repositories: input.repositories,
+            task,
+            workspacePath: runWorkspacePath,
+            now,
+          });
+          if (verificationPreparation.kind === "handoff_failed") {
+            // A verifier started on missing input would report on an empty directory and exit cleanly.
+            // Stop before the run, naming the producer whose output could not be handed over.
+            blockTaskForMissingDeliverable(input, task, verificationPreparation.producer, verificationPreparation.message);
+            result.blocked.push(task.id);
+            return;
+          }
+          const verificationPromptContext = {
+            producesRequirements: producesVerificationRequirements(input.repositories, task),
+            inputs: verificationPreparation.kind === "ready" ? verificationPreparation.inputs : null,
+          };
 
           const logPath = createLogPath(input.projectRoot, task);
           let timeoutResolution = initialTimeoutResolution;
           let agentRunId = "";
           let agentResult: AgentRunResult | null = null;
+          let preparationFailed = false;
+          let preparationTimeoutMs = EXECUTION_BRIEF_TIMEOUT_MS;
 
           while (true) {
             agentRunId = createId("agent_run");
@@ -351,7 +380,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               grant,
             };
             const preparationStartedAt = now().getTime();
-            const preparation = await prepareExecutionBrief({ adapter, request: { ...request, timeoutMs: Math.min(request.timeoutMs, 60_000) }, company, task, handoffs });
+            preparationTimeoutMs = Math.min(request.timeoutMs, EXECUTION_BRIEF_TIMEOUT_MS);
+            const preparation = await prepareExecutionBrief({ adapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs });
             const remainingMs = request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
             if (preparation.brief && remainingMs > 0) {
               appendAndEmitTaskEvent(input, {
@@ -369,11 +399,29 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               agentResult = await adapter.run({
                 ...request,
                 timeoutMs: remainingMs,
-                prompt: buildTaskExecutionPrompt({ task, company, handoffs, grant }) +
+                prompt: buildTaskExecutionPrompt({
+                  task,
+                  company,
+                  handoffs,
+                  grant,
+                  verification: verificationPromptContext,
+                  rework: pendingReworkFeedback(input.repositories, task),
+                }) +
                   `\n\n## Your announced execution plan\n${JSON.stringify(preparation.brief)}\nCarry out this plan. Explain material deviations in the final report.`,
               });
             } else {
-              agentResult = remainingMs <= 0 ? { ...preparation.result, status: "failed", failureReason: "timeout" } : preparation.result;
+              // Preparation failed, so substantive work was never dispatched. Its budget is the
+              // preparation cap, not the task's: reporting the task's budget sent the next reader to
+              // a run that never happened, and escalating to a longer task budget bought a second
+              // failure at the same 60s cap (ADR 0032).
+              agentResult = {
+                ...preparation.result,
+                status: "failed",
+                failureReason: remainingMs <= 0 ? "timeout" : (preparation.result.failureReason ?? "agent_failed"),
+                stderr: preparation.result.stderr.trim()
+                  || `The execution brief did not complete within ${formatExecutionBudget(preparationTimeoutMs)}; substantive work was not dispatched.`,
+              };
+              preparationFailed = true;
             }
             const logContent = [
               `# Agent Run ${agentRunId}`,
@@ -397,7 +445,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
             const failureReason =
               agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : null;
-            const retryTimeoutResolution = failureReason === "timeout" ? resolveRetryTimeout(timeoutResolution) : null;
+            // A preparation timeout is capped by the brief's own budget, so a longer task budget
+            // cannot change its outcome; only a substantive run earns an escalation.
+            const retryTimeoutResolution =
+              failureReason === "timeout" && !preparationFailed ? resolveRetryTimeout(timeoutResolution) : null;
 
             if (!retryTimeoutResolution) {
               break;
@@ -440,6 +491,34 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           if (!agentResult) {
             throw new Error(`No agent result produced for task ${task.id}`);
+          }
+
+          // A delivery whose artifact file does not parse gets one narrow syntax repair before capture,
+          // so everything downstream — proof, validation, finalization — reads the file it leaves.
+          if (agentResult.status === "complete") {
+            const repair = await repairBusinessArtifactSyntax({
+              adapter,
+              request: {
+                taskId: task.id,
+                promptPath: "",
+                workspacePath: runWorkspacePath,
+                metadata: { departmentId: task.departmentId, proofSchemaId: task.proofSchemaId },
+              },
+              grant,
+            });
+            if (repair) {
+              appendFileSync(
+                logPath,
+                ["## Artifact syntax repair", `outcome: ${repair.outcome}`, `syntaxError: ${repair.syntaxError}`, "", repair.result.stdout, repair.result.stderr, ""].join("\n"),
+                "utf8",
+              );
+              appendAndEmitTaskEvent(input, {
+                task,
+                type: "task_warning",
+                message: artifactSyntaxRepairMessage(task, repair),
+                status: "running",
+              });
+            }
           }
 
           let proof: Proof[] = [];
@@ -526,6 +605,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               workspacePath: runWorkspacePath,
               locale: input.repositories.getCompany(task.companyId)?.locale ?? "en",
               environmentBlockerVerification,
+              verificationContext: resolveCaptureVerificationContext(input.repositories, task, runWorkspacePath),
               now,
               createId,
             });
@@ -543,7 +623,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           if ((agentResult.status !== "complete" || proof.length === 0) && !environmentBlockerDegraded) {
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
-            if (failureReason === "timeout" && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
+            // A brief that timed out says nothing about whether the task fits its budget, so it is
+            // not evidence for a replan either.
+            if (failureReason === "timeout" && !preparationFailed && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
               const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
               applyTaskTransition({
                 repositories: input.repositories,
@@ -589,12 +671,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
               return;
             }
-            const failure = failureMessage(
-              task,
-              failureReason,
-              timeoutResolution.effectiveTimeoutMs,
-              refutedCapability,
-            );
+            const failure = preparationFailed
+              ? `Task failed: ${task.title} / ${failureReason} / the execution brief did not complete within ${formatExecutionBudget(preparationTimeoutMs)}; substantive work was not dispatched.`
+              : failureMessage(task, failureReason, timeoutResolution.effectiveTimeoutMs, refutedCapability);
             applyTaskTransition({
               repositories: input.repositories,
               task,
@@ -641,7 +720,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             return;
           }
 
-          if (!businessArtifact || !isReviewableBusinessArtifact(businessArtifact)) {
+          // A valid report whose verification verdict did not pass is a delivery with an outcome, not an
+          // artifact to recapture: it goes to finalization like any other delivery.
+          const deliveredWithVerdict = Boolean(
+            businessArtifact?.verification && businessArtifact.validationStatus === "valid",
+          );
+          if (!businessArtifact || (!isReviewableBusinessArtifact(businessArtifact) && !deliveredWithVerdict)) {
             if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
               return;
             }
@@ -706,115 +790,25 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           if (task.artifactWorkspacePath && task.artifactWorkspacePath !== runWorkspacePath) {
             input.repositories.updateTaskArtifactWorkspacePath(task.id, runWorkspacePath);
           }
+          // The run did its job whatever the delivery's outcome — a failed verdict included.
           input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
-          const automaticAcceptance = evaluateAutomaticAcceptance({ task, artifact: businessArtifact });
-          if (automaticAcceptance.kind === "accept") {
-            // A deliverable that would otherwise auto-accept but declares one or more kept Founder
-            // Decisions is not accepted and is not routed to manual CEO review: the choice is the
-            // founder's to make. Record the Task Completion Event (carrying the founder_decision
-            // items and the Task Outcome Summary) and stop. Downstream dependency readiness keeps
-            // blocking on the non-accepted upstream. A risk-pattern hit takes precedence — it lands
-            // in the `requires_review` branch below before this check runs.
-            const founderDecisions = parseOpenDecisions(
-              businessArtifact.payload,
-              input.repositories.getCompany(task.companyId)?.locale ?? "en",
-            ).kept;
-            if (founderDecisions.length > 0) {
-              // Parked in `review` but owned by the founder, not CEO Office: the Hold says so, which
-              // is why this task is not offered as an approvable review item.
-              applyTaskTransition({
-                repositories: input.repositories,
-                task,
-                status: "review",
-                hold: {
-                  kind: "awaiting_founder_decision",
-                  resolver: "founder",
-                  subjectKind: "business_artifact",
-                  subjectId: businessArtifact.id,
-                  reason: `${task.title} declares a Founder Decision that must be made before it can be accepted.`,
-                },
-                now,
-                createId,
-              });
-              recordTaskCompletionEvent({
-                repositories: input.repositories,
-                task,
-                businessArtifact,
-                outcome: "awaiting_founder_decision",
-                founderDecisions,
-                founderDecisionBlockedTaskIds: input.repositories
-                  .listDependencyConsumers(task.id)
-                  .map((consumer) => consumer.id),
-                now,
-                createId,
-              });
-              appendTaskProgressEvent(input, {
-                task,
-                step: "awaiting_review",
-                status: "current",
-                label: "Awaiting founder decision",
-                subjectTaskId: task.id,
-              });
-              emitParentTaskAggregationEvents(input, task);
-              result.completed.push(task.id);
-              return;
-            }
-
-            const accepted = acceptDeliverableAutomatically({
-              repositories: input.repositories,
-              task,
-              artifact: businessArtifact,
-              eventMessage: `Automatic Acceptance accepted task: ${task.title}.`,
-              requestSchedulerWake: () => undefined,
-              now,
-              createId,
-            });
-            for (const event of accepted.events) {
-              emitTaskEvent(input, event);
-            }
-            appendTaskProgressEvent(input, {
-              task,
-              step: "complete",
-              status: "complete",
-              label: "Automatically accepted",
-              subjectTaskId: task.id,
-            });
-            emitParentTaskAggregationEvents(input, task);
-            result.completed.push(task.id);
-            return;
-          }
-
-          // The Hold opened here is what CEO Office reads to offer the decision, and what the
-          // approve/return guard checks. One fact, so the offer and the guard cannot disagree.
-          applyTaskTransition({
+          const finalized = finalizeDelivery({
             repositories: input.repositories,
             task,
-            status: "review",
-            hold: {
-              kind: "awaiting_ceo_review",
-              resolver: "ceo_office",
-              subjectKind: "business_artifact",
-              subjectId: businessArtifact.id,
-              reason: `${task.title} is waiting for a CEO Office review decision.`,
-            },
+            artifact: businessArtifact,
+            source: "agent_run",
             now,
             createId,
           });
-          appendTaskProgressEvent(input, {
-            task,
-            step: "awaiting_review",
-            status: "current",
-            label: "Awaiting review",
-            subjectTaskId: task.id,
-          });
-          appendAndEmitTaskEvent(input, {
-            task,
-            type: "task_review",
-            message: "Task is ready for review.",
-            status: "review",
-          });
+          for (const event of finalized.events) {
+            emitTaskEvent(input, event);
+          }
+          if (finalized.outcome === "verification_failed") {
+            result.blocked.push(task.id, ...blockDirectDependencyConsumers(input, task));
+          } else {
+            result.completed.push(task.id);
+          }
           emitParentTaskAggregationEvents(input, task);
-          result.completed.push(task.id);
         } finally {
           try {
             if (taskWorkspaceRoot) {
@@ -1136,7 +1130,11 @@ function assessDepartmentTask(input: RunSchedulerOnceInput, task: Task): "ready"
     subjectTaskId: null,
   });
 
-  if (!isLargeDepartmentTask(task)) {
+  // A verifying task is never split: its targets and requirements belong to it, and a split template
+  // would hand them to subtasks as plain context.
+  // Splitting is the plan's decision, declared per task; the runtime does not read it out of the
+  // task's wording (ADR 0029). The verifier check stays as a floor: a verification task is never split.
+  if (!task.decomposition || isVerifyingTask(input.repositories, task)) {
     appendTaskProgressEvent(input, {
       task,
       step: "no_split_needed",
@@ -1188,37 +1186,56 @@ function hasAssessment(repositories: ReturnType<typeof createRepositories>, task
     .some((event) => event.step === "assessment_complete");
 }
 
-function isLargeDepartmentTask(task: Task): boolean {
-  const text = `${task.title} ${task.description}`.toLowerCase();
-  return (
-    (task.proofSchemaId === "landing-page-file" || task.proofSchemaId === "deployment") &&
-    text.includes("prototype") &&
-    (text.includes("validate") || text.includes("deployment"))
-  );
-}
+/**
+ * The department split template. Each stage declares the sibling outputs it consumes and in what role,
+ * so the execution order and the verification handoff are dependency edges — not array order, titles,
+ * or whichever stage happens to be dispatched first. Every stage also inherits the parent's own
+ * upstream dependencies as context.
+ */
+type DepartmentSubtaskStage = "define" | "execute" | "validate";
+
+type DepartmentSubtaskBlueprint = {
+  stage: DepartmentSubtaskStage;
+  title: string;
+  description: string;
+  proofSchemaId: string;
+  inputs: Array<{ stage: DepartmentSubtaskStage; role: DependencyInputRole; handoffContract: string }>;
+};
 
 function createDepartmentSubtasks(input: RunSchedulerOnceInput, parentTask: Task): Task[] {
   const createId = input.createId ?? defaultCreateId;
   const inheritedDependencies = input.repositories.listTaskDependencies(parentTask.id);
-  const subtaskBlueprints = [
+  const subtaskBlueprints: DepartmentSubtaskBlueprint[] = [
     {
+      stage: "define",
       title: `Define executable slice for ${parentTask.title}`,
       description: `Assess scope, dependencies, and proof criteria for the parent task: ${parentTask.title}.`,
       proofSchemaId: "product-brief",
+      inputs: [],
     },
     {
+      stage: "execute",
       title: `Execute ${parentTask.title}`,
       description: parentTask.description,
       proofSchemaId: parentTask.proofSchemaId,
+      inputs: [
+        { stage: "define", role: "context", handoffContract: "Implement the executable slice and scope defined upstream." },
+      ],
     },
     {
+      stage: "validate",
       title: `Validate proof for ${parentTask.title}`,
       description: `Validate the output and prepare parent-task proof for: ${parentTask.title}.`,
       proofSchemaId: "test-output",
+      inputs: [
+        { stage: "define", role: "verification_requirements", handoffContract: "Verify every requirement declared upstream." },
+        { stage: "execute", role: "verification_target", handoffContract: "Verify the snapshot of the executed output." },
+      ],
     },
   ];
 
-  return subtaskBlueprints.map((blueprint) => {
+  const subtasksByStage = new Map<DepartmentSubtaskStage, Task>();
+  for (const blueprint of subtaskBlueprints) {
     const subtaskId = createId("department_subtask");
     const taskWorkspace = createTaskWorkspace(input.projectRoot, subtaskId);
     const subtask: Task = {
@@ -1255,13 +1272,27 @@ function createDepartmentSubtasks(input: RunSchedulerOnceInput, parentTask: Task
         handoffContractText: dependency.handoffContractText,
       });
     }
+    for (const declared of blueprint.inputs) {
+      const producer = subtasksByStage.get(declared.stage);
+      if (!producer) {
+        throw new Error(`Department subtask ${blueprint.stage} consumes ${declared.stage}, which is not created before it.`);
+      }
+      input.repositories.createTaskDependency({
+        taskId: subtask.id,
+        dependsOnTaskId: producer.id,
+        handoffContract: declared.handoffContract,
+        inputRole: declared.role,
+      });
+    }
     input.repositories.createTaskDependency({
       taskId: parentTask.id,
       dependsOnTaskId: subtask.id,
       handoffContract: "Contribute to the parent task proof summary.",
     });
-    return subtask;
-  });
+    subtasksByStage.set(blueprint.stage, subtask);
+  }
+
+  return [...subtasksByStage.values()];
 }
 
 function appendTaskProgressEvent(
@@ -1306,7 +1337,11 @@ function appendTaskProgressEvent(
 }
 
 function resolveRunWorkspace(repositories: ReturnType<typeof createRepositories>, task: Task): string | null {
-  const dependencies = repositories.listTaskDependencies(task.id);
+  // Only context inputs continue in a producer's workspace. A verifier works on a runtime snapshot in
+  // its own workspace (see prepareVerificationInputs), so it cannot alter the output it judges.
+  const dependencies = repositories
+    .listTaskDependencies(task.id)
+    .filter((dependency) => (dependency.inputRole ?? "context") === "context");
   const producer = dependencies
     .map((dependency) => repositories.getTask(dependency.dependsOnTaskId))
     .find((dependency): dependency is Task => Boolean(dependency?.artifactWorkspacePath));
@@ -1603,6 +1638,20 @@ function terminateAsRetryExhausted(
   }
   emitParentTaskAggregationEvents(input, task);
   return blockedConsumerIds;
+}
+
+function artifactSyntaxRepairMessage(task: Task, repair: ArtifactSyntaxRepair): string {
+  const prefix = `Business artifact of ${task.title} was not valid JSON (${repair.syntaxError})`;
+  switch (repair.outcome) {
+    case "repaired":
+      return `${prefix}; its syntax was repaired without changing content.`;
+    case "still_invalid":
+      return `${prefix}; a syntax repair did not make it parse.`;
+    case "content_changed":
+      return `${prefix}; a syntax repair changed its content and was discarded.`;
+    case "run_failed":
+      return `${prefix}; the syntax repair run did not complete.`;
+  }
 }
 
 function appendAndEmitTaskEvent(

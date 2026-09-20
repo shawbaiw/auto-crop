@@ -211,6 +211,12 @@ describe("deriveTaskHold", () => {
       kind: "awaiting_dependency_artifact",
       resolver: "upstream_task",
     });
+    // A quota outage is a wait, not a defect: it gets its own Hold rather than the catch-all, whose
+    // meaning ADR 0020 reserves for stops nobody modelled.
+    expect(deriveTaskHold({ status: "failed", failureReason: "agent_quota_exhausted" })).toEqual({
+      kind: "agent_quota_exhausted",
+      resolver: "runtime",
+    });
     expect(deriveTaskHold({ status: "failed", failureReason: "non_reviewable_artifact" })).toEqual({
       kind: "invalid_business_artifact",
       resolver: "runtime",

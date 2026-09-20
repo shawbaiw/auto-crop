@@ -1,4 +1,4 @@
-import type { CompanyBlueprint, CompleteLocalizedText, ProofSchema } from "@auto-crop/core";
+import type { TaskDecomposition, BlueprintTaskVerification, CompanyBlueprint, CompleteLocalizedText, ProofSchema } from "@auto-crop/core";
 
 export type DepartmentTemplate = {
   key: string;
@@ -38,6 +38,8 @@ export type TaskTemplate = {
   dependsOnTaskKeys: string[];
   handoffContract: string;
   handoffContractText: CompleteLocalizedText;
+  verification: BlueprintTaskVerification | null;
+  decomposition: TaskDecomposition | null;
 };
 
 export type CreateBlueprintInput = {

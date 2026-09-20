@@ -325,7 +325,7 @@ export type FounderReportSummary = {
 };
 
 export type TaskRefreshRecoverySummary = {
-  status: "recovered" | "not_found" | "not_applicable";
+  status: "recovered" | "still_unreviewable" | "not_found" | "not_applicable";
   message: string;
 };
 

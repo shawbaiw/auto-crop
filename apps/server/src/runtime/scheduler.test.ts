@@ -78,6 +78,75 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  /**
+   * The reported failure, pinned: a Chinese delivery quoted a phrase with bare ASCII quotes, its
+   * artifact did not parse, and the whole company blocked on work that had been done. One narrow repair
+   * run fixes the syntax; the runtime keeps it only if the content is unchanged.
+   */
+  describe("business artifact syntax repair", () => {
+    const quoted = 'Mock implementation completed; rivals already offer "no sign-up" access.';
+    const runWithRepair = async (repairEdit: (artifact: string) => string) => {
+      const fixture = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+      const runs: Array<{ phase: string; grant?: string[] }> = [];
+      const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
+      const adapter: AgentAdapter = {
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          if (request.metadata.phase === "execution_brief") {
+            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
+          }
+          const path = artifactPath(request.workspacePath);
+          if (request.prompt.startsWith("## Repair the Business Artifact syntax")) {
+            runs.push({ phase: "repair", grant: request.grant?.granted });
+            writeFileSync(path, repairEdit(readFileSync(path, "utf8")), "utf8");
+          } else {
+            runs.push({ phase: "work" });
+            writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low"), workspacePath: request.workspacePath });
+            writeFileSync(path, readFileSync(path, "utf8").replace("Mock implementation completed.", quoted), "utf8");
+          }
+          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+        },
+      };
+      const events: SchedulerEventRecord[] = [];
+      const result = await runSchedulerOnce({
+        projectRoot: fixture.projectRoot, repositories: fixture.repositories, adapters: [adapter], workerId: "worker", maxTasks: 1,
+        approvalRequired: () => false, proofCollector: ({ task }) => [createProofForTask(task)], emit: (event) => events.push(event),
+      });
+      return { ...fixture, result, runs, events, artifactPath };
+    };
+
+    it("repairs the syntax once and delivers the work without re-running it", async () => {
+      const { repositories, client, result, runs } = await runWithRepair((artifact) => artifact.replace('"no sign-up"', '\\"no sign-up\\"'));
+
+      expect(runs.map((run) => run.phase)).toEqual(["work", "repair"]);
+      expect(runs[1]?.grant).toEqual(["workspace_read", "workspace_write"]);
+      expect(result.completed).toContain("task_1");
+      const artifact = repositories.getCurrentBusinessArtifactForTask("task_1");
+      expect(artifact?.validationStatus).toBe("valid");
+      expect((artifact?.payload as { summary?: string }).summary).toBe(quoted);
+      expect(repositories.listTaskEventsForCompany("company_1").find((event) => event.type === "task_warning")?.message).toContain(
+        "its syntax was repaired without changing content",
+      );
+      client.close();
+    });
+
+    it("discards a repair that changed content, and records the delivery as it was left", async () => {
+      const { repositories, client, result, artifactPath } = await runWithRepair((artifact) =>
+        artifact.replace('"no sign-up"', "free").replace("rivals already offer", "we uniquely offer"),
+      );
+
+      expect(result.failed).toContain("task_1");
+      expect(repositories.getTask("task_1")?.status).toBe("blocked");
+      expect(repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["invalid_business_artifact"]);
+      expect(repositories.getCurrentBusinessArtifactForTask("task_1")?.validationErrors.join(" ")).toContain("Invalid JSON");
+      expect(readFileSync(artifactPath(repositories.getTask("task_1")!.workspacePath!), "utf8")).toContain(quoted);
+      expect(repositories.listTaskEventsForCompany("company_1").find((event) => event.type === "task_warning")?.message).toContain(
+        "changed its content and was discarded",
+      );
+      client.close();
+    });
+  });
+
   it("does not dispatch work or fabricate a brief if preparation is malformed", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
     const phases: string[] = [];
@@ -88,6 +157,80 @@ describe("runSchedulerOnce", () => {
     expect(repositories.listTaskEventsForCompany("company_1").some(event => event.type === "task_started")).toBe(false);
     expect(repositories.getTask("task_1")?.status).toBe("failed");
     client.close();
+  });
+
+  /**
+   * The reported misattribution, pinned. A brief that timed out at its own 60s cap was reported as
+   * the task timing out after 5m, and the scheduler then "retried with the long budget" — a second
+   * run against the same 60s cap (ADR 0032).
+   */
+  it("reports a brief that timed out against the brief's budget, and does not escalate the task's", async () => {
+    // A `product-brief` task starts on the short profile, so an escalation would be visible.
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "product-brief"),
+    ]);
+    const phases: string[] = [];
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [{
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          phases.push(request.metadata.phase ?? "work");
+          return { status: "failed", exitCode: null, stdout: "", stderr: "", failureReason: "timeout" };
+        },
+      }],
+      workerId: "worker_a",
+      maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    // One preparation run, no substantive run, and no second attempt at a budget that caps the same.
+    expect(phases).toEqual(["execution_brief"]);
+    expect(events.some((event) => event.type === "task_retrying")).toBe(false);
+    expect(result.failed).toContain("task_1");
+    const task = repositories.getTask("task_1");
+    expect(task?.status).toBe("failed");
+    expect(task?.latestFailureMessage).toContain("the execution brief did not complete within 1m");
+    expect(task?.latestFailureMessage).not.toContain("timeout after 5m");
+    client.close();
+  });
+
+  /**
+   * The reported gap, pinned. Dispatch read only the task's own status, so a company still in
+   * `draft` — a plan the founder has not accepted — started spending agent runs the moment it was
+   * created, and the activate button changed nothing (ADR 0033).
+   */
+  it("dispatches nothing for a company that is not running, and everything once it is", async () => {
+    for (const status of ["draft", "creating", "paused", "review"] as const) {
+      const { projectRoot, repositories, client } = createSchedulerFixture(
+        [createTaskRecord("task_1", "queued", "low")],
+        { status },
+      );
+
+      const held = await runSchedulerOnce({
+        projectRoot, repositories, adapters: [createMockAgentAdapter({ id: "mock-worker", name: "Worker", capabilities: ["code"] })],
+        workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
+        proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+        emit: () => undefined,
+      });
+      expect(held.started, `a ${status} company must not dispatch`).toEqual([]);
+      expect(repositories.getTask("task_1")?.status).toBe("queued");
+
+      repositories.updateCompanyStatus("company_1", "active", "2026-08-17T00:00:00.000Z");
+      const running = await runSchedulerOnce({
+        projectRoot, repositories, adapters: [createMockAgentAdapter({ id: "mock-worker", name: "Worker", capabilities: ["code"] })],
+        workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
+        proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+        emit: () => undefined,
+      });
+      expect(running.started).toEqual(["task_1"]);
+      client.close();
+    }
   });
 
   it("reconciles stale running tasks before dispatching queued work", async () => {
@@ -757,6 +900,7 @@ describe("runSchedulerOnce", () => {
       title: "Build the playable web prototype",
       description: "Build the playable web prototype, validate it locally, capture proof, and prepare it for deployment.",
       requiredCapabilities: ["code", "frontend", "test"],
+      decomposition: { template: "define_execute_validate" as const },
     };
     const { projectRoot, repositories, client } = createSchedulerFixture([largeParentTask]);
 
@@ -837,6 +981,10 @@ describe("runSchedulerOnce", () => {
       uri: "ready.log",
       summary: "ready proof",
       verifiedAt: null,
+    });
+    repositories.createBusinessArtifact({
+      ...createBusinessArtifactRecord("business_artifact_ready", readySubtask.id, "proof_ready"),
+      reviewStatus: "unreviewed",
     });
 
     const result = await runSchedulerOnce({
@@ -1433,6 +1581,7 @@ describe("runSchedulerOnce", () => {
       ...createTaskRecord("task_2", "queued", "low", "landing-page-file"),
       title: "Build and validate the prototype",
       description: "Build a browser prototype and validate it against the accepted brief.",
+      decomposition: { template: "define_execute_validate" as const },
     };
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, parent]);
     repositories.createTaskDependency({
@@ -1478,12 +1627,42 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  /**
+   * The trigger this replaced matched "prototype" plus "validate" in the title and description, and
+   * company creation appended guidance containing both — so a landing-page task was split whatever the
+   * plan intended. Wording now decides nothing (ADR 0029).
+   */
+  it("does not split a task whose wording reads like a prototype but declares no decomposition", async () => {
+    const undeclared = {
+      ...createTaskRecord("task_1", "queued", "low", "landing-page-file"),
+      title: "Build the playable web prototype",
+      description: "Build the playable web prototype, validate it locally, capture proof, and prepare it for deployment.",
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([undeclared]);
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code", "frontend", "test"] })],
+      workerId: "worker_a",
+      maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+      emit: () => undefined,
+    });
+
+    expect(repositories.listTasksForCompany("company_1").filter((task) => task.parentTaskId === "task_1")).toHaveLength(0);
+    expect(result.started).toEqual(["task_1"]);
+    client.close();
+  });
+
   it("copies parent task dependencies onto generated department subtasks", async () => {
     const producer = createTaskRecord("task_1", "complete", "low", "product-brief");
     const parent = {
       ...createTaskRecord("task_2", "queued", "low", "landing-page-file"),
       title: "Build and validate the prototype",
       description: "Build a browser prototype and validate it against the accepted brief.",
+      decomposition: { template: "define_execute_validate" as const },
     };
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, parent]);
     const proof = createProofForTask(producer);
@@ -3149,6 +3328,7 @@ function createBusinessArtifactRecord(id: string, taskId: string, sourceProofId:
     reviewStatus: "accepted",
     isCurrent: true,
     supersedesArtifactId: null,
+    deliveryWorkspacePath: null,
     createdAt: "2026-08-17T00:00:00.000Z",
     updatedAt: "2026-08-17T00:00:00.000Z",
   };

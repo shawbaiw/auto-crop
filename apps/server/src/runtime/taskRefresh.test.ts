@@ -7,6 +7,7 @@ import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { refreshTaskDependencyState } from "./taskRefresh";
+import { recoverTask } from "./taskRecovery";
 
 const createdDirs: string[] = [];
 
@@ -61,6 +62,27 @@ describe("refreshTaskDependencyState proof recovery", () => {
       summary: "Review proof.",
       verifiedAt: null,
     });
+    fixture.repositories.createBusinessArtifact({
+      id: "artifact_review",
+      companyId: reviewSubtask.companyId,
+      taskId: reviewSubtask.id,
+      sourceProofId: "proof_review",
+      artifactKind: "deliverable",
+      artifactRole: "validation",
+      artifactSubtype: "prototype_validation",
+      artifactType: "validation_result",
+      taskType: "engineering.prototype_validation",
+      payload: {},
+      lineage: {},
+      validationStatus: "valid",
+      validationErrors: [],
+      reviewStatus: "unreviewed",
+      isCurrent: true,
+      supersedesArtifactId: null,
+      deliveryWorkspacePath: null,
+      createdAt: "2026-08-25T00:00:00.000Z",
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    });
 
     const result = refreshTaskDependencyState({
       repositories: fixture.repositories,
@@ -80,7 +102,9 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
   });
 
-  it("recovers controlled repo-diff output from failed no-proof tasks and submits them to review", () => {
+  // Recovered proof gets the scheduler's delivery policy, so an eligible ordinary deliverable is accepted
+  // automatically rather than always sent to CEO review (see deliveryFinalization).
+  it("recovers controlled repo-diff output from failed no-proof tasks and finalizes it like a finished run", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);
     writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
@@ -106,10 +130,10 @@ describe("refreshTaskDependencyState proof recovery", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(result.task.status).toBe("review");
+    expect(result.task.status).toBe("complete");
     expect(result.recovery).toEqual({
       status: "recovered",
-      message: "Found checkable proof and submitted it to CEO Office for review.",
+      message: "Found checkable proof; Automatic Acceptance accepted it.",
     });
     expect(result.proof).toHaveLength(1);
     expect(fixture.repositories.listProofsForTask("task_1")[0]).toMatchObject({
@@ -117,20 +141,20 @@ describe("refreshTaskDependencyState proof recovery", () => {
       summary: "Diff proof recovered from prototype-audit-trail.patch.",
     });
     expect(result.event).toMatchObject({
-      type: "proof_recovered",
-      status: "review",
-      message: "Proof recovered: Record implementation changes submitted to CEO Office for review.",
+      type: "automatic_acceptance",
+      status: "complete",
+      message: "Automatic Acceptance accepted recovered proof: Record implementation changes.",
     });
     expect(result.progressEvent).toMatchObject({
-      step: "awaiting_review",
-      status: "current",
-      label: "Found checkable proof and submitted it to CEO Office for review.",
+      step: "complete",
+      status: "complete",
+      label: "Automatically accepted",
     });
     expect(result.businessArtifacts).toHaveLength(1);
     expect(fixture.repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
       artifactKind: "deliverable",
       artifactRole: "implementation",
-      reviewStatus: "unreviewed",
+      reviewStatus: "accepted",
       validationStatus: "valid",
     });
   });
@@ -160,10 +184,10 @@ describe("refreshTaskDependencyState proof recovery", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(result.task.status).toBe("review");
+    expect(result.task.status).toBe("complete");
     expect(result.recovery).toEqual({
       status: "recovered",
-      message: "Found checkable proof and submitted it to CEO Office for review.",
+      message: "Found checkable proof; Automatic Acceptance accepted it.",
     });
     expect(fixture.repositories.listProofsForTask("task_1")[0]).toMatchObject({
       type: "diff",
@@ -172,7 +196,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     expect(fixture.repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
       artifactKind: "deliverable",
       artifactRole: "implementation",
-      reviewStatus: "unreviewed",
+      reviewStatus: "accepted",
       validationStatus: "valid",
     });
   });
@@ -221,22 +245,65 @@ describe("refreshTaskDependencyState proof recovery", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(result.task.status).toBe("review");
+    expect(result.task.status).toBe("complete");
     expect(fixture.repositories.listProofsForTask("task_1")[0]).toMatchObject({
       type: "diff",
       uri: join(upstreamWorkspacePath, ".auto-crop-proof", "task_1.diff"),
       summary: "Diff proof recovered from implementation-changes.diff.",
     });
-    expect(result.event).toMatchObject({
-      type: "proof_recovered",
-      status: "review",
-      artifactWorkspacePath: upstreamWorkspacePath,
-    });
+    expect(result.event).toMatchObject({ type: "automatic_acceptance", status: "complete" });
     expect(fixture.repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
       artifactKind: "deliverable",
-      reviewStatus: "unreviewed",
+      reviewStatus: "accepted",
       validationStatus: "valid",
     });
+  });
+
+  /**
+   * The reported loop, pinned. A task parked on an unreviewable artifact offers refresh and recover.
+   * Recapturing the same unreviewable workspace used to count as "recovered": it re-blocked the task,
+   * opened another Hold on the new capture, and never re-ran the work — so neither exit led out.
+   */
+  it("re-runs a task whose workspace still holds no reviewable artifact instead of recapturing it", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
+    createdDirs.push(workspacePath);
+    writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        workspacePath,
+        status: "failed",
+        proofSchemaId: "repo-diff",
+      },
+    ]);
+    fixture.repositories.updateTaskExecutionSummary("task_1", {
+      latestFailureReason: "no_proof",
+      latestFailureMessage: "Task failed: Record implementation changes / no_proof.",
+    });
+    const proofSchemas = [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff" as const] }];
+    const createId = createSequentialIdFactory();
+    const now = () => new Date("2026-08-25T00:00:00.000Z");
+    const invalidHolds = () =>
+      fixture.repositories.listOpenTaskHolds("task_1").filter((hold) => hold.kind === "invalid_business_artifact");
+
+    // The first capture is news: the task had no proof, now it has proof and no artifact.
+    refreshTaskDependencyState({ repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
+    expect(invalidHolds()).toHaveLength(1);
+    const artifactsAfterFirstCapture = fixture.repositories.listBusinessArtifactsForTask("task_1").length;
+
+    // Refreshing again learns nothing new and says so, without another artifact or Hold.
+    const refreshed = refreshTaskDependencyState({ repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
+    expect(refreshed.recovery?.status).toBe("still_unreviewable");
+    expect(refreshed.task.status).toBe("blocked");
+    expect(invalidHolds()).toHaveLength(1);
+    expect(fixture.repositories.listBusinessArtifactsForTask("task_1")).toHaveLength(artifactsAfterFirstCapture);
+
+    // Recover is the exit that re-runs the work, and re-running answers the Hold.
+    const recovered = recoverTask({ repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
+    expect(recovered.recovery?.status).toBe("queued");
+    expect(recovered.task.status).toBe("queued");
+    expect(invalidHolds()).toHaveLength(0);
+    expect(fixture.repositories.listBusinessArtifactsForTask("task_1")).toHaveLength(artifactsAfterFirstCapture);
   });
 
   it("blocks recovered proof before CEO review when the business artifact is missing", () => {

@@ -42,11 +42,86 @@ function createArtifact(overrides: Partial<BusinessArtifact> = {}): BusinessArti
     reviewStatus: "unreviewed",
     isCurrent: true,
     supersedesArtifactId: null,
+    deliveryWorkspacePath: null,
     createdAt: "2026-08-17T00:00:00.000Z",
     updatedAt: "2026-08-17T00:00:00.000Z",
     ...overrides,
   };
 }
+
+describe("evaluateAutomaticAcceptance with declared Action Intents", () => {
+  // The report that started this: an SEO company's every deliverable mentions Search Console in its gaps
+  // and next steps. Naming a service is not taking an action (ADR 0027).
+  const mentionsRisk = {
+    summary: "The slice is defined.",
+    execution_report: {
+      work_summary: "Defined the crawlable pages.",
+      evidence: "Listed the page structure.",
+      conclusion: "The structure is ready to build.",
+      vision_impact: "It moves the site forward.",
+      remaining_gap: "未获得 Google Search Console 权限，上线后再提交 sitemap；也未配置 custom domain。",
+      recommendation: "Build the pages, then submit the sitemap once the site is live.",
+    },
+  };
+
+  it("accepts a delivery whose prose names risks but declares no action", () => {
+    const decision = evaluateAutomaticAcceptance({
+      task: createTask(),
+      artifact: createArtifact({ payload: { ...mentionsRisk, actions: [] } }),
+    });
+
+    expect(decision).toEqual({ kind: "accept" });
+  });
+
+  it("accepts a delivery whose declared actions are all future steps", () => {
+    const decision = evaluateAutomaticAcceptance({
+      task: createTask(),
+      artifact: createArtifact({
+        payload: {
+          ...mentionsRisk,
+          actions: [
+            { category: "search_engine_submission", status: "considered", description: "Submit the sitemap after launch." },
+            { category: "domain_or_dns", status: "considered", description: "Point a custom domain at the site later." },
+          ],
+        },
+      }),
+    });
+
+    expect(decision).toEqual({ kind: "accept" });
+  });
+
+  it.each([
+    ["performed", "Submitted the sitemap to Google Search Console."],
+    ["requested", "Needs the production domain pointed at the site now."],
+  ])("routes a delivery declaring a %s action to CEO review", (status, description) => {
+    const decision = evaluateAutomaticAcceptance({
+      task: createTask(),
+      artifact: createArtifact({
+        payload: { summary: "done", actions: [{ category: "search_engine_submission", status, description }] },
+      }),
+    });
+
+    expect(decision).toEqual({ kind: "requires_review", reason: "declared_external_or_sensitive_action" });
+  });
+
+  it("routes a delivery whose declaration cannot be read to CEO review", () => {
+    const decision = evaluateAutomaticAcceptance({
+      task: createTask(),
+      artifact: createArtifact({ payload: { summary: "done", actions: [{ category: "nope", status: "performed", description: "x" }] } }),
+    });
+
+    expect(decision).toEqual({ kind: "requires_review", reason: "unreadable_action_declaration" });
+  });
+
+  it("still reads the text of an artifact written before the contract", () => {
+    const decision = evaluateAutomaticAcceptance({
+      task: createTask(),
+      artifact: createArtifact({ payload: { summary: "Submitted the sitemap to Google Search Console." } }),
+    });
+
+    expect(decision).toEqual({ kind: "requires_review", reason: "external_or_sensitive_risk" });
+  });
+});
 
 describe("evaluateAutomaticAcceptance", () => {
   it("accepts a valid, current, unreviewed deliverable with no payload marker", () => {

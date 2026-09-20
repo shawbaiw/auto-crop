@@ -1,4 +1,10 @@
 import type {
+  ArtifactVerification,
+  DependencyInputRole,
+  VerificationInputs,
+  TaskDecomposition,
+  VerificationRequirement,
+  VerificationRework,
   AgentRun,
   AgentFailureReason,
   Approval,
@@ -50,7 +56,34 @@ export type ReviewRecord = {
 };
 
 export function createRepositories(database: DatabaseClient) {
+  let savepointDepth = 0;
+
   return {
+    /**
+     * Run `work` as one atomic unit: either every write inside lands, or none does.
+     *
+     * Implemented with SAVEPOINTs so it nests — a seam that wraps itself in a transaction stays correct
+     * when a caller already opened one. Without this a runtime path that writes a record and then acts
+     * on it can be interrupted between the two, leaving a record whose actions never happened, which
+     * every idempotence guard then reads as "already done" (ADR 0026).
+     */
+    transaction<T>(work: () => T): T {
+      const name = `auto_crop_sp_${savepointDepth}`;
+      savepointDepth += 1;
+      database.exec(`SAVEPOINT ${name}`);
+      try {
+        const result = work();
+        database.exec(`RELEASE ${name}`);
+        return result;
+      } catch (error) {
+        database.exec(`ROLLBACK TO ${name}`);
+        database.exec(`RELEASE ${name}`);
+        throw error;
+      } finally {
+        savepointDepth -= 1;
+      }
+    },
+
     createCompany(company: Company): void {
       database
         .prepare(
@@ -320,8 +353,8 @@ export function createRepositories(database: DatabaseClient) {
             assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, artifact_workspace_path,
             status, risk_level, position, latest_failure_reason, latest_failure_message,
             latest_execution_profile_name, latest_requested_timeout_ms, latest_effective_timeout_ms,
-            dependency_note, parent_task_id, task_kind, source
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            dependency_note, parent_task_id, task_kind, source, verification_requirements, decomposition
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           task.id,
@@ -350,7 +383,17 @@ export function createRepositories(database: DatabaseClient) {
           task.parentTaskId ?? null,
           task.taskKind ?? "parent",
           task.source ?? "ceo",
+          task.verificationRequirements && task.verificationRequirements.length > 0
+            ? JSON.stringify(task.verificationRequirements)
+            : null,
+          task.decomposition ? JSON.stringify(task.decomposition) : null,
         );
+    },
+
+    updateTaskVerificationRequirements(id: string, requirements: VerificationRequirement[] | null): void {
+      database
+        .prepare("UPDATE tasks SET verification_requirements = ? WHERE id = ?")
+        .run(requirements && requirements.length > 0 ? JSON.stringify(requirements) : null, id);
     },
 
     getTask(id: string): Task | null {
@@ -520,10 +563,15 @@ export function createRepositories(database: DatabaseClient) {
     fetchQueuedTasks(limit: number): Task[] {
       const rows = database
         .prepare(
-          `SELECT tasks.*
+          // Only a running company dispatches. A `draft` company is a plan the founder has not
+           // activated, `creating` has no plan yet, and `paused` / `review` have been stopped on
+           // purpose — dispatching any of them would make activation a button that changes nothing
+           // (ADR 0033).
+           `SELECT tasks.*
            FROM tasks
            INNER JOIN companies ON companies.id = tasks.company_id
            WHERE tasks.status IN ('queued', 'waiting_dependency', 'retrying')
+             AND companies.status = 'active'
            ORDER BY companies.created_at ASC, tasks.position ASC, tasks.id ASC
            LIMIT ?`,
         )
@@ -718,24 +766,26 @@ export function createRepositories(database: DatabaseClient) {
     createTaskDependency(dependency: TaskDependency): void {
       database
         .prepare(
-          `INSERT INTO task_dependencies (task_id, depends_on_task_id, handoff_contract, handoff_contract_text)
-           VALUES (?, ?, ?, ?)
+          `INSERT INTO task_dependencies (task_id, depends_on_task_id, handoff_contract, handoff_contract_text, input_role)
+           VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(task_id, depends_on_task_id) DO UPDATE SET
              handoff_contract = COALESCE(excluded.handoff_contract, task_dependencies.handoff_contract),
-             handoff_contract_text = COALESCE(excluded.handoff_contract_text, task_dependencies.handoff_contract_text)`,
+             handoff_contract_text = COALESCE(excluded.handoff_contract_text, task_dependencies.handoff_contract_text),
+             input_role = CASE WHEN excluded.input_role = 'context' THEN task_dependencies.input_role ELSE excluded.input_role END`,
         )
         .run(
           dependency.taskId,
           dependency.dependsOnTaskId,
           dependency.handoffContract ?? null,
           stringifyLocalizedText(dependency.handoffContractText),
+          dependency.inputRole ?? "context",
         );
     },
 
     listTaskDependencies(taskId: string): TaskDependency[] {
       const rows = database
         .prepare(
-          `SELECT task_id, depends_on_task_id, handoff_contract, handoff_contract_text
+          `SELECT task_id, depends_on_task_id, handoff_contract, handoff_contract_text, input_role
            FROM task_dependencies
            WHERE task_id = ?
            ORDER BY depends_on_task_id ASC`,
@@ -763,7 +813,7 @@ export function createRepositories(database: DatabaseClient) {
     listTaskDependenciesForCompany(companyId: string): TaskDependency[] {
       const rows = database
         .prepare(
-          `SELECT task_dependencies.task_id, task_dependencies.depends_on_task_id, task_dependencies.handoff_contract, task_dependencies.handoff_contract_text
+          `SELECT task_dependencies.task_id, task_dependencies.depends_on_task_id, task_dependencies.handoff_contract, task_dependencies.handoff_contract_text, task_dependencies.input_role
            FROM task_dependencies
            INNER JOIN tasks ON tasks.id = task_dependencies.task_id
            WHERE tasks.company_id = ?
@@ -888,8 +938,8 @@ export function createRepositories(database: DatabaseClient) {
             id, company_id, task_id, source_proof_id, artifact_kind, artifact_role,
             artifact_subtype, artifact_type, task_type,
             payload, lineage, validation_status, validation_errors, review_status,
-            is_current, supersedes_artifact_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            is_current, supersedes_artifact_id, verification, delivery_workspace_path, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           artifact.id,
@@ -908,6 +958,8 @@ export function createRepositories(database: DatabaseClient) {
           artifact.reviewStatus,
           artifact.isCurrent ? 1 : 0,
           artifact.supersedesArtifactId,
+          artifact.verification ? JSON.stringify(artifact.verification) : null,
+          artifact.deliveryWorkspacePath,
           artifact.createdAt,
           artifact.updatedAt,
         );
@@ -1145,7 +1197,9 @@ export function createRepositories(database: DatabaseClient) {
 
     countAgentRunsForTask(taskId: string): number {
       // Counts attempts since the last reset marker (if any) so agent-run history is preserved
-      // for diagnosis (ADR 0002) rather than deleted when the count is reset.
+      // for diagnosis (ADR 0002) rather than deleted when the count is reset. A run that stopped
+      // because the agent's account was out of quota is not an attempt at the work: counting it
+      // would spend the recovery ceiling on an outage the task had no part in (ADR 0032).
       const marker = database
         .prepare("SELECT value FROM runtime_state WHERE key = ?")
         .get(taskAttemptsResetKey(taskId)) as { value: string } | undefined;
@@ -1155,12 +1209,15 @@ export function createRepositories(database: DatabaseClient) {
               .prepare(
                 `SELECT COUNT(*) AS count FROM agent_runs
                  WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')
+                   AND (failure_reason IS NULL OR failure_reason <> 'agent_quota_exhausted')
                    AND (started_at IS NULL OR started_at > ?)`,
               )
               .get(taskId, marker.value)
           : database
               .prepare(
-                "SELECT COUNT(*) AS count FROM agent_runs WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')",
+                `SELECT COUNT(*) AS count FROM agent_runs
+                 WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')
+                   AND (failure_reason IS NULL OR failure_reason <> 'agent_quota_exhausted')`,
               )
               .get(taskId)
       ) as { count: number };
@@ -1175,6 +1232,80 @@ export function createRepositories(database: DatabaseClient) {
            ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
         )
         .run(taskAttemptsResetKey(taskId), at);
+    },
+
+    /** Record what was done about one failed verdict. A report already recorded is left as it is. */
+    recordVerificationRework(rework: VerificationRework): void {
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO verification_reworks (
+            id, company_id, verifier_task_id, failed_artifact_id, round, decision,
+            producer_task_ids, redelivered_task_ids, failed_checks, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          rework.id,
+          rework.companyId,
+          rework.verifierTaskId,
+          rework.failedArtifactId,
+          rework.round,
+          rework.decision,
+          JSON.stringify(rework.producerTaskIds),
+          JSON.stringify(rework.redeliveredTaskIds),
+          JSON.stringify(rework.failedChecks),
+          rework.createdAt,
+        );
+    },
+
+    listVerificationReworksForVerifier(verifierTaskId: string): VerificationRework[] {
+      const rows = database
+        .prepare("SELECT * FROM verification_reworks WHERE verifier_task_id = ? ORDER BY round ASC, created_at ASC")
+        .all(verifierTaskId) as VerificationReworkRow[];
+      return rows.map(mapVerificationRework);
+    },
+
+    /** Reworks still waiting on this producer to deliver again. */
+    listPendingReworksForProducer(producerTaskId: string): VerificationRework[] {
+      const rows = database
+        .prepare("SELECT * FROM verification_reworks WHERE decision = 'rework_producers' ORDER BY created_at ASC, round ASC")
+        .all() as VerificationReworkRow[];
+      return rows
+        .map(mapVerificationRework)
+        .filter((rework) => rework.producerTaskIds.includes(producerTaskId) && !rework.redeliveredTaskIds.includes(producerTaskId));
+    },
+
+    markReworkRedelivered(reworkId: string, producerTaskId: string): void {
+      const row = database.prepare("SELECT * FROM verification_reworks WHERE id = ?").get(reworkId) as VerificationReworkRow | undefined;
+      if (!row) {
+        return;
+      }
+      const redelivered = new Set(JSON.parse(row.redelivered_task_ids) as string[]);
+      redelivered.add(producerTaskId);
+      database
+        .prepare("UPDATE verification_reworks SET redelivered_task_ids = ? WHERE id = ?")
+        .run(JSON.stringify([...redelivered]), reworkId);
+    },
+
+    /** The inputs the runtime handed a verifying task's latest dispatch. One row per task, replaced on each dispatch. */
+    saveVerificationInputs(taskId: string, inputs: VerificationInputs, preparedAt: string): void {
+      database
+        .prepare(
+          `INSERT INTO verification_handoffs (task_id, inputs, prepared_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(task_id) DO UPDATE SET inputs = excluded.inputs, prepared_at = excluded.prepared_at`,
+        )
+        .run(taskId, JSON.stringify(inputs), preparedAt);
+    },
+
+    getVerificationInputs(taskId: string): VerificationInputs | null {
+      const row = database
+        .prepare("SELECT inputs FROM verification_handoffs WHERE task_id = ?")
+        .get(taskId) as { inputs: string } | undefined;
+      return row ? (JSON.parse(row.inputs) as VerificationInputs) : null;
+    },
+
+    clearVerificationInputs(taskId: string): void {
+      database.prepare("DELETE FROM verification_handoffs WHERE task_id = ?").run(taskId);
     },
 
     hasReviewReconciliationRun(companyId: string): boolean {
@@ -1457,6 +1588,8 @@ type TaskRow = {
   parent_task_id: string | null;
   task_kind: TaskKind;
   source: TaskSource;
+  verification_requirements?: string | null;
+  decomposition?: string | null;
 };
 
 type ProofRow = {
@@ -1486,9 +1619,39 @@ type BusinessArtifactRow = {
   review_status: BusinessArtifact["reviewStatus"];
   is_current: number;
   supersedes_artifact_id: string | null;
+  verification?: string | null;
+  delivery_workspace_path?: string | null;
   created_at: string;
   updated_at: string;
 };
+
+type VerificationReworkRow = {
+  id: string;
+  company_id: string;
+  verifier_task_id: string;
+  failed_artifact_id: string;
+  round: number;
+  decision: VerificationRework["decision"];
+  producer_task_ids: string;
+  redelivered_task_ids: string;
+  failed_checks: string;
+  created_at: string;
+};
+
+function mapVerificationRework(row: VerificationReworkRow): VerificationRework {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    verifierTaskId: row.verifier_task_id,
+    failedArtifactId: row.failed_artifact_id,
+    round: row.round,
+    decision: row.decision,
+    producerTaskIds: JSON.parse(row.producer_task_ids) as string[],
+    redeliveredTaskIds: JSON.parse(row.redelivered_task_ids) as string[],
+    failedChecks: JSON.parse(row.failed_checks) as VerificationRework["failedChecks"],
+    createdAt: row.created_at,
+  };
+}
 
 type TaskLockRow = {
   task_id: string;
@@ -1540,6 +1703,7 @@ type TaskDependencyRow = {
   depends_on_task_id: string;
   handoff_contract: string | null;
   handoff_contract_text: string | null;
+  input_role?: DependencyInputRole | null;
 };
 
 type TaskEventRow = {
@@ -1754,6 +1918,10 @@ function mapTask(row: TaskRow): Task {
     parentTaskId: row.parent_task_id,
     taskKind: row.task_kind,
     source: row.source,
+    ...(row.decomposition ? { decomposition: JSON.parse(row.decomposition) as TaskDecomposition } : {}),
+    ...(row.verification_requirements
+      ? { verificationRequirements: JSON.parse(row.verification_requirements) as VerificationRequirement[] }
+      : {}),
   };
 }
 
@@ -1893,6 +2061,8 @@ function mapBusinessArtifact(row: BusinessArtifactRow): BusinessArtifact {
     reviewStatus: row.review_status,
     isCurrent: row.is_current === 1,
     supersedesArtifactId: row.supersedes_artifact_id,
+    deliveryWorkspacePath: row.delivery_workspace_path ?? null,
+    ...(row.verification ? { verification: JSON.parse(row.verification) as ArtifactVerification } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1949,6 +2119,7 @@ function mapTaskDependency(row: TaskDependencyRow): TaskDependency {
     dependsOnTaskId: row.depends_on_task_id,
     ...(row.handoff_contract ? { handoffContract: row.handoff_contract } : {}),
     ...(row.handoff_contract_text ? { handoffContractText: parseLocalizedText(row.handoff_contract_text) } : {}),
+    ...(row.input_role && row.input_role !== "context" ? { inputRole: row.input_role } : {}),
   };
 }
 

@@ -408,6 +408,7 @@ export const englishTranslations = {
   "taskStatus.failureUpstreamArtifactNotAccepted": "upstream artifact not accepted",
   "taskStatus.failureRetryExhausted": "retry exhausted",
   "taskStatus.failureRateLimited": "rate limited",
+  "taskStatus.failureVerificationFailed": "verification did not pass",
 
   "display.proofTypeFile": "File",
   "display.proofTypeDiff": "Diff",
@@ -945,6 +946,7 @@ export const chineseTranslations: Record<TranslationKey, string> = {
   "taskStatus.failureUpstreamArtifactNotAccepted": "上游交接物未验收",
   "taskStatus.failureRetryExhausted": "重试已耗尽",
   "taskStatus.failureRateLimited": "触发限流",
+  "taskStatus.failureVerificationFailed": "验证未通过",
 
   "display.proofTypeFile": "文件",
   "display.proofTypeDiff": "代码差异",

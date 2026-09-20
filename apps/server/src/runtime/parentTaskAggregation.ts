@@ -1,6 +1,13 @@
-import type { AgentFailureReason, Proof, Task, TaskEvent, TaskProgressEvent, TaskStatus } from "@auto-crop/core";
+import {
+  type AgentFailureReason,
+  type Task,
+  type TaskEvent,
+  type TaskProgressEvent,
+  type TaskStatus,
+} from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { applyTaskTransition } from "./taskTransition";
+import { resolveDependencyReadiness, type DependencyReadiness } from "./dependencyReadiness";
 
 export type ParentTaskAggregationUpdate = {
   task: Task;
@@ -22,12 +29,6 @@ export type PropagateParentTaskAggregationInput = {
   now?: () => Date;
   createId?: (prefix: string) => string;
 };
-
-type ParentDependencyReadiness =
-  | { kind: "ready"; proofs: Proof[] }
-  | { kind: "waiting"; note: string; dependency: Task }
-  | { kind: "blocked"; reason: "dependency_failed" | "needs_replan"; note: string; dependency: Task }
-  | { kind: "missing_deliverable"; note: string; dependency: Task };
 
 type ParentAggregationUpdate = {
   blockedByTaskId?: string;
@@ -100,7 +101,8 @@ function refreshParentTaskAggregation(
     return null;
   }
 
-  const readiness = resolveParentDependencyReadiness(input.repositories, parent);
+  // The same resolver dispatch uses, so aggregation cannot queue a parent that dispatch would park again.
+  const readiness = resolveDependencyReadiness(input.repositories, parent);
   const update = parentAggregationUpdateForTask(parent, readiness);
 
   if (!hasMeaningfulChange(parent, update)) {
@@ -136,13 +138,21 @@ function refreshParentTaskAggregation(
       dependencyNote: update.dependencyNote,
     },
     hold: update.status === "waiting_dependency" || update.status === "blocked"
-      ? {
-        kind: "awaiting_dependency_artifact",
-        resolver: "upstream_task",
-        subjectKind: "task",
-        subjectId: update.blockedByTaskId ?? update.progressSubjectTaskId ?? null,
-        reason: update.dependencyNote ?? update.failureMessage ?? update.message,
-      }
+      ? readiness.kind === "waiting" && readiness.waitingOnDecision
+        ? {
+          kind: "awaiting_founder_decision",
+          resolver: "founder",
+          subjectKind: "founder_decision",
+          subjectId: readiness.founderDecisionId ?? null,
+          reason: readiness.note,
+        }
+        : {
+          kind: "awaiting_dependency_artifact",
+          resolver: "upstream_task",
+          subjectKind: "task",
+          subjectId: update.blockedByTaskId ?? update.progressSubjectTaskId ?? null,
+          reason: update.dependencyNote ?? update.failureMessage ?? update.message,
+        }
       : null,
     // Aggregation answers only the parent's wait on its subtasks.
     resolvesHoldKinds: ["awaiting_dependency_artifact", "awaiting_founder_decision"],
@@ -169,116 +179,7 @@ function refreshParentTaskAggregation(
   };
 }
 
-function resolveParentDependencyReadiness(
-  repositories: ReturnType<typeof createRepositories>,
-  parent: Task,
-): ParentDependencyReadiness {
-  const dependencies = repositories.listTaskDependencies(parent.id);
-  const proofs: Proof[] = [];
-
-  for (const dependency of dependencies) {
-    const upstream = repositories.getTask(dependency.dependsOnTaskId);
-    if (!upstream) {
-      continue;
-    }
-
-    const dependencyProofs = repositories.listProofsForTask(upstream.id);
-    if ((upstream.taskKind ?? "parent") === "department_subtask") {
-      const subtaskReadiness = resolveDepartmentSubtaskReadiness(upstream, dependencyProofs);
-      if (subtaskReadiness.kind !== "ready") {
-        return subtaskReadiness;
-      }
-      proofs.push(...subtaskReadiness.proofs);
-      continue;
-    }
-
-    const taskReadiness = resolveOrdinaryDependencyReadiness(upstream, dependencyProofs);
-    if (taskReadiness.kind !== "ready") {
-      return taskReadiness;
-    }
-    proofs.push(...taskReadiness.proofs);
-  }
-
-  return { kind: "ready", proofs };
-}
-
-function resolveDepartmentSubtaskReadiness(task: Task, proofs: Proof[]): ParentDependencyReadiness {
-  if ((task.status === "review" || task.status === "complete") && proofs.length > 0) {
-    return { kind: "ready", proofs };
-  }
-
-  if (isWaitingStatus(task.status)) {
-    return {
-      kind: "waiting",
-      note: `Waiting for department subtask deliverable: ${task.title} (${task.status}).`,
-      dependency: task,
-    };
-  }
-
-  if (task.status === "needs_replan") {
-    return {
-      kind: "blocked",
-      reason: "needs_replan",
-      note: `Waiting for department subtask to be replanned: ${task.title}.`,
-      dependency: task,
-    };
-  }
-
-  if (isFailedDependencyStatus(task.status)) {
-    return {
-      kind: "blocked",
-      reason: "dependency_failed",
-      note: `Blocked by department subtask: ${task.title} (${task.status}).`,
-      dependency: task,
-    };
-  }
-
-  return {
-    kind: "missing_deliverable",
-    note: `Missing department subtask proof: ${task.title}.`,
-    dependency: task,
-  };
-}
-
-function resolveOrdinaryDependencyReadiness(task: Task, proofs: Proof[]): ParentDependencyReadiness {
-  if (isWaitingStatus(task.status)) {
-    return {
-      kind: "waiting",
-      note: `Waiting for dependency deliverable: ${task.title} (${task.status}).`,
-      dependency: task,
-    };
-  }
-
-  if (task.status === "needs_replan") {
-    return {
-      kind: "blocked",
-      reason: "needs_replan",
-      note: `Waiting for dependency to be replanned: ${task.title}.`,
-      dependency: task,
-    };
-  }
-
-  if (isFailedDependencyStatus(task.status)) {
-    return {
-      kind: "blocked",
-      reason: "dependency_failed",
-      note: `Blocked by failed dependency: ${task.title}.`,
-      dependency: task,
-    };
-  }
-
-  if (proofs.length === 0) {
-    return {
-      kind: "missing_deliverable",
-      note: `Missing consumable proof from dependency: ${task.title}.`,
-      dependency: task,
-    };
-  }
-
-  return { kind: "ready", proofs };
-}
-
-function parentAggregationUpdateForTask(parent: Task, readiness: ParentDependencyReadiness): ParentAggregationUpdate {
+function parentAggregationUpdateForTask(parent: Task, readiness: DependencyReadiness): ParentAggregationUpdate {
   if (readiness.kind === "ready") {
     return {
       type: "dependency_ready",
@@ -362,14 +263,6 @@ function hasDepartmentSubtaskDependency(
   return repositories
     .listTaskDependencies(task.id)
     .some((dependency) => (repositories.getTask(dependency.dependsOnTaskId)?.taskKind ?? "parent") === "department_subtask");
-}
-
-function isWaitingStatus(status: Task["status"]): boolean {
-  return status === "queued" || status === "waiting_dependency" || status === "running" || status === "retrying";
-}
-
-function isFailedDependencyStatus(status: Task["status"]): boolean {
-  return status === "failed" || status === "blocked" || status === "cancelled";
 }
 
 function hasMeaningfulChange(task: Task, update: ParentAggregationUpdate): boolean {

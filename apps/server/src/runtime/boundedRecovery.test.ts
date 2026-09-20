@@ -85,6 +85,24 @@ describe("bounded recovery", () => {
     client.close();
   });
 
+  /**
+   * A quota outage is not an attempt at the work: three of them used to spend the whole ceiling and
+   * park the task on `retry_exhausted`, whose only exit is a founder replan — for a wait (ADR 0032).
+   */
+  it("does not spend the recovery ceiling on runs that stopped for want of agent quota", () => {
+    const { repositories, client } = fixture();
+    for (const id of ["r1", "r2", "r3"]) {
+      repositories.createAgentRun({ ...run(id, "failed", "2026-09-01T00:01:00.000Z"), failureReason: "agent_quota_exhausted" });
+    }
+
+    expect(taskAttemptCount(repositories, "task_1")).toBe(0);
+    expect(isRetryExhausted(repositories, "task_1")).toBe(false);
+
+    repositories.createAgentRun({ ...run("r4", "failed", "2026-09-01T00:02:00.000Z"), failureReason: "agent_failed" });
+    expect(taskAttemptCount(repositories, "task_1")).toBe(1);
+    client.close();
+  });
+
   it("reset preserves agent-run history but drops attempts before the marker", () => {
     const { repositories, client } = fixture();
     for (const id of ["r1", "r2", "r3"]) {

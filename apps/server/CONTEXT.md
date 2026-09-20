@@ -68,6 +68,8 @@ Three rules follow:
 
 The same principle governs what comes back. A run whose reply the runtime parses declares a **Structured Output Contract** — a JSON Schema on the request, which Claude Code takes inline via `--json-schema` and Codex takes as a file via `--output-schema`. The prompt still explains the shape; it no longer guarantees it. A reply that misses the contract fails as `invalid_agent_output`, not `agent_failed`, because the process answered and the expectation was the runtime's. See ADR 0022, and add a contract to any new runtime-parsed reply.
 
+The Business Artifact is the exception: the agent writes it as a file and its payload is free-form, which Codex's strict `--output-schema` cannot express. A completed run whose artifact file does not parse gets one **Artifact Syntax Repair** before capture — the same agent, a workspace-only grant, told the parse error — and the runtime keeps the result only if it parses and says the same thing once syntax is set aside; otherwise the original file is restored. See ADR 0028.
+
 Do not ask an agent to repeat one generated field as another generated field. Founder Decisions use `recommended_option_index` to point into `open_decisions[].options`; the runtime derives the display recommendation label from that index. A string `recommendation` is legacy compatibility only. This is the same design rule as capability grants and structured output: turn prompt obligations into structure when the runtime can express them.
 
 `approvalRequired` decides whether a task needs Founder Approval before dispatch. It resolves the **company's** Permission Mode through `resolvePolicyForPermissionMode`, not a hardcoded default — a company set to `safe` must actually ask — and asks when any capability the run needs carries an `ask` decision.
@@ -101,6 +103,32 @@ The event a released path emits must report the task's **actual** resulting stat
 
 The granularity is deliberately coarse: one pre-dispatch question for the whole run, not one per action. That is also why an `ask` decision *grants* the capability rather than withholding it — the consent was already collected, once, before dispatch. Per-action approval during execution, and the per-action grant narrowing that belongs with it, are a separate and larger change.
 
+## Readiness Is Asked Of One Resolver
+
+`resolveDependencyReadiness` is the only answer to "can this task consume its upstream?". Dispatch, parent aggregation, the dependency cascade and Hold reconciliation all call it; a second copy is how aggregation once queued a parent the scheduler parked four seconds later. It classifies each dependency as internal (a subtask consumed by its parent or a sibling) or ordinary, and applies that relation's rule (ADR 0024).
+
+A department subtask never goes through acceptance. Its delivery parks in `review` under `awaiting_parent_aggregation`, and `deriveTaskHold` maps a subtask in `review` to that kind so reconciliation cannot rebuild a CEO review. The parent's acceptance ends those Holds.
+
+## Acceptance Reads Declarations, Not Prose
+
+`evaluateAutomaticAcceptance` decides from the delivery's Action Intent declaration (`payload.actions`): `performed` or `requested` goes to CEO Office, `considered` and `[]` do not. The text patterns remain only for artifacts written before the contract, which declare nothing. Do not add a keyword to that list to fix a routing problem — describing a risk is not taking one, which is the bug the list caused (ADR 0027).
+
+## A Failed Verdict Is Reworked, Not Retried
+
+`applyVerificationRework` decides what follows a verdict that did not pass and records it in `verification_reworks`, one row per failed report. The round budget (`MAX_VERIFICATION_ROUNDS`) counts those rows, not Agent Runs — every run in a rework loop succeeds, so the Bounded Recovery counter never sees it. Rework reaches a producer as prompt feedback read at dispatch, never as a dependency on its verifier (ADR 0026).
+
+## A Delivery Is Finalized In One Place
+
+`finalizeDelivery` (`src/runtime/deliveryFinalization.ts`) decides where a valid delivered artifact leaves its task: held, verification failed, CEO review, Founder Decision, internal delivery, or accepted. The scheduler and proof recovery both call it. A path that delivers an artifact and then chooses a status or Hold itself is a second copy of this policy — the shape of the bug where a recovered subtask skipped its Founder Decision (ADR 0024). Acceptance and completion recording are idempotent, so reaching the same delivery twice writes nothing twice.
+
+## A Verdict Is Asked Of One Predicate
+
+A Business Artifact can be `valid` and still record a Verification Verdict that is not `passed` — a well-formed report that the verified work failed. `isVerificationSatisfied` (core) is the only question every success path asks: `isReviewableBusinessArtifact`, CEO Office's pending projection, CEO approval, dependency readiness, parent aggregation, and `acceptTaskBusinessArtifact`, which throws rather than accept. A new acceptance or readiness path must ask it too. Checking `validationStatus` alone is how a failed verification report was one click from approval (ADR 0023).
+
+A verifier never runs in a producer's workspace. `resolveRunWorkspace` follows only `context` dependencies; `prepareVerificationInputs` gives the verifier snapshots in its own workspace, and a snapshot that cannot be made blocks the run before it starts. A snapshot's files come from `BusinessArtifact.deliveryWorkspacePath` — the workspace the runtime captured that delivery from — not from the producer task, which carries an artifact workspace only when a department split it. A delivery recording no workspace fails the handoff by name; handing over the artifact record alone let verifiers report on files they never got (ADR 0023).
+
+Never read a runtime fact back from an agent's workspace. What a verifier was handed lives in `verification_handoffs`; a manifest in the workspace is a file the agent can rewrite. And decide verification duty from the task's dependencies, never from the artifact kind the agent filed — both were real bypasses (ADR 0023).
+
 ## Glossary
 
 - **Task Transition Seam**: `applyTaskTransition`. The only writer of task status. _Avoid_: status update, state setter.
@@ -111,4 +139,10 @@ The granularity is deliberately coarse: one pre-dispatch question for the whole 
 - **Hold Release**: Answering one Task Hold and letting the remaining open Holds decide whether the task may move. Distinct from unblocking a task, which only happens when the released Hold was the last one. _Avoid_: unblock, resume.
 - **Agent Capability Grant**: The set of Runtime Capabilities one Agent Run is launched with, resolved by `resolveAgentCapabilityGrant` from the task's needs and the company's Permission Mode. Passed to the adapter as launch flags; never inherited from the operator's machine. _Avoid_: permission mode, allowed tools, sandbox.
 - **Structured Output Contract**: A JSON Schema on `AgentRunRequest.outputSchema` that the CLI enforces on the reply. Held as an object by the runtime; each adapter converts to its CLI's shape. _Avoid_: output format instruction, prompt rule.
+- **Running company**: `status = 'active'`, the only state `fetchQueuedTasks` dispatches from — activation is what starts spending, and `draft` / `creating` / `paused` / `review` dispatch nothing. _Avoid_: company enabled, not paused.
+- **Agent Quota Exhausted**: The failure reason and Hold for a run the CLI stopped because its account is out of quota — attributed to the account, not the agent, and not counted against the Bounded Recovery ceiling. _Avoid_: rate limit error, agent failure.
+- **Local Network capability**: `local_network`, held by runs whose deliverable needs a listener (`local-url`, `screenshot`); Codex takes it as `sandbox_workspace_write.network_access`, Claude Code cannot withhold it. _Avoid_: network flag, sandbox exception.
+- **Verification Gate**: A declared verifier's passing, current verdict on the exact artifact being consumed, which `resolveDependencyReadiness` requires before any other consumer may use that output. _Avoid_: verification dependency, blocking check.
+- **Planned Decomposition**: A task's declared `decomposition` — null, or the `define_execute_validate` template — which is the only reason a department splits it. _Avoid_: large task detection, split heuristic.
+- **Artifact Syntax Repair**: One narrow agent run that fixes the syntax of a Business Artifact file that does not parse, checked by the runtime for unchanged content before it is kept. _Avoid_: JSON repair, retry.
 - **Grant Refutation**: Rejecting an Environment-Blocked Blocker because it names a capability the run actually held. The runtime is the authority on what it granted, so that claim is checkable rather than testimony. _Avoid_: blocker validation, agent distrust.

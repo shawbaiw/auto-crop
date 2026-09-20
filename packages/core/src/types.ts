@@ -1,4 +1,5 @@
 import type { Locale, LocalizedText } from "./localizedText";
+import type { ArtifactVerification, DependencyInputRole, VerificationRequirement } from "./verification";
 
 export type CompanyStatus = "creating" | "creation_failed" | "draft" | "active" | "paused" | "review";
 export type PermissionMode = "safe" | "balanced" | "autonomous";
@@ -93,6 +94,12 @@ export type AgentFailureReason =
    * run that in fact exited 0: the contract is the runtime's, and so is the failure.
    */
   | "invalid_agent_output"
+  /**
+   * The agent CLI stopped because the account it runs on is out of quota until a stated reset. The
+   * work was never attempted, so blaming the agent (`agent_failed`) sends the next reader to look for
+   * a mistake that was not made, and the way forward is time, not a different plan (ADR 0032).
+   */
+  | "agent_quota_exhausted"
   | "no_proof"
   | "proof_capture_failed"
   | "dependency_failed"
@@ -105,7 +112,13 @@ export type AgentFailureReason =
   | "upstream_artifact_not_accepted"
   | "retry_exhausted"
   | "needs_replan"
-  | "rate_limited";
+  | "rate_limited"
+  /**
+   * The Agent Run finished and its report is well formed, but the Verification Contract says the
+   * target did not pass — a failed, inconclusive or stale verification. The process succeeded; the
+   * work being verified did not.
+   */
+  | "verification_failed";
 export type TaskEventType =
   | "task_started"
   | "task_review"
@@ -540,6 +553,16 @@ export type Task = {
   parentTaskId?: string | null;
   taskKind?: TaskKind;
   source?: TaskSource;
+  /**
+   * Requirements planned onto a verifying task itself, when no upstream artifact declares them — a
+   * verification task the CEO blueprint plans directly. Null for every other task (ADR 0025).
+   */
+  verificationRequirements?: VerificationRequirement[] | null;
+  /**
+   * How a department splits this task, as the plan declared it. Null means the task runs as one task:
+   * the runtime does not decide from the task's wording (ADR 0029).
+   */
+  decomposition?: TaskDecomposition | null;
 };
 
 export type TaskProgressEvent = {
@@ -594,6 +617,9 @@ export type Proof = {
   verifiedAt: string | null;
 };
 
+/** The only split shape the runtime implements: one parent, three stages, one level deep. */
+export type TaskDecomposition = { template: "define_execute_validate" };
+
 export type BusinessArtifact = {
   id: string;
   companyId: string;
@@ -611,6 +637,14 @@ export type BusinessArtifact = {
   reviewStatus: BusinessArtifactReviewStatus;
   isCurrent: boolean;
   supersedesArtifactId: string | null;
+  /**
+   * The workspace this delivery was captured from, recorded by the runtime at capture. It is where a
+   * verification snapshot copies the delivered files from, so it must never come from the agent's own
+   * account of its output. Null only on artifacts captured before the runtime recorded it.
+   */
+  deliveryWorkspacePath: string | null;
+  /** Runtime-derived Verification Contract verdict; absent on artifacts not produced by a verifying task. */
+  verification?: ArtifactVerification | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -635,6 +669,8 @@ export type TaskDependency = {
   dependsOnTaskId: string;
   handoffContract?: string | null;
   handoffContractText?: LocalizedText | null;
+  /** What this dependency supplies. Absent means `context`, the meaning every older dependency had. */
+  inputRole?: DependencyInputRole;
 };
 
 export type ReplanReplacementTask = {
@@ -721,6 +757,15 @@ export type BlueprintTask = {
   dependsOnTaskKeys: string[];
   handoffContract: string;
   handoffContractText?: LocalizedText;
+  /** Declared for every planned task: null, or what it verifies and against which requirements. */
+  verification: BlueprintTaskVerification | null;
+  /** Declared for every planned task: null, or how a department splits it (ADR 0029). */
+  decomposition: TaskDecomposition | null;
+};
+
+export type BlueprintTaskVerification = {
+  targetTaskKeys: string[];
+  requirements: VerificationRequirement[];
 };
 
 export type CompanyBlueprint = {

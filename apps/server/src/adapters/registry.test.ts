@@ -2,8 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { noToolGrant } from "../policies/capabilityGrant";
-import { createClaudeCodeAdapter, createCliAgentAdapter, createCodexAdapter, interpolateCommandTemplate } from "./cliAgent";
+import { noToolGrant, type AgentCapabilityGrant } from "../policies/capabilityGrant";
+import { createClaudeCodeAdapter, createCliAgentAdapter, createCodexAdapter, interpolateCommandTemplate, isQuotaExhaustedOutput } from "./cliAgent";
 import { createMockAgentAdapter } from "./mockAgent";
 import { createAgentRegistry, resolveLaunchableAdapter } from "./registry";
 import type { AgentRunRequest } from "./types";
@@ -359,10 +359,12 @@ describe("CLI command template adapter", () => {
         "--ignore-rules",
         "--skip-git-repo-check",
         "--sandbox",
-        "read-only",
+        "workspace-write",
         "--ephemeral",
         "-c",
         "tools.web_search=true",
+        "-c",
+        "sandbox_workspace_write.network_access=false",
         "Create a landing page",
       ],
     });
@@ -379,8 +381,43 @@ describe("CLI command template adapter", () => {
 
     expect(research).toContain("tools.web_search=true");
     expect(workspaceOnly).toContain("tools.web_search=false");
-    expect(workspaceOnly[workspaceOnly.indexOf("--sandbox") + 1]).toBe("read-only");
+    // The sandbox follows `workspace_write`, not the shell: Codex's sandbox governs writes, and a
+    // read-only run still has a shell. Keying it on `run_command` launched every write-without-shell
+    // grant read-only, where it could not write the artifact it had to deliver (ADR 0021).
+    expect(workspaceOnly[workspaceOnly.indexOf("--sandbox") + 1]).toBe("workspace-write");
     expect(withShell[withShell.indexOf("--sandbox") + 1]).toBe("workspace-write");
+    expect((await adapter.commandPreview({ ...request, grant: { granted: ["workspace_read"], withheld: [], id: "read" } })).args[
+      (await adapter.commandPreview({ ...request, grant: { granted: ["workspace_read"], withheld: [], id: "read" } })).args.indexOf("--sandbox") + 1
+    ]).toBe("read-only");
+  });
+
+  /**
+   * Codex denies every socket in its workspace-write sandbox unless this config is on — verified
+   * against the real CLI, where a run without it cannot bind 127.0.0.1 at all (ADR 0031).
+   */
+  it("opens Codex's local network only for a grant that carries it", async () => {
+    const adapter = codexWith(CODEX_EXEC_HELP);
+    const networkFor = async (granted: AgentCapabilityGrant["granted"]) =>
+      (await adapter.commandPreview({ ...request, grant: { granted, withheld: [], id: granted.join("+") } })).args;
+
+    expect(await networkFor(["workspace_read", "workspace_write", "run_command", "local_network"])).toContain(
+      "sandbox_workspace_write.network_access=true",
+    );
+    expect(await networkFor(["workspace_read", "workspace_write", "run_command"])).toContain(
+      "sandbox_workspace_write.network_access=false",
+    );
+  });
+
+  /**
+   * Both CLIs report an exhausted account by printing it and exiting non-zero — no exit code, no
+   * structured field. Recording that as `agent_failed` blames the agent for a wait (ADR 0032).
+   */
+  it("reads an exhausted account as its own failure, not as the agent failing", () => {
+    expect(isQuotaExhaustedOutput("You've hit your session limit · resets 7:10pm (Asia/Shanghai)")).toBe(true);
+    expect(isQuotaExhaustedOutput("Error: usage limit reached for this account")).toBe(true);
+    expect(isQuotaExhaustedOutput("quota exceeded")).toBe(true);
+    expect(isQuotaExhaustedOutput("TypeError: cannot read property of undefined")).toBe(false);
+    expect(isQuotaExhaustedOutput("the report describes a session limit for free users")).toBe(true);
   });
 
   it("marks Codex unavailable when a required isolation flag is missing", async () => {

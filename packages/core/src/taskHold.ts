@@ -25,6 +25,11 @@ import type { AgentFailureReason, TaskStatus } from "./types";
 export type TaskHoldKind =
   /** A reviewable Business Artifact is waiting for a CEO Office approve/return decision. */
   | "awaiting_ceo_review"
+  /**
+   * A department subtask delivered and is ready for its siblings and parent to consume. It is held for
+   * the parent's aggregation, not for anyone's approval: CEO Office reviews the parent's result.
+   */
+  | "awaiting_parent_aggregation"
   /** A risk policy requires Founder Approval before the task may be dispatched. */
   | "awaiting_founder_approval"
   /** A person must act outside the runtime before the task can proceed. */
@@ -42,15 +47,22 @@ export type TaskHoldKind =
   /** The plan itself is wrong for the goal; the task needs replanning before it can run again. */
   | "needs_replan"
   /**
+   * A verifying task produced a well-formed report whose Verification Contract verdict is not `passed`.
+   * The report stays as diagnostic evidence; it cannot stand as a successful delivery.
+   */
+  | "verification_failed"
+  /**
    * Execution stopped for a reason the runtime could not attribute to any of the above — a timed-out
    * or crashed run, a restart mid-flight, or a status transition that declared no Hold of its own.
    * The deliberate catch-all: it keeps rule 1 true for situations nobody modelled in advance, at the
    * cost of a vaguer reason string, instead of silently producing a task no one can move.
    */
+  | "agent_quota_exhausted"
   | "runtime_interrupted";
 
 export const taskHoldKinds = [
   "awaiting_ceo_review",
+  "awaiting_parent_aggregation",
   "awaiting_founder_approval",
   "awaiting_human_action",
   "awaiting_founder_decision",
@@ -59,6 +71,8 @@ export const taskHoldKinds = [
   "invalid_business_artifact",
   "recovery_exhausted",
   "needs_replan",
+  "verification_failed",
+  "agent_quota_exhausted",
   "runtime_interrupted",
 ] as const satisfies readonly TaskHoldKind[];
 
@@ -72,6 +86,7 @@ export const taskHoldKinds = [
  */
 export const taskHoldStatusBinding: Record<TaskHoldKind, TaskStatus | null> = {
   awaiting_ceo_review: "review",
+  awaiting_parent_aggregation: "review",
   needs_replan: "needs_replan",
   // The rest survive a change of status: an unanswered approval, an unconfirmed Human Action or an
   // upstream that still owes a deliverable stays true however the task itself was re-parked.
@@ -82,6 +97,8 @@ export const taskHoldStatusBinding: Record<TaskHoldKind, TaskStatus | null> = {
   awaiting_external_wait: null,
   invalid_business_artifact: null,
   recovery_exhausted: null,
+  verification_failed: null,
+  agent_quota_exhausted: null,
   runtime_interrupted: null,
 };
 
@@ -256,6 +273,11 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
       case "awaiting_ceo_review":
         offer(hold, "ceo_review_decision", "ceo_office");
         break;
+      case "awaiting_parent_aggregation":
+        // The runtime advances this on its own once the parent aggregates. The founder's way out, if the
+        // delivered slice is wrong for the parent, is replanning it.
+        offer(hold, "request_replan", "founder");
+        break;
       case "awaiting_founder_approval":
         offer(hold, "decide_founder_approval", "founder");
         break;
@@ -296,6 +318,18 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
         }
         offer(hold, "request_replan", "founder");
         break;
+      case "verification_failed":
+        // Running the verification again is the way forward when its input was wrong (a handoff
+        // repaired since); replanning is the way out when the verified work itself must change.
+        offer(hold, "recover_task", "runtime");
+        offer(hold, "request_replan", "founder");
+        break;
+      case "agent_quota_exhausted":
+        // Time is what resolves it, so the exits are the same two as an interrupted run — run it
+        // again once the quota resets, or replan if waiting is not acceptable.
+        offer(hold, "recover_task", "runtime");
+        offer(hold, "request_replan", "founder");
+        break;
       case "runtime_interrupted":
         // Nothing is known about why the run stopped, so the way back is to run it again; a refresh
         // would only re-derive state that is not what went wrong.
@@ -330,6 +364,8 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
  */
 export function deriveTaskHold(input: {
   status: TaskStatus;
+  /** A department subtask parked in `review` is held for its parent's aggregation, never for CEO review. */
+  taskKind?: "parent" | "department_subtask" | null;
   failureReason?: AgentFailureReason | null;
   dependencyNote?: string | null;
 }): { kind: TaskHoldKind; resolver: TaskHoldResolver } | null {
@@ -338,7 +374,9 @@ export function deriveTaskHold(input: {
   }
 
   if (input.status === "review") {
-    return { kind: "awaiting_ceo_review", resolver: "ceo_office" };
+    return input.taskKind === "department_subtask"
+      ? { kind: "awaiting_parent_aggregation", resolver: "runtime" }
+      : { kind: "awaiting_ceo_review", resolver: "ceo_office" };
   }
 
   if (input.status === "needs_replan") {
@@ -372,6 +410,10 @@ export function deriveTaskHold(input: {
     // meaning "nobody modelled this" (ADR 0020).
     case "invalid_agent_output":
       return { kind: "runtime_interrupted", resolver: "runtime" };
+    case "agent_quota_exhausted":
+      return { kind: "agent_quota_exhausted", resolver: "runtime" };
+    case "verification_failed":
+      return { kind: "verification_failed", resolver: "runtime" };
     default:
       return { kind: "runtime_interrupted", resolver: "runtime" };
   }

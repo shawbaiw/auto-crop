@@ -251,6 +251,7 @@ export function confirmReplanProposal(input: ConfirmReplanProposalInput): Confir
 
   if (finalTask) {
     input.repositories.replaceDependencyConsumers(sourceTask.id, finalTask.id);
+    inheritVerificationDuty(input.repositories, sourceTask, finalTask);
   }
 
   // The source task is retired in favour of the replacement chain, so its Hold names the task that
@@ -310,6 +311,28 @@ export function confirmReplanProposal(input: ConfirmReplanProposalInput): Confir
     createdTasks,
     affectedConsumers,
   };
+}
+
+/**
+ * A replacement chain carries the work its source task owed, and a verifying task owed a verdict. The
+ * final replacement inherits the source's verification targets, requirement source and planned
+ * requirements; without them the replacement would be an ordinary task and the verification would
+ * silently disappear from the plan (ADR 0025).
+ */
+function inheritVerificationDuty(
+  repositories: ReturnType<typeof createRepositories>,
+  sourceTask: Task,
+  finalTask: Task,
+): void {
+  for (const dependency of repositories.listTaskDependencies(sourceTask.id)) {
+    if ((dependency.inputRole ?? "context") === "context") {
+      continue;
+    }
+    repositories.createTaskDependency({ ...dependency, taskId: finalTask.id });
+  }
+  if (sourceTask.verificationRequirements && sourceTask.verificationRequirements.length > 0) {
+    repositories.updateTaskVerificationRequirements(finalTask.id, sourceTask.verificationRequirements);
+  }
 }
 
 function buildReplacementTasks(task: Task): ReplanProposal["replacementTasks"] {

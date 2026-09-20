@@ -245,6 +245,7 @@ function openHoldForStatus(
 
   const derived = deriveTaskHold({
     status: task.status,
+    taskKind: task.taskKind,
     failureReason: task.latestFailureReason,
     dependencyNote: task.dependencyNote,
   });
@@ -300,6 +301,8 @@ function defaultResolverForKind(kind: TaskHoldKind): TaskHoldResolver {
     case "awaiting_external_wait":
       return "time";
     case "invalid_business_artifact":
+    case "verification_failed":
+    case "awaiting_parent_aggregation":
     case "runtime_interrupted":
       return "runtime";
     default:
@@ -311,6 +314,8 @@ function defaultReasonForKind(kind: TaskHoldKind, task: Task): string {
   switch (kind) {
     case "awaiting_ceo_review":
       return `Waiting for a CEO Office review decision on ${task.title}.`;
+    case "awaiting_parent_aggregation":
+      return `${task.title} is delivered and waiting for its parent task to aggregate it.`;
     case "awaiting_founder_approval":
       return `Waiting for Founder Approval before ${task.title} can run.`;
     case "awaiting_human_action":
@@ -327,6 +332,10 @@ function defaultReasonForKind(kind: TaskHoldKind, task: Task): string {
       return `${task.title} reached the Bounded Recovery ceiling and needs a replan.`;
     case "needs_replan":
       return `${task.title} needs replanning before it can run again.`;
+    case "verification_failed":
+      return `${task.title} verified its target and the verification did not pass.`;
+    case "agent_quota_exhausted":
+      return `${task.title} stopped because its agent's account is out of quota; it can run again once that resets.`;
     case "runtime_interrupted":
       return `${task.title} stopped without an attributed reason and needs a decision.`;
     default: {

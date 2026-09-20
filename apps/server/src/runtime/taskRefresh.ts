@@ -12,6 +12,8 @@ import { isAffordanceApplicable } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhausted } from "./boundedRecovery";
 import { captureBusinessArtifact, isReviewableBusinessArtifact } from "./businessArtifact";
+import { finalizeDelivery, type DeliveryOutcome } from "./deliveryFinalization";
+import { resolveCaptureVerificationContext } from "./verificationContract";
 import { refreshDependencyTasks } from "./dependencyCascade";
 import { refreshParentTaskAggregationTask } from "./parentTaskAggregation";
 import { applyTaskTransition } from "./taskTransition";
@@ -32,7 +34,7 @@ export type RefreshTaskDependencyStateResult = {
   proof?: Proof[];
   businessArtifacts?: BusinessArtifact[];
   recovery?: {
-    status: "recovered" | "not_found" | "not_applicable";
+    status: "recovered" | "still_unreviewable" | "not_found" | "not_applicable";
     message: string;
   };
 };
@@ -70,7 +72,9 @@ export function refreshTaskDependencyState(
     ? { status: "not_applicable" as const, message: "Proof recovery does not apply to this task." }
     : recoveryResult.kind === "not_found"
       ? { status: "not_found" as const, message: proofRecoveryNotFoundMessage(task) }
-      : undefined;
+      : recoveryResult.kind === "still_unreviewable"
+        ? { status: "still_unreviewable" as const, message: stillUnreviewableMessage(recoveryResult.validationErrors) }
+        : undefined;
 
   const parentAggregationRefresh = refreshParentTaskAggregationTask({
     repositories: input.repositories,
@@ -120,6 +124,7 @@ export function recoverProofIfPossible(
   task: Task,
 ):
   | { kind: "recovered"; result: RefreshTaskDependencyStateResult }
+  | { kind: "still_unreviewable"; validationErrors: unknown[] }
   | { kind: "not_found" }
   | { kind: "not_applicable" } {
   if (!isProofRecoveryEligible(task)) {
@@ -138,21 +143,35 @@ export function recoverProofIfPossible(
   }
 
   const { proof, workspacePath } = recovered;
-  for (const item of proof) {
-    input.repositories.appendProof(item);
-  }
-
   const businessArtifact = captureBusinessArtifact({
     task,
     proofs: proof,
     workspacePath,
     locale: input.repositories.getCompany(task.companyId)?.locale ?? "en",
+    verificationContext: resolveCaptureVerificationContext(input.repositories, task, workspacePath),
     now: input.now,
     createId: input.createId,
   });
+
+  // A valid report whose verification verdict did not pass is a delivery with an outcome, not an
+  // artifact to recapture: it goes to finalization like any other delivery.
+  const deliveredWithVerdict = Boolean(businessArtifact.verification && businessArtifact.validationStatus === "valid");
+  const unreviewable = !isReviewableBusinessArtifact(businessArtifact) && !deliveredWithVerdict;
+
+  // Recovery exists to capture a delivery the run left behind. A task already parked on an
+  // unreviewable artifact that recaptures an unreviewable one has recovered nothing: its Hold already
+  // says so. Reporting that as recovered — re-blocking, opening a second Hold on the new capture —
+  // made `recover_task` loop without ever re-running the work (ADR 0020: a Hold's exits must lead out).
+  if (unreviewable && input.repositories.listOpenTaskHolds(task.id).some((hold) => hold.kind === "invalid_business_artifact")) {
+    return { kind: "still_unreviewable", validationErrors: businessArtifact.validationErrors };
+  }
+
+  for (const item of proof) {
+    input.repositories.appendProof(item);
+  }
   input.repositories.createBusinessArtifact(businessArtifact);
 
-  if (!isReviewableBusinessArtifact(businessArtifact)) {
+  if (unreviewable) {
     const now = input.now ?? (() => new Date());
     const createId = input.createId ?? defaultCreateId;
     const timestamp = now().toISOString();
@@ -231,84 +250,77 @@ export function recoverProofIfPossible(
     };
   }
 
-  // Entering `review` opens the Hold CEO Office reads to offer the decision. That Hold — not the
-  // artifact's `reviewStatus` — is what makes the approval offerable, so the two can never disagree.
-  applyTaskTransition({
-    repositories: input.repositories,
-    task,
-    status: "review",
-    executionSummary: {
-      latestFailureReason: null,
-      latestFailureMessage: null,
-      dependencyNote: null,
-    },
-    hold: {
-      kind: "awaiting_ceo_review",
-      subjectKind: "business_artifact",
-      subjectId: businessArtifact.id,
-      reason: `Recovered proof for ${task.title} is waiting for a CEO Office review decision.`,
-    },
-    now: input.now,
-    createId: input.createId,
-  });
   if (task.artifactWorkspacePath && task.artifactWorkspacePath !== workspacePath) {
     input.repositories.updateTaskArtifactWorkspacePath(task.id, workspacePath);
   }
 
-  const now = input.now ?? (() => new Date());
+  // Recovered proof is a delivery like a finished run's, and gets the same policy: failed verdicts,
+  // Founder Decisions, internal subtask delivery, Automatic Acceptance or CEO review — never a shortcut.
+  const finalized = finalizeDelivery({
+    repositories: input.repositories,
+    task: input.repositories.getTask(task.id) ?? task,
+    artifact: businessArtifact,
+    source: "proof_recovery",
+    now: input.now,
+    createId: input.createId,
+  });
+
+  return {
+    kind: "recovered",
+    result: {
+      task: finalized.task,
+      event: finalized.events.find((event) => event.taskId === task.id) ?? appendRecoveryEvent(input, finalized.task),
+      ...(finalized.progressEvent ? { progressEvent: finalized.progressEvent } : {}),
+      proof,
+      businessArtifacts: [input.repositories.getCurrentBusinessArtifactForTask(task.id) ?? businessArtifact],
+      recovery: {
+        status: "recovered",
+        message: recoveryMessage(finalized.outcome),
+      },
+    },
+  };
+}
+
+/** Recovery always answers with an event; an outcome that appended none of its own gets this one. */
+function appendRecoveryEvent(input: RefreshTaskDependencyStateInput, task: Task): TaskEvent {
   const createId = input.createId ?? defaultCreateId;
-  const timestamp = now().toISOString();
   const event: TaskEvent = {
     id: createId("task_event"),
     companyId: task.companyId,
     taskId: task.id,
     type: "proof_recovered",
-    message: `Proof recovered: ${task.title} submitted to CEO Office for review.`,
-    createdAt: timestamp,
-    status: "review",
+    message: `Proof recovered: ${task.title}.`,
+    createdAt: (input.now ?? (() => new Date()))().toISOString(),
+    status: task.status,
     failureReason: null,
     failureMessage: null,
     executionProfileName: null,
     requestedTimeoutMs: null,
     effectiveTimeoutMs: null,
     dependencyNote: null,
-    artifactWorkspacePath: task.artifactWorkspacePath ?? workspacePath,
+    artifactWorkspacePath: task.artifactWorkspacePath ?? null,
   };
   input.repositories.appendTaskEvent(event);
+  return event;
+}
 
-  const progressEvent: TaskProgressEvent = {
-    id: createId("task_progress"),
-    companyId: task.companyId,
-    departmentId: task.departmentId,
-    parentTaskId: task.parentTaskId ?? task.id,
-    subjectTaskId: task.id,
-    step: "awaiting_review",
-    status: "current",
-    label: "Found checkable proof and submitted it to CEO Office for review.",
-    detail: proof.map((item) => item.summary).join("\n"),
-    createdAt: timestamp,
-  };
-  input.repositories.appendTaskProgressEvent(progressEvent);
-
-  const refreshedTask = input.repositories.getTask(task.id);
-  if (!refreshedTask) {
-    throw new Error(`Task disappeared after proof recovery: ${task.id}`);
+function recoveryMessage(outcome: DeliveryOutcome): string {
+  switch (outcome) {
+    case "accepted":
+      return "Found checkable proof; Automatic Acceptance accepted it.";
+    case "awaiting_ceo_review":
+      return "Found checkable proof and submitted it to CEO Office for review.";
+    case "awaiting_founder_decision":
+      return "Found checkable proof; it declares a Founder Decision the founder must make.";
+    case "internal_delivery":
+      return "Found checkable proof and delivered it to the department.";
+    case "verification_failed":
+      return "Found a verification report whose verdict did not pass.";
+    case "verification_rework":
+      return "Found a verification report whose verdict did not pass; rework was requested.";
+    case "held":
+      return "Found checkable proof, but the task is still held for another reason.";
   }
-
-  return {
-    kind: "recovered",
-    result: {
-      task: refreshedTask,
-      event,
-      progressEvent,
-      proof,
-      businessArtifacts: [businessArtifact],
-      recovery: {
-        status: "recovered",
-        message: "Found checkable proof and submitted it to CEO Office for review.",
-      },
-    },
-  };
 }
 
 function recoverProofFromKnownWorkspaces(
@@ -364,6 +376,11 @@ function isProofRecoveryEligible(task: Task): boolean {
 /** One declaration, shared with the offer: `isAffordanceApplicable` in `@auto-crop/core`. */
 function isRefreshableStatus(status: TaskStatus): boolean {
   return isAffordanceApplicable("refresh_task", status);
+}
+
+function stillUnreviewableMessage(validationErrors: unknown[]): string {
+  const detail = validationErrors.length > 0 ? ` / ${JSON.stringify(validationErrors)}` : "";
+  return `The workspace still holds no reviewable business artifact; recover the task to run it again.${detail}`;
 }
 
 function proofRecoveryNotFoundMessage(task: Task): string {

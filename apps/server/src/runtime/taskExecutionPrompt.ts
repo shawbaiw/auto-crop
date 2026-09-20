@@ -1,4 +1,4 @@
-import type { Company, Locale, Task } from "@auto-crop/core";
+import { actionIntentCategories, type Company, type Locale, type Task, type VerificationInputs } from "@auto-crop/core";
 import { describeRuntimeCapability, type AgentCapabilityGrant } from "../policies/capabilityGrant";
 import type { TaskHandoff } from "./dependencyReadiness";
 import { LOCALE_LANGUAGE_NAME } from "./localePromptText";
@@ -10,7 +10,94 @@ export type BuildTaskExecutionPromptInput = {
   handoffs: TaskHandoff[];
   /** What this run may actually do. Omitted only by callers that do not launch an agent. */
   grant?: AgentCapabilityGrant;
+  /** Failed checks a verifier sent back to this task, to fix in this run. */
+  rework?: Array<{
+    round: number;
+    verifierTitle: string;
+    failedChecks: Array<{ requirementId: string; description: string; outcome: string; evidence: string }>;
+  }>;
+  /** This task's Verification Contract obligations, resolved by the runtime before dispatch. */
+  verification?: {
+    producesRequirements: boolean;
+    inputs: VerificationInputs | null;
+  };
 };
+
+/**
+ * Tell a producer what its verifier found. The previous delivery was judged and failed; this run exists
+ * to fix exactly those checks, so they lead the prompt's task-specific instructions.
+ */
+function buildReworkInstructions(rework: BuildTaskExecutionPromptInput["rework"]): string[] {
+  if (!rework || rework.length === 0) {
+    return [];
+  }
+  return [
+    "## Rework Requested",
+    "",
+    "Your previous delivery was verified and did not pass. Fix every check below in the existing work, then deliver again;",
+    "the verifier will check a fresh snapshot of your new output against the same requirements.",
+    ...rework.flatMap((entry) => [
+      "",
+      `${entry.verifierTitle}, verification round ${entry.round}:`,
+      ...entry.failedChecks.map((check) => `- \`${check.requirementId}\` (${check.outcome}): ${check.description} — evidence: ${check.evidence}`),
+    ]),
+    "",
+  ];
+}
+
+/**
+ * State the Verification Contract a run is under. A requirements producer declares the checks its
+ * downstream verifier is judged against; a verifier gets the runtime's snapshots and the requirements,
+ * and reports one check per requirement. The verdict is derived by the runtime from those checks, so the
+ * prompt never asks for an overall pass/fail the agent could phrase optimistically.
+ */
+function buildVerificationInstructions(
+  verification: BuildTaskExecutionPromptInput["verification"],
+  languageName: string,
+): string[] {
+  if (!verification) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  if (verification.producesRequirements) {
+    lines.push(
+      "## Verification Requirements",
+      "",
+      "A downstream task verifies the delivered work against the requirements you declare here, and cannot add or drop any.",
+      "Add `payload.verification_requirements`: a non-empty array of `{ \"id\": \"...\", \"description\": \"...\" }`.",
+      "Each `id` is a short unique slug. Each `description` states one observable condition the delivered output must meet,",
+      `derived from this task and its accepted upstream handoffs, written in ${languageName}. Declare every condition that must hold for the work to count as done.`,
+      "",
+    );
+  }
+
+  if (verification.inputs) {
+    lines.push(
+      "## Verification Contract",
+      "",
+      "You verify upstream output. The runtime copied it into your workspace; verify these snapshots and nothing else:",
+      ...verification.inputs.targets.map((target) => `- \`${target.path}\` (task ${target.taskId}, artifact ${target.artifactId})`),
+      "Each snapshot holds `business-artifact.json`, the delivered artifact, and a `files/` directory when the producer delivered files.",
+      "Do not modify the snapshots. If a check needs to build or run something, copy the files into a scratch directory first.",
+      "",
+      "Requirements:",
+      ...verification.inputs.requirements.map((requirement) => `- \`${requirement.id}\`: ${requirement.description}`),
+      "",
+      "Report `payload.verification.checks` with exactly one entry per requirement:",
+      JSON.stringify({ requirement_id: verification.inputs.requirements[0]?.id ?? "requirement-id", outcome: "passed", evidence: "..." }),
+      "`outcome` is `passed`, `failed`, or `not_run`. `evidence` names the command output, file, or observation behind the outcome.",
+      ...(verification.inputs.targets.length > 1
+        ? ["When a check fails because of one target, add `target_task_id` naming it, so only that target is sent back for rework."]
+        : []),
+      "Use `not_run` when you could not perform a check — never `passed`. Leaving a requirement out fails validation.",
+      "The runtime derives the overall verdict from these checks; do not state one of your own.",
+      "",
+    );
+  }
+
+  return lines;
+}
 
 /**
  * State the run's Agent Capability Grant, and forbid substituting priors for a capability it holds or
@@ -168,6 +255,19 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
     "recommendation. Missing or malformed `execution_report` fails validation, and a missing `outcome_summary`",
     "still fails validation.",
     "",
+    "## Actions You Take",
+    "",
+    "Declare `payload.actions`: every external or sensitive action this run performed, or asks approval to perform now.",
+    "Use `[]` when there is none — that is the normal case for research, planning, writing and local implementation work.",
+    JSON.stringify([{ category: "search_engine_submission", status: "performed", description: "Submitted the sitemap.", target: "example.com" }]),
+    `\`category\` is one of: ${actionIntentCategories.join(", ")}.`,
+    "`status` is `performed` (this run did it), `requested` (the work is blocked until someone approves and does it now),",
+    "or `considered` (a later step, a limitation, or something deliberately not done).",
+    "Naming a service in your report is not an action: \"we have no Search Console access yet\" or \"submit the sitemap after launch\"",
+    "is `considered`, or not an entry at all. Only what this run actually did, or needs done now, is `performed` or `requested`.",
+    "This declaration is what routes work to the founder, so an action left undeclared is one nobody was asked about.",
+    "It does not grant anything: an action still needs the capability and the approval it always did.",
+    "",
     "## Open Decisions",
     "",
     "If you make a choice on a strategic business decision whose first value is the founder's to set —",
@@ -197,19 +297,24 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
   ];
   const proofInstructions = buildProofContractInstructions(task);
   const grantInstructions = buildCapabilityGrantInstructions(grant);
+  const verificationInstructions = buildVerificationInstructions(input.verification, languageName);
+  const reworkInstructions = buildReworkInstructions(input.rework);
   const basePrompt = [
     ...companyContext,
     task.description,
     "",
+    ...reworkInstructions,
     ...(grantInstructions.length > 0 ? [...grantInstructions, ""] : []),
     ...artifactInstructions,
     "",
+    ...verificationInstructions,
     ...proofInstructions,
   ];
 
   if (handoffs.length === 0) {
     return basePrompt.join("\n");
   }
+  const snapshotPaths = new Map(input.verification?.inputs?.targets.map((target) => [target.taskId, target.path]) ?? []);
 
   return [
     ...basePrompt,
@@ -227,7 +332,10 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
       ...(handoff.summary ? [`   Summary: ${handoff.summary}`] : []),
       ...(handoff.handoffContract ? [`   Handoff Contract: ${handoff.handoffContract}`] : []),
       ...(handoff.handoffPackagePath ? [`   Handoff Package: ${handoff.handoffPackagePath}`] : []),
-      ...(handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
+      // A verification target is read from its snapshot, never from the producer's live workspace.
+      ...(snapshotPaths.has(handoff.upstreamTaskId)
+        ? [`   Verification Snapshot: ${snapshotPaths.get(handoff.upstreamTaskId)}`]
+        : handoff.artifactWorkspacePath ? [`   Artifact Workspace: ${handoff.artifactWorkspacePath}`] : []),
     ]),
   ].join("\n");
 }
