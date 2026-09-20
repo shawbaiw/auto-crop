@@ -84,6 +84,10 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
     "must meet for the plan to count it as done. The runtime hands the verifier a snapshot of the targets and judges it against exactly these",
     "requirements, so do not leave out a condition the plan depends on. Tasks that research, plan, build, or write are not verifying tasks:",
     "give them verification: null.",
+    "Every task must also include decomposition: null, or { \"template\": \"define_execute_validate\" } when the task is big enough that its",
+    "department should split it into three stages — define the executable slice, execute it, validate the executed output. Declare it only",
+    "for build-style tasks that produce a runnable artifact; research, planning, writing and verifying tasks take decomposition: null, and a",
+    "task that declares verification can never declare a decomposition.",
     "",
     "```json",
     JSON.stringify(
@@ -144,6 +148,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
                 zh: "该任务必须为下游工作产出的具体可消费交付物。",
               },
               verification: null,
+              decomposition: null,
             },
             {
               key: "verify_task_key",
@@ -167,6 +172,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
                 targetTaskKeys: ["task_key"],
                 requirements: [{ id: "requirement-slug", description: "One observable condition the target output must meet." }],
               },
+              decomposition: null,
             },
           ],
         },

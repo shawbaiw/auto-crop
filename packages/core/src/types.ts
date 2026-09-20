@@ -552,6 +552,11 @@ export type Task = {
    * verification task the CEO blueprint plans directly. Null for every other task (ADR 0025).
    */
   verificationRequirements?: VerificationRequirement[] | null;
+  /**
+   * How a department splits this task, as the plan declared it. Null means the task runs as one task:
+   * the runtime does not decide from the task's wording (ADR 0029).
+   */
+  decomposition?: TaskDecomposition | null;
 };
 
 export type TaskProgressEvent = {
@@ -605,6 +610,9 @@ export type Proof = {
   summaryText?: LocalizedText | null;
   verifiedAt: string | null;
 };
+
+/** The only split shape the runtime implements: one parent, three stages, one level deep. */
+export type TaskDecomposition = { template: "define_execute_validate" };
 
 export type BusinessArtifact = {
   id: string;
@@ -745,6 +753,8 @@ export type BlueprintTask = {
   handoffContractText?: LocalizedText;
   /** Declared for every planned task: null, or what it verifies and against which requirements. */
   verification: BlueprintTaskVerification | null;
+  /** Declared for every planned task: null, or how a department splits it (ADR 0029). */
+  decomposition: TaskDecomposition | null;
 };
 
 export type BlueprintTaskVerification = {

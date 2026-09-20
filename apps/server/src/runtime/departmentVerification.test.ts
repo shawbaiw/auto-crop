@@ -914,6 +914,7 @@ function createHarness(behaviour: StageBehaviour) {
     ...baseTask("task_1", "queued", "landing-page-file"),
     title: "Build the playable web prototype",
     description: "Build the playable web prototype, validate it locally, and capture proof.",
+    decomposition: { template: "define_execute_validate" },
   };
   repositories.createTask(parent);
 

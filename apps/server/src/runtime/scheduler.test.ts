@@ -723,6 +723,7 @@ describe("runSchedulerOnce", () => {
       title: "Build the playable web prototype",
       description: "Build the playable web prototype, validate it locally, capture proof, and prepare it for deployment.",
       requiredCapabilities: ["code", "frontend", "test"],
+      decomposition: { template: "define_execute_validate" as const },
     };
     const { projectRoot, repositories, client } = createSchedulerFixture([largeParentTask]);
 
@@ -1403,6 +1404,7 @@ describe("runSchedulerOnce", () => {
       ...createTaskRecord("task_2", "queued", "low", "landing-page-file"),
       title: "Build and validate the prototype",
       description: "Build a browser prototype and validate it against the accepted brief.",
+      decomposition: { template: "define_execute_validate" as const },
     };
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, parent]);
     repositories.createTaskDependency({
@@ -1448,12 +1450,42 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  /**
+   * The trigger this replaced matched "prototype" plus "validate" in the title and description, and
+   * company creation appended guidance containing both — so a landing-page task was split whatever the
+   * plan intended. Wording now decides nothing (ADR 0029).
+   */
+  it("does not split a task whose wording reads like a prototype but declares no decomposition", async () => {
+    const undeclared = {
+      ...createTaskRecord("task_1", "queued", "low", "landing-page-file"),
+      title: "Build the playable web prototype",
+      description: "Build the playable web prototype, validate it locally, capture proof, and prepare it for deployment.",
+    };
+    const { projectRoot, repositories, client } = createSchedulerFixture([undeclared]);
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code", "frontend", "test"] })],
+      workerId: "worker_a",
+      maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+      emit: () => undefined,
+    });
+
+    expect(repositories.listTasksForCompany("company_1").filter((task) => task.parentTaskId === "task_1")).toHaveLength(0);
+    expect(result.started).toEqual(["task_1"]);
+    client.close();
+  });
+
   it("copies parent task dependencies onto generated department subtasks", async () => {
     const producer = createTaskRecord("task_1", "complete", "low", "product-brief");
     const parent = {
       ...createTaskRecord("task_2", "queued", "low", "landing-page-file"),
       title: "Build and validate the prototype",
       description: "Build a browser prototype and validate it against the accepted brief.",
+      decomposition: { template: "define_execute_validate" as const },
     };
     const { projectRoot, repositories, client } = createSchedulerFixture([producer, parent]);
     const proof = createProofForTask(producer);

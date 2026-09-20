@@ -300,6 +300,7 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
       taskKind: "parent",
       source: "ceo",
       verificationRequirements: taskBlueprint.verification?.requirements ?? null,
+      decomposition: taskBlueprint.decomposition ?? null,
     };
     repositories.createTask(task);
     repositories.appendTaskProgressEvent({
@@ -349,7 +350,6 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
     handoffContractsByBlueprintKey,
     handoffContractTextsByBlueprintKey,
   ).forEach((dependency) => repositories.createTaskDependency(dependency));
-  inferValidationDependencies(tasks).forEach((dependency) => repositories.createTaskDependency(dependency));
   taskWarnings.forEach((warning) => repositories.appendTaskEvent(warning));
   repositories.appendCompanyEvent({
     id: createId("company_event"), companyId: company.id, type: "company_plan_created",
@@ -527,10 +527,6 @@ function isArtifactProducer(proofSchemaId: string): boolean {
   return proofSchemaId === "landing-page-file" || proofSchemaId === "repo-diff";
 }
 
-function isValidationTask(task: Task): boolean {
-  return task.proofSchemaId === "test-output" || task.proofSchemaId === "local-url" || task.proofSchemaId === "screenshot";
-}
-
 function createBlueprintDependencies(
   taskBlueprints: BlueprintTask[],
   taskIdsByBlueprintKey: Map<string, string>,
@@ -566,14 +562,3 @@ function createBlueprintDependencies(
   });
 }
 
-function inferValidationDependencies(tasks: Task[]): TaskDependency[] {
-  return tasks.flatMap((task, index) => {
-    if (!isValidationTask(task)) {
-      return [];
-    }
-
-    const producer = [...tasks.slice(0, index)].reverse().find((candidate) => isArtifactProducer(candidate.proofSchemaId));
-
-    return producer ? [{ taskId: task.id, dependsOnTaskId: producer.id }] : [];
-  });
-}

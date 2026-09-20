@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { BlueprintTask, Locale } from "@auto-crop/core";
+import type { BlueprintTask, Locale, TaskDecomposition } from "@auto-crop/core";
 import type { AgentAdapter, AgentRunRequest } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
@@ -35,11 +35,13 @@ type Business = {
   companyName: string;
   vision: string;
   locale: Locale;
-  producer: Omit<BlueprintTask, "verification" | "assigneeAgentId" | "dependsOnTaskKeys">;
-  verifier: Omit<BlueprintTask, "verification" | "assigneeAgentId" | "dependsOnTaskKeys" | "proofSchemaId">;
+  producer: Omit<BlueprintTask, "verification" | "decomposition" | "assigneeAgentId" | "dependsOnTaskKeys">;
+  verifier: Omit<BlueprintTask, "verification" | "decomposition" | "assigneeAgentId" | "dependsOnTaskKeys" | "proofSchemaId">;
   requirements: Array<{ id: string; description: string }>;
   /** What the producer's agent delivers; `defective` leaves out what one requirement checks. */
   produce: (workspacePath: string, defective: boolean) => Record<string, unknown>;
+  /** Whether the producer is one a department splits into stages. */
+  decomposition?: TaskDecomposition | null;
   /** A real check of the snapshot the runtime handed over, per requirement. */
   check: (snapshotPath: string) => Record<string, boolean>;
 };
@@ -461,13 +463,14 @@ function blueprintFor(business: Business) {
   return {
     ...base,
     tasks: [
-      { ...business.producer, assigneeAgentId: "worker", dependsOnTaskKeys: [], verification: null },
+      { ...business.producer, assigneeAgentId: "worker", dependsOnTaskKeys: [], verification: null, decomposition: business.decomposition ?? null },
       {
         ...business.verifier,
         assigneeAgentId: "worker",
         proofSchemaId: "test-output",
         dependsOnTaskKeys: [business.producer.key],
         verification: { targetTaskKeys: [business.producer.key], requirements: business.requirements },
+        decomposition: null,
       },
     ],
   };

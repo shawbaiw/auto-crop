@@ -88,6 +88,7 @@ const validBlueprint = {
       dependsOnTaskKeys: [],
       handoffContract: "Produce a competitor research brief for prototype positioning.",
       verification: null,
+      decomposition: null,
     },
     {
       key: "landing_page_prototype",
@@ -101,6 +102,7 @@ const validBlueprint = {
       dependsOnTaskKeys: ["competitor_research"],
       handoffContract: "Produce runnable landing page files for downstream validation.",
       verification: null,
+      decomposition: null,
     },
   ],
 };
@@ -249,6 +251,40 @@ describe("companyBlueprintSchema", () => {
       requirements: [{ id: "renders", description: "The landing page renders." }],
     },
   };
+
+  /**
+   * Splitting used to be decided by matching "prototype" and "validate" in a task's wording, while
+   * company creation appended guidance containing those words — so the decision was neither the
+   * plan's nor readable from it (ADR 0029).
+   */
+  it("requires every task to declare its decomposition, even as null", () => {
+    const { decomposition: _omitted, ...undeclared } = validBlueprint.tasks[0];
+
+    expect(companyBlueprintSchema.safeParse({ ...validBlueprint, tasks: [undeclared, ...validBlueprint.tasks.slice(1)] }).success).toBe(false);
+    expect(companyBlueprintSchema.safeParse({
+      ...validBlueprint,
+      tasks: [{ ...validBlueprint.tasks[0], decomposition: { template: "define_execute_validate" } }, ...validBlueprint.tasks.slice(1)],
+    }).success).toBe(true);
+  });
+
+  it("rejects an unknown decomposition template", () => {
+    const result = companyBlueprintSchema.safeParse({
+      ...validBlueprint,
+      tasks: [{ ...validBlueprint.tasks[0], decomposition: { template: "two_stage" } }, ...validBlueprint.tasks.slice(1)],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a task that both verifies and is split", () => {
+    const result = companyBlueprintSchema.safeParse({
+      ...validBlueprint,
+      tasks: [...validBlueprint.tasks, { ...verifierTask, decomposition: { template: "define_execute_validate" } }],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.some((issue) => issue.message.includes("cannot declare a decomposition"))).toBe(true);
+  });
 
   it("requires every task to declare verification, even as null", () => {
     const { verification: _omitted, ...undeclared } = validBlueprint.tasks[0];

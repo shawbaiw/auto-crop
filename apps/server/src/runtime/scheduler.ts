@@ -1101,7 +1101,9 @@ function assessDepartmentTask(input: RunSchedulerOnceInput, task: Task): "ready"
 
   // A verifying task is never split: its targets and requirements belong to it, and a split template
   // would hand them to subtasks as plain context.
-  if (!isLargeDepartmentTask(task) || isVerifyingTask(input.repositories, task)) {
+  // Splitting is the plan's decision, declared per task; the runtime does not read it out of the
+  // task's wording (ADR 0029). The verifier check stays as a floor: a verification task is never split.
+  if (!task.decomposition || isVerifyingTask(input.repositories, task)) {
     appendTaskProgressEvent(input, {
       task,
       step: "no_split_needed",
@@ -1151,15 +1153,6 @@ function hasAssessment(repositories: ReturnType<typeof createRepositories>, task
   return repositories
     .listTaskProgressEventsForParentTask(taskId)
     .some((event) => event.step === "assessment_complete");
-}
-
-function isLargeDepartmentTask(task: Task): boolean {
-  const text = `${task.title} ${task.description}`.toLowerCase();
-  return (
-    (task.proofSchemaId === "landing-page-file" || task.proofSchemaId === "deployment") &&
-    text.includes("prototype") &&
-    (text.includes("validate") || text.includes("deployment"))
-  );
 }
 
 /**

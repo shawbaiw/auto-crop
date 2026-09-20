@@ -28,6 +28,7 @@ const taskTemplates: TaskTemplate[] = [
       "产出一份简洁的产品简报，包含目标客户、切入点、MVP 范围和第一条收入路径。",
     ),
     verification: null,
+    decomposition: null,
   },
   {
     key: "market_research",
@@ -51,6 +52,7 @@ const taskTemplates: TaskTemplate[] = [
       "产出一份研究报告，覆盖可比产品、定位、定价和客户痛点。",
     ),
     verification: null,
+    decomposition: null,
   },
   {
     key: "growth_assets",
@@ -74,6 +76,7 @@ const taskTemplates: TaskTemplate[] = [
       "产出发布文案、定位说明，以及用于原型和发布计划的初始渠道清单。",
     ),
     verification: null,
+    decomposition: null,
   },
   {
     key: "landing_page_prototype",
@@ -97,6 +100,8 @@ const taskTemplates: TaskTemplate[] = [
       "产出可运行的原型文件，落实已批准的切入点、基于研究的定位和发布文案。",
     ),
     verification: null,
+    // Building a runnable prototype is the one task this playbook hands to a department in stages.
+    decomposition: { template: "define_execute_validate" },
   },
   {
     key: "prototype_validation",
@@ -126,6 +131,7 @@ const taskTemplates: TaskTemplate[] = [
         { id: "core-flow", description: "The core user flow described in the product brief works end to end." },
       ],
     },
+    decomposition: null,
   },
 ];
 
@@ -321,6 +327,7 @@ export const aiSaasPlaybook = {
         handoffContract: template.handoffContract,
         handoffContractText: template.handoffContractText,
         verification: template.verification,
+        decomposition: template.decomposition,
       })),
     };
   },

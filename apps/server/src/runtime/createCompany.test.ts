@@ -366,6 +366,7 @@ describe("createCompany", () => {
         dependsOnTaskKeys: [],
         handoffContract: "Produce runnable prototype files that implement the accepted product direction.",
         verification: null,
+        decomposition: { template: "define_execute_validate" },
       },
     ];
     const ceoAgent = createMockAgentAdapter({

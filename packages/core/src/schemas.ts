@@ -445,6 +445,15 @@ export const blueprintTaskVerificationSchema = z.object({
   requirements: z.array(verificationRequirementSchema).min(1),
 });
 
+/**
+ * Whether a department splits this task, and into what. Required on every task as either null or a
+ * template, so the plan says it: the runtime used to decide by matching "prototype" and "validate" in
+ * the title and description, and company creation appended guidance containing those very words.
+ */
+export const blueprintTaskDecompositionSchema = z.object({
+  template: z.literal("define_execute_validate"),
+});
+
 export const taskSchema = z.object({
   key: taskKeySchema,
   departmentKey: taskKeySchema.optional(),
@@ -461,6 +470,7 @@ export const taskSchema = z.object({
   handoffContract: nonEmptyString,
   handoffContractText: localizedTextSchema.optional(),
   verification: blueprintTaskVerificationSchema.nullable(),
+  decomposition: blueprintTaskDecompositionSchema.nullable(),
 });
 
 export const companyBlueprintSchema = z
@@ -547,6 +557,15 @@ export const companyBlueprintSchema = z
           context.addIssue({ code: "custom", path: targetPath, message: `Verification must target earlier task keys: ${targetKey}` });
         }
       });
+      // A verifier is judged against a snapshot of someone else's output; a split turns the task into
+      // three stages with their own delivery. A task cannot be both (ADR 0025).
+      if (task.verification && task.decomposition) {
+        context.addIssue({
+          code: "custom",
+          path: ["tasks", index, "decomposition"],
+          message: "A verification task cannot declare a decomposition.",
+        });
+      }
       const requirementIds = new Set<string>();
       task.verification?.requirements.forEach((requirement, requirementIndex) => {
         if (requirementIds.has(requirement.id)) {

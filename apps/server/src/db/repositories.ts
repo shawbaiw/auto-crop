@@ -2,6 +2,7 @@ import type {
   ArtifactVerification,
   DependencyInputRole,
   VerificationInputs,
+  TaskDecomposition,
   VerificationRequirement,
   VerificationRework,
   AgentRun,
@@ -352,8 +353,8 @@ export function createRepositories(database: DatabaseClient) {
             assignee_agent_id, required_capabilities, proof_schema_id, workspace_path, artifact_workspace_path,
             status, risk_level, position, latest_failure_reason, latest_failure_message,
             latest_execution_profile_name, latest_requested_timeout_ms, latest_effective_timeout_ms,
-            dependency_note, parent_task_id, task_kind, source, verification_requirements
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            dependency_note, parent_task_id, task_kind, source, verification_requirements, decomposition
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           task.id,
@@ -385,6 +386,7 @@ export function createRepositories(database: DatabaseClient) {
           task.verificationRequirements && task.verificationRequirements.length > 0
             ? JSON.stringify(task.verificationRequirements)
             : null,
+          task.decomposition ? JSON.stringify(task.decomposition) : null,
         );
     },
 
@@ -1577,6 +1579,7 @@ type TaskRow = {
   task_kind: TaskKind;
   source: TaskSource;
   verification_requirements?: string | null;
+  decomposition?: string | null;
 };
 
 type ProofRow = {
@@ -1905,6 +1908,7 @@ function mapTask(row: TaskRow): Task {
     parentTaskId: row.parent_task_id,
     taskKind: row.task_kind,
     source: row.source,
+    ...(row.decomposition ? { decomposition: JSON.parse(row.decomposition) as TaskDecomposition } : {}),
     ...(row.verification_requirements
       ? { verificationRequirements: JSON.parse(row.verification_requirements) as VerificationRequirement[] }
       : {}),
