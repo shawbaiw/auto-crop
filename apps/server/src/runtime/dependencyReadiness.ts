@@ -2,7 +2,7 @@ import { isVerificationSatisfied, type BusinessArtifact, type Proof, type Task }
 import type { createRepositories } from "../db/repositories";
 import { collectFounderDecisions } from "./ceoAttention";
 import { getHandoffPackageManifestPath } from "./proof";
-import { isVerificationCurrent } from "./verificationContract";
+import { isVerificationCurrent, verifiersOf } from "./verificationContract";
 
 export type TaskHandoff = {
   upstreamTaskId: string;
@@ -128,11 +128,58 @@ export function resolveDependencyReadiness(
       };
     }
 
+    // A plan that declares who verifies this output has said the output is not usable until that
+    // verdict exists. Consuming it earlier is what let a prototype be built from a brief whose
+    // verification never passed — the plan's own verification edge, ignored by everyone but the
+    // verifier (ADR 0030).
+    const unverified = pendingVerificationOf(repositories, task, upstream, artifact);
+    if (unverified) {
+      return unverified;
+    }
+
     const sourceProof = artifact.sourceProofId ? repositories.listProofsForTask(upstream.id).find((proof) => proof.id === artifact.sourceProofId) : null;
     handoffs.push(createTaskHandoff(upstream, artifact, sourceProof ?? null, dependency.handoffContract ?? null));
   }
 
   return { kind: "ready", handoffs };
+}
+
+/**
+ * The verdict a consumer still waits on, or null when the output is free to consume.
+ *
+ * Checked against the artifact being consumed, so a verdict on a superseded version does not release
+ * a new one. A verifier consuming its own target is exempt: it is the one being waited for.
+ */
+function pendingVerificationOf(
+  repositories: ReturnType<typeof createRepositories>,
+  consumer: Task,
+  upstream: Task,
+  artifact: BusinessArtifact,
+): Exclude<DependencyReadiness, { kind: "ready" }> | null {
+  for (const verifier of verifiersOf(repositories, upstream.id)) {
+    if (verifier.id === consumer.id) {
+      continue;
+    }
+    const verdict = repositories.getCurrentBusinessArtifactForTask(verifier.id);
+    const judged = verdict?.verification?.targets.some((target) => target.artifactId === artifact.id) ?? false;
+    if (judged && verdict && isVerificationSatisfied(verdict) && isVerificationCurrent(repositories, verdict)) {
+      continue;
+    }
+    if (isFailedDependencyStatus(verifier.status) || verifier.status === "needs_replan") {
+      return {
+        kind: "blocked",
+        reason: verifier.status === "needs_replan" ? "needs_replan" : "dependency_failed",
+        note: `Blocked by verification of ${upstream.title}: ${verifier.title} (${verifier.status}).`,
+        dependency: verifier,
+      };
+    }
+    return {
+      kind: "waiting",
+      note: `Waiting for ${verifier.title} to verify ${upstream.title}.`,
+      dependency: verifier,
+    };
+  }
+  return null;
 }
 
 /**

@@ -53,6 +53,22 @@ export function dependenciesWithRole(repositories: Repositories, taskId: string,
 }
 
 /**
+ * The tasks whose declared duty is to verify this one's output.
+ *
+ * Read from the dependency graph, the same edges {@link prepareVerificationInputs} hands snapshots
+ * over: a verifier declares its targets, so its targets can find their verifiers.
+ */
+export function verifiersOf(repositories: Repositories, producerTaskId: string): Task[] {
+  return repositories
+    .listDependencyConsumers(producerTaskId)
+    .filter((consumer) =>
+      repositories
+        .listTaskDependencies(consumer.id)
+        .some((dependency) => dependency.dependsOnTaskId === producerTaskId && (dependency.inputRole ?? "context") === "verification_target"),
+    );
+}
+
+/**
  * Whether a task carries verification duty. Decided by its declared dependencies — never by what kind of
  * artifact its agent chose to file, which is exactly the choice a verifier could use to skip the contract.
  */
