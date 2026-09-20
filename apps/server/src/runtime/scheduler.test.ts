@@ -159,6 +159,47 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  /**
+   * The reported misattribution, pinned. A brief that timed out at its own 60s cap was reported as
+   * the task timing out after 5m, and the scheduler then "retried with the long budget" — a second
+   * run against the same 60s cap (ADR 0032).
+   */
+  it("reports a brief that timed out against the brief's budget, and does not escalate the task's", async () => {
+    // A `product-brief` task starts on the short profile, so an escalation would be visible.
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "product-brief"),
+    ]);
+    const phases: string[] = [];
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [{
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          phases.push(request.metadata.phase ?? "work");
+          return { status: "failed", exitCode: null, stdout: "", stderr: "", failureReason: "timeout" };
+        },
+      }],
+      workerId: "worker_a",
+      maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    // One preparation run, no substantive run, and no second attempt at a budget that caps the same.
+    expect(phases).toEqual(["execution_brief"]);
+    expect(events.some((event) => event.type === "task_retrying")).toBe(false);
+    expect(result.failed).toContain("task_1");
+    const task = repositories.getTask("task_1");
+    expect(task?.status).toBe("failed");
+    expect(task?.latestFailureMessage).toContain("the execution brief did not complete within 1m");
+    expect(task?.latestFailureMessage).not.toContain("timeout after 5m");
+    client.close();
+  });
+
   it("reconciles stale running tasks before dispatching queued work", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "running", "low"),

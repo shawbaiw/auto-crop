@@ -22,6 +22,13 @@ export const executionBriefOutputSchema: Record<string, unknown> = {
 };
 
 /** Preparation is a separate run: a brief is durable before the work prompt is dispatched. */
+/**
+ * The brief's own budget. It is a short planning reply, not the work, and it is capped independently
+ * of the task's execution profile — which is why a failure here cannot be reported, or retried, as a
+ * failure of the task's budget (ADR 0032).
+ */
+export const EXECUTION_BRIEF_TIMEOUT_MS = 60_000;
+
 export async function prepareExecutionBrief(input: {
   adapter: AgentAdapter;
   request: AgentRunRequest;

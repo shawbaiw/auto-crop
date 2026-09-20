@@ -1,4 +1,4 @@
-import { prepareExecutionBrief } from "./executionBrief";
+import { EXECUTION_BRIEF_TIMEOUT_MS, prepareExecutionBrief } from "./executionBrief";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
@@ -333,6 +333,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           let timeoutResolution = initialTimeoutResolution;
           let agentRunId = "";
           let agentResult: AgentRunResult | null = null;
+          let preparationFailed = false;
+          let preparationTimeoutMs = EXECUTION_BRIEF_TIMEOUT_MS;
 
           while (true) {
             agentRunId = createId("agent_run");
@@ -365,7 +367,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               grant,
             };
             const preparationStartedAt = now().getTime();
-            const preparation = await prepareExecutionBrief({ adapter, request: { ...request, timeoutMs: Math.min(request.timeoutMs, 60_000) }, company, task, handoffs });
+            preparationTimeoutMs = Math.min(request.timeoutMs, EXECUTION_BRIEF_TIMEOUT_MS);
+            const preparation = await prepareExecutionBrief({ adapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs });
             const remainingMs = request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
             if (preparation.brief && remainingMs > 0) {
               appendAndEmitTaskEvent(input, {
@@ -394,7 +397,18 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                   `\n\n## Your announced execution plan\n${JSON.stringify(preparation.brief)}\nCarry out this plan. Explain material deviations in the final report.`,
               });
             } else {
-              agentResult = remainingMs <= 0 ? { ...preparation.result, status: "failed", failureReason: "timeout" } : preparation.result;
+              // Preparation failed, so substantive work was never dispatched. Its budget is the
+              // preparation cap, not the task's: reporting the task's budget sent the next reader to
+              // a run that never happened, and escalating to a longer task budget bought a second
+              // failure at the same 60s cap (ADR 0032).
+              agentResult = {
+                ...preparation.result,
+                status: "failed",
+                failureReason: remainingMs <= 0 ? "timeout" : (preparation.result.failureReason ?? "agent_failed"),
+                stderr: preparation.result.stderr.trim()
+                  || `The execution brief did not complete within ${formatExecutionBudget(preparationTimeoutMs)}; substantive work was not dispatched.`,
+              };
+              preparationFailed = true;
             }
             const logContent = [
               `# Agent Run ${agentRunId}`,
@@ -416,7 +430,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
             const failureReason =
               agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : null;
-            const retryTimeoutResolution = failureReason === "timeout" ? resolveRetryTimeout(timeoutResolution) : null;
+            // A preparation timeout is capped by the brief's own budget, so a longer task budget
+            // cannot change its outcome; only a substantive run earns an escalation.
+            const retryTimeoutResolution =
+              failureReason === "timeout" && !preparationFailed ? resolveRetryTimeout(timeoutResolution) : null;
 
             if (!retryTimeoutResolution) {
               break;
@@ -591,7 +608,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           if ((agentResult.status !== "complete" || proof.length === 0) && !environmentBlockerDegraded) {
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
-            if (failureReason === "timeout" && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
+            // A brief that timed out says nothing about whether the task fits its budget, so it is
+            // not evidence for a replan either.
+            if (failureReason === "timeout" && !preparationFailed && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
               const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
               applyTaskTransition({
                 repositories: input.repositories,
@@ -637,12 +656,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
               return;
             }
-            const failure = failureMessage(
-              task,
-              failureReason,
-              timeoutResolution.effectiveTimeoutMs,
-              refutedCapability,
-            );
+            const failure = preparationFailed
+              ? `Task failed: ${task.title} / ${failureReason} / the execution brief did not complete within ${formatExecutionBudget(preparationTimeoutMs)}; substantive work was not dispatched.`
+              : failureMessage(task, failureReason, timeoutResolution.effectiveTimeoutMs, refutedCapability);
             applyTaskTransition({
               repositories: input.repositories,
               task,
