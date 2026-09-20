@@ -134,6 +134,9 @@ const CLAUDE_TOOLS_BY_CAPABILITY: Record<RuntimeCapability, string[]> = {
   workspace_read: ["Read", "Glob", "Grep"],
   workspace_write: ["Write", "Edit"],
   run_command: ["Bash"],
+  // Claude Code has no tool for this and no flag that withholds it: its `Bash` tool can already bind a
+  // local port. Granting adds nothing here; withholding is what it cannot express (ADR 0031).
+  local_network: [],
   web_research: ["WebSearch", "WebFetch"],
 };
 
@@ -229,6 +232,10 @@ export function createCodexAdapter(
         "--ephemeral",
         "-c",
         `tools.web_search=${grant.granted.includes("web_research")}`,
+        // Codex's workspace-write sandbox denies every socket unless this is on, so a run that must
+        // serve or reach 127.0.0.1 cannot without it — and a run that must not, cannot with it.
+        "-c",
+        `sandbox_workspace_write.network_access=${grant.granted.includes("local_network")}`,
         prompt,
       ],
     }),

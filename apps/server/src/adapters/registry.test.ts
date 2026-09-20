@@ -132,6 +132,8 @@ describe("CLI command template adapter", () => {
         "--ephemeral",
         "-c",
         "tools.web_search=true",
+        "-c",
+        "sandbox_workspace_write.network_access=false",
         "Create a landing page",
       ],
     });
@@ -185,6 +187,20 @@ describe("CLI command template adapter", () => {
     expect(sandboxFor(["workspace_read", "workspace_write", "run_command"])).toBe("workspace-write");
     expect(sandboxFor(["workspace_read"])).toBe("read-only");
     expect(createCodexAdapter().commandPreview({ ...request, grant: noToolGrant }).args).toContain("read-only");
+  });
+
+  /**
+   * Codex denies every socket in its workspace-write sandbox unless this config is on — verified
+   * against the real CLI, where a run without it cannot bind 127.0.0.1 at all (ADR 0031).
+   */
+  it("opens Codex's local network only for a grant that carries it", () => {
+    const networkFor = (granted: AgentCapabilityGrant["granted"]) => {
+      const args = createCodexAdapter().commandPreview({ ...request, grant: { granted, withheld: [], id: granted.join("+") } }).args;
+      return args[args.indexOf("sandbox_workspace_write.network_access=true") >= 0 ? args.indexOf("sandbox_workspace_write.network_access=true") : args.indexOf("sandbox_workspace_write.network_access=false")];
+    };
+
+    expect(networkFor(["workspace_read", "workspace_write", "run_command", "local_network"])).toBe("sandbox_workspace_write.network_access=true");
+    expect(networkFor(["workspace_read", "workspace_write", "run_command"])).toBe("sandbox_workspace_write.network_access=false");
   });
 
   it("withholds the shell and the web from a grant that does not carry them", () => {
@@ -263,6 +279,8 @@ describe("CLI command template adapter", () => {
         "--ephemeral",
         "-c",
         "tools.web_search=true",
+        "-c",
+        "sandbox_workspace_write.network_access=false",
         "Create a landing page",
       ],
     });
