@@ -341,6 +341,109 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("dispatches under compatible launch isolation and records the downgrade on the task", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+    const warning = "Claude Code does not support --restricted; using compatibility launch isolation.";
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "proof: created artifact",
+          launchSupport: { isolationLevel: "compatible", supportedFlags: [], missingFlags: ["--restricted"], warnings: [warning] },
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => {
+        writeValidBusinessArtifact(task);
+        return [createProofForTask(task)];
+      },
+      emit: () => undefined,
+    });
+
+    expect(result.started).toEqual(["task_1"]);
+    const events = repositories.listTaskEventsForCompany("company_1").filter((event) => event.taskId === "task_1");
+    const warningIndex = events.findIndex((event) => event.type === "task_warning" && event.message.includes(warning));
+    expect(warningIndex).toBeGreaterThanOrEqual(0);
+    expect(warningIndex).toBeLessThan(events.findIndex((event) => event.type === "task_started"));
+    const log = readFileSync(join(projectRoot, ".auto-crop", "companies", "company_1", "logs", "task_1.log"), "utf8");
+    expect(log).toContain("launchIsolation: compatible");
+    expect(log).toContain(`launchWarning: ${warning}`);
+
+    client.close();
+  });
+
+  it("does not dispatch to an adapter whose launch support is unavailable, and falls back to one that can launch", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+    const unavailable = createMockAgentAdapter({
+      id: "mock-worker",
+      name: "Old Worker",
+      capabilities: ["code"],
+      launchSupport: {
+        isolationLevel: "unavailable",
+        supportedFlags: [],
+        missingFlags: ["--tools"],
+        warnings: ["Old Worker does not support --tools."],
+      },
+    });
+    const runs: string[] = [];
+    unavailable.run = async () => {
+      throw new Error("Must not dispatch to an unavailable adapter");
+    };
+    const fallback = createMockAgentAdapter({ id: "other-worker", name: "Other Worker", capabilities: ["code"], output: "proof" });
+    const fallbackRun = fallback.run;
+    fallback.run = async (request) => {
+      runs.push(request.metadata.phase ?? "work");
+      return fallbackRun(request);
+    };
+
+    const input = {
+      projectRoot,
+      repositories,
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }: { task: Task }) => {
+        writeValidBusinessArtifact(task);
+        return [createProofForTask(task)];
+      },
+      emit: () => undefined,
+    };
+
+    // Only the unavailable adapter: the task stays queued, and repeated ticks warn once.
+    await runSchedulerOnce({ ...input, adapters: [unavailable] });
+    const secondTick = await runSchedulerOnce({ ...input, adapters: [unavailable] });
+
+    expect(secondTick.started).toEqual([]);
+    expect(repositories.getTask("task_1")?.status).toBe("queued");
+    expect(repositories.listTaskLocks()).toEqual([]);
+    const warnings = repositories
+      .listTaskEventsForCompany("company_1")
+      .filter((event) => event.taskId === "task_1" && event.type === "task_warning");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toContain("Old Worker does not support --tools.");
+
+    // A launchable capability match takes the task instead of the unavailable assignee.
+    const result = await runSchedulerOnce({ ...input, adapters: [unavailable, fallback] });
+
+    expect(result.started).toEqual(["task_1"]);
+    expect(runs).toEqual(["execution_brief", "work"]);
+
+    client.close();
+  });
+
   it("includes company context in prompts for first tasks without upstream handoffs", async () => {
     const founderVision =
       "Find an English SEO opportunity, build a small website or web product, rank it in Google, and validate the full launch-to-indexing loop.";

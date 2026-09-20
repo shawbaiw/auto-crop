@@ -1,6 +1,8 @@
 import { EXECUTION_BRIEF_TIMEOUT_MS, prepareExecutionBrief } from "./executionBrief";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveLaunchableAdapter } from "../adapters/registry";
+import type { AdapterLaunchSupport } from "../adapters/launchPolicy";
 import type { AgentAdapter, AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import { resolvePolicyForPermissionMode } from "../policies/defaults";
@@ -268,6 +270,16 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             return;
           }
 
+          // Decided before the task is marked running: a task whose adapters cannot launch stays where it
+          // is rather than failing on a CLI's unknown-option error.
+          const launch = await resolveLaunchableAdapter(adapterCandidates(input.adapters, task));
+          if (!launch.launchable) {
+            appendLaunchUnavailableWarningOnce(input, task, launch.unavailable);
+            return;
+          }
+          const adapter = launch.adapter;
+          const launchWarnings = launch.support?.warnings ?? [];
+
           const initialTimeoutResolution = resolveEffectiveTimeout(task, process.env, grant);
           // Dispatch resolves whatever parked this task: the runtime owns it again.
           applyTaskTransition({
@@ -287,7 +299,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             createId,
           });
           result.started.push(task.id);
-          for (const warning of initialTimeoutResolution.warnings) {
+          // Compatible launch isolation still dispatches (Auto-Crop is local-first), but the downgrade is
+          // recorded on the task, not only in server stdout.
+          for (const warning of [...launchWarnings, ...initialTimeoutResolution.warnings]) {
             appendAndEmitTaskEvent(input, {
               task,
               type: "task_warning",
@@ -328,7 +342,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             inputs: verificationPreparation.kind === "ready" ? verificationPreparation.inputs : null,
           };
 
-          const adapter = selectAdapter(input.adapters, task);
           const logPath = createLogPath(input.projectRoot, task);
           let timeoutResolution = initialTimeoutResolution;
           let agentRunId = "";
@@ -415,6 +428,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               "",
               `status: ${agentResult.status}`,
               `exitCode: ${agentResult.exitCode ?? ""}`,
+              `launchIsolation: ${launch.support?.isolationLevel ?? "unclaimed"}`,
+              ...launchWarnings.map((warning) => `launchWarning: ${warning}`),
               "",
               "## Preparation",
               preparation.result.stdout,
@@ -1715,23 +1730,42 @@ function emitTaskEvent(input: RunSchedulerOnceInput, record: TaskEvent): void {
   });
 }
 
-function selectAdapter(adapters: AgentAdapter[], task: Task): AgentAdapter {
-  const byAssignee = adapters.find((adapter) => adapter.id === task.assigneeAgentId);
-
-  if (byAssignee) {
-    return byAssignee;
-  }
-
-  const requiredCapabilities = new Set(task.requiredCapabilities);
-  const byCapability = adapters.find((adapter) =>
-    [...requiredCapabilities].every((capability) => adapter.capabilities.includes(capability)),
+/** Adapters that may run `task`, most preferred first: its assignee, then capability matches. */
+function adapterCandidates(adapters: AgentAdapter[], task: Task): AgentAdapter[] {
+  const byAssignee = adapters.filter((adapter) => adapter.id === task.assigneeAgentId);
+  const byCapability = adapters.filter(
+    (adapter) =>
+      adapter.id !== task.assigneeAgentId &&
+      task.requiredCapabilities.every((capability) => adapter.capabilities.includes(capability)),
   );
+  const candidates = [...byAssignee, ...byCapability];
 
-  if (byCapability) {
-    return byCapability;
+  if (candidates.length === 0) {
+    throw new Error(`No adapter available for task ${task.id}`);
   }
 
-  throw new Error(`No adapter available for task ${task.id}`);
+  return candidates;
+}
+
+/**
+ * Records why a task is not being dispatched. The scheduler re-checks every tick, so the warning is
+ * appended only when it differs from the task's latest event.
+ */
+function appendLaunchUnavailableWarningOnce(
+  input: RunSchedulerOnceInput,
+  task: Task,
+  unavailable: AdapterLaunchSupport[],
+): void {
+  const reasons = unavailable.flatMap((support) => support.warnings).join(" ");
+  const message = `Task warning: ${task.title} / not dispatched: no agent adapter can launch it / ${reasons}`;
+  const latest = input.repositories
+    .listTaskEventsForCompany(task.companyId)
+    .filter((event) => event.taskId === task.id)
+    .at(-1);
+  if (latest?.message === message) {
+    return;
+  }
+  appendAndEmitTaskEvent(input, { task, type: "task_warning", message });
 }
 
 function createLogPath(projectRoot: string, task: Task): string {

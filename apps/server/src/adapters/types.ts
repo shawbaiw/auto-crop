@@ -1,5 +1,6 @@
 import type { AgentFailureReason } from "@auto-crop/core";
 import type { AgentCapabilityGrant } from "../policies/capabilityGrant";
+import type { LaunchPlan } from "./launchPolicy";
 
 export type AgentCapability = string;
 
@@ -74,7 +75,17 @@ export type AgentAdapter = {
   id: string;
   name: string;
   capabilities: AgentCapability[];
+  /**
+   * Whether this adapter can run a task under Auto-Crop's launch semantics — not merely whether its
+   * executable exists. An adapter whose launch plan is `unavailable` is not detected.
+   */
   detect(): Promise<boolean>;
+  /**
+   * How far the installed agent can enforce the Launch Policy, decided before dispatch. Absent means
+   * the adapter makes no launch-isolation claim (mocks, grant-blind command templates) and is
+   * launchable whenever it is detected.
+   */
+  launchPlan?(): Promise<LaunchPlan>;
   run(request: AgentRunRequest): Promise<AgentRunResult>;
   session?: AgentSessionCapability;
 };

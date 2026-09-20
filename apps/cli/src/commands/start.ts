@@ -47,7 +47,11 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
 
   for (const agent of agents) {
     const detected = await agent.detect();
-    log(`Agent ${agent.name}: ${detected ? "available" : "unavailable"}`);
+    const support = (await agent.launchPlan?.())?.support;
+    log(`Agent ${agent.name}: ${detected ? "available" : "unavailable"}${support ? ` (launch isolation: ${support.isolationLevel})` : ""}`);
+    for (const warning of support?.warnings ?? []) {
+      log(`Agent ${agent.name} warning: ${warning}`);
+    }
   }
 
   let scheduler: ReturnType<typeof startSchedulerLoop> | undefined;
