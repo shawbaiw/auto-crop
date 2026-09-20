@@ -133,10 +133,13 @@ apps/server/src/runtime/
 - **中文 ASCII 引号破坏 `business-artifact.json`**：运行完成后若产物文件不能解析，同一 agent 做一次 Artifact Syntax Repair（只给 workspace 读写、2 分钟、告知解析错误）；runtime 要求修后能解析且去掉引号/转义/标点/空白后内容一致，否则还原原文件、照常停在 `invalid_business_artifact`（ADR 0028）。结构化输出契约走不通：codex `--output-schema` 是 strict 模式，拒绝自由结构的 `payload`（已实测）。真实 claude-code 修复冒烟里那份坏产物：22 秒，只在两处引号前加了反斜杠。
 
 冒烟发现、未修（待讨论）：
-1. **Execution Brief 超时被错记成任务超时**：brief 限 60s，失败时 `agentResult = preparation.result`，记成 `timeout after 5m` 并升级到 10m 档（`main` 上已有）。另见 claude-code 的 brief 回复满足 schema 但内容全是「测试」占位。
-2. **draft 公司的任务被派发**：`fetchQueuedTasks` 不看公司状态，激活前已开始运行（`main` 上已有）。
-3. 联网调研在 medium 档（300s）偏紧：第二轮里每个 claude-code 联网任务第一次运行都在 300s 超时，升到 10 分钟档后才完成。
-4. **额度用尽被记成 agent 失败**：claude-code 撞上账号会话上限（stdout 为 `You've hit your session limit`，exit 1），记成 `agent_failed` + `runtime_interrupted`，而不是环境受限。第二、三轮冒烟各出现一次。
+1. **draft 公司的任务被派发**：`fetchQueuedTasks` 不看公司状态，激活前已开始运行（`main` 上已有）。
+2. 联网调研在 medium 档（300s）偏紧：第二轮里每个 claude-code 联网任务第一次运行都在 300s 超时，升到 10 分钟档后才完成；第四轮里调研任务连 10 分钟档也超时，转 `needs_replan`，公司停住。
+3. claude-code 的 brief 回复满足 schema 但内容全是「测试」占位——结构化输出契约只保证形状，不保证内容。
+
+已修（ADR 0032，失败归属）：
+- **Execution Brief 超时被错记成任务超时**：brief 限 `min(任务预算, 60s)`，其结果原先被当成整次运行的结果，记成 `timeout after 5m`，还会升级预算再跑一次同样 60s 上限的 brief，长档下甚至会把任务推向 `needs_replan`。现在按 brief 自己的预算报告、不升级、不作为重新规划的依据。
+- **额度用尽被记成 agent 失败**：新增 `agent_quota_exhausted` 失败原因与同名 Hold（出路：额度恢复后重跑，或重新规划），且不计入 Bounded Recovery 的 3 次上限——否则一次额度中断就把任务推到只能重新规划。信号由 adapter 读 CLI 自己的输出（两个 CLI 都没有退出码或结构化字段），已知的误判方向在测试里都钉住了。
 
 ### 3) 收紧契约、删掉兼容层（删库之后就没有旧数据要照顾了）
 - `payload.actions` 改为**必填**（缺失即交付物无效），然后**整段删除** `automaticAcceptance.ts` 里的 `FORBIDDEN_RISK_PATTERNS`（约 70 条正则）与相关测试。代价：十几处测试 fixture / mock agent 要补 `actions: []`。

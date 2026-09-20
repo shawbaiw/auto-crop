@@ -57,6 +57,7 @@ export type TaskHoldKind =
    * The deliberate catch-all: it keeps rule 1 true for situations nobody modelled in advance, at the
    * cost of a vaguer reason string, instead of silently producing a task no one can move.
    */
+  | "agent_quota_exhausted"
   | "runtime_interrupted";
 
 export const taskHoldKinds = [
@@ -71,6 +72,7 @@ export const taskHoldKinds = [
   "recovery_exhausted",
   "needs_replan",
   "verification_failed",
+  "agent_quota_exhausted",
   "runtime_interrupted",
 ] as const satisfies readonly TaskHoldKind[];
 
@@ -96,6 +98,7 @@ export const taskHoldStatusBinding: Record<TaskHoldKind, TaskStatus | null> = {
   invalid_business_artifact: null,
   recovery_exhausted: null,
   verification_failed: null,
+  agent_quota_exhausted: null,
   runtime_interrupted: null,
 };
 
@@ -321,6 +324,12 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
         offer(hold, "recover_task", "runtime");
         offer(hold, "request_replan", "founder");
         break;
+      case "agent_quota_exhausted":
+        // Time is what resolves it, so the exits are the same two as an interrupted run — run it
+        // again once the quota resets, or replan if waiting is not acceptable.
+        offer(hold, "recover_task", "runtime");
+        offer(hold, "request_replan", "founder");
+        break;
       case "runtime_interrupted":
         // Nothing is known about why the run stopped, so the way back is to run it again; a refresh
         // would only re-derive state that is not what went wrong.
@@ -401,6 +410,8 @@ export function deriveTaskHold(input: {
     // meaning "nobody modelled this" (ADR 0020).
     case "invalid_agent_output":
       return { kind: "runtime_interrupted", resolver: "runtime" };
+    case "agent_quota_exhausted":
+      return { kind: "agent_quota_exhausted", resolver: "runtime" };
     case "verification_failed":
       return { kind: "verification_failed", resolver: "runtime" };
     default:

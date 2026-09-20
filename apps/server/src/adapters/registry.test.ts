@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { noToolGrant, type AgentCapabilityGrant } from "../policies/capabilityGrant";
-import { createClaudeCodeAdapter, createCliAgentAdapter, createCodexAdapter, interpolateCommandTemplate } from "./cliAgent";
+import { createClaudeCodeAdapter, createCliAgentAdapter, createCodexAdapter, interpolateCommandTemplate, isQuotaExhaustedOutput } from "./cliAgent";
 import { createMockAgentAdapter } from "./mockAgent";
 import { createAgentRegistry } from "./registry";
 import type { AgentRunRequest } from "./types";
@@ -201,6 +201,18 @@ describe("CLI command template adapter", () => {
 
     expect(networkFor(["workspace_read", "workspace_write", "run_command", "local_network"])).toBe("sandbox_workspace_write.network_access=true");
     expect(networkFor(["workspace_read", "workspace_write", "run_command"])).toBe("sandbox_workspace_write.network_access=false");
+  });
+
+  /**
+   * Both CLIs report an exhausted account by printing it and exiting non-zero — no exit code, no
+   * structured field. Recording that as `agent_failed` blames the agent for a wait (ADR 0032).
+   */
+  it("reads an exhausted account as its own failure, not as the agent failing", () => {
+    expect(isQuotaExhaustedOutput("You've hit your session limit · resets 7:10pm (Asia/Shanghai)")).toBe(true);
+    expect(isQuotaExhaustedOutput("Error: usage limit reached for this account")).toBe(true);
+    expect(isQuotaExhaustedOutput("quota exceeded")).toBe(true);
+    expect(isQuotaExhaustedOutput("TypeError: cannot read property of undefined")).toBe(false);
+    expect(isQuotaExhaustedOutput("the report describes a session limit for free users")).toBe(true);
   });
 
   it("withholds the shell and the web from a grant that does not carry them", () => {

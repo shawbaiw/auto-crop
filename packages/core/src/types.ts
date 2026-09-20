@@ -94,6 +94,12 @@ export type AgentFailureReason =
    * run that in fact exited 0: the contract is the runtime's, and so is the failure.
    */
   | "invalid_agent_output"
+  /**
+   * The agent CLI stopped because the account it runs on is out of quota until a stated reset. The
+   * work was never attempted, so blaming the agent (`agent_failed`) sends the next reader to look for
+   * a mistake that was not made, and the way forward is time, not a different plan (ADR 0032).
+   */
+  | "agent_quota_exhausted"
   | "no_proof"
   | "proof_capture_failed"
   | "dependency_failed"

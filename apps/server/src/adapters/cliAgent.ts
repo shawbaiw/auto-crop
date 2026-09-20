@@ -365,15 +365,36 @@ function runCommand(
       }
       settled = true;
       clearTimeout(timeout);
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
       resolve({
         status: code === 0 ? "complete" : "failed",
         exitCode: code,
-        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf8"),
-        failureReason: code === 0 ? undefined : "agent_failed",
+        stdout,
+        stderr,
+        failureReason:
+          code === 0 ? undefined : isQuotaExhaustedOutput(`${stdout}\n${stderr}`) ? "agent_quota_exhausted" : "agent_failed",
       });
     });
   });
+}
+
+/**
+ * Whether a CLI stopped because its account is out of quota rather than because the work failed.
+ *
+ * This reads the CLI's own operational message, not the agent's reply — the distinction the runtime
+ * keeps everywhere else. There is no exit code or structured field for it on either CLI, and the
+ * alternative is to record a quota outage as a failed attempt by the agent: a wrong cause, and one
+ * that burns the task's recovery ceiling while the account waits to reset (ADR 0032).
+ */
+export function isQuotaExhaustedOutput(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("session limit") ||
+    normalized.includes("usage limit") ||
+    normalized.includes("quota exceeded") ||
+    normalized.includes("rate limit reached")
+  );
 }
 
 function splitCommand(command: string): string[] {

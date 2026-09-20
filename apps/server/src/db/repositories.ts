@@ -1192,7 +1192,9 @@ export function createRepositories(database: DatabaseClient) {
 
     countAgentRunsForTask(taskId: string): number {
       // Counts attempts since the last reset marker (if any) so agent-run history is preserved
-      // for diagnosis (ADR 0002) rather than deleted when the count is reset.
+      // for diagnosis (ADR 0002) rather than deleted when the count is reset. A run that stopped
+      // because the agent's account was out of quota is not an attempt at the work: counting it
+      // would spend the recovery ceiling on an outage the task had no part in (ADR 0032).
       const marker = database
         .prepare("SELECT value FROM runtime_state WHERE key = ?")
         .get(taskAttemptsResetKey(taskId)) as { value: string } | undefined;
@@ -1202,12 +1204,15 @@ export function createRepositories(database: DatabaseClient) {
               .prepare(
                 `SELECT COUNT(*) AS count FROM agent_runs
                  WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')
+                   AND (failure_reason IS NULL OR failure_reason <> 'agent_quota_exhausted')
                    AND (started_at IS NULL OR started_at > ?)`,
               )
               .get(taskId, marker.value)
           : database
               .prepare(
-                "SELECT COUNT(*) AS count FROM agent_runs WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')",
+                `SELECT COUNT(*) AS count FROM agent_runs
+                 WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')
+                   AND (failure_reason IS NULL OR failure_reason <> 'agent_quota_exhausted')`,
               )
               .get(taskId)
       ) as { count: number };
