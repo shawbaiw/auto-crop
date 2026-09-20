@@ -123,18 +123,22 @@ apps/server/src/runtime/
 契约本身：
 - CEO 规划 3/3 合规（codex 中文、claude-code 中文、codex 英文）：每个任务都有 `verification`，目标与要求合理。一例语义错误：claude-code 把 `run_local_checks`（test-output，依赖原型）声明为 `null`——即第 8 节「声明 null 却在验证」的限制，真实模型第一次就出现。
 - 执行 agent：每个有效产物都声明了 `payload.actions`；codex 验证者按快照逐项给出 checks 与证据，runtime 汇总 `outcome: passed` 并绑定目标产物 ID 与 revision。
-- 还没走到：原型验证、验证失败、返工。
+- 第二轮（修复后）补齐了剩下的链路：CEO 规划链与部门链各走了一次完整的「验证失败 → 返工 → 重新验证 → 通过」；两次重新验证的裁决都绑定返工后的新版本，被退回的旧版本不再是当前版本；返工期间已排队的下游被重新停住，旧的创始人决策没有流到下游；子任务全程内部交付，父任务汇总后验收；验证任务没有被拆分（ADR 0025 的保护生效）；两次 `inconclusive` 都停住上报，没有放行。
 
 冒烟发现、已修：
 - codex 沙箱按 `run_command` 选 `workspace-write`，导致「可写不可跑命令」的授权以只读启动，写不出产物文件（`cliAgent.ts` 的 `codexSandboxForGrant`，ADR 0021 已补说明）。
 - **`recover_task` 对无效产物原地打转**：`recoverProofIfPossible` 在任务已停在 `invalid_business_artifact` Hold 上时，重新抓到的产物仍不可审就返回 `still_unreviewable`——不写新产物、不再 block、不开第二个 Hold；`recover` 于是走重跑分支，`refresh` 只报告原因。首次抓取（如 `no_proof` → 缺产物）仍照常 block，那是新信息。已在冒烟库副本上重放：卡住的验证任务从「blocked + 2 个重复 Hold」变为 queued、Hold 全部解除。只影响失败原因为 `missing_business_artifact` / `missing_deliverable` / `non_reviewable_artifact` / `no_proof` 的任务；`invalid_business_artifact`（如 JSON 损坏）本来就会直接重跑。
 
+- **验证快照只给摘要、不给文件**：快照原先从生产者**任务**的 `artifactWorkspacePath` 取文件，而这个字段只有部门拆分出的子任务才有；CEO 规划、未拆分的任务（调研、简报）因此只交出产物记录。第二轮冒烟里简报验证者 4 条要求全部 `not_run`、裁决 `inconclusive`、公司停住。改为抓取时把产出工作区记在**产物**上（`deliveryWorkspacePath`，runtime 写、agent 不能声明），快照从产物取；没有记录来源的交付直接具名失败，不再静默只给记录（ADR 0023 已补记）。旧产物没有这个字段，按约定不做兼容，会走具名失败。
 - **中文 ASCII 引号破坏 `business-artifact.json`**：运行完成后若产物文件不能解析，同一 agent 做一次 Artifact Syntax Repair（只给 workspace 读写、2 分钟、告知解析错误）；runtime 要求修后能解析且去掉引号/转义/标点/空白后内容一致，否则还原原文件、照常停在 `invalid_business_artifact`（ADR 0028）。结构化输出契约走不通：codex `--output-schema` 是 strict 模式，拒绝自由结构的 `payload`（已实测）。真实 claude-code 修复冒烟里那份坏产物：22 秒，只在两处引号前加了反斜杠。
 
 冒烟发现、未修（待讨论）：
 1. **Execution Brief 超时被错记成任务超时**：brief 限 60s，失败时 `agentResult = preparation.result`，记成 `timeout after 5m` 并升级到 10m 档（`main` 上已有）。另见 claude-code 的 brief 回复满足 schema 但内容全是「测试」占位。
 2. **draft 公司的任务被派发**：`fetchQueuedTasks` 不看公司状态，激活前已开始运行（`main` 上已有）。
-3. 联网调研在 medium 档（300s）偏紧：同一任务一次 273s 完成、一次 300s 超时。
+3. 联网调研在 medium 档（300s）偏紧：第二轮里每个 claude-code 联网任务第一次运行都在 300s 超时，升到 10 分钟档后才完成。
+4. **下游不等验证者**：CEO 规划里下游只依赖生产者、不依赖它的验证者，所以简报验证卡在 `inconclusive` 时，构建原型照常开工。ADR 0025 只要求声明验证职责，没要求消费者等裁决。与第 4 项（拆分改为规划声明）一起考虑。
+5. **规划出了授权环境里跑不了的验证要求**：「起本地服务再访问」在 codex 的 `workspace-write` 沙箱里会 `PermissionError`（沙箱禁网，本机端口也不行），只能是 `inconclusive`。要么按能力授权把这类要求映射到能联网的运行，要么规划期就不产出这种要求。
+6. **额度用尽被记成 agent 失败**：claude-code 撞上账号会话上限（stdout 为 `You've hit your session limit`，exit 1），记成 `agent_failed` + `runtime_interrupted`，而不是环境受限。
 
 ### 3) 收紧契约、删掉兼容层（删库之后就没有旧数据要照顾了）
 - `payload.actions` 改为**必填**（缺失即交付物无效），然后**整段删除** `automaticAcceptance.ts` 里的 `FORBIDDEN_RISK_PATTERNS`（约 70 条正则）与相关测试。代价：十几处测试 fixture / mock agent 要补 `actions: []`。
