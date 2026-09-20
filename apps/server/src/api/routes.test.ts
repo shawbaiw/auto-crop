@@ -65,7 +65,7 @@ describe("API routes", () => {
     );
     expect(activated.company.status).toBe("active");
 
-    const task = fixture.repositories.fetchQueuedTasks(1)[0];
+    const task = activatedTasks(fixture, created.company.id, 1)[0];
     expect(task).toBeDefined();
     fixture.repositories.appendProof({
       id: "proof_1",
@@ -489,8 +489,8 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
-    const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
+    const sourceTask = activatedTasks(fixture, created.company.id, 1)[0]!;
+    const consumerTask = activatedTasks(fixture, created.company.id, 2)[1]!;
     fixture.repositories.writeTaskStatusUnchecked(sourceTask.id, "needs_replan");
     fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
       latestFailureReason: "needs_replan",
@@ -568,7 +568,7 @@ describe("API routes", () => {
 
   it("returns queued affected consumers after replan dependency rewiring without writing dependency events", async () => {
     const fixture = await startFixtureServer();
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -576,8 +576,8 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
-    const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
+    const sourceTask = activatedTasks(fixture, created.company.id, 1)[0]!;
+    const consumerTask = activatedTasks(fixture, created.company.id, 2)[1]!;
     fixture.repositories.writeTaskStatusUnchecked(sourceTask.id, "needs_replan");
     fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
       latestFailureReason: "needs_replan",
@@ -613,7 +613,7 @@ describe("API routes", () => {
 
   it("keeps replan confirmation successful when affected consumer refresh fails", async () => {
     const fixture = await startFixtureServer();
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -621,8 +621,8 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
-    const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
+    const sourceTask = activatedTasks(fixture, created.company.id, 1)[0]!;
+    const consumerTask = activatedTasks(fixture, created.company.id, 2)[1]!;
     fixture.repositories.writeTaskStatusUnchecked(sourceTask.id, "needs_replan");
     fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
       latestFailureReason: "needs_replan",
@@ -684,8 +684,8 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const producerTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
-    const consumerTask = fixture.repositories.fetchQueuedTasks(2)[1]!;
+    const producerTask = activatedTasks(fixture, created.company.id, 1)[0]!;
+    const consumerTask = activatedTasks(fixture, created.company.id, 2)[1]!;
     fixture.repositories.createTaskDependency({ taskId: consumerTask.id, dependsOnTaskId: producerTask.id });
     fixture.repositories.writeTaskStatusUnchecked(producerTask.id, "failed");
     fixture.repositories.writeTaskStatusUnchecked(consumerTask.id, "blocked");
@@ -731,7 +731,7 @@ describe("API routes", () => {
   it("returns parent aggregation when a department subtask proof recovery reaches review", async () => {
     const schedulerWakeRequests: SchedulerWakeReason[] = [];
     const fixture = await startFixtureServer({ schedulerWakeRequests });
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -739,7 +739,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     const parentTask = {
       ...createIsolatedTask(templateTask, "parent_task", "Build the playable prototype", "waiting_dependency", 100),
       dependencyNote: "Waiting for department subtasks.",
@@ -813,7 +813,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
     fixture.repositories.writeTaskStatusUnchecked(task.id, "running");
     fixture.repositories.acquireTaskLock(task.id, "worker_1", "2026-08-16T23:59:00.000Z");
     fixture.repositories.createAgentRun({
@@ -845,7 +845,7 @@ describe("API routes", () => {
 
   it("recovers failed timeout tasks through the API", async () => {
     const fixture = await startFixtureServer();
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -853,7 +853,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
     fixture.repositories.writeTaskStatusUnchecked(task.id, "failed");
     fixture.repositories.updateTaskExecutionSummary(task.id, {
       latestFailureReason: "timeout",
@@ -980,7 +980,7 @@ describe("API routes", () => {
       ],
     });
     const { fixture, companyId, sourceTask } = seeded;
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, companyId, 1)[0]!;
     const ordinaryTask = {
       ...createIsolatedTask(templateTask, "company_state_ordinary_completion", "Document the onboarding script", "complete", 280),
       departmentId: sourceTask.departmentId,
@@ -1207,7 +1207,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const [approvedTask, returnedTask] = fixture.repositories.fetchQueuedTasks(2);
+    const [approvedTask, returnedTask] = activatedTasks(fixture, created.company.id, 2);
     expect(approvedTask).toBeDefined();
     expect(returnedTask).toBeDefined();
     fixture.repositories.writeTaskStatusUnchecked(approvedTask!.id, "review");
@@ -1466,7 +1466,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const task = fixture.repositories.fetchQueuedTasks(1)[0];
+    const task = activatedTasks(fixture, created.company.id, 1)[0];
     expect(task).toBeDefined();
     fixture.repositories.writeTaskStatusUnchecked(task!.id, "review");
     fixture.repositories.appendProof({
@@ -1524,7 +1524,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     const departments = fixture.repositories.listDepartments(created.company.id);
     const ownerDepartment = departments[0]!;
     const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id)!;
@@ -1912,7 +1912,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     const tasks = fixture.repositories.listTasksForCompany(created.company.id);
     for (const task of tasks) {
       fixture.repositories.writeTaskStatusUnchecked(task.id, "complete");
@@ -1943,7 +1943,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     const departments = fixture.repositories.listDepartments(created.company.id);
     const ownerDepartment = departments[0]!;
     const sourceTask = createIsolatedTask(templateTask, "founder_decision_source", "Draft the MVP brief", "review", 260);
@@ -2316,7 +2316,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     const sourceTask = createIsolatedTask(templateTask, "two_hold_source", "Build private prototype", "complete", 400);
     const launchTask = createIsolatedTask(templateTask, "two_hold_launch", "Launch public prototype", "queued", 401);
     const humanActionId = "task_completion_event_two_hold_human_action_human_action_1";
@@ -2404,7 +2404,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     const sourceTask = createIsolatedTask(templateTask, "wait_state_source", "Publish private prototype", "complete", 250);
     const indexingTask = createIsolatedTask(templateTask, "wait_state_indexing", "Check indexing signals", "queued", 251);
     const prepTask = createIsolatedTask(templateTask, "wait_state_prep", "Prepare comparison copy", "queued", 252);
@@ -2503,7 +2503,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     const sourceTask = createIsolatedTask(templateTask, "human_action_source", "Build private prototype", "complete", 300);
     const launchTask = createIsolatedTask(templateTask, "human_action_launch", "Launch public prototype", "queued", 301);
     const prepTask = createIsolatedTask(templateTask, "human_action_prep", "Prepare launch notes", "queued", 302);
@@ -2636,7 +2636,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     const departments = fixture.repositories.listDepartments(created.company.id);
     const ownerDepartment = departments[0]!;
     const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id) ?? ownerDepartment;
@@ -2941,7 +2941,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const [producerTask, consumerTask] = fixture.repositories.fetchQueuedTasks(2);
+    const [producerTask, consumerTask] = activatedTasks(fixture, created.company.id, 2);
     expect(producerTask).toBeDefined();
     expect(consumerTask).toBeDefined();
     fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: producerTask!.id });
@@ -3017,7 +3017,7 @@ describe("API routes", () => {
 
   it("cascades dependency readiness to a second-level consumer after CEO approval", async () => {
     const fixture = await startFixtureServer();
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -3025,7 +3025,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     const sourceTask = createIsolatedTask(templateTask, "cascade_source", "Source cascade task", "review", 100);
     const firstConsumer = createIsolatedTask(templateTask, "cascade_first", "First cascade consumer", "blocked", 101);
     const secondConsumer = createIsolatedTask(templateTask, "cascade_second", "Second cascade consumer", "blocked", 102);
@@ -3093,7 +3093,7 @@ describe("API routes", () => {
   it("keeps a direct consumer blocked when another dependency is still missing proof", async () => {
     const schedulerWakeRequests: SchedulerWakeReason[] = [];
     const fixture = await startFixtureServer({ schedulerWakeRequests });
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -3101,7 +3101,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const [approvedDependency, missingDependency, consumerTask] = fixture.repositories.fetchQueuedTasks(3);
+    const [approvedDependency, missingDependency, consumerTask] = activatedTasks(fixture, created.company.id, 3);
     expect(approvedDependency).toBeDefined();
     expect(missingDependency).toBeDefined();
     expect(consumerTask).toBeDefined();
@@ -3158,7 +3158,7 @@ describe("API routes", () => {
 
   it("does not cascade non-dependency failed consumers", async () => {
     const fixture = await startFixtureServer();
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -3166,7 +3166,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const [producerTask, consumerTask] = fixture.repositories.fetchQueuedTasks(2);
+    const [producerTask, consumerTask] = activatedTasks(fixture, created.company.id, 2);
     expect(producerTask).toBeDefined();
     expect(consumerTask).toBeDefined();
     fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: producerTask!.id });
@@ -3206,7 +3206,7 @@ describe("API routes", () => {
 
   it("does not duplicate cascade events when a consumer state does not change", async () => {
     const fixture = await startFixtureServer();
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -3214,7 +3214,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const [producerTask, consumerTask] = fixture.repositories.fetchQueuedTasks(2);
+    const [producerTask, consumerTask] = activatedTasks(fixture, created.company.id, 2);
     expect(producerTask).toBeDefined();
     expect(consumerTask).toBeDefined();
     fixture.repositories.createTaskDependency({ taskId: consumerTask!.id, dependsOnTaskId: producerTask!.id });
@@ -3260,7 +3260,7 @@ describe("API routes", () => {
 
   it("rejects CEO approval when a review task has no proof", async () => {
     const fixture = await startFixtureServer();
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -3268,7 +3268,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
     fixture.repositories.writeTaskStatusUnchecked(task.id, "review");
 
     const response = await fetch(`${fixture.baseUrl}/api/ceo-review-decisions`, {
@@ -3287,7 +3287,7 @@ describe("API routes", () => {
 
   it("rejects CEO approval when a review task has proof but no valid business artifact", async () => {
     const fixture = await startFixtureServer();
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -3295,7 +3295,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
     fixture.repositories.writeTaskStatusUnchecked(task.id, "review");
     fixture.repositories.appendProof({
       id: "proof_1",
@@ -3337,7 +3337,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const task = activatedTasks(fixture, company.company.id, 1)[0]!;
 
     applyTaskTransition({
       repositories: fixture.repositories,
@@ -3390,7 +3390,7 @@ describe("API routes", () => {
    */
   it("clears the approval Hold and queues the task when the founder grants approval", async () => {
     const fixture = await startFixtureServer();
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -3398,7 +3398,7 @@ describe("API routes", () => {
       permissionMode: "safe",
       assets: [],
     });
-    const task = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
     fixture.repositories.createApproval({
       id: "approval_1",
       companyId: task.companyId,
@@ -3467,7 +3467,7 @@ describe("API routes", () => {
         "```",
       ].join("\n"),
     });
-    await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
       locale: "en",
@@ -3475,7 +3475,7 @@ describe("API routes", () => {
       permissionMode: "balanced",
       assets: [],
     });
-    const sourceTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+    const sourceTask = activatedTasks(fixture, created.company.id, 1)[0]!;
     fixture.repositories.writeTaskStatusUnchecked(sourceTask.id, "needs_replan");
     fixture.repositories.updateTaskExecutionSummary(sourceTask.id, {
       latestFailureReason: "needs_replan",
@@ -3547,7 +3547,7 @@ describe("department subtask Founder Decision lifecycle", () => {
       assets: [],
     });
     const { repositories } = fixture;
-    const template = repositories.fetchQueuedTasks(1)[0]!;
+    const template = activatedTasks(fixture, created.company.id, 1)[0]!;
     const parent = { ...createIsolatedTask(template, "lifecycle_parent", "Build the prototype", "waiting_dependency", 300), taskKind: "parent" as const };
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-lifecycle-"));
     createdDirs.push(workspacePath);
@@ -3915,6 +3915,16 @@ function createIsolatedTask(
   };
 }
 
+/**
+ * Tasks of a company that has been activated, the way the founder reaches them: a `draft` company
+ * dispatches nothing, so the dispatch query answers nothing for one (ADR 0033). Tests that seed state
+ * and then act on a task through the API want the tasks, not the dispatch decision.
+ */
+function activatedTasks(fixture: Awaited<ReturnType<typeof startFixtureServer>>, companyId: string, limit = 5) {
+  fixture.repositories.updateCompanyStatus(companyId, "active", "2026-08-17T00:00:00.000Z");
+  return fixture.repositories.fetchQueuedTasks(limit);
+}
+
 async function createCompanyForApi(
   fixture: Awaited<ReturnType<typeof startFixtureServer>>,
 ): Promise<{ company: { id: string } }> {
@@ -3938,7 +3948,7 @@ async function seedCrossDepartmentCompletion(
   companyId: string,
   options: { downstreamStatus: Task["status"]; prefix: string },
 ): Promise<{ downstreamDepartment: { id: string }; sourceTask: Task; downstreamTask: Task }> {
-  const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+  const templateTask = activatedTasks(fixture, companyId, 1)[0]!;
   const departments = fixture.repositories.listDepartments(companyId);
   const ownerDepartment = departments[0]!;
   const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id)!;
@@ -3990,7 +4000,7 @@ async function seedAwaitingFounderDecision(options: {
     permissionMode: "balanced",
     assets: [],
   });
-  const templateTask = fixture.repositories.fetchQueuedTasks(1)[0]!;
+  const templateTask = activatedTasks(fixture, created.company.id, 1)[0]!;
   const departments = fixture.repositories.listDepartments(created.company.id);
   const ownerDepartment = departments[0]!;
   const downstreamDepartment = departments.find((department) => department.id !== ownerDepartment.id) ?? ownerDepartment;

@@ -563,10 +563,15 @@ export function createRepositories(database: DatabaseClient) {
     fetchQueuedTasks(limit: number): Task[] {
       const rows = database
         .prepare(
-          `SELECT tasks.*
+          // Only a running company dispatches. A `draft` company is a plan the founder has not
+           // activated, `creating` has no plan yet, and `paused` / `review` have been stopped on
+           // purpose — dispatching any of them would make activation a button that changes nothing
+           // (ADR 0033).
+           `SELECT tasks.*
            FROM tasks
            INNER JOIN companies ON companies.id = tasks.company_id
            WHERE tasks.status IN ('queued', 'waiting_dependency', 'retrying')
+             AND companies.status = 'active'
            ORDER BY companies.created_at ASC, tasks.position ASC, tasks.id ASC
            LIMIT ?`,
         )

@@ -368,6 +368,8 @@ async function createOnly(business: Business) {
     permissionMode: "balanced",
     assets: [],
   });
+  // As the founder would: a company still in `draft` dispatches nothing (ADR 0033).
+  repositories.updateCompanyStatus(created.company.id, "active", "2026-09-20T00:00:00.000Z");
   return { repositories, projectRoot, created };
 }
 
@@ -389,6 +391,9 @@ async function runBusiness(business: Business, defective: boolean | "until_rewor
     permissionMode: "balanced",
     assets: [],
   });
+  // The founder activates the plan before anything runs, exactly as the API does; a company still in
+  // `draft` dispatches nothing (ADR 0033).
+  repositories.updateCompanyStatus(created.company.id, "active", "2026-09-20T00:00:00.000Z");
   const taskByKey = (key: string) => {
     const title = [business.producer, business.verifier].find((task) => task.key === key)!.title;
     return created.tasks.find((task) => task.title === title)!;

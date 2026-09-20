@@ -200,6 +200,39 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  /**
+   * The reported gap, pinned. Dispatch read only the task's own status, so a company still in
+   * `draft` — a plan the founder has not accepted — started spending agent runs the moment it was
+   * created, and the activate button changed nothing (ADR 0033).
+   */
+  it("dispatches nothing for a company that is not running, and everything once it is", async () => {
+    for (const status of ["draft", "creating", "paused", "review"] as const) {
+      const { projectRoot, repositories, client } = createSchedulerFixture(
+        [createTaskRecord("task_1", "queued", "low")],
+        { status },
+      );
+
+      const held = await runSchedulerOnce({
+        projectRoot, repositories, adapters: [createMockAgentAdapter({ id: "mock-worker", name: "Worker", capabilities: ["code"] })],
+        workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
+        proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+        emit: () => undefined,
+      });
+      expect(held.started, `a ${status} company must not dispatch`).toEqual([]);
+      expect(repositories.getTask("task_1")?.status).toBe("queued");
+
+      repositories.updateCompanyStatus("company_1", "active", "2026-08-17T00:00:00.000Z");
+      const running = await runSchedulerOnce({
+        projectRoot, repositories, adapters: [createMockAgentAdapter({ id: "mock-worker", name: "Worker", capabilities: ["code"] })],
+        workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
+        proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+        emit: () => undefined,
+      });
+      expect(running.started).toEqual(["task_1"]);
+      client.close();
+    }
+  });
+
   it("reconciles stale running tasks before dispatching queued work", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "running", "low"),

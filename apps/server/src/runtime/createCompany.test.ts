@@ -185,6 +185,10 @@ describe("createCompany", () => {
     expect(repositories.listObjectives(result.company.id)).toHaveLength(1);
     expect(repositories.listObjectives(result.company.id)[0]?.titleText?.zh).toBe("验证第一个 AI SaaS 切入点");
     expect(repositories.listKeyResults(result.company.id)).toHaveLength(2);
+    // Created queued, but not dispatchable until the founder activates the plan (ADR 0033).
+    expect(repositories.listTasksForCompany(result.company.id).every((task) => task.status === "queued")).toBe(true);
+    expect(repositories.fetchQueuedTasks(10)).toEqual([]);
+    repositories.updateCompanyStatus(result.company.id, "active", "2026-09-20T00:00:00.000Z");
     expect(repositories.fetchQueuedTasks(10).length).toBeGreaterThan(0);
     expect(result.tasks.map((task) => task.position)).toEqual(result.tasks.map((_, index) => index));
     expect(repositories.listTasksForCompany(result.company.id).map((task) => task.title)).toEqual(

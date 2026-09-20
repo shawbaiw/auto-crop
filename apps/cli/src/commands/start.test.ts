@@ -107,6 +107,15 @@ describe("startAutoCrop", () => {
       });
 
       expect(response.ok).toBe(true);
+      // The founder activates the plan before anything runs; a `draft` company dispatches nothing
+      // (ADR 0033), which is what the activate button is for.
+      const { company } = (await response.json()) as { company: { id: string } };
+      const activated = await fetch(`${started.url}/api/companies/${company.id}/activate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(activated.ok).toBe(true);
       await waitFor(() => logs.some((line) => line.includes("Scheduler tick: started=1")));
     } finally {
       await started.close();

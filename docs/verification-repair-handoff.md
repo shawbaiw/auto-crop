@@ -133,9 +133,11 @@ apps/server/src/runtime/
 - **中文 ASCII 引号破坏 `business-artifact.json`**：运行完成后若产物文件不能解析，同一 agent 做一次 Artifact Syntax Repair（只给 workspace 读写、2 分钟、告知解析错误）；runtime 要求修后能解析且去掉引号/转义/标点/空白后内容一致，否则还原原文件、照常停在 `invalid_business_artifact`（ADR 0028）。结构化输出契约走不通：codex `--output-schema` 是 strict 模式，拒绝自由结构的 `payload`（已实测）。真实 claude-code 修复冒烟里那份坏产物：22 秒，只在两处引号前加了反斜杠。
 
 冒烟发现、未修（待讨论）：
-1. **draft 公司的任务被派发**：`fetchQueuedTasks` 不看公司状态，激活前已开始运行（`main` 上已有）。
-2. 联网调研在 medium 档（300s）偏紧：第二轮里每个 claude-code 联网任务第一次运行都在 300s 超时，升到 10 分钟档后才完成；第四轮里调研任务连 10 分钟档也超时，转 `needs_replan`，公司停住。
-3. claude-code 的 brief 回复满足 schema 但内容全是「测试」占位——结构化输出契约只保证形状，不保证内容。
+1. 联网调研在 medium 档（300s）偏紧：第二轮里每个 claude-code 联网任务第一次运行都在 300s 超时，升到 10 分钟档后才完成；第四轮里调研任务连 10 分钟档也超时，转 `needs_replan`，公司停住。
+2. claude-code 的 brief 回复满足 schema 但内容全是「测试」占位——结构化输出契约只保证形状，不保证内容。
+
+已修（ADR 0033）：
+- **draft 公司的任务被派发**：`fetchQueuedTasks` 加上 `companies.status = 'active'`，与全局暂停、最终报告两处判断一致。draft/creating/paused/review 都不派发，「激活」才真正是开始花钱的那一步。任务不为此开 Hold——停的是公司不是任务，出路在公司层（激活）。连带把测试里「用派发查询随手取个任务」的 35 处用法改成按公司列任务，并让端到端测试像生产一样先激活。
 
 已修（ADR 0032，失败归属）：
 - **Execution Brief 超时被错记成任务超时**：brief 限 `min(任务预算, 60s)`，其结果原先被当成整次运行的结果，记成 `timeout after 5m`，还会升级预算再跑一次同样 60s 上限的 brief，长档下甚至会把任务推向 `needs_replan`。现在按 brief 自己的预算报告、不升级、不作为重新规划的依据。
