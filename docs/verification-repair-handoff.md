@@ -93,7 +93,7 @@ apps/server/src/runtime/
 
 ## 5. 必须守住的不变量（改这块代码时最容易破坏的）
 
-1. **不要再加关键词判断。** 描述风险 ≠ 执行风险动作；谁是验证者、要验什么、做了什么动作，都由声明决定。系统里最后一处关键词驱动行为是拆分触发器（见第 6 节第 4 项）。
+1. **不要再加关键词判断。** 描述风险 ≠ 执行风险动作；谁是验证者、要验什么、做了什么动作，都由声明决定。拆分触发器已在 ADR 0029 改为规划声明；剩下的文本推断是 proof schema 归一化（它只决定记录哪个 schema）。
 2. **只有一份就绪判定。** 新增调用方要调用 `resolveDependencyReadiness`，不要再写第二套「review + Proof 就算数」。
 3. **只有一份交付收尾策略。** 任何“产出了产物之后决定去哪”的新入口都要走 `finalizeDelivery`，否则就是当初 recovery 漏掉创始人决策的同一类 bug。
 4. **状态只经 `applyTaskTransition`**，并且只解除自己确实回答了的 Hold（`resolvesHoldKinds` / `resolvesHoldIds`）。
@@ -136,18 +136,20 @@ apps/server/src/runtime/
 1. **Execution Brief 超时被错记成任务超时**：brief 限 60s，失败时 `agentResult = preparation.result`，记成 `timeout after 5m` 并升级到 10m 档（`main` 上已有）。另见 claude-code 的 brief 回复满足 schema 但内容全是「测试」占位。
 2. **draft 公司的任务被派发**：`fetchQueuedTasks` 不看公司状态，激活前已开始运行（`main` 上已有）。
 3. 联网调研在 medium 档（300s）偏紧：第二轮里每个 claude-code 联网任务第一次运行都在 300s 超时，升到 10 分钟档后才完成。
-4. **下游不等验证者**：CEO 规划里下游只依赖生产者、不依赖它的验证者，所以简报验证卡在 `inconclusive` 时，构建原型照常开工。ADR 0025 只要求声明验证职责，没要求消费者等裁决。与第 4 项（拆分改为规划声明）一起考虑。
-5. **规划出了授权环境里跑不了的验证要求**：「起本地服务再访问」在 codex 的 `workspace-write` 沙箱里会 `PermissionError`（沙箱禁网，本机端口也不行），只能是 `inconclusive`。要么按能力授权把这类要求映射到能联网的运行，要么规划期就不产出这种要求。
-6. **额度用尽被记成 agent 失败**：claude-code 撞上账号会话上限（stdout 为 `You've hit your session limit`，exit 1），记成 `agent_failed` + `runtime_interrupted`，而不是环境受限。
+4. **额度用尽被记成 agent 失败**：claude-code 撞上账号会话上限（stdout 为 `You've hit your session limit`，exit 1），记成 `agent_failed` + `runtime_interrupted`，而不是环境受限。第二、三轮冒烟各出现一次。
 
 ### 3) 收紧契约、删掉兼容层（删库之后就没有旧数据要照顾了）
 - `payload.actions` 改为**必填**（缺失即交付物无效），然后**整段删除** `automaticAcceptance.ts` 里的 `FORBIDDEN_RISK_PATTERNS`（约 70 条正则）与相关测试。代价：十几处测试 fixture / mock agent 要补 `actions: []`。
 - 删除 ADR 0017 的一次性迁移 `reviewReconciliation.ts` 及其 `runtime_state` 标记。
 - 视情况清理更早的兼容层（`businessArtifact.ts` 的 legacy artifactType 分类、`founderDecision.ts` 的 legacy `recommendation` 字符串、`ceoOffice.ts` 的 legacy plan snapshot 视图、`outcome_summary` 兼容字段）。价值递减，别为清理而清理。
 
-### 4) 拆分触发器改为规划声明（最后一处关键词驱动行为）
-现状：`scheduler.ts` 的 `isLargeDepartmentTask` 用「proofSchema 是 landing-page-file/deployment」+「标题或描述含 prototype」+「含 validate 或 deployment」判断是否拆分；而 `createCompany.ts` 的 `withPrototypeGuidance` 又会给所有 `landing-page-file` 任务追加含这些词的指导语——**结果是这类任务必然被拆**（②b 的端到端测试里可以直接观察到）。
-方向：由 blueprint 显式声明是否拆分/拆成什么（与 ②b 的 `verification` 同一种做法），runtime 不再从文本推断。注意：验证职责任务已经禁止被拆（ADR 0025），改造时要保留这条。
+### 4) 规划契约三片——已完成（2026-09-20）
+一起做掉的三件同类事，都是「runtime 不再从文本或 schema 猜规划意图」：
+- **拆分改为规划声明**（ADR 0029）：blueprint 任务必填 `decomposition`（`null` 或 `{ template: "define_execute_validate" }`）；删除 `isLargeDepartmentTask` 与 `inferValidationDependencies`；schema 拒绝「既验证又拆分」和未知 template。原型指导语保留（拆分不再读文本，它就只是关于 proof 形态的建议）。
+- **消费者等验证结论**（ADR 0030）：`resolveDependencyReadiness` 要求每个声明的验证者对「即将被消费的那一版产物」有通过且当前的裁决；验证者自身豁免；验证者被阻塞时消费者具名阻塞。
+- **本地网络能力**（ADR 0031）：新增 `local_network`，由 `local-url`/`screenshot` 触发，按 `run_safe_command` 授权；codex 翻译成 `sandbox_workspace_write.network_access`。实测：codex 没有它绑不了 127.0.0.1，有它可以；claude-code 的 Bash 本来就能绑且无法收回——同一份授权在两个 CLI 上含义不同，这点已记入 ADR。
+
+待验证：真实 CEO 能否稳定输出 `decomposition`（提示词已说明）。用 `pnpm smoke:real-planning` 验，和当初验 `verification` 一样。
 
 ### 5) ⑤ 展示层
 - 页面显示当前真实阻塞原因与可执行入口（现在部门页的「查看 CEO 待办」按钮在某些状态下不出现，未在浏览器中复现过根因）。
