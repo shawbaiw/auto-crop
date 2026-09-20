@@ -1,5 +1,5 @@
 import { projectCeoOfficeItems } from "@auto-crop/core";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -532,7 +532,7 @@ describe("verification contract", () => {
     repositories.createBusinessArtifact(artifactRecord("artifact_define", define.id, {
       verification_requirements: [{ id: "r1", description: "works" }],
     }));
-    repositories.createBusinessArtifact(artifactRecord("artifact_execute", producer.id, {}));
+    repositories.createBusinessArtifact(artifactRecord("artifact_execute", producer.id, {}, producerWorkspace));
     repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: define.id, inputRole: "verification_requirements" });
     repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: producer.id, inputRole: "verification_target" });
     expect(prepareVerificationInputs({ repositories, task: verifier, workspacePath: verifierWorkspace }).kind).toBe("ready");
@@ -780,6 +780,97 @@ describe("verification contract", () => {
     expect(pendingReworkFeedback(repositories, repositories.getTask(execute.id)!)[0]?.failedChecks.map((check) => check.requirementId)).toEqual(["accessible"]);
   });
 
+  /**
+   * The reported failure, pinned. The snapshot used to take its files from the producer *task*'s
+   * artifact workspace, which only a department's split subtasks ever carry. A CEO-planned task that
+   * was never split handed over its artifact record alone, so a verifier asked to check a report or a
+   * brief could not read one — in a real smoke every check came back `not_run`.
+   */
+  it("hands over the files of a producer the department never split", () => {
+    const harness = createHarness({ validate: () => [] });
+    const producerWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-producer-"));
+    const verifierWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-verifier-"));
+    createdDirs.push(producerWorkspace, verifierWorkspace);
+    writeFileSync(join(producerWorkspace, "research-report.md"), "# Findings\n");
+
+    const { repositories } = harness;
+    const define = baseTask("define_1", "complete", "product-brief");
+    // No artifactWorkspacePath: this is a task the CEO planned, not a subtask a department split out.
+    const producer = baseTask("research_1", "complete", "research-report");
+    const verifier = { ...baseTask("verify_1", "queued", "research-report"), workspacePath: verifierWorkspace };
+    for (const task of [define, producer, verifier]) {
+      repositories.createTask(task);
+    }
+    repositories.createBusinessArtifact(artifactRecord("artifact_define_ns", define.id, {
+      verification_requirements: [{ id: "r1", description: "The report has findings." }],
+    }));
+    repositories.createBusinessArtifact(artifactRecord("artifact_research", producer.id, {}, producerWorkspace));
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: define.id, inputRole: "verification_requirements" });
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: producer.id, inputRole: "verification_target" });
+
+    const result = prepareVerificationInputs({ repositories, task: verifier, workspacePath: verifierWorkspace });
+
+    expect(result.kind).toBe("ready");
+    expect(repositories.getTask(producer.id)?.artifactWorkspacePath ?? null).toBeNull();
+    expect(readFileSync(join(verifierWorkspace, ".auto-crop-inputs", producer.id, "files", "research-report.md"), "utf8")).toBe("# Findings\n");
+  });
+
+  it("hands over the workspace of the version being verified, not an earlier one", () => {
+    const harness = createHarness({ validate: () => [] });
+    const firstWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-producer-v1-"));
+    const reworkWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-producer-v2-"));
+    const verifierWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-verifier-"));
+    createdDirs.push(firstWorkspace, reworkWorkspace, verifierWorkspace);
+    writeFileSync(join(firstWorkspace, "report.md"), "first");
+    writeFileSync(join(reworkWorkspace, "report.md"), "reworked");
+
+    const { repositories } = harness;
+    const define = baseTask("define_2", "complete", "product-brief");
+    const producer = baseTask("research_2", "complete", "research-report");
+    const verifier = { ...baseTask("verify_2", "queued", "research-report"), workspacePath: verifierWorkspace };
+    for (const task of [define, producer, verifier]) {
+      repositories.createTask(task);
+    }
+    repositories.createBusinessArtifact(artifactRecord("artifact_define_v", define.id, {
+      verification_requirements: [{ id: "r1", description: "The report has findings." }],
+    }));
+    repositories.createBusinessArtifact(artifactRecord("artifact_v1", producer.id, {}, firstWorkspace));
+    repositories.createBusinessArtifact(artifactRecord("artifact_v2", producer.id, {}, reworkWorkspace));
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: define.id, inputRole: "verification_requirements" });
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: producer.id, inputRole: "verification_target" });
+
+    expect(prepareVerificationInputs({ repositories, task: verifier, workspacePath: verifierWorkspace }).kind).toBe("ready");
+    expect(readFileSync(join(verifierWorkspace, ".auto-crop-inputs", producer.id, "files", "report.md"), "utf8")).toBe("reworked");
+  });
+
+  it("refuses to dispatch a verifier when the delivery records no workspace to hand over", () => {
+    const harness = createHarness({ validate: () => [] });
+    const verifierWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-verifier-"));
+    createdDirs.push(verifierWorkspace);
+
+    const { repositories } = harness;
+    const define = baseTask("define_3", "complete", "product-brief");
+    const producer = baseTask("research_3", "complete", "research-report");
+    const verifier = { ...baseTask("verify_3", "queued", "research-report"), workspacePath: verifierWorkspace };
+    for (const task of [define, producer, verifier]) {
+      repositories.createTask(task);
+    }
+    repositories.createBusinessArtifact(artifactRecord("artifact_define_fc", define.id, {
+      verification_requirements: [{ id: "r1", description: "The report has findings." }],
+    }));
+    // A delivery captured before the runtime recorded where it came from.
+    repositories.createBusinessArtifact(artifactRecord("artifact_no_source", producer.id, {}));
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: define.id, inputRole: "verification_requirements" });
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: producer.id, inputRole: "verification_target" });
+
+    const result = prepareVerificationInputs({ repositories, task: verifier, workspacePath: verifierWorkspace });
+
+    // Named and stopped, rather than a snapshot of nothing the verifier would report on.
+    expect(result).toMatchObject({ kind: "handoff_failed", producer: { id: producer.id } });
+    expect(result.kind === "handoff_failed" && result.message).toContain("records no workspace to hand over");
+    expect(existsSync(join(verifierWorkspace, ".auto-crop-inputs", producer.id, "files"))).toBe(false);
+  });
+
   it("refuses to hand over a symbolic link out of the producer workspace", () => {
     const harness = createHarness({ validate: () => [] });
     const producerWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-producer-"));
@@ -798,7 +889,7 @@ describe("verification contract", () => {
     repositories.createBusinessArtifact(artifactRecord("artifact_define", define.id, {
       verification_requirements: [{ id: "r1", description: "works" }],
     }));
-    repositories.createBusinessArtifact(artifactRecord("artifact_execute", producer.id, {}));
+    repositories.createBusinessArtifact(artifactRecord("artifact_execute", producer.id, {}, producerWorkspace));
     repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: define.id, inputRole: "verification_requirements" });
     repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: producer.id, inputRole: "verification_target" });
 
@@ -970,7 +1061,7 @@ function writeArtifact(workspacePath: string, role: string, payload: Record<stri
   );
 }
 
-function artifactRecord(id: string, taskId: string, payload: Record<string, unknown>) {
+function artifactRecord(id: string, taskId: string, payload: Record<string, unknown>, deliveryWorkspacePath: string | null = null) {
   return {
     id,
     companyId: "company_1",
@@ -988,6 +1079,7 @@ function artifactRecord(id: string, taskId: string, payload: Record<string, unkn
     reviewStatus: "accepted" as const,
     isCurrent: true,
     supersedesArtifactId: null,
+    deliveryWorkspacePath,
     createdAt: "2026-09-17T00:00:00.000Z",
     updatedAt: "2026-09-17T00:00:00.000Z",
   };

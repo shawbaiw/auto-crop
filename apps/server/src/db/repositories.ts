@@ -931,8 +931,8 @@ export function createRepositories(database: DatabaseClient) {
             id, company_id, task_id, source_proof_id, artifact_kind, artifact_role,
             artifact_subtype, artifact_type, task_type,
             payload, lineage, validation_status, validation_errors, review_status,
-            is_current, supersedes_artifact_id, verification, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            is_current, supersedes_artifact_id, verification, delivery_workspace_path, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           artifact.id,
@@ -952,6 +952,7 @@ export function createRepositories(database: DatabaseClient) {
           artifact.isCurrent ? 1 : 0,
           artifact.supersedesArtifactId,
           artifact.verification ? JSON.stringify(artifact.verification) : null,
+          artifact.deliveryWorkspacePath,
           artifact.createdAt,
           artifact.updatedAt,
         );
@@ -1606,6 +1607,7 @@ type BusinessArtifactRow = {
   is_current: number;
   supersedes_artifact_id: string | null;
   verification?: string | null;
+  delivery_workspace_path?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -2045,6 +2047,7 @@ function mapBusinessArtifact(row: BusinessArtifactRow): BusinessArtifact {
     reviewStatus: row.review_status,
     isCurrent: row.is_current === 1,
     supersedesArtifactId: row.supersedes_artifact_id,
+    deliveryWorkspacePath: row.delivery_workspace_path ?? null,
     ...(row.verification ? { verification: JSON.parse(row.verification) as ArtifactVerification } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

@@ -272,9 +272,14 @@ function snapshotProducerOutput(input: {
   );
   writeFileSync(join(directory, "business-artifact.json"), `${artifactRecord}\n`, "utf8");
 
-  const sourceRoot = input.producer.artifactWorkspacePath;
+  // Where the delivery was captured from, recorded by the runtime on the artifact itself — so the
+  // snapshot carries the files of the version being verified, and a task that was never split has
+  // them too. A delivery with no recorded workspace is handed over to nobody: shipping the artifact
+  // record alone let a verifier report on files it was never given (all checks `not_run`, or worse,
+  // a verdict formed from the summary).
+  const sourceRoot = input.artifact.deliveryWorkspacePath;
   if (!sourceRoot) {
-    return { kind: "ready", directory };
+    return { kind: "failed", message: `delivery ${input.artifact.id} records no workspace to hand over.` };
   }
   if (!existsSync(sourceRoot) || !lstatSync(sourceRoot).isDirectory()) {
     return { kind: "failed", message: `artifact workspace ${sourceRoot} is missing.` };

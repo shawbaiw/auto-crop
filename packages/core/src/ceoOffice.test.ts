@@ -446,6 +446,7 @@ describe("projectCeoOfficeItems", () => {
       payload: { private_diagnostics: "/private/workspace/raw-output.json" },
       lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "unreviewed",
       isCurrent: true, supersedesArtifactId: null,
+ deliveryWorkspacePath: null,
       createdAt: "2026-09-01T09:55:00Z", updatedAt: "2026-09-01T09:55:00Z",
     };
 
@@ -473,6 +474,7 @@ describe("projectCeoOfficeItems", () => {
       artifactType: "validation_result", taskType: "validation.onboarding",
       payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "accepted",
       isCurrent: true, supersedesArtifactId: null,
+ deliveryWorkspacePath: null,
       createdAt: "2026-09-01T10:00:00Z", updatedAt: "2026-09-01T10:00:00Z",
     };
 
@@ -492,6 +494,7 @@ describe("projectCeoOfficeItems", () => {
       artifactType: "validation_result", taskType: "validation.onboarding",
       payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "accepted",
       isCurrent: true, supersedesArtifactId: null,
+ deliveryWorkspacePath: null,
       createdAt: "2026-09-01T10:00:00Z", updatedAt: "2026-09-01T10:00:00Z",
     };
 
@@ -572,6 +575,7 @@ describe("projectCeoOfficeItems", () => {
       artifactType: "validation_result", taskType: "validation.onboarding",
       payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "unreviewed",
       isCurrent: true, supersedesArtifactId: null,
+ deliveryWorkspacePath: null,
       createdAt: "2026-09-01T10:05:00Z", updatedAt: "2026-09-01T10:05:00Z",
     };
     const reviewHold: TaskHold = {
@@ -658,6 +662,7 @@ describe("projectCeoOfficeItems", () => {
       artifactType: "validation_result", taskType: "validation.onboarding",
       payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "unreviewed",
       isCurrent: true, supersedesArtifactId: null,
+ deliveryWorkspacePath: null,
       createdAt: "2026-09-01T10:05:00Z", updatedAt: "2026-09-01T10:05:00Z",
     };
     const blockedTask: Task = { ...task!, status: "blocked", latestFailureReason: "retry_exhausted" };
@@ -694,6 +699,7 @@ describe("projectCeoOfficeItems", () => {
       artifactType: "validation_result", taskType: "validation.onboarding",
       payload: {}, lineage: {}, validationStatus: "valid", validationErrors: [], reviewStatus: "unreviewed",
       isCurrent: true, supersedesArtifactId: null,
+ deliveryWorkspacePath: null,
       verification: {
         outcome: "failed", requirementsArtifactId: "requirements", requirements: [{ id: "r1", description: "works" }],
         targets: [], checks: [{ requirementId: "r1", outcome: "failed", evidence: "does not work" }], issues: [],

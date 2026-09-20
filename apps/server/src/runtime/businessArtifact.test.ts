@@ -293,6 +293,59 @@ describe("captureBusinessArtifact", () => {
     );
   });
 
+  /**
+   * Where a delivery came from is the runtime's record, not the agent's: a verification snapshot hands
+   * over these files, so it must not be readable from the artifact's own `lineage`, which the agent
+   * writes. Recorded whatever the delivery turned out to be, because a broken one is recaptured and
+   * re-judged from the same workspace.
+   */
+  it("records the workspace it captured from, on sound and on broken deliveries", () => {
+    const soundWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    const brokenWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    const missingWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
+    createdDirs.push(soundWorkspace, brokenWorkspace, missingWorkspace);
+    const writeArtifactFile = (workspacePath: string, content: string) => {
+      mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+      writeFileSync(join(workspacePath, ".auto-crop", "business-artifact.json"), content, "utf8");
+    };
+    writeArtifactFile(
+      soundWorkspace,
+      JSON.stringify({
+        artifact_kind: "deliverable",
+        artifact_role: "spec",
+        artifact_subtype: "mvp_brief",
+        task_type: "product_planning",
+        source_proof_id: "proof_1",
+        payload: {
+          execution_report: {
+            conclusion: "The brief settles on one wedge.",
+            vision_impact: "Product has something concrete to build.",
+            remaining_gap: "Demand still needs validating.",
+            recommendation: "Build the wedge next.",
+          },
+          outcome_summary: "The brief settles on one wedge, which Product can build next; demand still needs validating.",
+        },
+        lineage: {},
+      }),
+    );
+    writeArtifactFile(brokenWorkspace, "{ not json");
+    const capture = (workspacePath: string) =>
+      captureBusinessArtifact({
+        task: createTaskRecord(),
+        proofs: [createProofRecord()],
+        workspacePath,
+        now: () => new Date("2026-08-17T00:00:00.000Z"),
+        createId: () => "business_artifact_1",
+      });
+
+    expect(capture(soundWorkspace)).toMatchObject({ validationStatus: "valid", deliveryWorkspacePath: soundWorkspace });
+    expect(capture(brokenWorkspace)).toMatchObject({ validationStatus: "invalid_schema", deliveryWorkspacePath: brokenWorkspace });
+    expect(capture(missingWorkspace)).toMatchObject({
+      artifactSubtype: "missing_business_artifact_file",
+      deliveryWorkspacePath: missingWorkspace,
+    });
+  });
+
   it("records an invalid blocker artifact when no artifact file exists", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);

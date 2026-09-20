@@ -553,6 +553,7 @@ function migrateBusinessArtifactClassificationFields(database: DatabaseClient): 
   addColumnIfMissing(database, columns, "business_artifacts", "artifact_role TEXT NOT NULL DEFAULT 'none'");
   addColumnIfMissing(database, columns, "business_artifacts", "artifact_subtype TEXT NOT NULL DEFAULT 'legacy'");
   addColumnIfMissing(database, columns, "business_artifacts", "verification TEXT");
+  addColumnIfMissing(database, columns, "business_artifacts", "delivery_workspace_path TEXT");
 }
 
 function addColumnIfMissing(

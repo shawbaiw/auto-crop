@@ -301,6 +301,7 @@ function createBusinessArtifactRecord(
     reviewStatus: overrides.reviewStatus ?? "accepted",
     isCurrent: overrides.isCurrent ?? true,
     supersedesArtifactId: overrides.supersedesArtifactId ?? null,
+    deliveryWorkspacePath: overrides.deliveryWorkspacePath ?? null,
     createdAt: overrides.createdAt ?? "2026-08-17T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-08-17T00:00:00.000Z",
   };

@@ -623,6 +623,12 @@ export type BusinessArtifact = {
   reviewStatus: BusinessArtifactReviewStatus;
   isCurrent: boolean;
   supersedesArtifactId: string | null;
+  /**
+   * The workspace this delivery was captured from, recorded by the runtime at capture. It is where a
+   * verification snapshot copies the delivered files from, so it must never come from the agent's own
+   * account of its output. Null only on artifacts captured before the runtime recorded it.
+   */
+  deliveryWorkspacePath: string | null;
   /** Runtime-derived Verification Contract verdict; absent on artifacts not produced by a verifying task. */
   verification?: ArtifactVerification | null;
   createdAt: string;

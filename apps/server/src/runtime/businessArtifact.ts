@@ -142,6 +142,7 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
       reviewStatus: "not_reviewable",
       isCurrent: true,
       supersedesArtifactId: null,
+      deliveryWorkspacePath: input.workspacePath,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -170,6 +171,7 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
       reviewStatus: "not_reviewable",
       isCurrent: true,
       supersedesArtifactId: null,
+      deliveryWorkspacePath: input.workspacePath,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -197,6 +199,7 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
       reviewStatus: "not_reviewable",
       isCurrent: true,
       supersedesArtifactId: null,
+      deliveryWorkspacePath: input.workspacePath,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -219,6 +222,7 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
     reviewStatus: "unreviewed",
     isCurrent: true,
     supersedesArtifactId: null,
+    deliveryWorkspacePath: input.workspacePath,
     ...(contract.verification ? { verification: contract.verification } : {}),
     createdAt: timestamp,
     updatedAt: timestamp,
