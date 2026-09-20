@@ -149,7 +149,13 @@ apps/server/src/runtime/
 - **消费者等验证结论**（ADR 0030）：`resolveDependencyReadiness` 要求每个声明的验证者对「即将被消费的那一版产物」有通过且当前的裁决；验证者自身豁免；验证者被阻塞时消费者具名阻塞。
 - **本地网络能力**（ADR 0031）：新增 `local_network`，由 `local-url`/`screenshot` 触发，按 `run_safe_command` 授权；codex 翻译成 `sandbox_workspace_write.network_access`。实测：codex 没有它绑不了 127.0.0.1，有它可以；claude-code 的 Bash 本来就能绑且无法收回——同一份授权在两个 CLI 上含义不同，这点已记入 ADR。
 
-待验证：真实 CEO 能否稳定输出 `decomposition`（提示词已说明）。用 `pnpm smoke:real-planning` 验，和当初验 `verification` 一样。
+真实规划冒烟验证（两轮，各 3 份规划，`pnpm smoke:real-planning`）：字段 6/6 都填了，解析全过；但**没有一个任务声明拆分**。第一版提示词写的是「任务大到需要拆时声明」＋任务类型清单，第二版改写成一条判定原则（「评判对象是它构建并运行出来的东西，而不是它写下的推理」，不含 proof schema 名与类型清单），结果不变。
+
+结论：模型不是漏填，而是**把拆分表达在规划层**——用独立任务加声明验证者，而不是部门三段模板。例如 codex 英文规划的 `build_cleaning_prototype` → `create_realistic_samples` → `run_validation_checks` → `verify_validation_outputs`（5 条必验要求），claude 中文规划的 `eng_build_site` → `eng_verify_site`（8 条要求）。配合 ADR 0030（消费者等裁决），这种形状给出的保障与部门拆分基本等价；部门模板只多两样：Define 阶段在运行时产出更细的必验要求，以及三段之间是内部交付、不进 CEO 审核。
+
+与用户确认的处理（2026-09-20）：**保持 opt-in，不再改提示词、也不按 proof schema 强制拆分，更不把决定移交给部门**（部门在派发时判断，等于重新引入刚删掉的 runtime 推断，且与规划层表达重复）。若后续真实运行中长期无人声明，再单独立项评估是否废弃部门三段模板（它承载 ADR 0007/0024/0026 的机制，改动大）。
+
+提示词写法上的教训（借鉴 Cumora 的 anti-pattern「Don't accrete scenario examples in the prompt」）：规则写成一条可判定的原则，不要堆场景条款或类型清单——前者会让模型在同构场景上变差，也会让规划契约和 proof schema 名字重新耦合，正是 ADR 0029 删掉 `isLargeDepartmentTask` 要避免的。
 
 ### 5) ⑤ 展示层
 - 页面显示当前真实阻塞原因与可执行入口（现在部门页的「查看 CEO 待办」按钮在某些状态下不出现，未在浏览器中复现过根因）。
