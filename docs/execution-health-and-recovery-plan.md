@@ -1,8 +1,10 @@
 # 执行健康监控、预算与恢复：交给 Claude 的实施方案
 
-日期：2026-09-21。已核对基线：`main@b70636a`。
+日期：2026-09-21。已核对基线：`main@a3893bd`（包含 PR #12，结算保护实现提交 `0a82cf0`）；原方案基线为 `b70636a`。
 
-状态：待实施方案。本文创建时没有修改实现、运行真实 Agent、调整生产预算或提交 Git。
+状态：实施中。**P0 已完成**，基线证据见 [execution-health-p0-baseline.md](execution-health-p0-baseline.md)；**P2a（结算一致性）已完成**，见 [ADR 0035](adr/0035-a-settlement-is-one-transaction.md)；**P1（只采集）已完成**。剩余 P2b、P3–P5 待实施。运行健康监控、健康续时和可靠恢复链仍待实施。迄今未运行真实 Agent，未调整生产预算。
+
+阶段顺序已按实测调整为 **P0 → P2a → P1 → P2b → P3 → P5**：P2a 修的是当前就在损坏数据的一致性缺陷（基线 F1–F4），P1 的纯观测对它们零保护，且观测要挂在结算 seam 上，先建 seam 可免于写两遍。P2b（移除 GET 判死、取消闭环）确实需要 P1 的观测数据，故留在 P1 之后。
 
 ## 1. 目标与交付边界
 
@@ -22,9 +24,11 @@
 
 ## 2. 实施前必读与代码依据
 
-Claude 开始时读取仓库当前约定，确认 HEAD 相对本基线的变化。保留用户未提交的 `docs/open-issues-execution-budget-and-brief-quality.md`，本文不覆盖它。代码符号优先于历史行号。
+P0 的审计与复现结果见 [execution-health-p0-baseline.md](execution-health-p0-baseline.md)；本节的代码依据已在那里逐条核对，后续阶段以它为"改之前是什么样"的参照。
 
-必读：根 `CONTEXT.md`、`apps/server/CONTEXT.md`、`apps/dashboard/CONTEXT.md`、ADR 0015、0020、0021、0022、0026、0028、0032，以及执行预算相关 ADR 0001。实施中新增或修改 ADR/CONTEXT 时使用仓库的 domain-modeling、writing-for-agents 技能；按仓库要求执行测试。
+Claude 开始时读取仓库当前约定，确认 HEAD 相对本基线的变化，并检查工作区。`docs/open-issues-execution-budget-and-brief-quality.md` 已提交，可作为问题背景阅读；本文不覆盖它，实施时保留用户新增的未提交修改。代码符号优先于历史行号。
+
+必读：根 `CONTEXT.md`、`apps/server/CONTEXT.md`、`apps/dashboard/CONTEXT.md`、ADR 0015、0020、0021、0022、0026、0028、0032、[0034](adr/0034-one-writer-settles-a-run.md)，以及执行预算相关 ADR 0001。实施中新增或修改 ADR/CONTEXT 时使用仓库的 domain-modeling、writing-for-agents 技能；按仓库要求执行测试。
 
 已核对的实现位置：
 
@@ -35,13 +39,17 @@ Claude 开始时读取仓库当前约定，确认 HEAD 相对本基线的变化�
 | `apps/server/src/adapters/cliAgent.ts` 的 `runCommand` | 总时间计时；stdout/stderr 只记录；SIGTERM 后立即返回 | 保留输出并观测；受控停止；等待退出 |
 | `apps/server/src/runtime/scheduler.ts` | 拿锁先于建 run；简报扣预算；超时升档重跑 | 原子认领；阶段预算；健康续时 |
 | `runtime/artifactSyntaxRepair.ts` | 正式执行后另跑最多 120s 修复 | 修复属于可观测执行阶段 |
-| `runtime/taskRecovery.ts` 的 `reconcileStaleRunningTasks` | 遍历 running run，按 startedAt + effectiveTimeoutMs 判死 | 拆分健康评估与遗留状态对账 |
+| `runtime/taskRecovery.ts` 的 `reconcileStaleRunningTasks` | 遍历 running run，按 startedAt + effectiveTimeoutMs + FINALIZATION_GRACE_MS 判过期；条件结算成功后才改 Task、释放锁 | 拆分健康评估与遗留状态对账，补齐归属与终止确认 |
 | `api/routes.ts` 的 `buildCompanyState` | GET 触发判失败并释放锁 | 移除执行判死副作用 |
-| `db/repositories.ts` 的 `updateAgentRunStatus` | 更新仅按 id，无终态前置条件 | 条件更新，迟到结果不可复活 run |
+| `db/repositories.ts` 的 `updateAgentRunStatus` | 已支持可选 expectedStatus，返回是否更新成功；scheduler 的 claimRun 与过期回收已使用 running 条件 | 审计所有终结入口，补齐当前执行归属、终态保护与整体事务 |
 | `runtime/taskTransition.ts` | Task 状态唯一写入口，带 Hold 规则 | 在此落实前置条件，保持唯一入口 |
 | `runtime/killSwitch.ts` | 由 running run 找任务，清全部锁 | 修复孤立任务；接通实际取消；限制清理范围 |
 
-已经找到的竞态：第一轮正式执行接近预算时成功，进入独立 120s 语法修复；GET 此时按原 run deadline 判失败并释放锁；修复返回后 scheduler 继续捕获产物并可能写 complete。代码路径可达，尚未声称真实冒烟已经复现，实施第一个回归测试要受控复现它。
+已修复的旧竞态：原基线中，正式执行接近预算成功后进入独立 120s 语法修复，GET 可按原 deadline 判失败，迟到收尾再写 complete。PR #12 增加双向条件结算，并把过期回收宽限设为 `ARTIFACT_SYNTAX_REPAIR_TIMEOUT_MS + 30_000`，当前为 150s。[scheduler.test.ts](../apps/server/src/runtime/scheduler.test.ts) 的 `a settlement racing a timeout declaration` 已覆盖宽限内成功、成功后回收不干预、回收获胜后不提交 Business Artifact/完成事件三个场景。实施时复用这些回归，不再把旧结果当成当前代码必然可复现的故障。
+
+现有保护尚未覆盖整段收尾：[scheduler.ts](../apps/server/src/runtime/scheduler.ts) 中 `appendProof`、`createHandoffPackage`、部分 `updateTaskArtifactWorkspacePath` 仍在最终 `claimRun` 之前；认领失败后仍进入清理和释放锁的 finally。run 结果、Business Artifact 与 `finalizeDelivery` 的业务写入也未组成一个整体事务。现有测试没有证明败方对 proof、工作区、全部事件及锁完全无副作用；这些是静态代码依据，需在 P0 补充受控验证。ADR 0034 明确保留了结算中断与孤立锁的限制，P2 不能因此标为完成。
+
+150s 宽限只延后过期回收，不延长 CLI 自身的执行计时器，也不是健康续时。当前仍缺少运行中心跳、独立健康监督、生命周期预算账本及 outbox 恢复消费闭环；已有任务事件记录和运行时通知不等于可靠恢复投递。
 
 拿锁与建 run 之间既可能留下 queued+锁，也可能留下 running+锁+无 run；“两处相隔 132 行”不能代表整个窗口状态。两个超时截止时间也并不严格一致，分别从 run 记录和子进程计时起算。
 
@@ -202,6 +210,8 @@ evaluateExecution(snapshot, policy, time): HealthDecision;
 
 observe 模式保持旧预算策略，修复一致性问题可先上线；新策略完整通过模拟故障、预算测试后才能 opt-in。正式默认启用前提交观测报告。不能因为尚未获得真实运行授权而偷偷付费跑大量任务，也不能把未做实测的阈值写成已验证。
 
+预算迁移以 ADR 0034 为旧模式基线：在 P2 移除旧判死路径前，legacy/observe 保留现有 CLI 超时与过期回收的 150s 收尾宽限；移除后由独立生命周期对账接管，保持旧预算模式有明确、有限的收尾窗口。P4 新策略把 repair/finalizing 纳入阶段上限和 run 硬预算，不在这些上限之外再叠加 `FINALIZATION_GRACE_MS`。按 run 的策略版本选择唯一判定路径，并更新 ADR 0034 的适用范围。
+
 ### 6.4 时间源
 
 同进程时长使用单调时钟，持久化审计使用 UTC。租约由统一数据库/监督者时间计算，报告内容不能自行指定未来租约。检测显著时钟跳变、系统休眠唤醒；唤醒后先探测 owner 并留恢复宽限，不能把整机睡眠当作多个任务同时死锁。软预算、硬预算、lease 使用各自明确定义的时间语义，测试覆盖跳时和休眠。
@@ -284,28 +294,70 @@ Task/run 页面显示业务状态、当前阶段、执行持续时间、最近�
 
 ## 10. 实施阶段与完成条件
 
-### P0：基线与确定性复现
+### P0：现有回归与剩余缺口复现 —— 已完成（2026-09-21）
 
-- 确认本文代码依据，审计全部 Agent 调用、状态写入、锁释放和 GET 对账入口。
-- 使用 fake adapter、可控 Promise 和注入时钟复现：正式执行成功→repair 等待→GET 过期判死→迟到收尾。
-- 构造 queued+锁无 run、running+锁无 run、终态 run+残留锁；记录当前恢复行为。
-- 不调用真实付费模型，不通过真实 SIGKILL 人为破坏用户当前 Worker。
-- 完成条件：有可重复的基线证据，区分已有实现、本文提出的变更与未验证假设。
+交付物：[execution-health-p0-baseline.md](execution-health-p0-baseline.md)。新增 8 条确定性测试，`pnpm test` 55 文件 / 781 项通过，typecheck 与 lint 通过；未运行真实 Agent，未对运行中的 Worker 发信号。
 
-### P1：只采集，不驱动停止
+- [x] 确认本文代码依据，审计全部 Agent 调用、状态写入、锁释放和 GET 对账入口。7 个 Agent 调用点中只有 Task 执行有 run 记录，且简报/执行/修复共用同一 `agentRunId`；4 个 run 终结入口中 2 个无条件写入；`buildCompanyState` 被 4 条路由到达，含纯读的 `GET /state`。
+- [x] 复用 ADR 0034 的三条竞态回归，核对宽限内收尾成功与宽限外回收获胜；双方竞争只产生一个有效结果的断言保留且持续通过。
+- [x] 补测认领失败后的副作用（基线 F1、F2、F4）：败方仍写 proof、handoff 包与产物指针；败方的 `finally` 会释放接任分派的锁；重试上限路径完全不认领，还能让同一 Task 同时挂两个 open Hold。
+- [x] 注入结算持久化点的中断（基线 F3）：`claimRun` 之后抛异常留下 run=complete、Task=running、无 Hold、无锁，且因对账只读 running run 而永久不可达。
+- [x] 构造三种遗留组合（基线 F5）：queued+锁无 run、running+锁无 run、终态 run+残留锁，均对账不可见，锁永久残留。
+- [x] 未调用真实付费模型，未通过真实 SIGKILL 破坏用户当前 Worker。
+- [x] 完成条件：基线证据可重复，已按"已实现 / 本文提出的变更 / 未验证假设"三分类记录。
 
-- 添加版本化观测、阶段、调用标识与活动摘要；adapter 回调/取消接口兼容已有调用方。
-- 从认领到 finalizing 全程发 owner 心跳；独立监督循环先观察，保留旧预算模式。
-- 观测写入失败有界降级并记录，不把普通日志落库失败变成任务成功/失败依据；租约权威写入失败按第 7 节处理。
-- 完成条件：mock 场景的四阶段记录完整；能导出静默统计；没有新增自动判死行为；额度/结构化输出与授权隔离回归通过。
+P0 额外确认、需在后续阶段处理的事实：取消全链路是空实现（`routes.ts` 的 `cancelActiveRun` 接成 no-op，`cliAgent` 发一次 SIGTERM 即返回），且 `killSwitch` 的 `releaseAllTaskLocks()` 会清掉其他公司的锁（基线 F6）。P2 修复 F1–F5 时，基线中记录当前行为的断言必须被改写，改写本身即修复到位的证明。
 
-### P2：执行一致性与取消闭环
+### P1：只采集，不驱动停止 —— 已完成（2026-09-21）
 
-- 原子 claim、epoch、workspace claim、短事务提交、终态保护；重构产物捕获先准备后提交。
-- 实现协作取消、终止升级、进程身份确认和隔离。
+交付物：`runtime/executionObservation.ts`（`RunObserver` + 纯函数 `summarizeRunActivity`）、`run_invocations` / `run_activity` 两张表、`agent_runs` 的观测列。`pnpm test` 57 文件 / 799 项通过，typecheck 与 lint 通过。未运行真实 Agent。
+
+- [x] 版本化观测：`OBSERVATION_POLICY_VERSION` 随 run 落库，旧 run 按记录时的规则读回。
+- [x] 阶段与调用标识：`preparing_brief / executing / repairing_artifact / finalizing` 各自一条 invocation，带 `startedAt / endedAt / endReason`；同一 run 的简报、执行、修复是三次 invocation。
+- [x] 活动摘要：内存聚合、默认 10s 落一次，仅记录 channel 与字节数，**不复制原文**。摘要两端都是真实到达时间（`windowStartedAt` / `observedAt`），并保存窗口内最大间隔——节流不能让静默看起来更短。窗口间的静默按"上个窗口末字节 → 下个窗口首字节"计算。
+- [x] adapter 接口兼容：`AgentRunRequest.observe` 为可选，不实现的 adapter 照常工作，被观测为 unknown 而非 silent。`cliAgent` 在 stdout/stderr chunk 处上报字节数。
+- [x] 全程 owner 心跳：阶段边界确定性发一次（测试可断言），加上 CLI 配置的 20s 定时器覆盖长阶段。**心跳只由运行时时钟驱动，永不由 stdout 刷新。**
+- [x] 观测写入失败有界降级：`maxFailures` 次后停止重试，失败计入并以 task_warning 上报；实测数据库写失败**不改变 run 状态**。
+- [x] 完成条件：mock 场景四阶段记录完整（`scheduler.test.ts` › `records all four phases in order`）；静默统计可导出（`exports silence statistics for a run that said nothing for most of its life`）；**没有新增自动判死行为**——`executionObservation.test.ts` › `cannot end a run, move a task, or touch a lock` 扫描模块源码，禁止出现任何终结写入者；原有 799 项回归（含额度、结构化输出、授权隔离）全部通过。
+
+决策记录见 [ADR 0036](adr/0036-observation-before-judgement.md)。
+
+**实施中发现并修正的两个缺陷**（都是自己新写的代码，被测试断言揪出来的，未流出）：
+
+1. **聚合把静默统计算错了。** 活动摘要原本只记一个时间戳，而那是 **flush 时刻**不是字节到达时刻。一个 5 分钟里只输出 12 字节的 run，首次活动延迟被算成 300s 而非真实的 240s —— 节流扭曲了它本该服务的统计，正是方案 §5.1 明令禁止的。改为摘要两端（`windowStartedAt` / `observedAt`）都记真实到达时间，flush 时刻与任何统计无关。
+2. **窗口之间的静默口径错了。** 原本按"上个窗口末字节 → 下个窗口末字节"计算，把下个窗口内部的活动时长也算进了静默。应为"上个窗口末字节 → 下个窗口**首字节**"。同时处理了同一窗口两个 channel 产生重叠区间的情况，不能算出负的静默。
+
+**本阶段明确未做的事**（不是遗漏，是划出的边界）：
+
+| 未做 | 原因 | 去向 |
+| --- | --- | --- |
+| 结构化模型/工具事件 | 只接了 stdout/stderr，没有可信的流契约 | 因此**不宣称**支持可靠 `model_idle_timeout`（方案 §6.1 要求）；按 adapter 逐个验证后再说 |
+| `lastProgressAt` | 需要"可确认检查点"的语义，当前无可信来源；用输出冒充进展正是要避免的 | P4 与验证契约一并设计 |
+| `run_activity` 的保留期与清理上限 | 方案 §5.1 明确要求，本轮未做 | **本地库会无界增长**，P3 前必须补 |
+| 独立监督循环、进程外 Supervisor | 属 P3 | P3 |
+| 取消能力经 adapter 下达 | `observe` 只出不进；取消仍是空实现（基线 F6） | P2b |
+| 阈值实测 | 10s 聚合窗口、20s 心跳是"便宜且够用"的初值，**无任何实测支撑** | P5 采样后收紧；`policyVersion` 已落库，改动不会悄悄改写旧 run 的含义 |
+
+### P2a：结算一致性 —— 已完成（2026-09-21）
+
+交付物：[ADR 0035](adr/0035-a-settlement-is-one-transaction.md)。`pnpm test` 56 文件 / 786 项通过，typecheck 与 lint 通过。未运行真实 Agent。
+
+- [x] 将 proof、产物指针及全部业务写入纳入获准提交的事务：`settleRun` 开事务、先认领、再提交，6 个结算分支全部改道（修 F1、F3）。
+- [x] 补齐所有终结入口的保护：重试上限不再自成写入者，成为结算携带的 outcome（修 F4）。`updateAgentRunStatus` 的无条件调用在调度路径中已清零。
+- [x] 重构产物捕获先准备后提交：handoff 包改为事务提交后、仅胜方发布——文件无法随事务回滚。
+- [x] 锁记录所属 run（`task_locks.run_id`），释放须指名同一个 run（修 F2）。删除 `runtime/locks.ts` 这套已经分叉的并行锁实现。
+- [x] 多连接 SQLite 竞争测试（`db/multiConnection.test.ts`，4 项）：证实条件更新跨连接原子、事务跨连接隔离；**证伪**了"事务内先读后写安全"这一假设——先读会在对方提交后升级失败，且 `busy_timeout` 无效。结算因此必须以认领为第一条语句，并由扫描源码的守护测试禁止事务内出现 await 与文件 I/O。
+- [x] 完成条件（本段）：现有三条竞态回归持续通过；P0 的败方副作用与结算中断用例全部改写为断言新行为并通过。
+
+### P2b：取消闭环与读路径去副作用（待实施）
+
+- 原子执行认领：锁、run 与 running 转换在同一事务内创建，关闭"锁已建、run 未建"的窗口（基线 F5 的成因，P2a 未关闭）。
+- `ownerEpoch`、workspace claim（同一可写目录互斥，含跨 Task 共用产物工作区）。
+- 实现协作取消、终止升级、进程身份确认和隔离（基线 F6：`cancelActiveRun` 当前是 no-op，`cliAgent` 发一次 SIGTERM 即返回）。
 - 新启动/独立对账覆盖遗留组合，同时移除 GET 与调度中旧的墙钟判死写路径；保留必要的非执行类修复。
-- 修复 Emergency Stop 与共享目录互斥。迁移现有 active/legacy 数据有明确协议。
-- 完成条件：P0 竞态回归变绿；双连接/双 Worker 竞争与迟到结果测试通过；打开页面不改变执行结果；无 run 孤立 Task 有真实恢复出口。
+- 修复 Emergency Stop 与共享目录互斥（`releaseAllTaskLocks()` 当前会清掉其他公司的锁）。迁移现有 active/legacy 数据有明确协议。
+- 为 Supervisor 的第二个连接设置有界 `busy_timeout`（P2a 实测当前为 0，第二连接写入立即失败）。
+- 完成条件：双连接/双 Worker 竞争与迟到结果测试通过；打开页面不改变执行结果；无 run 孤立 Task 有真实恢复出口。
 
 ### P3：独立监督与可靠事件
 
@@ -316,7 +368,7 @@ Task/run 页面显示业务状态、当前阶段、执行持续时间、最近�
 ### P4：健康与预算新策略
 
 - 启用软检查点、生命周期硬预算、Task 累计账本、分阶段限额；同一 run 续时。
-- 保留 legacy/observe 模式的明确转换；停止所有隐式“超时升档立刻重跑”入口在新模式的作用，避免两套恢复循环竞争。
+- 按第 6.3 节迁移 legacy/observe 模式及收尾宽限；停止所有隐式“超时升档立刻重跑”入口在新模式的作用，避免两套恢复循环竞争或宽限重复叠加。
 - 预算/权限/额度/Hold 的出口连通，不把 long 超时自动解释为 replan。
 - 完成条件：持续进展超过旧上限仍是同 run；硬预算不可被输出、重试或重启绕开；brief/repair/finalize 归因正确。
 
@@ -345,6 +397,8 @@ Task/run 页面显示业务状态、当前阶段、执行持续时间、最近�
 | 模型流事件源不可用 | 不启用结构化 idle 判死，显示能力 unknown |
 | 两个停止请求竞争 | 一个停止决策与一次最终事件，信号操作可幂等 |
 | 成功与停止同刻竞争 | 原子决策唯一；若成功已提交停止 no-op，若停止已 claim 成功不得提交 |
+| 收尾失去认领后继续返回 | proof、产物指针、业务事件及共享工作区不被迟到收尾修改，不释放新执行的锁 |
+| run 终结与 Task/产物提交之间发生异常或崩溃 | 短事务整体提交或回滚；未完成执行可由对账发现并处置 |
 | A 失效、B 运行、A 迟到心跳/结果 | A 无权刷新 B/产物/依赖/Hold |
 | 旧进程收到 TERM 仍写文件 | 不启动共享目录的新执行；升级终止或隔离 |
 | PID 被复用 | 身份不匹配拒绝 kill，不伤害新进程 |
@@ -380,6 +434,8 @@ Task/run 页面显示业务状态、当前阶段、执行持续时间、最近�
 
 按当前 package.json 执行受影响测试、类型检查及必要的全量回归（当前 root 有 test、typecheck、lint、smoke:mock）。真实 smoke 使用独立数据库、工作区和端口，保留用户现有 `.auto-crop`。
 
+2026-09-21 在 `a3893bd` 核对时执行 `pnpm exec vitest run apps/server/src/runtime/scheduler.test.ts apps/server/src/runtime/taskRecovery.test.ts apps/server/src/api/routes.test.ts`，3 个文件、136 项测试全部通过。这仅是当前回归基线，不证明新监控策略、候选阈值或本节完整验收矩阵已通过；本次未运行真实 Agent 或新增故障注入测试。
+
 每阶段交付记录：改了哪些接口与持久化语义、通过哪些场景、未完成哪些门槛。完成时更新 CONTEXT/ADR，特别是 server CONTEXT 中“读时修复执行”的旧描述、预算与 Bounded Recovery 术语；不把本文原案冒充最终实现。
 
 回滚顺序：停止新派发/自动恢复→排空或确认停止活动执行→排空/保存 outbox→切换策略版本。可以从新预算策略回退 observe，但保留归属保护、终态校验、GET 去副作用等正确性修复。数据库 schema 回滚需要验证兼容性，不直接删新列/事件。
@@ -397,10 +453,10 @@ Task/run 页面显示业务状态、当前阶段、执行持续时间、最近�
 
 ## 13. cumora 参考的适用范围
 
-核对版本 `1a82fe6`，仅作设计参考，不复制阈值作为本项目真理：
+核对版本 `1a82fe6`；2026-09-21 查询远端 HEAD 仍为该提交，参考版本未发生变化。仅作设计参考，不复制阈值作为本项目真理：
 
 - [本地引擎整轮时限默认关闭、可配置开启](https://github.com/yetone/cumora/blob/1a82fe6/server/src/agents/computer/engine.ts#L259)。
-- [本地 run 心跳每 60s](https://github.com/yetone/cumora/blob/1a82fe6/server/src/agents/computer/daemon.ts#L2295)，[独立遗留运行清理](https://github.com/yetone/cumora/blob/1a82fe6/server/src/agents/observability.ts#L326)。
+- [本地 run 心跳每 60s](https://github.com/yetone/cumora/blob/1a82fe6/server/src/agents/computer/daemon.ts#L2295)，[独立遗留运行清理默认每 60s 扫描、关闭超过 10 分钟未更新的 running 记录](https://github.com/yetone/cumora/blob/1a82fe6/server/src/agents/observability.ts#L326)。daemon 仍能心跳不代表它等待的模型一定在正常推进。
 - [云端单次模型流 idle/wall 限制](https://github.com/yetone/cumora/blob/1a82fe6/server/src/agents/turn-stream.ts#L15)，不是本地 CLI 内部调用的统一保证。
 - [75% 上下文压缩、95% 上下文硬限制](https://github.com/yetone/cumora/blob/1a82fe6/server/src/agents/turn.ts#L925)，不是总费用预算。
 - 它的清理器不直接重启任务；议程/未读消息的后续唤醒也不等于所有失败都保证续跑。本项目要实现的可靠恢复链须独立完成。

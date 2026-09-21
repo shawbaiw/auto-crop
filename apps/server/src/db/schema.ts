@@ -220,6 +220,36 @@ export function migrate(database: DatabaseClient): void {
       failure_message TEXT
     );
 
+    -- One launch of an agent process within a run (ADR 0035 / execution-health P1). A run's brief,
+    -- its substantive work and its Artifact Syntax Repair are separate invocations of the same run,
+    -- so "how long did it take" and "what ended it" are answerable per phase rather than per run.
+    CREATE TABLE IF NOT EXISTS run_invocations (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      phase TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      ended_at TEXT,
+      end_reason TEXT
+    );
+
+    -- Bounded activity summaries, never raw output. High-frequency deltas are aggregated in memory
+    -- and landed at most once per flush window; the window keeps its own longest gap so throttling
+    -- cannot make a silent run look busy. Observation only: nothing here ends a run.
+    CREATE TABLE IF NOT EXISTS run_activity (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      invocation_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      window_started_at TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      max_gap_ms INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id, seq);
+
     CREATE TABLE IF NOT EXISTS task_dependencies (
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -356,6 +386,10 @@ export function migrate(database: DatabaseClient): void {
       confirmed_at TEXT
     );
   `);
+  // Which run a lock is held for (ADR 0034 / execution-health P2a). A lock taken before its run
+  // exists carries NULL until `bindTaskLockToRun` fills it in, and legacy rows keep NULL forever;
+  // both release conditionally on the value, so a dispatch can only ever release its own lock.
+  addColumnIfMissing(database, getColumnNames(database, "task_locks"), "task_locks", "run_id TEXT");
   addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "execution_brief TEXT");
   addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "blocked_by_task_id TEXT");
   addColumnIfMissing(database, getColumnNames(database, "company_events"), "company_events", "plan_snapshot TEXT");
@@ -541,6 +575,14 @@ function migrateAgentRunsExecutionFields(database: DatabaseClient): void {
   addColumnIfMissing(database, columns, "agent_runs", "effective_timeout_ms INTEGER");
   addColumnIfMissing(database, columns, "agent_runs", "failure_reason TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "failure_message TEXT");
+  // Observation (execution-health P1). All nullable: a run that predates observation reports unknown,
+  // which is not the same as "no activity" and must never be read as one.
+  addColumnIfMissing(database, columns, "agent_runs", "owner_id TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "phase TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "phase_started_at TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "last_heartbeat_at TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "last_activity_at TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "policy_version TEXT");
 }
 
 function migrateTaskDependencyContracts(database: DatabaseClient): void {

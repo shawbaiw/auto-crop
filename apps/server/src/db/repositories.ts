@@ -46,6 +46,7 @@ import type {
 } from "@auto-crop/core";
 import { isLocale } from "@auto-crop/core";
 import type { DatabaseClient } from "./client";
+import type { RunActivity, RunInvocation } from "../runtime/executionObservation";
 
 export type ReviewRecord = {
   id: string;
@@ -854,10 +855,50 @@ export function createRepositories(database: DatabaseClient) {
       }
     },
 
-    releaseTaskLock(taskId: string, ownerId: string): void {
-      database
-        .prepare("DELETE FROM task_locks WHERE task_id = ? AND owner_id = ?")
-        .run(taskId, ownerId);
+    /**
+     * Tie a lock to the run it is now held for, so releasing it can be conditional.
+     *
+     * The lock is taken before the run exists, so there is a window where it is bound to nothing.
+     * Binding is itself conditional on the lock still being unbound: a lock that has already moved on
+     * to another run is not this dispatch's to label.
+     */
+    bindTaskLockToRun(taskId: string, ownerId: string, runId: string): boolean {
+      const result = database
+        .prepare("UPDATE task_locks SET run_id = ? WHERE task_id = ? AND owner_id = ? AND run_id IS NULL")
+        .run(runId, taskId, ownerId);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * Release a lock only if it is still held for the run the caller thinks it is holding.
+     *
+     * A single process dispatches under one `ownerId`, so task id and owner cannot tell two dispatches
+     * of the same task apart: an unwinding dispatch that lost its run used to delete the lock its own
+     * successor had just taken, leaving the successor running unlocked. The run id is what separates
+     * them. `IS` rather than `=` so an unbound lock (NULL) matches a caller that never created a run.
+     */
+    releaseTaskLock(taskId: string, ownerId: string, runId: string | null): boolean {
+      const result = database
+        .prepare("DELETE FROM task_locks WHERE task_id = ? AND owner_id = ? AND run_id IS ?")
+        .run(taskId, ownerId, runId);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * Release the lock held for this run, whoever owns it — used by whoever settles a run they did not
+     * dispatch.
+     *
+     * An unbound lock (`run_id IS NULL`) is released too: it is either a row from before locks carried
+     * a run, or a dispatch caught between taking the lock and creating its run. A lock bound to a
+     * *different* run is never released, so settling one run cannot unlock another one that is live.
+     * Closing the unbound window itself needs the lock and the run to be created together, which is
+     * execution-health P2b.
+     */
+    releaseTaskLockForRun(taskId: string, runId: string): boolean {
+      const result = database
+        .prepare("DELETE FROM task_locks WHERE task_id = ? AND (run_id = ? OR run_id IS NULL)")
+        .run(taskId, runId);
+      return Number(result.changes) > 0;
     },
 
     releaseAllTaskLocks(): string[] {
@@ -866,7 +907,7 @@ export function createRepositories(database: DatabaseClient) {
       return locks.map((lock) => lock.taskId);
     },
 
-    listTaskLocks(): Array<{ taskId: string; ownerId: string; acquiredAt: string }> {
+    listTaskLocks(): Array<{ taskId: string; ownerId: string; acquiredAt: string; runId: string | null }> {
       const rows = database.prepare("SELECT * FROM task_locks ORDER BY task_id ASC").all();
       return rows.map((row) => {
         const lock = row as TaskLockRow;
@@ -874,6 +915,7 @@ export function createRepositories(database: DatabaseClient) {
           taskId: lock.task_id,
           ownerId: lock.owner_id,
           acquiredAt: lock.acquired_at,
+          runId: lock.run_id,
         };
       });
     },
@@ -1208,6 +1250,116 @@ export function createRepositories(database: DatabaseClient) {
           ...(outcome.expectedStatus ? [outcome.expectedStatus] : []),
         );
       return Number(result.changes) > 0;
+    },
+
+    /**
+     * Record where a run is and that its owner is still alive.
+     *
+     * Observation only. Every field is independent: a heartbeat says the runner answered, activity
+     * says bytes moved, and neither implies the other. Callers pass only what they actually observed,
+     * so an unobserved field keeps its previous value rather than being reset to "nothing happened".
+     */
+    updateAgentRunObservation(
+      id: string,
+      observation: {
+        ownerId?: string;
+        phase?: string;
+        phaseStartedAt?: string;
+        lastHeartbeatAt?: string;
+        lastActivityAt?: string;
+        policyVersion?: string;
+      },
+    ): void {
+      const assignments: string[] = [];
+      const values: Array<string> = [];
+      const set = (column: string, value: string | undefined) => {
+        if (value !== undefined) {
+          assignments.push(`${column} = ?`);
+          values.push(value);
+        }
+      };
+      set("owner_id", observation.ownerId);
+      set("phase", observation.phase);
+      set("phase_started_at", observation.phaseStartedAt);
+      set("last_heartbeat_at", observation.lastHeartbeatAt);
+      set("last_activity_at", observation.lastActivityAt);
+      set("policy_version", observation.policyVersion);
+      if (assignments.length === 0) {
+        return;
+      }
+      database.prepare(`UPDATE agent_runs SET ${assignments.join(", ")} WHERE id = ?`).run(...values, id);
+    },
+
+    createRunInvocation(invocation: RunInvocation): void {
+      database
+        .prepare(
+          `INSERT INTO run_invocations (id, run_id, phase, started_at, ended_at, end_reason)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          invocation.id,
+          invocation.runId,
+          invocation.phase,
+          invocation.startedAt,
+          invocation.endedAt,
+          invocation.endReason,
+        );
+    },
+
+    endRunInvocation(id: string, endedAt: string, endReason: string): void {
+      database
+        .prepare("UPDATE run_invocations SET ended_at = ?, end_reason = ? WHERE id = ? AND ended_at IS NULL")
+        .run(endedAt, endReason, id);
+    },
+
+    listRunInvocations(runId: string): RunInvocation[] {
+      return (database
+        .prepare("SELECT * FROM run_invocations WHERE run_id = ? ORDER BY started_at ASC, rowid ASC")
+        .all(runId) as RunInvocationRow[]).map((row) => ({
+        id: row.id,
+        runId: row.run_id,
+        phase: row.phase,
+        startedAt: row.started_at,
+        endedAt: row.ended_at,
+        endReason: row.end_reason,
+      }));
+    },
+
+    appendRunActivity(activity: RunActivity): void {
+      database
+        .prepare(
+          `INSERT INTO run_activity (id, run_id, invocation_id, seq, window_started_at, observed_at, phase, channel, bytes, max_gap_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          activity.id,
+          activity.runId,
+          activity.invocationId,
+          activity.seq,
+          activity.windowStartedAt,
+          activity.observedAt,
+          activity.phase,
+          activity.channel,
+          activity.bytes,
+          activity.maxGapMs,
+        );
+    },
+
+    listRunActivity(runId: string): RunActivity[] {
+      return (database
+        .prepare("SELECT * FROM run_activity WHERE run_id = ? ORDER BY seq ASC")
+        .all(runId) as RunActivityRow[]).map((row) => ({
+        id: row.id,
+        runId: row.run_id,
+        invocationId: row.invocation_id,
+        seq: row.seq,
+        windowStartedAt: row.window_started_at,
+        observedAt: row.observed_at,
+        phase: row.phase,
+        channel: row.channel as RunActivity["channel"],
+        bytes: row.bytes,
+        maxGapMs: row.max_gap_ms,
+      }));
     },
 
     countAgentRunsForTask(taskId: string): number {
@@ -1668,10 +1820,33 @@ function mapVerificationRework(row: VerificationReworkRow): VerificationRework {
   };
 }
 
+type RunInvocationRow = {
+  id: string;
+  run_id: string;
+  phase: string;
+  started_at: string;
+  ended_at: string | null;
+  end_reason: string | null;
+};
+
+type RunActivityRow = {
+  id: string;
+  run_id: string;
+  invocation_id: string;
+  seq: number;
+  window_started_at: string;
+  observed_at: string;
+  phase: string;
+  channel: string;
+  bytes: number;
+  max_gap_ms: number | null;
+};
+
 type TaskLockRow = {
   task_id: string;
   owner_id: string;
   acquired_at: string;
+  run_id: string | null;
 };
 
 type AgentRunRow = {

@@ -15,7 +15,7 @@ import {
   type LaunchPlan,
   type ReadCliHelp,
 } from "./launchPolicy";
-import type { AgentAdapter, AgentRunRequest, AgentRunResult, AgentSessionProbeResult } from "./types";
+import type { AgentAdapter, AgentRunRequest, AgentRunResult, AgentSessionProbeResult, RunObservationSink } from "./types";
 
 export type CommandValues = {
   prompt: string;
@@ -158,6 +158,7 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
           timeoutMs: resolveTimeoutMs(request.timeoutMs, options.timeoutMs),
           log: options.log,
           agentName: options.name,
+          observe: request.observe,
         });
         options.log?.(`Agent ${options.name} finished task ${request.taskId} with status ${result.status}`);
         return result;
@@ -398,7 +399,7 @@ function runCommand(
   command: string,
   args: string[],
   cwd: string,
-  options: { timeoutMs: number; log?: (line: string) => void; agentName: string },
+  options: { timeoutMs: number; log?: (line: string) => void; agentName: string; observe?: RunObservationSink },
 ): Promise<AgentRunResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
@@ -428,10 +429,13 @@ function runCommand(
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
+      // Report that bytes moved, not what they were: the log already holds the text.
+      options.observe?.output("stdout", chunk.length);
       options.log?.(`Agent ${options.agentName} stdout: ${chunk.toString("utf8").trimEnd()}`);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderrChunks.push(chunk);
+      options.observe?.output("stderr", chunk.length);
       options.log?.(`Agent ${options.agentName} stderr: ${chunk.toString("utf8").trimEnd()}`);
     });
     child.on("error", (error) => {

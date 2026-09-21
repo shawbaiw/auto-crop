@@ -18,6 +18,15 @@ import {
   type SchedulerWakeReason,
 } from "@auto-crop/server";
 
+/**
+ * How often a live run's owner records that it is still here.
+ *
+ * Short enough that a lost worker is visible within a scan or two, long enough that a slow database
+ * is not asked to take a write every second. It is an observation cadence, not a budget: nothing is
+ * declared dead by a missing heartbeat yet.
+ */
+const HEARTBEAT_INTERVAL_MS = 20_000;
+
 export type StartAutoCropOptions = {
   projectRoot: string;
   host?: string;
@@ -156,6 +165,9 @@ export function startSchedulerLoop(input: {
         // Mode. Passing one here is what pinned every company to the `balanced` default.
         proofCollector,
         createId: input.createId,
+        // The owner runner reports in on its own clock while a run is in flight. Observation only:
+        // nothing reads a heartbeat to end a run (execution-health P1).
+        heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
         emit,
       });
 

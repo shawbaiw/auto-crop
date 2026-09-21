@@ -27,6 +27,24 @@ export type AgentRunRequest = {
    * any substantive work was dispatched (ADR 0022).
    */
   outputSchema?: Record<string, unknown>;
+  /**
+   * Where to report what this run is doing while it does it.
+   *
+   * Optional, and ignored by adapters that have nothing to report: a run without it is observed as
+   * unknown rather than as silent. Purely an outbound report — an adapter never reads the runtime's
+   * judgement back, and nothing an adapter reports here ends its own run.
+   */
+  observe?: RunObservationSink;
+};
+
+/**
+ * The observation an adapter can offer about a run in flight.
+ *
+ * Deliberately narrow: how many bytes moved on which channel, not what they said. Storing the output
+ * again would duplicate the log and drag prompts and credentials into the observation tables.
+ */
+export type RunObservationSink = {
+  output(channel: "stdout" | "stderr", bytes: number): void;
 };
 
 export type AgentRunResult = {

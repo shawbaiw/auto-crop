@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveLaunchableAdapter } from "../adapters/registry";
 import type { AdapterLaunchSupport } from "../adapters/launchPolicy";
-import type { AgentAdapter, AgentRunResult } from "../adapters/types";
+import type { AgentAdapter, AgentRunResult, RunObservationSink } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import { resolvePolicyForPermissionMode } from "../policies/defaults";
 import {
@@ -44,6 +44,7 @@ import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadin
 import { generateFinalFounderReport, hasWorkCompletedSinceReport } from "./finalFounderReport";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { finalizeDelivery } from "./deliveryFinalization";
+import { RunObserver } from "./executionObservation";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { buildProofContractInstructions } from "./proofContract";
@@ -99,6 +100,16 @@ export type RunSchedulerOnceInput = {
   /** Injectable session manager for the CEO Agent run that authors a Final Founder Report. */
   agentSessionManager?: AgentSessionManager;
   agentSessionEnv?: Record<string, string | undefined>;
+  /**
+   * How often the owner runner reports that it is still alive while a run is in flight.
+   *
+   * A heartbeat is the runner answering, never the agent's output arriving, so it needs a clock of
+   * its own. Zero (the default) means only the deterministic beats at phase boundaries, which is what
+   * tests want; the CLI passes a real interval so a long phase still reports in.
+   *
+   * Observation only: nothing reads a heartbeat to end a run yet (execution-health P1).
+   */
+  heartbeatIntervalMs?: number;
   emit: (event: SchedulerEvent) => void;
 };
 
@@ -225,6 +236,13 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         }
 
         let taskWorkspaceRoot: string | null = null;
+        // Which run this dispatch's lock is held for. Null until a run exists, which is the window
+        // a crash can leave a lock bound to nothing; the release matches on the same value either way.
+        let heldForRunId: string | null = null;
+        // Observation state lives outside the try: the `finally` has to flush and close it however
+        // the dispatch ends.
+        let observer: RunObserver | null = null;
+        let heartbeat: { stop: () => void } | null = null;
         try {
           if (approvalRequired(task)) {
             const approvalId = createId("approval");
@@ -265,9 +283,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           // Reached the recovery ceiling without a qualifying reset (a new accepted upstream
           // Business Artifact or a CEO replan): terminate instead of dispatching another run.
-          if (
-            endedAtRetryCeiling(input, result, task, null, resolveEffectiveTimeout(task, process.env, grant), now, createId)
-          ) {
+          if (atRetryCeiling(input, task)) {
+            // No run exists yet, so there is no claim to win: this terminates the task on its own.
+            terminateAtRetryCeiling(input, result, task, resolveEffectiveTimeout(task, process.env, grant), now, createId);
             return;
           }
 
@@ -352,6 +370,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           while (true) {
             agentRunId = createId("agent_run");
+            heldForRunId = agentRunId;
             input.repositories.createAgentRun({
               id: agentRunId,
               taskId: task.id,
@@ -366,6 +385,24 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               failureReason: null,
               failureMessage: null,
             });
+            // The lock was taken before this run existed; tell it which run it now guards. A retry
+            // rebinds nothing — the lock stays bound to the first run of this dispatch, which is the
+            // one the release will name.
+            input.repositories.bindTaskLockToRun(task.id, input.workerId, agentRunId);
+
+            // A retry is a new run, so it observes into a new observer; the previous one is closed
+            // by the settlement that ended it.
+            observer = new RunObserver({
+              repositories: input.repositories,
+              runId: agentRunId,
+              ownerId: input.workerId,
+              now,
+              createId,
+            });
+            const observe: RunObservationSink = {
+              output: (channel, bytes) => observer?.recordOutput(channel, bytes),
+            };
+            heartbeat = startHeartbeat(observer, input.heartbeatIntervalMs);
 
             const company = input.repositories.getCompany(task.companyId);
             if (!company) {
@@ -379,9 +416,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               metadata: { departmentId: task.departmentId, proofSchemaId: task.proofSchemaId },
               timeoutMs: timeoutResolution.effectiveTimeoutMs,
               grant,
+              observe,
             };
             const preparationStartedAt = now().getTime();
             preparationTimeoutMs = Math.min(request.timeoutMs, EXECUTION_BRIEF_TIMEOUT_MS);
+            observer.enterPhase("preparing_brief");
+            observer.beat();
             const preparation = await prepareExecutionBrief({ adapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs });
             const remainingMs = request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
             if (preparation.brief && remainingMs > 0) {
@@ -397,6 +437,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 task, step: "executing", status: "current",
                 label: `Task ${task.position + 1} (${task.title}) in progress`, subjectTaskId: task.id,
               });
+              observer.enterPhase("executing", "brief_returned");
+              observer.beat();
               agentResult = await adapter.run({
                 ...request,
                 timeoutMs: remainingMs,
@@ -457,36 +499,40 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
             const failure = failureMessage(task, "timeout", timeoutResolution.effectiveTimeoutMs);
             const timedOutAfterMs = timeoutResolution.effectiveTimeoutMs;
-            if (!claimRun(input, agentRunId, "failed", now, { failureReason: "timeout", failureMessage: failure })) {
+            const escalated = retryTimeoutResolution;
+            if (
+              !settleRun(input, agentRunId, { status: "failed", failureReason: "timeout", failureMessage: failure }, now, (settled) => {
+                applyTaskTransition({
+                  repositories: settled.repositories,
+                  task,
+                  status: "retrying",
+                  executionSummary: {
+                    latestExecutionProfileName: escalated.executionProfile.name,
+                    latestRequestedTimeoutMs: escalated.requestedTimeoutMs,
+                    latestEffectiveTimeoutMs: escalated.effectiveTimeoutMs,
+                  },
+                  resolution: "cleared",
+                  now,
+                  createId,
+                });
+                appendAndEmitTaskEvent(settled, {
+                  task,
+                  type: "task_retrying",
+                  message: `Task warning: ${task.title} / timed out after ${formatExecutionBudget(
+                    timedOutAfterMs,
+                  )}; retrying with ${escalated.executionProfile.name} budget ${formatExecutionBudget(
+                    escalated.effectiveTimeoutMs,
+                  )}.`,
+                  status: "running",
+                  executionProfileName: escalated.executionProfile.name,
+                  requestedTimeoutMs: escalated.requestedTimeoutMs,
+                  effectiveTimeoutMs: escalated.effectiveTimeoutMs,
+                });
+              })
+            ) {
               return;
             }
-            timeoutResolution = retryTimeoutResolution;
-            applyTaskTransition({
-              repositories: input.repositories,
-              task,
-              status: "retrying",
-              executionSummary: {
-                latestExecutionProfileName: timeoutResolution.executionProfile.name,
-                latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-                latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-              },
-              resolution: "cleared",
-              now,
-              createId,
-            });
-            appendAndEmitTaskEvent(input, {
-              task,
-              type: "task_retrying",
-              message: `Task warning: ${task.title} / timed out after ${formatExecutionBudget(
-                timedOutAfterMs,
-              )}; retrying with ${timeoutResolution.executionProfile.name} budget ${formatExecutionBudget(
-                timeoutResolution.effectiveTimeoutMs,
-              )}.`,
-              status: "running",
-              executionProfileName: timeoutResolution.executionProfile.name,
-              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-            });
+            timeoutResolution = escalated;
           }
 
           if (!agentResult) {
@@ -496,6 +542,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           // A delivery whose artifact file does not parse gets one narrow syntax repair before capture,
           // so everything downstream — proof, validation, finalization — reads the file it leaves.
           if (agentResult.status === "complete") {
+            observer?.enterPhase("repairing_artifact", "work_returned");
+            observer?.beat();
             const repair = await repairBusinessArtifactSyntax({
               adapter,
               request: {
@@ -503,6 +551,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 promptPath: "",
                 workspacePath: runWorkspacePath,
                 metadata: { departmentId: task.departmentId, proofSchemaId: task.proofSchemaId },
+                observe: { output: (channel, bytes) => observer?.recordOutput(channel, bytes) },
               },
               grant,
             });
@@ -531,49 +580,58 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 logPath,
               });
             } catch (error) {
-              if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
-                return;
-              }
               const failureReason = "proof_capture_failed";
               const failure = `Task failed: ${task.title} / proof_capture_failed / ${(error as Error).message}`;
-              if (!claimRun(input, agentRunId, "failed", now, { failureReason, failureMessage: failure })) {
-                return;
-              }
-              applyTaskTransition({
-                repositories: input.repositories,
-                task,
-                status: "failed",
-                executionSummary: {
-                  latestFailureReason: failureReason,
-                  latestFailureMessage: failure,
-                },
-                hold: {
-                  kind: "invalid_business_artifact",
-                  subjectKind: "agent_run",
-                  subjectId: agentRunId,
-                  reason: failure,
-                },
+              const ceiling = atRetryCeiling(input, task);
+              settleRun(
+                input,
+                agentRunId,
+                ceiling ? retryCeilingOutcome(task) : { status: "failed", failureReason, failureMessage: failure },
                 now,
-                createId,
-              });
-              appendAndEmitTaskEvent(input, {
-                task,
-                type: "task_failed",
-                failureReason,
-                failureMessage: failure,
-                message: failure,
-                status: "failed",
-              });
-              result.blocked.push(...blockDirectDependencyConsumers(input, task));
-              emitParentTaskAggregationEvents(input, task);
-              result.failed.push(task.id);
+                (settled) => {
+                  if (ceiling) {
+                    terminateAtRetryCeiling(settled, result, task, timeoutResolution, now, createId);
+                    return;
+                  }
+                  applyTaskTransition({
+                    repositories: settled.repositories,
+                    task,
+                    status: "failed",
+                    executionSummary: {
+                      latestFailureReason: failureReason,
+                      latestFailureMessage: failure,
+                    },
+                    hold: {
+                      kind: "invalid_business_artifact",
+                      subjectKind: "agent_run",
+                      subjectId: agentRunId,
+                      reason: failure,
+                    },
+                    now,
+                    createId,
+                  });
+                  appendAndEmitTaskEvent(settled, {
+                    task,
+                    type: "task_failed",
+                    failureReason,
+                    failureMessage: failure,
+                    message: failure,
+                    status: "failed",
+                  });
+                  result.blocked.push(...blockDirectDependencyConsumers(settled, task));
+                  emitParentTaskAggregationEvents(settled, task);
+                  result.failed.push(task.id);
+                },
+              );
               return;
             }
           }
 
-          for (const item of proof) {
-            input.repositories.appendProof(item);
-          }
+          // Everything from here is the runtime's own work on the run's output. It is still the run's
+          // time, and it is the phase a settlement is interrupted in, so it is observed like the rest.
+          observer?.enterPhase("finalizing", agentResult.status === "complete" ? "work_complete" : "work_failed");
+          observer?.beat();
+
           let businessArtifact: BusinessArtifact | null = null;
           let environmentBlockerDegraded = false;
           let refutedCapability: string | null = null;
@@ -614,12 +672,34 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             // Persisted by whichever branch settles this run, after it has claimed it: a delivery that
             // lost the claim must leave nothing behind (ADR 0034).
           }
-          createHandoffPackage({
-            task: { ...task, workspacePath: runWorkspacePath },
-            proofs: proof,
-            workspacePath: runWorkspacePath,
-            logPath,
-          });
+          /**
+           * Everything a settlement records about what this run produced, whatever its outcome.
+           *
+           * Proof rows and the delivery used to be written on the way to the claim, so a dispatch that
+           * lost the run still left them behind for the winner's Task to carry. They belong to the
+           * writer that owns the run, so they are written from inside the settlement transaction.
+           */
+          const recordRunOutput = (settled: RunSchedulerOnceInput): void => {
+            for (const item of proof) {
+              settled.repositories.appendProof(item);
+            }
+            persistArtifact(settled, businessArtifact);
+          };
+          /**
+           * Publish the handoff package the next task reads as this task's output.
+           *
+           * Files cannot be rolled back with the transaction, so this runs after a settlement commits
+           * and only for the writer that won it: a loser that published would hand the next task the
+           * output of a run that was declared dead.
+           */
+          const publishHandoff = (): void => {
+            createHandoffPackage({
+              task: { ...task, workspacePath: runWorkspacePath },
+              proofs: proof,
+              workspacePath: runWorkspacePath,
+              logPath,
+            });
+          };
 
           if ((agentResult.status !== "complete" || proof.length === 0) && !environmentBlockerDegraded) {
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
@@ -627,96 +707,110 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             // not evidence for a replan either.
             if (failureReason === "timeout" && !preparationFailed && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
               const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
-              if (!claimRun(input, agentRunId, "failed", now, { failureReason: "timeout", failureMessage: failure })) {
-                return;
+              if (
+                settleRun(input, agentRunId, { status: "failed", failureReason: "timeout", failureMessage: failure }, now, (settled) => {
+                  recordRunOutput(settled);
+                  applyTaskTransition({
+                    repositories: settled.repositories,
+                    task,
+                    status: "needs_replan",
+                    executionSummary: {
+                      latestFailureReason: "needs_replan",
+                      latestFailureMessage: failure,
+                      latestExecutionProfileName: timeoutResolution.executionProfile.name,
+                      latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                      latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+                    },
+                    hold: { kind: "needs_replan", reason: failure },
+                    now,
+                    createId,
+                  });
+                  appendAndEmitTaskEvent(settled, {
+                    task,
+                    type: "task_needs_replan",
+                    failureReason: "needs_replan",
+                    failureMessage: failure,
+                    message: failure,
+                    status: "needs_replan",
+                    executionProfileName: timeoutResolution.executionProfile.name,
+                    requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                    effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+                  });
+                  recordTaskCompletionEvent({
+                    repositories: settled.repositories,
+                    task,
+                    outcome: "needs_replan",
+                    now,
+                    createId,
+                  });
+                  emitParentTaskAggregationEvents(settled, task);
+                  result.blocked.push(task.id);
+                })
+              ) {
+                publishHandoff();
               }
-              persistArtifact(input, businessArtifact);
-              applyTaskTransition({
-                repositories: input.repositories,
-                task,
-                status: "needs_replan",
-                executionSummary: {
-                  latestFailureReason: "needs_replan",
-                  latestFailureMessage: failure,
-                  latestExecutionProfileName: timeoutResolution.executionProfile.name,
-                  latestRequestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-                  latestEffectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-                },
-                hold: { kind: "needs_replan", reason: failure },
-                now,
-                createId,
-              });
-              appendAndEmitTaskEvent(input, {
-                task,
-                type: "task_needs_replan",
-                failureReason: "needs_replan",
-                failureMessage: failure,
-                message: failure,
-                status: "needs_replan",
-                executionProfileName: timeoutResolution.executionProfile.name,
-                requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-                effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-              });
-              recordTaskCompletionEvent({
-                repositories: input.repositories,
-                task,
-                outcome: "needs_replan",
-                now,
-                createId,
-              });
-              emitParentTaskAggregationEvents(input, task);
-              result.blocked.push(task.id);
               return;
             }
             const failure = preparationFailed
               ? `Task failed: ${task.title} / ${failureReason} / the execution brief did not complete within ${formatExecutionBudget(preparationTimeoutMs)}; substantive work was not dispatched.`
               : failureMessage(task, failureReason, timeoutResolution.effectiveTimeoutMs, refutedCapability);
-            if (!claimRun(input, agentRunId, "failed", now, { failureReason, failureMessage: failure })) {
-              return;
+            const ceiling = atRetryCeiling(input, task);
+            if (
+              settleRun(
+                input,
+                agentRunId,
+                ceiling ? retryCeilingOutcome(task) : { status: "failed", failureReason, failureMessage: failure },
+                now,
+                (settled) => {
+                  if (ceiling) {
+                    terminateAtRetryCeiling(settled, result, task, timeoutResolution, now, createId);
+                    return;
+                  }
+                  recordRunOutput(settled);
+                  applyTaskTransition({
+                    repositories: settled.repositories,
+                    task,
+                    status: "failed",
+                    executionSummary: {
+                      latestFailureReason: failureReason,
+                      latestFailureMessage: failure,
+                    },
+                    // No declared kind: `deriveTaskHold` reads the failure reason just recorded, so a
+                    // reason added later still parks the task on an owned Hold.
+                    now,
+                    createId,
+                  });
+                  appendAndEmitTaskEvent(settled, {
+                    task,
+                    type: "task_failed",
+                    failureReason,
+                    failureMessage: failure,
+                    message: failure,
+                    status: "failed",
+                    executionProfileName: timeoutResolution.executionProfile.name,
+                    requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                    effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+                  });
+                  if (task.artifactWorkspacePath) {
+                    appendAndEmitTaskEvent(settled, {
+                      task,
+                      type: "partial_output",
+                      message: `Partial Output: ${task.artifactWorkspacePath} (not Proof).`,
+                      status: "failed",
+                      artifactWorkspacePath: task.artifactWorkspacePath,
+                    });
+                  }
+                  const followUpTask = createPartialOutputFollowUpTask(settled, task, failureReason, failure, logPath);
+                  if (!followUpTask) {
+                    result.blocked.push(...blockDirectDependencyConsumers(settled, task));
+                  }
+                  emitParentTaskAggregationEvents(settled, task);
+                  result.failed.push(task.id);
+                },
+              )
+            ) {
+              publishHandoff();
             }
-            if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
-              return;
-            }
-            persistArtifact(input, businessArtifact);
-            applyTaskTransition({
-              repositories: input.repositories,
-              task,
-              status: "failed",
-              executionSummary: {
-                latestFailureReason: failureReason,
-                latestFailureMessage: failure,
-              },
-              // No declared kind: `deriveTaskHold` reads the failure reason just recorded, so a
-              // reason added later still parks the task on an owned Hold.
-              now,
-              createId,
-            });
-            appendAndEmitTaskEvent(input, {
-              task,
-              type: "task_failed",
-              failureReason,
-              failureMessage: failure,
-              message: failure,
-              status: "failed",
-              executionProfileName: timeoutResolution.executionProfile.name,
-              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-            });
-            if (task.artifactWorkspacePath) {
-              appendAndEmitTaskEvent(input, {
-                task,
-                type: "partial_output",
-                message: `Partial Output: ${task.artifactWorkspacePath} (not Proof).`,
-                status: "failed",
-                artifactWorkspacePath: task.artifactWorkspacePath,
-              });
-            }
-            const followUpTask = createPartialOutputFollowUpTask(input, task, failureReason, failure, logPath);
-            if (!followUpTask) {
-              result.blocked.push(...blockDirectDependencyConsumers(input, task));
-            }
-            emitParentTaskAggregationEvents(input, task);
-            result.failed.push(task.id);
             return;
           }
 
@@ -728,91 +822,107 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           if (!businessArtifact || (!isReviewableBusinessArtifact(businessArtifact) && !deliveredWithVerdict)) {
             const failureReason = businessArtifactFailureReason(businessArtifact);
             const failure = businessArtifactFailureMessage(task, businessArtifact);
-            if (!claimRun(input, agentRunId, "failed", now, { failureReason, failureMessage: failure })) {
-              return;
+            const ceiling = atRetryCeiling(input, task);
+            if (
+              settleRun(
+                input,
+                agentRunId,
+                ceiling ? retryCeilingOutcome(task) : { status: "failed", failureReason, failureMessage: failure },
+                now,
+                (settled) => {
+                  if (ceiling) {
+                    terminateAtRetryCeiling(settled, result, task, timeoutResolution, now, createId);
+                    return;
+                  }
+                  recordRunOutput(settled);
+                  applyTaskTransition({
+                    repositories: settled.repositories,
+                    task,
+                    status: "blocked",
+                    executionSummary: {
+                      latestFailureReason: failureReason,
+                      latestFailureMessage: failure,
+                    },
+                    hold: {
+                      kind: "invalid_business_artifact",
+                      subjectKind: businessArtifact ? "business_artifact" : "agent_run",
+                      subjectId: businessArtifact?.id ?? agentRunId,
+                      reason: failure,
+                    },
+                    now,
+                    createId,
+                  });
+                  appendAndEmitTaskEvent(settled, {
+                    task,
+                    type: "task_blocked",
+                    failureReason,
+                    failureMessage: failure,
+                    message: failure,
+                    status: "blocked",
+                    executionProfileName: timeoutResolution.executionProfile.name,
+                    requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                    effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+                  });
+                  appendTaskProgressEvent(settled, {
+                    task,
+                    step: "blocked",
+                    status: "blocked",
+                    label: "Business artifact is not reviewable",
+                    detail: failure,
+                    subjectTaskId: task.id,
+                  });
+                  const blockedConsumerIds = blockDirectDependencyConsumers(settled, task);
+                  recordTaskCompletionEvent({
+                    repositories: settled.repositories,
+                    task,
+                    businessArtifact,
+                    outcome: "failed_to_review",
+                    dependencyImpact: { blockedTaskIds: blockedConsumerIds },
+                    now,
+                    createId,
+                  });
+                  result.blocked.push(...blockedConsumerIds);
+                  emitParentTaskAggregationEvents(settled, task);
+                  result.failed.push(task.id);
+                },
+              )
+            ) {
+              publishHandoff();
             }
-            if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
-              return;
-            }
-            persistArtifact(input, businessArtifact);
-            applyTaskTransition({
-              repositories: input.repositories,
-              task,
-              status: "blocked",
-              executionSummary: {
-                latestFailureReason: failureReason,
-                latestFailureMessage: failure,
-              },
-              hold: {
-                kind: "invalid_business_artifact",
-                subjectKind: businessArtifact ? "business_artifact" : "agent_run",
-                subjectId: businessArtifact?.id ?? agentRunId,
-                reason: failure,
-              },
-              now,
-              createId,
-            });
-            appendAndEmitTaskEvent(input, {
-              task,
-              type: "task_blocked",
-              failureReason,
-              failureMessage: failure,
-              message: failure,
-              status: "blocked",
-              executionProfileName: timeoutResolution.executionProfile.name,
-              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-            });
-            appendTaskProgressEvent(input, {
-              task,
-              step: "blocked",
-              status: "blocked",
-              label: "Business artifact is not reviewable",
-              detail: failure,
-              subjectTaskId: task.id,
-            });
-            const blockedConsumerIds = blockDirectDependencyConsumers(input, task);
-            recordTaskCompletionEvent({
-              repositories: input.repositories,
-              task,
-              businessArtifact,
-              outcome: "failed_to_review",
-              dependencyImpact: { blockedTaskIds: blockedConsumerIds },
-              now,
-              createId,
-            });
-            result.blocked.push(...blockedConsumerIds);
-            emitParentTaskAggregationEvents(input, task);
-            result.failed.push(task.id);
             return;
           }
 
-          if (task.artifactWorkspacePath && task.artifactWorkspacePath !== runWorkspacePath) {
-            input.repositories.updateTaskArtifactWorkspacePath(task.id, runWorkspacePath);
-          }
           // The run did its job whatever the delivery's outcome — a failed verdict included. Claiming it
-          // first is what keeps a delivery and a timeout declaration from both landing (ADR 0034).
-          if (!claimRun(input, agentRunId, "complete", now)) {
-            return;
+          // first is what keeps a delivery and a timeout declaration from both landing (ADR 0034); the
+          // rest of the settlement rides in the same transaction, so a delivery is recorded whole or
+          // not at all.
+          if (
+            settleRun(input, agentRunId, { status: "complete" }, now, (settled) => {
+              if (task.artifactWorkspacePath && task.artifactWorkspacePath !== runWorkspacePath) {
+                settled.repositories.updateTaskArtifactWorkspacePath(task.id, runWorkspacePath);
+              }
+              recordRunOutput(settled);
+              const finalized = finalizeDelivery({
+                repositories: settled.repositories,
+                task,
+                artifact: businessArtifact,
+                source: "agent_run",
+                now,
+                createId,
+              });
+              for (const event of finalized.events) {
+                emitTaskEvent(settled, event);
+              }
+              if (finalized.outcome === "verification_failed") {
+                result.blocked.push(task.id, ...blockDirectDependencyConsumers(settled, task));
+              } else {
+                result.completed.push(task.id);
+              }
+              emitParentTaskAggregationEvents(settled, task);
+            })
+          ) {
+            publishHandoff();
           }
-          persistArtifact(input, businessArtifact);
-          const finalized = finalizeDelivery({
-            repositories: input.repositories,
-            task,
-            artifact: businessArtifact,
-            source: "agent_run",
-            now,
-            createId,
-          });
-          for (const event of finalized.events) {
-            emitTaskEvent(input, event);
-          }
-          if (finalized.outcome === "verification_failed") {
-            result.blocked.push(task.id, ...blockDirectDependencyConsumers(input, task));
-          } else {
-            result.completed.push(task.id);
-          }
-          emitParentTaskAggregationEvents(input, task);
         } finally {
           try {
             if (taskWorkspaceRoot) {
@@ -830,7 +940,14 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               }
             }
           } finally {
-            input.repositories.releaseTaskLock(task.id, input.workerId);
+            heartbeat?.stop();
+            // Flush whatever the last phase observed. Nothing here judges the run: an observation
+            // that failed to land leaves the run unknown, which is not the same as failed.
+            observer?.close("dispatch_ended");
+            reportObservationFailures(input, task, observer);
+            // Only this dispatch's own lock. One process dispatches under one `workerId`, so without
+            // the run id an unwinding dispatch released whatever lock its successor had just taken.
+            input.repositories.releaseTaskLock(task.id, input.workerId, heldForRunId);
           }
         }
       })(dependencyDecision.handoffs),
@@ -1589,48 +1706,136 @@ function blockTaskForMissingDeliverable(
   });
 }
 
-/**
- * If the task has reached the Bounded Recovery ceiling, terminate it as `blocked` / `retry_exhausted`,
- * route it to the CEO Blocked Queue, record the outcome, and return true so the caller can stop.
- */
-function endedAtRetryCeiling(
-  input: RunSchedulerOnceInput,
-  result: RunSchedulerOnceResult,
-  task: Task,
-  agentRunId: string | null,
-  timeoutResolution: ReturnType<typeof resolveEffectiveTimeout>,
-  now: () => Date,
-  createId: (prefix: string) => string,
-): boolean {
-  if (taskAttemptCount(input.repositories, task.id) < MAX_TASK_ATTEMPTS) {
-    return false;
-  }
-  result.blocked.push(
-    task.id,
-    ...terminateAsRetryExhausted(input, task, agentRunId, timeoutResolution, now, createId),
-  );
-  return true;
+/** Whether this task's next failure is its last: the Bounded Recovery ceiling is reached. */
+function atRetryCeiling(input: RunSchedulerOnceInput, task: Task): boolean {
+  return taskAttemptCount(input.repositories, task.id) >= MAX_TASK_ATTEMPTS;
+}
+
+/** How a run settles when its task has reached the ceiling: the reason is the ceiling, not the failure. */
+function retryCeilingOutcome(task: Task): RunOutcome {
+  return { status: "failed", failureReason: "retry_exhausted", failureMessage: retryExhaustedFailureMessage(task) };
 }
 
 /**
- * Claim this run's outcome, and say whether this caller won.
+ * Terminate a task that has hit the Bounded Recovery ceiling as `blocked` / `retry_exhausted` and
+ * route it to the CEO Blocked Queue.
+ *
+ * Only ever called from inside a settlement that has already claimed the run: this writes the Task,
+ * its Hold and its completion event, and a caller that does not own the run must write none of them.
+ * It used to settle the run itself, with an unconditional update, which let a dispatch that had
+ * already lost overwrite the winner's outcome and leave the task carrying both writers' Holds.
+ */
+function terminateAtRetryCeiling(
+  settled: RunSchedulerOnceInput,
+  result: RunSchedulerOnceResult,
+  task: Task,
+  timeoutResolution: ReturnType<typeof resolveEffectiveTimeout>,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): void {
+  result.blocked.push(task.id, ...terminateAsRetryExhausted(settled, task, timeoutResolution, now, createId));
+}
+
+/**
+ * Beat on a clock of the runtime's own, so a heartbeat can never be mistaken for the agent's output.
+ *
+ * Unreferenced, so an interval outliving its dispatch cannot hold the process open; `stop` is called
+ * from the dispatch's `finally` either way. An interval of zero means the deterministic beats at
+ * phase boundaries are the only ones, which is what tests run with.
+ */
+function startHeartbeat(observer: RunObserver, intervalMs: number | undefined): { stop: () => void } {
+  if (!intervalMs || intervalMs <= 0) {
+    return { stop: () => undefined };
+  }
+  const timer = setInterval(() => observer.beat(), intervalMs);
+  timer.unref?.();
+  return { stop: () => clearInterval(timer) };
+}
+
+/**
+ * Surface observation that did not land, without letting it decide anything.
+ *
+ * A database that refused a log line says the run is unobserved, not that it failed. It is reported
+ * as a task warning so a reader knows this run's activity is incomplete rather than quiet.
+ */
+function reportObservationFailures(
+  input: RunSchedulerOnceInput,
+  task: Task,
+  observer: RunObserver | null,
+): void {
+  const failures = observer?.observationFailures() ?? [];
+  if (failures.length === 0) {
+    return;
+  }
+  appendAndEmitTaskEvent(input, {
+    task,
+    type: "task_warning",
+    message: `Task warning: ${task.title} / execution observation incomplete (${failures.length} write${
+      failures.length === 1 ? "" : "s"
+    } failed) / ${failures[0].message}`,
+  });
+}
+
+export type RunOutcome = {
+  status: AgentRun["status"];
+  failureReason?: AgentFailureReason;
+  failureMessage?: string;
+};
+
+/**
+ * Settle a run and everything that settlement owns, or leave the database exactly as it was.
  *
  * Two writers reach every run: the dispatch settling its delivery, and whoever declares the run timed
- * out (`reconcileStaleRunningTasks`, reachable from any read of company state). The claim is a
- * conditional update — it lands only while the run is still `running` — so the loser learns it lost
- * before writing anything else, and settles nothing (ADR 0034).
+ * out (`reconcileStaleRunningTasks`, reachable from any read of company state). Claiming the run is a
+ * conditional update that lands only while it is still `running`, so the loser learns it lost before
+ * writing anything (ADR 0034).
+ *
+ * The claim alone was not enough, because a settlement is not one write. The Business Artifact, the
+ * proof rows, the artifact pointer, the Task transition, the Hold and the completion events are
+ * separate statements after it, and anything that interrupted the sequence left a run recorded as
+ * finished beside a task still recorded as running — a state no reconcile could see, because
+ * reconciliation reads `running` runs and this one was settled. So the claim and every write it
+ * authorises are one transaction: they all land or none do.
+ *
+ * The claim is deliberately the transaction's *first* statement. A transaction that reads before it
+ * writes holds only a read snapshot, and under a second connection the upgrade to a write fails
+ * outright once anyone else has committed — `busy_timeout` does not help, because the snapshot is
+ * stale rather than the lock busy. Claiming first takes the write lock up front, which is also
+ * exactly the order ADR 0034 requires. `multiConnection.test.ts` pins both halves.
+ *
+ * `commit` receives a scheduler input whose `emit` is buffered: events reach subscribers only once
+ * the transaction has committed, so a settlement that rolls back never announces itself. Persisting
+ * those events is still part of the transaction.
  */
-function claimRun(
+function settleRun(
   input: RunSchedulerOnceInput,
   agentRunId: string,
-  status: AgentRun["status"],
+  outcome: RunOutcome,
   now: () => Date,
-  outcome: { failureReason?: AgentFailureReason; failureMessage?: string } = {},
+  commit: (settled: RunSchedulerOnceInput) => void = () => undefined,
 ): boolean {
-  return input.repositories.updateAgentRunStatus(agentRunId, status, now().toISOString(), {
-    ...outcome,
-    expectedStatus: "running",
+  const announcements: SchedulerEvent[] = [];
+  const settled: RunSchedulerOnceInput = { ...input, emit: (event) => announcements.push(event) };
+
+  const won = input.repositories.transaction(() => {
+    const claimed = input.repositories.updateAgentRunStatus(agentRunId, outcome.status, now().toISOString(), {
+      failureReason: outcome.failureReason,
+      failureMessage: outcome.failureMessage,
+      expectedStatus: "running",
+    });
+    if (!claimed) {
+      return false;
+    }
+    commit(settled);
+    return true;
   });
+
+  if (won) {
+    for (const announcement of announcements) {
+      input.emit(announcement);
+    }
+  }
+  return won;
 }
 
 /** Record the delivery this settlement captured, once its run is claimed. */
@@ -1643,17 +1848,10 @@ function persistArtifact(input: RunSchedulerOnceInput, artifact: BusinessArtifac
 function terminateAsRetryExhausted(
   input: RunSchedulerOnceInput,
   task: Task,
-  agentRunId: string | null,
   timeoutResolution: ReturnType<typeof resolveEffectiveTimeout>,
   now: () => Date,
   createId: (prefix: string) => string,
 ): string[] {
-  if (agentRunId) {
-    input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
-      failureReason: "retry_exhausted",
-      failureMessage: retryExhaustedFailureMessage(task),
-    });
-  }
   const blockedConsumerIds = blockDirectDependencyConsumers(input, task);
   const termination = terminateTaskAsRetryExhausted({
     repositories: input.repositories,

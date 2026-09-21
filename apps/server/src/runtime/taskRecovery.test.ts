@@ -236,6 +236,79 @@ describe("task recovery", () => {
       message: "Recovery task created from Partial Output and queued for another run.",
     });
   });
+
+  /**
+   * P0 baseline (execution-health-and-recovery-plan §10 P0): the leftover state combinations the
+   * plan asks to be constructed and recorded before anything changes. Reconciliation is driven by
+   * `listRunningAgentRuns`, so every combination that has no `running` run is invisible to it — the
+   * assertions below pin that as the behaviour to be replaced, not as behaviour to be preserved.
+   */
+  describe("leftover state combinations reconciliation does not reach", () => {
+    it("leaves a queued task holding a lock with no run queued and locked forever", () => {
+      const fixture = createFixture([{ ...createTaskRecord(), status: "queued" }]);
+      fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z");
+
+      const result = reconcileStaleRunningTasks({
+        repositories: fixture.repositories,
+        companyId: "company_1",
+        now: () => new Date("2026-08-25T06:00:00.000Z"),
+        createId: createSequentialIdFactory(),
+      });
+
+      // No run to read, so nothing is judged: the lock outlives the worker that took it, and the
+      // scheduler's `acquireTaskLock` will keep failing for this task on every later tick.
+      expect(result.reconciledTaskIds).toEqual([]);
+      expect(fixture.repositories.getTask("task_1")?.status).toBe("queued");
+      expect(fixture.repositories.listTaskLocks()).toEqual([
+        { taskId: "task_1", ownerId: "worker_1", acquiredAt: "2026-08-25T00:00:00.000Z", runId: null },
+      ]);
+    });
+
+    it("leaves a running task with no run running forever, however long it has been", () => {
+      const fixture = createFixture([{ ...createTaskRecord(), status: "running" }]);
+      fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z");
+
+      const result = reconcileStaleRunningTasks({
+        repositories: fixture.repositories,
+        companyId: "company_1",
+        now: () => new Date("2026-08-26T00:00:00.000Z"),
+        createId: createSequentialIdFactory(),
+      });
+
+      // A worker that died between `acquireTaskLock` and `createAgentRun` leaves exactly this. There
+      // is no deadline to compare against, so the task never leaves `running` and never gets a Hold.
+      expect(result.reconciledTaskIds).toEqual([]);
+      expect(fixture.repositories.getTask("task_1")).toMatchObject({ status: "running" });
+      expect(fixture.repositories.listOpenTaskHolds("task_1")).toEqual([]);
+      expect(fixture.repositories.listTaskLocks()).toHaveLength(1);
+    });
+
+    it("leaves a lock behind when the run it belonged to is already terminal", () => {
+      const fixture = createFixture([{ ...createTaskRecord(), status: "failed" }]);
+      fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z");
+      fixture.repositories.createAgentRun({
+        ...createAgentRunRecord(),
+        status: "failed",
+        finishedAt: "2026-08-25T00:03:00.000Z",
+        failureReason: "timeout",
+      });
+
+      const result = reconcileStaleRunningTasks({
+        repositories: fixture.repositories,
+        companyId: "company_1",
+        now: () => new Date("2026-08-25T06:00:00.000Z"),
+        createId: createSequentialIdFactory(),
+      });
+
+      // The run is settled, so the reconcile skips it — and the lock its settlement never released
+      // stays, blocking every future dispatch of this task.
+      expect(result.reconciledTaskIds).toEqual([]);
+      expect(fixture.repositories.listTaskLocks()).toEqual([
+        { taskId: "task_1", ownerId: "worker_1", acquiredAt: "2026-08-25T00:00:00.000Z", runId: null },
+      ]);
+      expect(fixture.repositories.acquireTaskLock("task_1", "worker_2", "2026-08-25T06:00:00.000Z")).toBe(false);
+    });
+  });
 });
 
 function createFixture(tasks: Task[]) {

@@ -97,7 +97,7 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
       now: input.now,
       createId: input.createId,
     });
-    releaseAnyTaskLock(input.repositories, task.id);
+    releaseTaskLockForRun(input.repositories, task.id, run.id);
 
     const event: TaskEvent = {
       id: createId("task_event"),
@@ -397,11 +397,18 @@ function partialOutputSourceMarker(taskId: string): string {
   return `Partial Output Source Task: ${taskId}`;
 }
 
-function releaseAnyTaskLock(repositories: ReturnType<typeof createRepositories>, taskId: string): void {
-  const lock = repositories.listTaskLocks().find((candidate) => candidate.taskId === taskId);
-  if (lock) {
-    repositories.releaseTaskLock(taskId, lock.ownerId);
-  }
+/**
+ * Release the lock for the run this reconcile just claimed.
+ *
+ * It used to release whatever lock the task had, by any owner and for any run, which meant declaring
+ * one run dead could unlock a different run that was still live.
+ */
+function releaseTaskLockForRun(
+  repositories: ReturnType<typeof createRepositories>,
+  taskId: string,
+  runId: string,
+): void {
+  repositories.releaseTaskLockForRun(taskId, runId);
 }
 
 function defaultCreateId(prefix: string): string {

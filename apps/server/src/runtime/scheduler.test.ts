@@ -1,5 +1,6 @@
 import { projectCeoOfficeItems } from "@auto-crop/core";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,9 +22,9 @@ import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { acceptTaskBusinessArtifact } from "./businessAcceptance";
-import { acquireTaskLock, releaseTaskLock } from "./locks";
 import { createHandoffPackage, createProofCollector } from "./proof";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
+import { OBSERVATION_POLICY_VERSION, summarizeRunActivity } from "./executionObservation";
 import {
   reconcileFinalFounderReportUpgrade,
   runFinalFounderReportJobs,
@@ -40,16 +41,23 @@ afterEach(() => {
 });
 
 describe("task locks", () => {
-  it("allows only one owner to hold a task lock and releases it", () => {
+  it("allows only one owner to hold a task lock, and releases it only for the run it is held for", () => {
     const client = createDatabaseClient(":memory:");
     migrate(client);
+    const repositories = createRepositories(client);
 
-    expect(acquireTaskLock(client, "task_1", "worker_a", "2026-08-17T00:00:00.000Z")).toBe(true);
-    expect(acquireTaskLock(client, "task_1", "worker_b", "2026-08-17T00:00:01.000Z")).toBe(false);
+    expect(repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T00:00:00.000Z")).toBe(true);
+    expect(repositories.acquireTaskLock("task_1", "worker_b", "2026-08-17T00:00:01.000Z")).toBe(false);
 
-    releaseTaskLock(client, "task_1", "worker_a");
+    // Bound to a run, the lock stops answering to a release that names a different one — which is how
+    // a dispatch unwinding after it lost its run keeps its hands off its successor's lock.
+    expect(repositories.bindTaskLockToRun("task_1", "worker_a", "agent_run_1")).toBe(true);
+    expect(repositories.releaseTaskLock("task_1", "worker_a", "agent_run_2")).toBe(false);
+    expect(repositories.releaseTaskLock("task_1", "worker_a", null)).toBe(false);
+    expect(repositories.acquireTaskLock("task_1", "worker_b", "2026-08-17T00:00:02.000Z")).toBe(false);
 
-    expect(acquireTaskLock(client, "task_1", "worker_b", "2026-08-17T00:00:02.000Z")).toBe(true);
+    expect(repositories.releaseTaskLock("task_1", "worker_a", "agent_run_1")).toBe(true);
+    expect(repositories.acquireTaskLock("task_1", "worker_b", "2026-08-17T00:00:03.000Z")).toBe(true);
 
     client.close();
   });
@@ -130,7 +138,7 @@ describe("runSchedulerOnce", () => {
       const run = client
         .prepare("SELECT status, failure_reason FROM agent_runs WHERE task_id = ? ORDER BY started_at DESC")
         .get("task_1") as { status: string; failure_reason: string | null };
-      return { repositories, client, events, run, task: repositories.getTask("task_1")! };
+      return { projectRoot, repositories, client, events, run, task: repositories.getTask("task_1")! };
     };
 
     it("lets the settlement finish when the read path arrives inside the finalization grace", async () => {
@@ -171,6 +179,329 @@ describe("runSchedulerOnce", () => {
       expect(repositories.listTaskCompletionEventsForCompany("company_1")).toEqual([]);
       expect(events.some((event) => event.type === "automatic_acceptance" || event.type === "task_review")).toBe(false);
       client.close();
+    });
+
+    /**
+     * Losing the claim means writing nothing at all, not merely settling nothing.
+     *
+     * Proof rows and the handoff package used to be written on the way to the claim, so the loser
+     * still left the winner's task carrying a proof row and the next task reading a directory
+     * published by a run that had been declared dead. Proof now rides inside the settlement
+     * transaction, and the handoff package is published only after that transaction commits.
+     */
+    it("writes no proof and publishes no handoff package after losing the claim", async () => {
+      const { repositories, client, task } = await raceFixture(new Date("2026-08-17T12:30:00.000Z"));
+
+      expect(task.status).toBe("failed");
+      expect(repositories.listProofsForTask("task_1")).toEqual([]);
+      expect(existsSync(join(repositories.getTask("task_1")!.workspacePath!, ".auto-crop-handoff"))).toBe(false);
+      expect(repositories.listTaskLocks()).toEqual([]);
+      client.close();
+    });
+
+    /**
+     * A dispatch releases its own lock and no one else's.
+     *
+     * Locks are keyed by `workerId`, and a single process dispatches under one `workerId`, so task id
+     * and owner cannot tell two dispatches of the same task apart: an unwinding dispatch used to
+     * delete the lock its own successor had just taken, leaving the successor running unlocked. The
+     * lock now records which run it is held for, and the release matches on it.
+     */
+    it("leaves a redispatch's lock alone when the loser's dispatch unwinds", async () => {
+      const { projectRoot, repositories, client } = createSchedulerFixture([
+        createTaskRecord("task_1", "queued", "low", "product-brief"),
+      ]);
+      const adapter: AgentAdapter = {
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          if (request.metadata.phase === "execution_brief") {
+            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
+          }
+          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
+          // Past the grace, a read of company state declares this run timed out and frees the lock…
+          reconcileStaleRunningTasks({ repositories, companyId: "company_1", now: () => new Date("2026-08-17T12:30:00.000Z") });
+          // …and the next dispatch of the recovered task, in this same worker, takes it.
+          expect(repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T12:31:00.000Z")).toBe(true);
+          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+        },
+      };
+      await runSchedulerOnce({
+        projectRoot, repositories, adapters: [adapter], workerId: "worker_a", maxTasks: 1,
+        now: () => new Date("2026-08-17T12:00:00.000Z"),
+        approvalRequired: () => false,
+        proofCollector: ({ task }) => [createProofForTask(task)],
+        emit: () => undefined,
+      });
+
+      // The loser unwound without disturbing the lock the redispatch is holding.
+      expect(repositories.listTaskLocks()).toEqual([
+        { taskId: "task_1", ownerId: "worker_a", acquiredAt: "2026-08-17T12:31:00.000Z", runId: null },
+      ]);
+      client.close();
+    });
+
+    /**
+     * An interrupted settlement leaves the database as it was, so the run stays reachable.
+     *
+     * The claim settled the run row, and the Business Artifact, the Task transition and the completion
+     * events were separate writes after it. A failure in between left a run recorded as finished
+     * beside a task recorded as running — a state no reconcile could ever see, because reconciliation
+     * reads `running` runs and that one was settled. The claim and the writes it authorises are now
+     * one transaction, so the run is still `running` afterwards and the deadline still applies to it.
+     */
+    it("rolls the claim back with the settlement when committing the delivery is interrupted", async () => {
+      const { projectRoot, repositories, client } = createSchedulerFixture([
+        createTaskRecord("task_1", "queued", "low", "product-brief"),
+      ]);
+      const interrupted = {
+        ...repositories,
+        createBusinessArtifact: () => {
+          throw new Error("interrupted while committing the delivery");
+        },
+      };
+      const adapter: AgentAdapter = {
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          if (request.metadata.phase === "execution_brief") {
+            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
+          }
+          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
+          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+        },
+      };
+
+      await expect(
+        runSchedulerOnce({
+          projectRoot, repositories: interrupted, adapters: [adapter], workerId: "worker_a", maxTasks: 1,
+          now: () => new Date("2026-08-17T12:00:00.000Z"),
+          approvalRequired: () => false,
+          proofCollector: ({ task }) => [createProofForTask(task)],
+          emit: () => undefined,
+        }),
+      ).rejects.toThrow("interrupted while committing the delivery");
+
+      const run = client
+        .prepare("SELECT status FROM agent_runs WHERE task_id = ?")
+        .get("task_1") as { status: string };
+      // Nothing was settled: the run is exactly where it was before the settlement began…
+      expect(run.status).toBe("running");
+      expect(repositories.getTask("task_1")?.status).toBe("running");
+      expect(repositories.listProofsForTask("task_1")).toEqual([]);
+      expect(repositories.listBusinessArtifactsForTask("task_1")).toEqual([]);
+      // …so the run is still one a reconcile reads, and its deadline still governs it.
+      expect(
+        reconcileStaleRunningTasks({
+          repositories, companyId: "company_1", now: () => new Date("2026-08-18T12:00:00.000Z"),
+        }).reconciledTaskIds,
+      ).toEqual(["task_1"]);
+      expect(repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["runtime_interrupted"]);
+      client.close();
+    });
+
+    /**
+     * The Artifact Workspace pointer moves only for the writer that owns the run.
+     *
+     * A task that left Partial Output in one workspace and is retried in another used to have its
+     * pointer repointed at the new run's workspace on the way to the claim, so a dispatch that went on
+     * to lose had already redirected every reader of that task's output at a dead run's directory.
+     */
+    it("leaves the task's artifact workspace pointing at the earlier run after losing the claim", async () => {
+      const { projectRoot, repositories, client } = createSchedulerFixture([
+        { ...createTaskRecord("task_1", "queued", "low", "product-brief"), artifactWorkspacePath: "/partial/output/from/an/earlier/run" },
+      ]);
+      const adapter: AgentAdapter = {
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          if (request.metadata.phase === "execution_brief") {
+            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
+          }
+          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
+          reconcileStaleRunningTasks({ repositories, companyId: "company_1", now: () => new Date("2026-08-17T12:30:00.000Z") });
+          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+        },
+      };
+      await runSchedulerOnce({
+        projectRoot, repositories, adapters: [adapter], workerId: "worker_a", maxTasks: 1,
+        now: () => new Date("2026-08-17T12:00:00.000Z"),
+        approvalRequired: () => false,
+        proofCollector: ({ task }) => [createProofForTask(task)],
+        emit: () => undefined,
+      });
+
+      const task = repositories.getTask("task_1")!;
+      // The timeout declaration won the run, and the loser left the pointer where it found it.
+      expect(task.status).toBe("failed");
+      expect(task.artifactWorkspacePath).toBe("/partial/output/from/an/earlier/run");
+      client.close();
+    });
+
+    /**
+     * The Bounded Recovery ceiling settles through the claim like every other outcome.
+     *
+     * `terminateAsRetryExhausted` used to write the run status unconditionally, and on the
+     * proof-capture path it ran *before* the claim — so a dispatch that had already lost the run
+     * overwrote the winner's record and added a second Hold on top of the winner's, leaving the task
+     * carrying two reasons for being parked (ADR 0020). The ceiling is now an outcome the settlement
+     * carries, so losing it writes nothing.
+     */
+    it("leaves the winner's settlement alone when the loser reaches the retry ceiling", async () => {
+      const { projectRoot, repositories, client } = createSchedulerFixture([
+        createTaskRecord("task_1", "queued", "low", "product-brief"),
+      ]);
+      // Two spent attempts: this dispatch's own run is the third, so the ceiling is reached inside it.
+      for (const id of ["agent_run_old_1", "agent_run_old_2"]) {
+        repositories.createAgentRun({
+          id, taskId: "task_1", agentId: "mock-worker", status: "failed",
+          logPath: "agent.log", startedAt: "2026-08-17T11:00:00.000Z", finishedAt: "2026-08-17T11:01:00.000Z",
+          executionProfileName: "short", requestedTimeoutMs: 180_000, effectiveTimeoutMs: 180_000,
+          failureReason: "agent_failed", failureMessage: "earlier attempt",
+        });
+      }
+      const adapter: AgentAdapter = {
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          if (request.metadata.phase === "execution_brief") {
+            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
+          }
+          // The read path declares this run timed out and records its own outcome…
+          reconcileStaleRunningTasks({ repositories, companyId: "company_1", now: () => new Date("2026-08-17T12:30:00.000Z") });
+          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+        },
+      };
+
+      await runSchedulerOnce({
+        projectRoot, repositories, adapters: [adapter], workerId: "worker_a", maxTasks: 1,
+        now: () => new Date("2026-08-17T12:00:00.000Z"),
+        approvalRequired: () => false,
+        // …and then proof capture throws, sending the loser down the retry-ceiling path.
+        proofCollector: () => { throw new Error("proof capture failed"); },
+        emit: () => undefined,
+      });
+
+      const run = client
+        .prepare("SELECT status, failure_reason FROM agent_runs WHERE id NOT LIKE 'agent_run_old%'")
+        .get() as { status: string; failure_reason: string };
+      // The winner's record stands…
+      expect({ status: run.status, failureReason: run.failure_reason }).toEqual({ status: "failed", failureReason: "timeout" });
+      // …and the task carries one reason for being parked, the winner's.
+      expect(repositories.getTask("task_1")?.status).toBe("failed");
+      expect(repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["runtime_interrupted"]);
+      client.close();
+    });
+  });
+
+
+  /**
+   * Observation, end to end through a real dispatch (execution-health P1).
+   *
+   * P1 adds recording and nothing else: the point of these is that a dispatch now says what it was
+   * doing and when, and that saying so changed no outcome.
+   */
+  describe("what a dispatch records about itself", () => {
+    const quoted = 'Mock implementation completed; rivals already offer "no sign-up" access.';
+
+    it("records all four phases in order, attributing output to the phase that produced it", async () => {
+      const fixture = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+      const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
+      const adapter: AgentAdapter = {
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          // A real CLI reports through the sink as bytes arrive; a mock reports what it would emit.
+          if (request.metadata.phase === "execution_brief") {
+            request.observe?.output("stdout", 64);
+            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
+          }
+          const path = artifactPath(request.workspacePath);
+          if (request.prompt.startsWith("## Repair the Business Artifact syntax")) {
+            request.observe?.output("stdout", 16);
+            writeFileSync(path, readFileSync(path, "utf8").replace('"no sign-up"', '\\"no sign-up\\"'), "utf8");
+            return { status: "complete", exitCode: 0, stdout: "repaired", stderr: "" };
+          }
+          request.observe?.output("stdout", 1024);
+          request.observe?.output("stderr", 32);
+          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low"), workspacePath: request.workspacePath });
+          writeFileSync(path, readFileSync(path, "utf8").replace("Mock implementation completed.", quoted), "utf8");
+          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+        },
+      };
+
+      await runSchedulerOnce({
+        projectRoot: fixture.projectRoot, repositories: fixture.repositories, adapters: [adapter],
+        workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
+        proofCollector: ({ task }) => [createProofForTask(task)], emit: () => undefined,
+      });
+
+      const runId = (fixture.client.prepare("SELECT id FROM agent_runs WHERE task_id = ?").get("task_1") as { id: string }).id;
+      expect(fixture.repositories.listRunInvocations(runId).map((invocation) => invocation.phase)).toEqual([
+        "preparing_brief",
+        "executing",
+        "repairing_artifact",
+        "finalizing",
+      ]);
+      // Every invocation is closed, and says what ended it.
+      expect(fixture.repositories.listRunInvocations(runId).every((invocation) => invocation.endedAt && invocation.endReason)).toBe(true);
+
+      // Output is attributed to the phase that produced it, not to the run as a whole.
+      const byPhase = new Map<string, number>();
+      for (const entry of fixture.repositories.listRunActivity(runId)) {
+        byPhase.set(entry.phase, (byPhase.get(entry.phase) ?? 0) + entry.bytes);
+      }
+      expect(byPhase.get("preparing_brief")).toBe(64);
+      expect(byPhase.get("executing")).toBe(1024 + 32);
+      expect(byPhase.get("repairing_artifact")).toBe(16);
+
+      // The owner is recorded, under a named policy version, with a heartbeat from its own clock.
+      const run = fixture.client
+        .prepare("SELECT owner_id, policy_version, last_heartbeat_at, status FROM agent_runs WHERE id = ?")
+        .get(runId) as { owner_id: string; policy_version: string; last_heartbeat_at: string | null; status: string };
+      expect(run.owner_id).toBe("worker_a");
+      expect(run.policy_version).toBe(OBSERVATION_POLICY_VERSION);
+      expect(run.last_heartbeat_at).not.toBeNull();
+      // And observing changed nothing: the delivery landed exactly as it did before.
+      expect(run.status).toBe("complete");
+      expect(fixture.repositories.getTask("task_1")?.status).toBe("complete");
+      fixture.client.close();
+    });
+
+    it("exports silence statistics for a run that said nothing for most of its life", async () => {
+      const fixture = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+      let at = Date.parse("2026-09-21T00:00:00.000Z");
+      const adapter: AgentAdapter = {
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          if (request.metadata.phase === "execution_brief") {
+            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
+          }
+          // Four minutes of thinking, then one line, then more thinking.
+          at += 240_000;
+          request.observe?.output("stdout", 12);
+          at += 60_000;
+          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low"), workspacePath: request.workspacePath });
+          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+        },
+      };
+
+      await runSchedulerOnce({
+        projectRoot: fixture.projectRoot, repositories: fixture.repositories, adapters: [adapter],
+        workerId: "worker_a", maxTasks: 1, approvalRequired: () => false, now: () => new Date(at),
+        proofCollector: ({ task }) => [createProofForTask(task)], emit: () => undefined,
+      });
+
+      const runId = (fixture.client.prepare("SELECT id FROM agent_runs WHERE task_id = ?").get("task_1") as { id: string }).id;
+      const stats = summarizeRunActivity({
+        activity: fixture.repositories.listRunActivity(runId),
+        startedAt: "2026-09-21T00:00:00.000Z",
+        until: new Date(at).toISOString(),
+      });
+
+      // A run that produced twelve bytes in five minutes is legible as exactly that — and none of it
+      // ended the run, which is the whole of P1.
+      expect(stats.firstActivityAfterMs).toBe(240_000);
+      expect(stats.longestGapMs).toBe(240_000);
+      expect(stats.trailingSilenceMs).toBe(60_000);
+      expect(stats.bytesByChannel).toEqual({ stdout: 12, stderr: 0 });
+      expect(fixture.repositories.getTask("task_1")?.status).toBe("complete");
+      fixture.client.close();
     });
   });
 
@@ -3219,6 +3550,73 @@ describe("Final Founder Report on Company Quiescence", () => {
     });
   });
 });
+
+describe("the settlement transaction", () => {
+  /**
+   * A settlement holds SQLite's write lock for as long as its transaction is open, and everything
+   * else — the read path, the next dispatch, and the Supervisor's own connection once it exists —
+   * waits or fails while it does. Awaiting a model, a process or the filesystem in there would hold
+   * that lock for the length of an agent run.
+   *
+   * It is also why the handoff package is published after the transaction rather than inside it:
+   * files do not roll back, so a settlement that unwound would leave the next task reading output
+   * from a run that never landed.
+   *
+   * Checked here rather than left to review, because the cost of getting it wrong is a database that
+   * stops accepting writes for minutes at a time, with nothing in the logs to say why.
+   */
+  it("never awaits or touches the filesystem while it holds the write lock", () => {
+    const source = readFileSync(fileURLToPath(new URL("./scheduler.ts", import.meta.url)), "utf8");
+    const forbidden = [
+      "await ",
+      "readFileSync",
+      "writeFileSync",
+      "appendFileSync",
+      "existsSync",
+      "mkdirSync",
+      "createHandoffPackage",
+      "cleanupGeneratedWorkspaceArtifacts",
+    ];
+    const offenders: string[] = [];
+
+    for (const start of callSiteOffsets(source, "settleRun(")) {
+      const body = source.slice(start, matchingCloseParen(source, start));
+      const line = source.slice(0, start).split("\n").length;
+      for (const term of forbidden) {
+        if (body.includes(term)) {
+          offenders.push(`scheduler.ts:${line} settles with \`${term.trim()}\` inside the transaction`);
+        }
+      }
+    }
+
+    expect(offenders, "prepare outside the settlement; commit only database writes inside it").toEqual([]);
+  });
+});
+
+/** Offsets of every call to `name` in `source`. */
+function callSiteOffsets(source: string, name: string): number[] {
+  const offsets: number[] = [];
+  for (let at = source.indexOf(name); at >= 0; at = source.indexOf(name, at + 1)) {
+    offsets.push(at);
+  }
+  return offsets;
+}
+
+/** The offset just past the `)` that closes the first `(` at or after `start`. */
+function matchingCloseParen(source: string, start: number): number {
+  let depth = 0;
+  for (let at = start; at < source.length; at += 1) {
+    if (source[at] === "(") {
+      depth += 1;
+    } else if (source[at] === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return at + 1;
+      }
+    }
+  }
+  return source.length;
+}
 
 function createSchedulerFixture(tasks: Task[], companyOverrides: Partial<Company> = {}) {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-scheduler-"));
