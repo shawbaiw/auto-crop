@@ -16,10 +16,22 @@ describe("task recovery", () => {
     fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z");
     fixture.repositories.createAgentRun(createAgentRunRecord());
 
-    const result = reconcileStaleRunningTasks({
+    // One second past the 3m budget the run may still be finalizing — capture and an Artifact Syntax
+    // Repair happen after the agent returns, with the run row still `running` (ADR 0034).
+    const inGrace = reconcileStaleRunningTasks({
       repositories: fixture.repositories,
       companyId: "company_1",
       now: () => new Date("2026-08-25T00:03:01.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+    expect(inGrace.reconciledTaskIds).toEqual([]);
+    expect(fixture.repositories.getTask("task_1")?.status).toBe("running");
+
+    const result = reconcileStaleRunningTasks({
+      repositories: fixture.repositories,
+      companyId: "company_1",
+      // Past the budget and the finalization grace: nobody is finishing this one.
+      now: () => new Date("2026-08-25T00:06:00.000Z"),
       createId: createSequentialIdFactory(),
     });
 
@@ -48,6 +60,35 @@ describe("task recovery", () => {
         label: "Task timed out and is waiting for recovery.",
       }),
     );
+  });
+
+  /**
+   * The reciprocal half of the claim (ADR 0034). Between reading the running runs and writing the
+   * timeout, the scheduler can settle that run — so the write is conditional, and losing it must stop
+   * everything else this reconcile would have done to the task.
+   */
+  it("touches nothing when the run it read as running was settled before it could write", () => {
+    const fixtureState = createFixture([{ ...createTaskRecord(), status: "running" }]);
+    const { repositories } = fixtureState;
+    repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z");
+    const staleRun = createAgentRunRecord();
+    repositories.createAgentRun(staleRun);
+    // The scheduler wins the claim first.
+    expect(repositories.updateAgentRunStatus(staleRun.id, "complete", "2026-08-25T00:01:00.000Z", { expectedStatus: "running" })).toBe(true);
+
+    const result = reconcileStaleRunningTasks({
+      // What this reconcile read a moment ago, before the settlement landed.
+      repositories: { ...repositories, listRunningAgentRuns: () => [staleRun] },
+      companyId: "company_1",
+      now: () => new Date("2026-08-25T01:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    expect(result.reconciledTaskIds).toEqual([]);
+    expect(repositories.getTask("task_1")?.status).toBe("running");
+    expect(repositories.listTaskLocks()).toHaveLength(1);
+    expect(repositories.listTaskEventsForCompany("company_1")).toEqual([]);
+    fixtureState.client.close();
   });
 
   it("refuses to recover a task that has exhausted its recovery attempts", () => {

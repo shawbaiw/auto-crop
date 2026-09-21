@@ -822,7 +822,8 @@ describe("API routes", () => {
       agentId: "codex",
       status: "running",
       logPath: "agent.log",
-      startedAt: "2026-08-16T23:59:00.000Z",
+      // Long past its budget and the finalization grace, so no settlement can still be in flight.
+      startedAt: "2026-08-16T23:00:00.000Z",
       finishedAt: null,
       executionProfileName: "short",
       requestedTimeoutMs: 1_000,

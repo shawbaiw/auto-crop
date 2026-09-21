@@ -23,6 +23,7 @@ import { migrate } from "../db/schema";
 import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { acquireTaskLock, releaseTaskLock } from "./locks";
 import { createHandoffPackage, createProofCollector } from "./proof";
+import { reconcileStaleRunningTasks } from "./taskRecovery";
 import {
   reconcileFinalFounderReportUpgrade,
   runFinalFounderReportJobs,
@@ -83,6 +84,96 @@ describe("runSchedulerOnce", () => {
    * artifact did not parse, and the whole company blocked on work that had been done. One narrow repair
    * run fixes the syntax; the runtime keeps it only if the content is unchanged.
    */
+  /**
+   * Two writers reach every run: the dispatch settling its delivery, and whoever declares the run
+   * timed out — `reconcileStaleRunningTasks`, which any read of company state can trigger. They used
+   * to both write their own outcome, leaving a run `complete` with a `timeout` failure reason and a
+   * task carrying a failure it had not suffered (ADR 0034).
+   *
+   * Both directions are tested, because either can legitimately win: what must hold is that the loser
+   * writes nothing at all.
+   */
+  describe("a settlement racing a timeout declaration", () => {
+    const start = new Date("2026-08-17T12:00:00.000Z");
+    const raceFixture = async (readPathClock: Date) => {
+      const { projectRoot, repositories, client } = createSchedulerFixture([
+        createTaskRecord("task_1", "queued", "low", "product-brief"),
+      ]);
+      const broken = 'Mock implementation completed; rivals already offer "no sign-up" access.';
+      const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
+      const adapter: AgentAdapter = {
+        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        run: async (request) => {
+          if (request.metadata.phase === "execution_brief") {
+            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
+          }
+          const path = artifactPath(request.workspacePath);
+          if (request.prompt.startsWith("## Repair the Business Artifact syntax")) {
+            // A read of company state lands while the repair run is in flight.
+            reconcileStaleRunningTasks({ repositories, companyId: "company_1", now: () => readPathClock });
+            writeFileSync(path, readFileSync(path, "utf8").replace('"no sign-up"', '\\"no sign-up\\"'), "utf8");
+            return { status: "complete", exitCode: 0, stdout: "repaired", stderr: "" };
+          }
+          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
+          writeFileSync(path, readFileSync(path, "utf8").replace("Mock implementation completed.", broken), "utf8");
+          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+        },
+      };
+      const events: SchedulerEventRecord[] = [];
+      await runSchedulerOnce({
+        projectRoot, repositories, adapters: [adapter], workerId: "worker_a", maxTasks: 1,
+        now: () => start,
+        approvalRequired: () => false,
+        proofCollector: ({ task }) => [createProofForTask(task)],
+        emit: (event) => events.push(event),
+      });
+      const run = client
+        .prepare("SELECT status, failure_reason FROM agent_runs WHERE task_id = ? ORDER BY started_at DESC")
+        .get("task_1") as { status: string; failure_reason: string | null };
+      return { repositories, client, events, run, task: repositories.getTask("task_1")! };
+    };
+
+    it("lets the settlement finish when the read path arrives inside the finalization grace", async () => {
+      // Past the run's budget, inside the grace: the delivery is still being written.
+      const { repositories, client, task, run, events } = await raceFixture(new Date("2026-08-17T12:03:00.000Z"));
+
+      expect({ status: run.status, failureReason: run.failure_reason }).toEqual({ status: "complete", failureReason: null });
+      expect(task.status).toBe("complete");
+      expect(task.latestFailureReason).toBeNull();
+      expect(repositories.listOpenTaskHolds("task_1")).toEqual([]);
+      expect(events.some((event) => event.type === "task_failed")).toBe(false);
+      client.close();
+    });
+
+    it("leaves a settled run alone when the timeout declaration arrives late", async () => {
+      // The settlement won; the read path arrives afterwards, with the budget long spent.
+      const { repositories, client, run } = await raceFixture(new Date("2026-08-17T12:03:00.000Z"));
+      const reconciled = reconcileStaleRunningTasks({
+        repositories, companyId: "company_1", now: () => new Date("2026-08-17T13:00:00.000Z"),
+      });
+
+      expect(reconciled.reconciledTaskIds).toEqual([]);
+      expect(repositories.getTask("task_1")).toMatchObject({ status: "complete", latestFailureReason: null });
+      expect(run.failure_reason).toBeNull();
+      client.close();
+    });
+
+    it("writes nothing from the settlement when the timeout declaration wins", async () => {
+      // Past the grace too: the run is declared timed out while the scheduler is still settling.
+      const { repositories, client, task, run, events } = await raceFixture(new Date("2026-08-17T12:30:00.000Z"));
+
+      // The winner's record stands, undisturbed by the loser.
+      expect({ status: run.status, failureReason: run.failure_reason }).toEqual({ status: "failed", failureReason: "timeout" });
+      expect(task.status).toBe("failed");
+      expect(repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["runtime_interrupted"]);
+      // And the loser left nothing: no delivery, no acceptance, no completion event.
+      expect(repositories.listBusinessArtifactsForTask("task_1")).toEqual([]);
+      expect(repositories.listTaskCompletionEventsForCompany("company_1")).toEqual([]);
+      expect(events.some((event) => event.type === "automatic_acceptance" || event.type === "task_review")).toBe(false);
+      client.close();
+    });
+  });
+
   describe("business artifact syntax repair", () => {
     const quoted = 'Mock implementation completed; rivals already offer "no sign-up" access.';
     const runWithRepair = async (repairEdit: (artifact: string) => string) => {
@@ -266,7 +357,8 @@ describe("runSchedulerOnce", () => {
       ],
       workerId: "worker_a",
       maxTasks: 1,
-      now: () => new Date("2026-08-17T00:00:02.000Z"),
+      // Past the run's budget and the finalization grace, so nobody could still be settling it.
+      now: () => new Date("2026-08-17T00:05:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: () => [],

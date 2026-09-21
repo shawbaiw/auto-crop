@@ -1174,6 +1174,12 @@ export function createRepositories(database: DatabaseClient) {
         );
     },
 
+    /**
+     * Record how a run ended. With `expectedStatus` the write is a claim: it lands only while the run
+     * is still in that state, and the boolean says whether this caller won. Two writers race for
+     * every run — the one finalizing the delivery and whoever declares it timed out — and without the
+     * condition both used to write their own outcome over the other's (ADR 0034).
+     */
     updateAgentRunStatus(
       id: string,
       status: AgentRun["status"],
@@ -1181,18 +1187,27 @@ export function createRepositories(database: DatabaseClient) {
       outcome: {
         failureReason?: AgentFailureReason | null;
         failureMessage?: string | null;
+        expectedStatus?: AgentRun["status"];
       } = {},
-    ): void {
-      database
+    ): boolean {
+      const result = database
         .prepare(
           `UPDATE agent_runs
            SET status = ?,
                finished_at = ?,
                failure_reason = COALESCE(?, failure_reason),
                failure_message = COALESCE(?, failure_message)
-           WHERE id = ?`,
+           WHERE id = ?${outcome.expectedStatus ? " AND status = ?" : ""}`,
         )
-        .run(status, finishedAt, outcome.failureReason ?? null, outcome.failureMessage ?? null, id);
+        .run(
+          status,
+          finishedAt,
+          outcome.failureReason ?? null,
+          outcome.failureMessage ?? null,
+          id,
+          ...(outcome.expectedStatus ? [outcome.expectedStatus] : []),
+        );
+      return Number(result.changes) > 0;
     },
 
     countAgentRunsForTask(taskId: string): number {
