@@ -238,35 +238,83 @@ describe("task recovery", () => {
   });
 
   /**
-   * P0 baseline (execution-health-and-recovery-plan §10 P0): the leftover state combinations the
-   * plan asks to be constructed and recorded before anything changes. Reconciliation is driven by
-   * `listRunningAgentRuns`, so every combination that has no `running` run is invisible to it — the
-   * assertions below pin that as the behaviour to be replaced, not as behaviour to be preserved.
+   * The leftover state combinations a crash mid-dispatch leaves behind.
+   *
+   * These used to be permanent. Reconciliation is indexed by running runs, so a dispatch that died
+   * before its run row existed left a lock nothing could see and nothing would clear, and that task
+   * never ran again. The fix is not to prove the dead worker is gone — nothing can — but to make its
+   * leftovers reclaimable: the lock carries a lease its holder renews, and silence past the lease is
+   * what lets the task move on (execution-health P2b).
    */
-  describe("leftover state combinations reconciliation does not reach", () => {
-    it("leaves a queued task holding a lock with no run queued and locked forever", () => {
+  describe("leftover state after a worker dies mid-dispatch", () => {
+    const leaseOf = (expiresAt: string) => ({ expiresAt, now: "2026-08-25T00:00:00.000Z" });
+
+    it("lets another dispatch take over a queued task whose holder stopped renewing", () => {
       const fixture = createFixture([{ ...createTaskRecord(), status: "queued" }]);
-      fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z");
+      fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z", leaseOf("2026-08-25T00:01:30.000Z"));
+
+      // While the lease holds, nobody else gets in.
+      expect(
+        fixture.repositories.acquireTaskLock("task_1", "worker_2", "2026-08-25T00:01:00.000Z", {
+          expiresAt: "2026-08-25T00:02:30.000Z",
+          now: "2026-08-25T00:01:00.000Z",
+        }),
+      ).toBe(false);
+
+      // Once it lapses, the task is available again — no reconciliation pass required.
+      expect(
+        fixture.repositories.acquireTaskLock("task_1", "worker_2", "2026-08-25T00:05:00.000Z", {
+          expiresAt: "2026-08-25T00:06:30.000Z",
+          now: "2026-08-25T00:05:00.000Z",
+        }),
+      ).toBe(true);
+      expect(fixture.repositories.listTaskLocks()).toEqual([
+        expect.objectContaining({ taskId: "task_1", ownerId: "worker_2", runId: null }),
+      ]);
+    });
+
+    it("recovers a running task whose run was never recorded", () => {
+      const fixture = createFixture([{ ...createTaskRecord(), status: "running" }]);
+      // The shape a crash between taking the lock and creating the run leaves: a task that says it is
+      // executing, and no run to account for it.
+      fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z", leaseOf("2026-08-25T00:01:30.000Z"));
+
+      // Inside the lease this is a dispatch in flight, and is left alone.
+      expect(
+        reconcileStaleRunningTasks({
+          repositories: fixture.repositories,
+          companyId: "company_1",
+          now: () => new Date("2026-08-25T00:01:00.000Z"),
+          createId: createSequentialIdFactory(),
+        }).reconciledTaskIds,
+      ).toEqual([]);
+      expect(fixture.repositories.getTask("task_1")?.status).toBe("running");
 
       const result = reconcileStaleRunningTasks({
         repositories: fixture.repositories,
         companyId: "company_1",
-        now: () => new Date("2026-08-25T06:00:00.000Z"),
+        now: () => new Date("2026-08-25T00:05:00.000Z"),
         createId: createSequentialIdFactory(),
       });
 
-      // No run to read, so nothing is judged: the lock outlives the worker that took it, and the
-      // scheduler's `acquireTaskLock` will keep failing for this task on every later tick.
-      expect(result.reconciledTaskIds).toEqual([]);
-      expect(fixture.repositories.getTask("task_1")?.status).toBe("queued");
-      expect(fixture.repositories.listTaskLocks()).toEqual([
-        { taskId: "task_1", ownerId: "worker_1", acquiredAt: "2026-08-25T00:00:00.000Z", runId: null },
-      ]);
+      // Past the lease, nobody is speaking for it: it gets a failure, a Hold with a way forward, and
+      // its lock back.
+      expect(result.reconciledTaskIds).toEqual(["task_1"]);
+      expect(fixture.repositories.getTask("task_1")).toMatchObject({
+        status: "failed",
+        latestFailureReason: "worker_lost",
+      });
+      expect(fixture.repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["runtime_interrupted"]);
+      expect(fixture.repositories.listTaskLocks()).toEqual([]);
+      expect(result.events).toContainEqual(
+        expect.objectContaining({ type: "task_failed", taskId: "task_1", failureReason: "worker_lost" }),
+      );
     });
 
-    it("leaves a running task with no run running forever, however long it has been", () => {
+    it("leaves a running task alone when it holds no lock at all", () => {
+      // Never dispatched by this runtime — a hand-edited row, or one from before locks existed.
+      // Reaping on that guess would let one wrong assumption fail tasks in bulk.
       const fixture = createFixture([{ ...createTaskRecord(), status: "running" }]);
-      fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z");
 
       const result = reconcileStaleRunningTasks({
         repositories: fixture.repositories,
@@ -275,17 +323,13 @@ describe("task recovery", () => {
         createId: createSequentialIdFactory(),
       });
 
-      // A worker that died between `acquireTaskLock` and `createAgentRun` leaves exactly this. There
-      // is no deadline to compare against, so the task never leaves `running` and never gets a Hold.
       expect(result.reconciledTaskIds).toEqual([]);
-      expect(fixture.repositories.getTask("task_1")).toMatchObject({ status: "running" });
-      expect(fixture.repositories.listOpenTaskHolds("task_1")).toEqual([]);
-      expect(fixture.repositories.listTaskLocks()).toHaveLength(1);
+      expect(fixture.repositories.getTask("task_1")?.status).toBe("running");
     });
 
-    it("leaves a lock behind when the run it belonged to is already terminal", () => {
+    it("frees a lock left behind by a settlement that already finished", () => {
       const fixture = createFixture([{ ...createTaskRecord(), status: "failed" }]);
-      fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z");
+      fixture.repositories.acquireTaskLock("task_1", "worker_1", "2026-08-25T00:00:00.000Z", leaseOf("2026-08-25T00:01:30.000Z"));
       fixture.repositories.createAgentRun({
         ...createAgentRunRecord(),
         status: "failed",
@@ -293,20 +337,14 @@ describe("task recovery", () => {
         failureReason: "timeout",
       });
 
-      const result = reconcileStaleRunningTasks({
-        repositories: fixture.repositories,
-        companyId: "company_1",
-        now: () => new Date("2026-08-25T06:00:00.000Z"),
-        createId: createSequentialIdFactory(),
-      });
-
-      // The run is settled, so the reconcile skips it — and the lock its settlement never released
-      // stays, blocking every future dispatch of this task.
-      expect(result.reconciledTaskIds).toEqual([]);
-      expect(fixture.repositories.listTaskLocks()).toEqual([
-        { taskId: "task_1", ownerId: "worker_1", acquiredAt: "2026-08-25T00:00:00.000Z", runId: null },
-      ]);
-      expect(fixture.repositories.acquireTaskLock("task_1", "worker_2", "2026-08-25T06:00:00.000Z")).toBe(false);
+      // The task is already settled, so nothing needs reconciling — but the leaked lock must not keep
+      // the task out of service, and an expired lease is enough for the next dispatch to take it.
+      expect(
+        fixture.repositories.acquireTaskLock("task_1", "worker_2", "2026-08-25T06:00:00.000Z", {
+          expiresAt: "2026-08-25T06:01:30.000Z",
+          now: "2026-08-25T06:00:00.000Z",
+        }),
+      ).toBe(true);
     });
   });
 });

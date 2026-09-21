@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { noToolGrant, type AgentCapabilityGrant } from "../policies/capabilityGrant";
 import { createClaudeCodeAdapter, createCliAgentAdapter, createCodexAdapter, interpolateCommandTemplate, isQuotaExhaustedOutput } from "./cliAgent";
@@ -535,7 +535,120 @@ describe("CLI command template adapter", () => {
     expect(result.status).toBe("failed");
     expect(result.failureReason).toBe("timeout");
   });
+
+  /**
+   * Stopping a run, against real processes (execution-health P2b).
+   *
+   * These spawn node and signal it, because the defect being fixed only exists at that level: the
+   * runtime used to send SIGTERM and resolve in the same tick, reporting a process as finished while
+   * it was still running — and still writing to the workspace the next run was about to use.
+   */
+  describe("stopping a run", () => {
+    const stoppableAdapter = () =>
+      createCliAgentAdapter({
+        id: "custom",
+        name: "Custom Agent",
+        capabilities: ["code"],
+        commandTemplate: "node {promptPath}",
+      });
+
+    it("waits for the process to exit before reporting the stop, and confirms it", async () => {
+      // Runs for a long time and exits promptly when asked.
+      const workspacePath = createWorkspaceWithScript("setInterval(() => {}, 1000);");
+      const stopper = new AbortController();
+      const started = Date.now();
+
+      const run = stoppableAdapter().run({
+        ...request,
+        promptPath: join(workspacePath, "agent-script.mjs"),
+        workspacePath,
+        timeoutMs: 60_000,
+        signal: stopper.signal,
+      });
+      setTimeout(() => stopper.abort(), 100);
+      const result = await run;
+
+      expect(result.status).toBe("failed");
+      expect(result.failureReason).toBe("cancelled");
+      // It was seen to exit, not merely signalled.
+      expect(result.terminationConfirmed).toBe(true);
+      expect(result.stderr).toContain("stopped by the runtime");
+      // And it did not sit through the full 60s budget waiting for one.
+      expect(Date.now() - started).toBeLessThan(20_000);
+    }, 30_000);
+
+    it("escalates to a kill when the process ignores the polite signal", async () => {
+      // Refuses SIGTERM outright; only SIGKILL will end it.
+      const workspacePath = createWorkspaceWithScript(
+        "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);",
+      );
+      const stopper = new AbortController();
+
+      const run = stoppableAdapter().run({
+        ...request,
+        promptPath: join(workspacePath, "agent-script.mjs"),
+        workspacePath,
+        timeoutMs: 60_000,
+        signal: stopper.signal,
+        graceMs: 300,
+        confirmMs: 2_000,
+      });
+      setTimeout(() => stopper.abort(), 100);
+      const result = await run;
+
+      expect(result.failureReason).toBe("cancelled");
+      // Ignoring the request does not make a process unstoppable, and the runtime still knows it went.
+      expect(result.terminationConfirmed).toBe(true);
+    }, 30_000);
+
+    it("takes the processes the agent started down with it", async () => {
+      // An agent CLI spawns compilers, servers and test runners. Signalling only the process we hold
+      // leaves those behind, still writing to the workspace this task is about to be retried in.
+      const pidPath = join(mkdtempSync(join(tmpdir(), "auto-crop-grandchild-")), "grandchild.pid");
+      createdDirs.push(dirname(pidPath));
+      const workspacePath = createWorkspaceWithScript(`
+        import { spawn } from "node:child_process";
+        import { writeFileSync } from "node:fs";
+        const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        writeFileSync(${JSON.stringify(pidPath)}, String(grandchild.pid), "utf8");
+        setInterval(() => {}, 1000);
+      `);
+      const stopper = new AbortController();
+
+      const run = stoppableAdapter().run({
+        ...request,
+        promptPath: join(workspacePath, "agent-script.mjs"),
+        workspacePath,
+        timeoutMs: 60_000,
+        signal: stopper.signal,
+        graceMs: 500,
+        confirmMs: 2_000,
+      });
+      // Give the grandchild time to exist and record itself.
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const grandchildPid = Number(readFileSync(pidPath, "utf8"));
+      expect(isAlive(grandchildPid)).toBe(true);
+
+      stopper.abort();
+      await run;
+      // Signal 0 only checks existence. Give the kernel a moment to reap the group.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      expect(isAlive(grandchildPid)).toBe(false);
+    }, 30_000);
+  });
+
 });
+
+/** Whether a pid still exists. Signal 0 checks for the process without touching it. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function createWorkspaceWithScript(script: string): string {
   const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-cli-agent-"));

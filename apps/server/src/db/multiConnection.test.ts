@@ -60,6 +60,57 @@ describe("storage under a second connection", () => {
     second.close();
   });
 
+  it("gives a task to exactly one of two workers racing for it, and to neither while the lease holds", () => {
+    const { first, second } = openDatabase();
+    const take = (client: ReturnType<typeof createDatabaseClient>, worker: string, at: string) =>
+      createRepositories(client).acquireTaskLock("task_1", worker, at, {
+        expiresAt: new Date(Date.parse(at) + 90_000).toISOString(),
+        now: at,
+      });
+
+    // Two workers, two connections, same task.
+    expect([take(first, "worker_a", "2026-09-21T00:00:00.000Z"), take(second, "worker_b", "2026-09-21T00:00:00.000Z")])
+      .toEqual([true, false]);
+
+    // The loser keeps losing while the winner's lease is good.
+    expect(take(second, "worker_b", "2026-09-21T00:01:00.000Z")).toBe(false);
+
+    // Past the lease, the task is claimable again — the winner stopped renewing, so it is gone.
+    expect(take(second, "worker_b", "2026-09-21T00:02:00.000Z")).toBe(true);
+    expect(createRepositories(first).listTaskLocks()).toEqual([
+      expect.objectContaining({ taskId: "task_1", ownerId: "worker_b" }),
+    ]);
+    first.close();
+    second.close();
+  });
+
+  it("renews a lease only for the owner that still holds the run and the epoch", () => {
+    const { first, second } = openDatabase();
+    const holder = createRepositories(first);
+    holder.acquireTaskLock("task_1", "worker_a", "2026-09-21T00:00:00.000Z", {
+      expiresAt: "2026-09-21T00:01:30.000Z",
+      now: "2026-09-21T00:00:00.000Z",
+    });
+    holder.bindTaskLockToRun("task_1", "worker_a", "agent_run_1", 4);
+
+    // The owner extends its own lease.
+    expect(holder.renewTaskLock("task_1", "worker_a", "agent_run_1", 4, "2026-09-21T00:03:00.000Z")).toBe(true);
+    // A superseded generation cannot keep a lock alive for a run nobody is waiting on, and neither
+    // can another worker or another run.
+    expect(holder.renewTaskLock("task_1", "worker_a", "agent_run_1", 3, "2026-09-21T00:09:00.000Z")).toBe(false);
+    expect(holder.renewTaskLock("task_1", "worker_a", "agent_run_2", 4, "2026-09-21T00:09:00.000Z")).toBe(false);
+    expect(
+      createRepositories(second).renewTaskLock("task_1", "worker_b", "agent_run_1", 4, "2026-09-21T00:09:00.000Z"),
+    ).toBe(false);
+
+    expect(createRepositories(second).listTaskLocks()[0]).toMatchObject({
+      leaseExpiresAt: "2026-09-21T00:03:00.000Z",
+      ownerEpoch: 4,
+    });
+    first.close();
+    second.close();
+  });
+
   it("hides a transaction's writes from the other connection until it commits, and unwinds them on rollback", () => {
     const { first, second, runStatus } = openDatabase();
     const repositories = createRepositories(first);
@@ -128,7 +179,10 @@ describe("storage under a second connection", () => {
       const won = repositories.updateAgentRunStatus("agent_run_1", "complete", "2026-09-21T00:10:00.000Z", {
         expectedStatus: "running",
       });
-      // The other connection cannot get in behind us now.
+      // The other connection cannot get in behind us now. Its busy timeout is dropped to zero first,
+      // so the exclusion is observed immediately instead of after the wait a real caller would take:
+      // what is being asserted is that it is kept out, not how patiently.
+      second.exec("PRAGMA busy_timeout = 0");
       expect(() =>
         createRepositories(second).updateAgentRunStatus("agent_run_1", "failed", "2026-09-21T00:10:30.000Z", {
           expectedStatus: "running",

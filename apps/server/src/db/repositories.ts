@@ -844,15 +844,94 @@ export function createRepositories(database: DatabaseClient) {
       return row.next_position;
     },
 
-    acquireTaskLock(taskId: string, ownerId: string, acquiredAt: string): boolean {
+    /**
+     * Take the execution lock for a task, or take it over from a lease that has run out.
+     *
+     * A lock used to be permanent: a dispatch that died between taking it and creating its run left a
+     * row nothing could see and nothing would clear, and that task never ran again. A lease makes the
+     * leftover reclaimable without anyone having to prove the dead worker is gone — the holder renews
+     * while it works, and silence is what lets the lock go.
+     *
+     * `leaseExpiresAt` is the caller's; `now` decides whether the incumbent's has passed. A lock with
+     * no lease at all (written before leases existed) counts as expired.
+     */
+    acquireTaskLock(
+      taskId: string,
+      ownerId: string,
+      acquiredAt: string,
+      lease?: { expiresAt: string; now: string },
+    ): boolean {
+      const taken = database
+        .prepare("SELECT owner_id, lease_expires_at FROM task_locks WHERE task_id = ?")
+        .get(taskId) as { owner_id: string; lease_expires_at: string | null } | undefined;
+
+      if (taken) {
+        if (!lease) {
+          return false;
+        }
+        const expiry = taken.lease_expires_at ? Date.parse(taken.lease_expires_at) : Number.NaN;
+        const stillHeld = !Number.isNaN(expiry) && expiry > Date.parse(lease.now);
+        if (stillHeld) {
+          return false;
+        }
+        // Conditional on the incumbent we just read, so two reclaimers cannot both win.
+        const reclaimed = database
+          .prepare(
+            `UPDATE task_locks SET owner_id = ?, acquired_at = ?, lease_expires_at = ?, run_id = NULL, owner_epoch = NULL
+             WHERE task_id = ? AND owner_id = ?${taken.lease_expires_at === null ? " AND lease_expires_at IS NULL" : " AND lease_expires_at = ?"}`,
+          )
+          .run(
+            ownerId,
+            acquiredAt,
+            lease.expiresAt,
+            taskId,
+            taken.owner_id,
+            ...(taken.lease_expires_at === null ? [] : [taken.lease_expires_at]),
+          );
+        return Number(reclaimed.changes) > 0;
+      }
+
       try {
         database
-          .prepare("INSERT INTO task_locks (task_id, owner_id, acquired_at) VALUES (?, ?, ?)")
-          .run(taskId, ownerId, acquiredAt);
+          .prepare("INSERT INTO task_locks (task_id, owner_id, acquired_at, lease_expires_at) VALUES (?, ?, ?, ?)")
+          .run(taskId, ownerId, acquiredAt, lease?.expiresAt ?? null);
         return true;
       } catch {
         return false;
       }
+    },
+
+    /**
+     * Push this lock's lease out, but only for the holder that still owns this run.
+     *
+     * Renewal is how a live dispatch says it is still here. It is conditional on owner, run and epoch
+     * together, so a dispatch that has been superseded cannot keep a lock alive for a run nobody is
+     * waiting on. Returns whether the lease was actually extended.
+     */
+    renewTaskLock(taskId: string, ownerId: string, runId: string, ownerEpoch: number, expiresAt: string): boolean {
+      const result = database
+        .prepare(
+          `UPDATE task_locks SET lease_expires_at = ?
+           WHERE task_id = ? AND owner_id = ? AND run_id = ? AND owner_epoch = ?`,
+        )
+        .run(expiresAt, taskId, ownerId, runId, ownerEpoch);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * The next ownership generation for this task, recorded on the task so it survives the lock.
+     *
+     * Monotonic by construction: it is read and written in the same statement, so two claimers cannot
+     * be handed the same number.
+     */
+    nextExecutionEpoch(taskId: string): number {
+      database
+        .prepare("UPDATE tasks SET execution_epoch = COALESCE(execution_epoch, 0) + 1 WHERE id = ?")
+        .run(taskId);
+      const row = database.prepare("SELECT execution_epoch FROM tasks WHERE id = ?").get(taskId) as
+        | { execution_epoch: number | null }
+        | undefined;
+      return row?.execution_epoch ?? 1;
     },
 
     /**
@@ -862,10 +941,10 @@ export function createRepositories(database: DatabaseClient) {
      * Binding is itself conditional on the lock still being unbound: a lock that has already moved on
      * to another run is not this dispatch's to label.
      */
-    bindTaskLockToRun(taskId: string, ownerId: string, runId: string): boolean {
+    bindTaskLockToRun(taskId: string, ownerId: string, runId: string, ownerEpoch: number): boolean {
       const result = database
-        .prepare("UPDATE task_locks SET run_id = ? WHERE task_id = ? AND owner_id = ? AND run_id IS NULL")
-        .run(runId, taskId, ownerId);
+        .prepare("UPDATE task_locks SET run_id = ?, owner_epoch = ? WHERE task_id = ? AND owner_id = ? AND run_id IS NULL")
+        .run(runId, ownerEpoch, taskId, ownerId);
       return Number(result.changes) > 0;
     },
 
@@ -907,7 +986,14 @@ export function createRepositories(database: DatabaseClient) {
       return locks.map((lock) => lock.taskId);
     },
 
-    listTaskLocks(): Array<{ taskId: string; ownerId: string; acquiredAt: string; runId: string | null }> {
+    listTaskLocks(): Array<{
+      taskId: string;
+      ownerId: string;
+      acquiredAt: string;
+      runId: string | null;
+      leaseExpiresAt: string | null;
+      ownerEpoch: number | null;
+    }> {
       const rows = database.prepare("SELECT * FROM task_locks ORDER BY task_id ASC").all();
       return rows.map((row) => {
         const lock = row as TaskLockRow;
@@ -916,6 +1002,8 @@ export function createRepositories(database: DatabaseClient) {
           ownerId: lock.owner_id,
           acquiredAt: lock.acquired_at,
           runId: lock.run_id,
+          leaseExpiresAt: lock.lease_expires_at,
+          ownerEpoch: lock.owner_epoch,
         };
       });
     },
@@ -1197,8 +1285,9 @@ export function createRepositories(database: DatabaseClient) {
         .prepare(
           `INSERT INTO agent_runs (
             id, task_id, agent_id, status, log_path, started_at, finished_at,
-            execution_profile_name, requested_timeout_ms, effective_timeout_ms, failure_reason, failure_message
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            execution_profile_name, requested_timeout_ms, effective_timeout_ms, failure_reason, failure_message,
+            owner_epoch
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           agentRun.id,
@@ -1213,6 +1302,7 @@ export function createRepositories(database: DatabaseClient) {
           agentRun.effectiveTimeoutMs ?? null,
           agentRun.failureReason ?? null,
           agentRun.failureMessage ?? null,
+          agentRun.ownerEpoch ?? null,
         );
     },
 
@@ -1847,6 +1937,8 @@ type TaskLockRow = {
   owner_id: string;
   acquired_at: string;
   run_id: string | null;
+  lease_expires_at: string | null;
+  owner_epoch: number | null;
 };
 
 type AgentRunRow = {
@@ -1862,6 +1954,7 @@ type AgentRunRow = {
   effective_timeout_ms: number | null;
   failure_reason: AgentFailureReason | null;
   failure_message: string | null;
+  owner_epoch: number | null;
 };
 
 type ReviewRow = {
@@ -2272,6 +2365,7 @@ function mapAgentRun(row: AgentRunRow): AgentRun {
     effectiveTimeoutMs: row.effective_timeout_ms,
     failureReason: row.failure_reason,
     failureMessage: row.failure_message,
+    ownerEpoch: row.owner_epoch,
   };
 }
 

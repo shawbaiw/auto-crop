@@ -46,7 +46,7 @@ import {
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { reconcileReviewTasksForAutomaticAcceptance } from "../runtime/reviewReconciliation";
-import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
+import { recoverTask } from "../runtime/taskRecovery";
 import {
   checkTaskAffordance,
   resolveTaskAffordanceState,
@@ -860,7 +860,6 @@ async function routeRequest(
       companyId: body.companyId,
       repositories: options.repositories,
       now: options.now,
-      cancelActiveRun: () => undefined,
       stopCompanySessions: (companyId, reason) => defaultAgentSessionManager.stopCompanySessions(companyId, reason),
     });
     sendJson(response, 200, {
@@ -880,12 +879,16 @@ function buildCompanyState(
   options?: { now?: () => Date; createId?: (prefix: string) => string; requestSchedulerWake?: (reason: SchedulerWakeReason) => void },
 ) {
   const currentCompany = reconcileStaleCompanyCreation(company, repositories, options) ?? company;
-  reconcileStaleRunningTasks({
-    repositories,
-    companyId: currentCompany.id,
-    now: options?.now,
-    createId: options?.createId,
-  });
+  // Reading company state does not decide that an execution is dead.
+  //
+  // It used to: every read ran the stale-run reconcile, so opening the dashboard could declare a run
+  // timed out, park its task on a Hold and release its lock — while the dispatch was still settling.
+  // Whether a run is finished was therefore a function of who had a browser tab open. Judging
+  // execution belongs to the scheduler tick, which owns dispatch and runs on its own clock, and to
+  // `recoverTask`, where a person has asked for it.
+  //
+  // The repairs below stay: none of them judges an execution. They repair state the runtime already
+  // settled, which is safe to do on a read and pointless to defer.
   // One-time migration pass (ADR 0017 §Migration): the first company-state read after this company
   // gets the deterministic model accepts the `review` tasks it would have accepted; a per-company
   // marker makes every later read a no-op. Its events are read back below with the rest of company

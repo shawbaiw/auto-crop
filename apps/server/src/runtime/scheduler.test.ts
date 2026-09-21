@@ -24,6 +24,8 @@ import { migrate } from "../db/schema";
 import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { createHandoffPackage, createProofCollector } from "./proof";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
+import { ExecutionRegistry } from "./executionControl";
+import { triggerKillSwitch } from "./killSwitch";
 import { OBSERVATION_POLICY_VERSION, summarizeRunActivity } from "./executionObservation";
 import {
   reconcileFinalFounderReportUpgrade,
@@ -51,7 +53,7 @@ describe("task locks", () => {
 
     // Bound to a run, the lock stops answering to a release that names a different one — which is how
     // a dispatch unwinding after it lost its run keeps its hands off its successor's lock.
-    expect(repositories.bindTaskLockToRun("task_1", "worker_a", "agent_run_1")).toBe(true);
+    expect(repositories.bindTaskLockToRun("task_1", "worker_a", "agent_run_1", 1)).toBe(true);
     expect(repositories.releaseTaskLock("task_1", "worker_a", "agent_run_2")).toBe(false);
     expect(repositories.releaseTaskLock("task_1", "worker_a", null)).toBe(false);
     expect(repositories.acquireTaskLock("task_1", "worker_b", "2026-08-17T00:00:02.000Z")).toBe(false);
@@ -235,7 +237,7 @@ describe("runSchedulerOnce", () => {
 
       // The loser unwound without disturbing the lock the redispatch is holding.
       expect(repositories.listTaskLocks()).toEqual([
-        { taskId: "task_1", ownerId: "worker_a", acquiredAt: "2026-08-17T12:31:00.000Z", runId: null },
+        expect.objectContaining({ taskId: "task_1", ownerId: "worker_a", acquiredAt: "2026-08-17T12:31:00.000Z", runId: null }),
       ]);
       client.close();
     });
@@ -503,6 +505,81 @@ describe("runSchedulerOnce", () => {
       expect(fixture.repositories.getTask("task_1")?.status).toBe("complete");
       fixture.client.close();
     });
+  });
+
+
+  /**
+   * Emergency Stop against a dispatch that is actually running (execution-health P2b).
+   *
+   * It used to be a status change with no teeth: the task was written `cancelled`, every lock in the
+   * database was cleared — other companies' included — and the agent process kept running and
+   * spending. The founder was told the company had stopped while it had not.
+   */
+  it("stops a live dispatch, and the dispatch it stopped settles nothing", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "product-brief"),
+    ]);
+    const registry = new ExecutionRegistry();
+    const events: SchedulerEventRecord[] = [];
+    let stopResult: ReturnType<typeof triggerKillSwitch> | null = null;
+
+    const adapter: AgentAdapter = {
+      id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      run: async (request) => {
+        if (request.metadata.phase === "execution_brief") {
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
+        }
+        // The founder hits Emergency Stop while the agent is working.
+        stopResult = triggerKillSwitch({
+          companyId: "company_1",
+          repositories,
+          executionRegistry: registry,
+          now: () => new Date("2026-08-17T12:05:00.000Z"),
+        });
+        // The adapter is told to stop, and reports the process gone.
+        expect(request.signal?.aborted).toBe(true);
+        writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
+        return { status: "failed", exitCode: null, stdout: "", stderr: "stopped", failureReason: "cancelled", terminationConfirmed: true };
+      },
+    };
+
+    await runSchedulerOnce({
+      projectRoot, repositories, adapters: [adapter], workerId: "worker_a", maxTasks: 1,
+      now: () => new Date("2026-08-17T12:00:00.000Z"),
+      approvalRequired: () => false, executionRegistry: registry,
+      proofCollector: ({ task }) => [createProofForTask(task)],
+      emit: (event) => events.push(event),
+    });
+
+    // The stop reached the live run, not just the row.
+    expect(stopResult).toMatchObject({ cancelledTasks: ["task_1"], unreachableTasks: [] });
+    // The task is cancelled, and the dispatch that lost the run wrote nothing over it.
+    expect(repositories.getTask("task_1")?.status).toBe("cancelled");
+    expect(repositories.listBusinessArtifactsForTask("task_1")).toEqual([]);
+    expect(repositories.listProofsForTask("task_1")).toEqual([]);
+    expect(events.some((event) => event.type === "task_failed")).toBe(false);
+    // A cancelled company leaves no Holds behind for a founder to work through.
+    expect(repositories.listOpenTaskHolds("task_1")).toEqual([]);
+    client.close();
+  });
+
+  it("clears only the stopped company's locks", async () => {
+    const { repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "running", "low")]);
+    // Another company, mid-run, with its own lock.
+    repositories.createCompany({ ...createCompanyRecord(), id: "company_2", name: "Other Studio" });
+    repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T12:00:00.000Z");
+    repositories.acquireTaskLock("other_task", "worker_b", "2026-08-17T12:00:00.000Z");
+
+    triggerKillSwitch({
+      companyId: "company_1",
+      repositories,
+      executionRegistry: new ExecutionRegistry(),
+      now: () => new Date("2026-08-17T12:05:00.000Z"),
+    });
+
+    // Stopping one company must not unlock another's live execution.
+    expect(repositories.listTaskLocks().map((lock) => lock.taskId)).toEqual(["other_task"]);
+    client.close();
   });
 
   describe("business artifact syntax repair", () => {

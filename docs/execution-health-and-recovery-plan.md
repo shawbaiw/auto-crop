@@ -2,7 +2,7 @@
 
 日期：2026-09-21。已核对基线：`main@a3893bd`（包含 PR #12，结算保护实现提交 `0a82cf0`）；原方案基线为 `b70636a`。
 
-状态：实施中。**P0 已完成**，基线证据见 [execution-health-p0-baseline.md](execution-health-p0-baseline.md)；**P2a（结算一致性）已完成**，见 [ADR 0035](adr/0035-a-settlement-is-one-transaction.md)；**P1（只采集）已完成**。剩余 P2b、P3–P5 待实施。运行健康监控、健康续时和可靠恢复链仍待实施。迄今未运行真实 Agent，未调整生产预算。
+状态：实施中。**P0 已完成**，基线证据见 [execution-health-p0-baseline.md](execution-health-p0-baseline.md)；**P2a（结算一致性）已完成**，见 [ADR 0035](adr/0035-a-settlement-is-one-transaction.md)；**P1（只采集）已完成**；**P2b 大部分完成**（workspace claim 与 termination_unconfirmed 出口留给 P2c）。剩余 P2c、P3–P5 待实施。运行健康监控、健康续时和可靠恢复链仍待实施。迄今未运行真实 Agent，未调整生产预算。
 
 阶段顺序已按实测调整为 **P0 → P2a → P1 → P2b → P3 → P5**：P2a 修的是当前就在损坏数据的一致性缺陷（基线 F1–F4），P1 的纯观测对它们零保护，且观测要挂在结算 seam 上，先建 seam 可免于写两遍。P2b（移除 GET 判死、取消闭环）确实需要 P1 的观测数据，故留在 P1 之后。
 
@@ -349,15 +349,28 @@ P0 额外确认、需在后续阶段处理的事实：取消全链路是空实�
 - [x] 多连接 SQLite 竞争测试（`db/multiConnection.test.ts`，4 项）：证实条件更新跨连接原子、事务跨连接隔离；**证伪**了"事务内先读后写安全"这一假设——先读会在对方提交后升级失败，且 `busy_timeout` 无效。结算因此必须以认领为第一条语句，并由扫描源码的守护测试禁止事务内出现 await 与文件 I/O。
 - [x] 完成条件（本段）：现有三条竞态回归持续通过；P0 的败方副作用与结算中断用例全部改写为断言新行为并通过。
 
-### P2b：取消闭环与读路径去副作用（待实施）
+### P2b：取消闭环与读路径去副作用 —— 大部分完成（2026-09-21）
 
-- 原子执行认领：锁、run 与 running 转换在同一事务内创建，关闭"锁已建、run 未建"的窗口（基线 F5 的成因，P2a 未关闭）。
-- `ownerEpoch`、workspace claim（同一可写目录互斥，含跨 Task 共用产物工作区）。
-- 实现协作取消、终止升级、进程身份确认和隔离（基线 F6：`cancelActiveRun` 当前是 no-op，`cliAgent` 发一次 SIGTERM 即返回）。
-- 新启动/独立对账覆盖遗留组合，同时移除 GET 与调度中旧的墙钟判死写路径；保留必要的非执行类修复。
-- 修复 Emergency Stop 与共享目录互斥（`releaseAllTaskLocks()` 当前会清掉其他公司的锁）。迁移现有 active/legacy 数据有明确协议。
-- 为 Supervisor 的第二个连接设置有界 `busy_timeout`（P2a 实测当前为 0，第二连接写入立即失败）。
-- 完成条件：双连接/双 Worker 竞争与迟到结果测试通过；打开页面不改变执行结果；无 run 孤立 Task 有真实恢复出口。
+`pnpm test` 57 文件 / 808 项通过，typecheck 与 lint 通过。未运行真实 Agent（但**运行了真实子进程**：停止相关测试 spawn node 并发信号）。
+
+- [x] **原子执行认领**：run、`ownerEpoch` 与锁的绑定在同一事务内建立。锁另获**租约**（`lease_expires_at`，默认 90s），由持有者心跳续租——死掉的 dispatch 留下的锁会过期并被下一个 dispatch 接管，不需要先证明那个进程已死。`tasks.execution_epoch` 单调递增，读写同一条语句，两个认领者拿不到同一个数。
+- [x] **孤儿 Task 有真实恢复出口**（基线 F5）：`reconcileStaleRunningTasks` 新增一轮扫描，处理"`running` 但没有 run"的任务——证据是锁的租约已过期。新增失败原因 `worker_lost`（语义不与 `timeout`、`agent_failed` 混用），映射到 `runtime_interrupted` Hold。**没有锁的 `running` 任务不予收割**：锁在最先获取且全程持有，所以没有锁意味着它从未被本运行时派发过，凭这个猜测去收割会让一个错误假设批量失败任务。
+- [x] **移除 GET 判死写路径**（不变量 8）：`buildCompanyState` 不再调用 `reconcileStaleRunningTasks`。判定执行死亡归调度 tick 和显式 `recoverTask`；读只报告。非执行类修复（Hold 对账、一次性迁移）保留。
+- [x] **真实取消**（基线 F6）：`cliAgent` 以 `detached` 启动获得独立进程组；停止先 SIGTERM 整组，宽限后升级 SIGKILL，**等到进程真的退出才结算**，并在确认窗口内仍未退出时报 `terminationConfirmed: false`。发信号前校验子进程未退出，避免 pid 复用误杀。新增 `AgentRunRequest.signal`（可选，不实现的 adapter 照常工作）。
+- [x] **Emergency Stop 接上真实控制柄**：`ExecutionRegistry` 登记在途执行，停止请求经它抵达进程而非只改行；无法触及的（其他 Worker 拥有的）在结果里如实列为 `unreachableTasks`，不冒充已停止。清锁**只清本公司**的任务——原先 `releaseAllTaskLocks()` 会把其他公司正在跑的锁一起清掉。
+- [x] 新增失败原因 `cancelled`，**不映射任何 Hold**：主动停掉的任务不需要被"救"，由停它的人决定下一步。
+- [x] 有界 `busy_timeout = 5s`（原为 0，第二连接写入立即失败）。
+- [x] 双 Worker / 双连接竞争测试通过；真实进程测试覆盖"等待退出""忽略 SIGTERM 被升级""**进程组把孙进程一并带走**"——最后一条我关掉进程组验证过会失败，不是空跑。
+
+**未完成，留给 P2c：**
+
+| 未做 | 现状与风险 |
+| --- | --- |
+| `workspace claim`（同一可写目录互斥） | 锁仍只按 taskId。**跨 Task 共用产物工作区时没有互斥**，方案不变量 1 的后半句尚未成立 |
+| `termination_unconfirmed` 的 Hold 与隔离出口 | `terminationConfirmed: false` 已被 adapter 如实上报并写进 run 的 stderr，但**没有消费者**：不会隔离工作区，也没有排查用的 Hold。按 ADR 0020，新 Hold 需要 core 穷举映射 + 后端 guard + 真实路由 + dashboard 控件 + 测试，半做比不做更糟，故整体留给 P2c |
+| Windows 终止 | `canGroupSignal` 在 win32 下为 false，只能终止持有的那个进程。**已显式降级，不宣称终止了进程树** |
+| 跨进程停止 | `ExecutionRegistry` 是进程内的。别的 Worker 拥有的 run 停不了，如实报为 unreachable；真正解决需要 P3 的进程外 Supervisor |
+| 迁移现有 active/legacy 数据的协议 | 新列均可空，旧行读作"租约已过期"，但没有写明的升级排空流程 |
 
 ### P3：独立监督与可靠事件
 

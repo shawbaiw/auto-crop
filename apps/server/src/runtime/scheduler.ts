@@ -45,6 +45,7 @@ import { generateFinalFounderReport, hasWorkCompletedSinceReport } from "./final
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { finalizeDelivery } from "./deliveryFinalization";
 import { RunObserver } from "./executionObservation";
+import { defaultExecutionRegistry, type ExecutionRegistry } from "./executionControl";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { buildProofContractInstructions } from "./proofContract";
@@ -110,6 +111,19 @@ export type RunSchedulerOnceInput = {
    * Observation only: nothing reads a heartbeat to end a run yet (execution-health P1).
    */
   heartbeatIntervalMs?: number;
+  /**
+   * How long a task lock stays valid without renewal.
+   *
+   * A lock used to be permanent, so a dispatch that died holding one took its task out of service for
+   * good. The holder renews while it works; silence past the lease is what lets another dispatch take
+   * the task over, without anyone having to prove the dead worker is gone.
+   */
+  executionLeaseMs?: number;
+  /**
+   * Where live executions register so a stop request can reach the process, not only the row.
+   * Defaults to the process-wide registry; tests pass their own.
+   */
+  executionRegistry?: ExecutionRegistry;
   emit: (event: SchedulerEvent) => void;
 };
 
@@ -123,6 +137,7 @@ export type RunSchedulerOnceResult = {
 export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<RunSchedulerOnceResult> {
   const now = input.now ?? (() => new Date());
   const createId = input.createId ?? defaultCreateId;
+  const registry = input.executionRegistry ?? defaultExecutionRegistry;
   const approvalRequired = input.approvalRequired
     ?? ((task: Task) => requiresFounderApproval(input.repositories, task));
   const result: RunSchedulerOnceResult = {
@@ -231,7 +246,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
       (async (handoffs: TaskHandoff[]) => {
         const acquiredAt = now().toISOString();
 
-        if (!input.repositories.acquireTaskLock(task.id, input.workerId, acquiredAt)) {
+        if (
+          !input.repositories.acquireTaskLock(task.id, input.workerId, acquiredAt, {
+            expiresAt: leaseExpiryFrom(now(), input.executionLeaseMs),
+            now: acquiredAt,
+          })
+        ) {
           return;
         }
 
@@ -243,6 +263,11 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         // the dispatch ends.
         let observer: RunObserver | null = null;
         let heartbeat: { stop: () => void } | null = null;
+        // The ownership generation this dispatch is executing under. Null until the run exists.
+        let ownerEpoch: number | null = null;
+        let stopper: AbortController | null = null;
+        let stopHandle: { stopReason: string | null } | null = null;
+        let releaseHandle: (() => void) | null = null;
         try {
           if (approvalRequired(task)) {
             const approvalId = createId("approval");
@@ -371,24 +396,31 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           while (true) {
             agentRunId = createId("agent_run");
             heldForRunId = agentRunId;
-            input.repositories.createAgentRun({
-              id: agentRunId,
-              taskId: task.id,
-              agentId: adapter.id,
-              status: "running",
-              logPath,
-              startedAt: now().toISOString(),
-              finishedAt: null,
-              executionProfileName: timeoutResolution.executionProfile.name,
-              requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
-              effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
-              failureReason: null,
-              failureMessage: null,
+            // The run, its ownership generation and the lock's binding to both are established
+            // together. Apart, a crash in between left a lock bound to no run — invisible to a
+            // reconciler indexed by running runs, and permanent (execution-health P2b).
+            ownerEpoch = input.repositories.transaction(() => {
+              const epoch = input.repositories.nextExecutionEpoch(task.id);
+              input.repositories.createAgentRun({
+                id: agentRunId,
+                taskId: task.id,
+                agentId: adapter.id,
+                status: "running",
+                logPath,
+                startedAt: now().toISOString(),
+                finishedAt: null,
+                executionProfileName: timeoutResolution.executionProfile.name,
+                requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+                failureReason: null,
+                failureMessage: null,
+                ownerEpoch: epoch,
+              });
+              // A retry rebinds nothing: the lock stays bound to this dispatch's first run, which is
+              // the one the release will name.
+              input.repositories.bindTaskLockToRun(task.id, input.workerId, agentRunId, epoch);
+              return epoch;
             });
-            // The lock was taken before this run existed; tell it which run it now guards. A retry
-            // rebinds nothing — the lock stays bound to the first run of this dispatch, which is the
-            // one the release will name.
-            input.repositories.bindTaskLockToRun(task.id, input.workerId, agentRunId);
 
             // A retry is a new run, so it observes into a new observer; the previous one is closed
             // by the settlement that ended it.
@@ -402,7 +434,45 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             const observe: RunObservationSink = {
               output: (channel, bytes) => observer?.recordOutput(channel, bytes),
             };
-            heartbeat = startHeartbeat(observer, input.heartbeatIntervalMs);
+            /**
+             * One beat: the run records that its owner answered, and the lock's lease moves out.
+             *
+             * Renewal lives here rather than in the observer because observation is forbidden from
+             * touching locks — seeing a run and holding one are different powers, and a module that
+             * had both would be one edit away from ending a run it found quiet.
+             */
+            const beat = () => {
+              observer?.beat();
+              if (ownerEpoch !== null) {
+                input.repositories.renewTaskLock(
+                  task.id,
+                  input.workerId,
+                  agentRunId,
+                  ownerEpoch,
+                  leaseExpiryFrom(now(), input.executionLeaseMs),
+                );
+              }
+            };
+            heartbeat?.stop();
+            heartbeat = startHeartbeat(beat, input.heartbeatIntervalMs);
+
+            // Publish a way to stop this run while it runs. Without it, "stop the company" was a
+            // status change that left the agent processes running and spending.
+            releaseHandle?.();
+            stopper = new AbortController();
+            const handle = {
+              taskId: task.id,
+              companyId: task.companyId,
+              runId: agentRunId,
+              ownerEpoch,
+              stopReason: null as string | null,
+              requestStop: (reason: string) => {
+                handle.stopReason = reason;
+                stopper?.abort();
+              },
+            };
+            releaseHandle = registry.register(handle);
+            stopHandle = handle;
 
             const company = input.repositories.getCompany(task.companyId);
             if (!company) {
@@ -421,7 +491,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             const preparationStartedAt = now().getTime();
             preparationTimeoutMs = Math.min(request.timeoutMs, EXECUTION_BRIEF_TIMEOUT_MS);
             observer.enterPhase("preparing_brief");
-            observer.beat();
+            beat();
             const preparation = await prepareExecutionBrief({ adapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs });
             const remainingMs = request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
             if (preparation.brief && remainingMs > 0) {
@@ -438,9 +508,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 label: `Task ${task.position + 1} (${task.title}) in progress`, subjectTaskId: task.id,
               });
               observer.enterPhase("executing", "brief_returned");
-              observer.beat();
+              beat();
               agentResult = await adapter.run({
                 ...request,
+                signal: stopper.signal,
                 timeoutMs: remainingMs,
                 prompt: buildTaskExecutionPrompt({
                   task,
@@ -941,6 +1012,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             }
           } finally {
             heartbeat?.stop();
+            releaseHandle?.();
             // Flush whatever the last phase observed. Nothing here judges the run: an observation
             // that failed to land leaves the run unknown, which is not the same as failed.
             observer?.close("dispatch_ended");
@@ -1737,17 +1809,30 @@ function terminateAtRetryCeiling(
 }
 
 /**
+ * How long a lock stays valid without renewal, when the caller names no other value.
+ *
+ * Comfortably longer than the heartbeat that renews it, so an ordinary pause — a slow write, a busy
+ * event loop — never costs a live dispatch its task. It is a liveness window, not a budget: a run
+ * that outlives it while renewing is untouched.
+ */
+export const DEFAULT_EXECUTION_LEASE_MS = 90_000;
+
+function leaseExpiryFrom(now: Date, leaseMs: number | undefined): string {
+  return new Date(now.getTime() + (leaseMs ?? DEFAULT_EXECUTION_LEASE_MS)).toISOString();
+}
+
+/**
  * Beat on a clock of the runtime's own, so a heartbeat can never be mistaken for the agent's output.
  *
  * Unreferenced, so an interval outliving its dispatch cannot hold the process open; `stop` is called
  * from the dispatch's `finally` either way. An interval of zero means the deterministic beats at
  * phase boundaries are the only ones, which is what tests run with.
  */
-function startHeartbeat(observer: RunObserver, intervalMs: number | undefined): { stop: () => void } {
+function startHeartbeat(beat: () => void, intervalMs: number | undefined): { stop: () => void } {
   if (!intervalMs || intervalMs <= 0) {
     return { stop: () => undefined };
   }
-  const timer = setInterval(() => observer.beat(), intervalMs);
+  const timer = setInterval(beat, intervalMs);
   timer.unref?.();
   return { stop: () => clearInterval(timer) };
 }

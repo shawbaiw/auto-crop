@@ -410,6 +410,14 @@ export function deriveTaskHold(input: {
     // meaning "nobody modelled this" (ADR 0020).
     case "invalid_agent_output":
       return { kind: "runtime_interrupted", resolver: "runtime" };
+    // Nobody is executing it and nobody can say what happened; the way forward is to run it again.
+    // Modelled explicitly so `runtime_interrupted` keeps meaning "nobody modelled this" (ADR 0020).
+    case "worker_lost":
+      return { kind: "runtime_interrupted", resolver: "runtime" };
+    // Stopping a task on purpose is not a stop it needs rescuing from: whoever stopped it decides
+    // what happens next, so a cancelled task carries no Hold of its own.
+    case "cancelled":
+      return null;
     case "agent_quota_exhausted":
       return { kind: "agent_quota_exhausted", resolver: "runtime" };
     case "verification_failed":

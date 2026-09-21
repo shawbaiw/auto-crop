@@ -35,6 +35,18 @@ export type AgentRunRequest = {
    * judgement back, and nothing an adapter reports here ends its own run.
    */
   observe?: RunObservationSink;
+  /**
+   * Asks this run to stop.
+   *
+   * An adapter that honours it must not resolve when the signal fires, but when the process is
+   * actually gone — or admit it could not confirm that. Resolving on the signal reports a process as
+   * finished while it is still writing to the workspace the next run is about to use.
+   */
+  signal?: AbortSignal;
+  /** How long the process gets to exit on its own after being asked, before the group is killed. */
+  graceMs?: number;
+  /** How long after the kill the runtime waits for proof the process is gone. */
+  confirmMs?: number;
 };
 
 /**
@@ -53,6 +65,14 @@ export type AgentRunResult = {
   stdout: string;
   stderr: string;
   failureReason?: AgentFailureReason;
+  /**
+   * Whether the runtime saw the process actually exit after asking it to stop.
+   *
+   * Absent means no stop was requested. `false` means the process was signalled, did not exit, and
+   * the runtime cannot prove it is gone — it may still be writing to the workspace, so the task must
+   * be isolated rather than re-run there (execution-health §7).
+   */
+  terminationConfirmed?: boolean;
 };
 
 export type AgentSessionKey = {

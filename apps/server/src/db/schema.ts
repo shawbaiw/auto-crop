@@ -389,7 +389,15 @@ export function migrate(database: DatabaseClient): void {
   // Which run a lock is held for (ADR 0034 / execution-health P2a). A lock taken before its run
   // exists carries NULL until `bindTaskLockToRun` fills it in, and legacy rows keep NULL forever;
   // both release conditionally on the value, so a dispatch can only ever release its own lock.
-  addColumnIfMissing(database, getColumnNames(database, "task_locks"), "task_locks", "run_id TEXT");
+  {
+    const lockColumns = getColumnNames(database, "task_locks");
+    addColumnIfMissing(database, lockColumns, "task_locks", "run_id TEXT");
+    // A lease, so a lock left by a dispatch that died is reclaimable rather than permanent, and the
+    // ownership generation it was taken under, so a later owner's writes cannot be mistaken for an
+    // earlier one's (execution-health P2b). Legacy rows have NULL for both, which reads as expired.
+    addColumnIfMissing(database, lockColumns, "task_locks", "lease_expires_at TEXT");
+    addColumnIfMissing(database, lockColumns, "task_locks", "owner_epoch INTEGER");
+  }
   addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "execution_brief TEXT");
   addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "blocked_by_task_id TEXT");
   addColumnIfMissing(database, getColumnNames(database, "company_events"), "company_events", "plan_snapshot TEXT");
@@ -552,6 +560,10 @@ function backfillTaskPositions(database: DatabaseClient): void {
 
 function migrateTasksExecutionFields(database: DatabaseClient): void {
   const columns = getColumnNames(database, "tasks");
+  // A monotonic counter of how many times this task has been claimed for execution. It only ever
+  // increases, so an epoch identifies one generation of ownership for the life of the task — a lock
+  // released and retaken is a new epoch, and anything still carrying the old one is stale.
+  addColumnIfMissing(database, columns, "tasks", "execution_epoch INTEGER");
   addColumnIfMissing(database, columns, "tasks", "artifact_workspace_path TEXT");
   addColumnIfMissing(database, columns, "tasks", "latest_failure_reason TEXT");
   addColumnIfMissing(database, columns, "tasks", "latest_failure_message TEXT");
@@ -583,6 +595,9 @@ function migrateAgentRunsExecutionFields(database: DatabaseClient): void {
   addColumnIfMissing(database, columns, "agent_runs", "last_heartbeat_at TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "last_activity_at TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "policy_version TEXT");
+  // Which generation of ownership this run belongs to. A run whose epoch is not the task's current
+  // one has been superseded, whatever its status says.
+  addColumnIfMissing(database, columns, "agent_runs", "owner_epoch INTEGER");
 }
 
 function migrateTaskDependencyContracts(database: DatabaseClient): void {

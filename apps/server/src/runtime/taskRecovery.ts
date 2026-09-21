@@ -135,7 +135,118 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
     reconciledTaskIds.push(task.id);
   }
 
+  reconcileOrphanedRunningTasks({ input, now, createId, timestamp, reconciledTaskIds, events, progressEvents });
+
   return { reconciledTaskIds, events, progressEvents };
+}
+
+/**
+ * Recover tasks that are `running` with no run to account for them.
+ *
+ * Reconciliation is indexed by running runs, so a task whose run was never created was invisible to
+ * it: a dispatch that died between taking the lock and creating the row left a task that said it was
+ * executing forever, with no Hold, no failure and nothing offered to move it. Nothing in the old
+ * design could even see it, let alone recover it.
+ *
+ * The evidence that nobody is working on it is the lock's lease. A live dispatch renews while it
+ * works, so an expired lease — or no lock at all — is what says the worker is gone. This never has to
+ * prove a process died; it only has to observe that nobody has spoken for the task.
+ */
+function reconcileOrphanedRunningTasks(context: {
+  input: ReconcileStaleRunningTasksInput;
+  now: () => Date;
+  createId: (prefix: string) => string;
+  timestamp: string;
+  reconciledTaskIds: string[];
+  events: TaskEvent[];
+  progressEvents: TaskProgressEvent[];
+}): void {
+  const { input, now, createId, timestamp } = context;
+  const repositories = input.repositories;
+  const liveRunTaskIds = new Set(repositories.listRunningAgentRuns(input.companyId).map((run) => run.taskId));
+  const locks = new Map(repositories.listTaskLocks().map((lock) => [lock.taskId, lock]));
+
+  for (const task of repositories.listTasksForCompany(input.companyId)) {
+    if (task.status !== "running" || liveRunTaskIds.has(task.id)) {
+      continue;
+    }
+    const lock = locks.get(task.id);
+    if (!lock) {
+      // The lock is taken before anything else and held until the dispatch unwinds, so a `running`
+      // task without one was never dispatched by this runtime — a hand-edited row, or a state from
+      // a version that predates locks. Reaping on that guess would let one wrong assumption fail
+      // tasks in bulk; leave it to a deliberate reconciliation with a human behind it.
+      continue;
+    }
+    if (!leaseHasExpired(lock.leaseExpiresAt, now())) {
+      // Someone is still renewing: this is a dispatch mid-flight, not a leftover.
+      continue;
+    }
+
+    const failureMessage = `Task failed: ${task.title} / the worker executing it stopped reporting before its run was recorded.`;
+    applyTaskTransition({
+      repositories,
+      task,
+      status: "failed",
+      executionSummary: {
+        latestFailureReason: "worker_lost",
+        latestFailureMessage: failureMessage,
+      },
+      hold: {
+        kind: "runtime_interrupted",
+        subjectKind: "task",
+        subjectId: task.id,
+        reason: failureMessage,
+      },
+      now: input.now,
+      createId: input.createId,
+    });
+    repositories.releaseTaskLock(task.id, lock.ownerId, lock.runId);
+
+    const event: TaskEvent = {
+      id: createId("task_event"),
+      companyId: task.companyId,
+      taskId: task.id,
+      type: "task_failed",
+      message: failureMessage,
+      createdAt: timestamp,
+      status: "failed",
+      failureReason: "worker_lost",
+      failureMessage,
+      executionProfileName: null,
+      requestedTimeoutMs: null,
+      effectiveTimeoutMs: null,
+      dependencyNote: null,
+      artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+    };
+    repositories.appendTaskEvent(event);
+    context.events.push(event);
+
+    const progressEvent: TaskProgressEvent = {
+      id: createId("task_progress"),
+      companyId: task.companyId,
+      departmentId: task.departmentId,
+      parentTaskId: task.parentTaskId ?? task.id,
+      subjectTaskId: task.id,
+      step: "blocked",
+      status: "blocked",
+      label: "Task lost its worker and is waiting for recovery.",
+      detail: failureMessage,
+      createdAt: timestamp,
+    };
+    repositories.appendTaskProgressEvent(progressEvent);
+    context.progressEvents.push(progressEvent);
+    context.reconciledTaskIds.push(task.id);
+  }
+}
+
+/** A lock with no lease at all predates leases, and is treated as long expired. */
+function leaseHasExpired(leaseExpiresAt: string | null, at: Date): boolean {
+  if (!leaseExpiresAt) {
+    return true;
+  }
+  const expiry = Date.parse(leaseExpiresAt);
+  return Number.isNaN(expiry) || expiry <= at.getTime();
 }
 
 /**

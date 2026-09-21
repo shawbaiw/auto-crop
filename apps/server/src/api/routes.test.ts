@@ -10,6 +10,7 @@ import { createRepositories, type ReviewRecord } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
+import { reconcileStaleRunningTasks } from "../runtime/taskRecovery";
 import { finalizeDelivery } from "../runtime/deliveryFinalization";
 import { resolveDependencyReadiness } from "../runtime/dependencyReadiness";
 import { applyTaskTransition } from "../runtime/taskTransition";
@@ -803,7 +804,13 @@ describe("API routes", () => {
     await fixture.close();
   });
 
-  it("reconciles stale running tasks when reading company state", async () => {
+  /**
+   * Reading company state used to run the stale-run reconcile, so opening the dashboard could declare
+   * a run timed out, park its task on a Hold and release its lock — while the dispatch was still
+   * settling. Whether a run had finished depended on who had a tab open. Judging execution belongs to
+   * the scheduler tick and to an explicit recover; a read only reports (execution-health P2b).
+   */
+  it("does not judge a stale execution when reading company state", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
@@ -837,8 +844,16 @@ describe("API routes", () => {
       activity: Array<{ type: string; taskId?: string; failureReason?: string }>;
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
 
-    expect(state.tasks).toContainEqual(expect.objectContaining({ id: task.id, status: "failed", failureReason: "timeout" }));
-    expect(state.activity).toContainEqual(expect.objectContaining({ type: "task_failed", taskId: task.id, failureReason: "timeout" }));
+    // The read reports the task as it found it…
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: task.id, status: "running" }));
+    expect(state.activity).not.toContainEqual(expect.objectContaining({ type: "task_failed", taskId: task.id }));
+    // …and changed nothing: the run still stands, and its lock is still held.
+    expect(fixture.repositories.listRunningAgentRuns(created.company.id)).toHaveLength(1);
+    expect(fixture.repositories.listTaskLocks()).toHaveLength(1);
+
+    // The scheduler, which owns dispatch, is what settles it.
+    reconcileStaleRunningTasks({ repositories: fixture.repositories, companyId: created.company.id });
+    expect(fixture.repositories.getTask(task.id)).toMatchObject({ status: "failed", latestFailureReason: "timeout" });
     expect(fixture.repositories.listTaskLocks()).toEqual([]);
 
     await fixture.close();

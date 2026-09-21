@@ -111,6 +111,19 @@ export type AgentFailureReason =
   | "stale_business_artifact"
   | "upstream_artifact_not_accepted"
   | "retry_exhausted"
+  /**
+   * The worker executing this run stopped reporting, and the run's own record cannot say why — the
+   * process was killed, the machine slept, or it died before its run row existed. Distinct from
+   * `timeout`, which means a deadline the runtime set was reached while someone was still watching,
+   * and from `agent_failed`, which blames an agent that in this case may never have been launched.
+   */
+  | "worker_lost"
+  /**
+   * The run was stopped on purpose — an Emergency Stop, or a founder cancelling the task. The work
+   * did not fail; it was ended, so it must not be counted against the Bounded Recovery ceiling or
+   * read as a reason the plan was wrong.
+   */
+  | "cancelled"
   | "needs_replan"
   | "rate_limited"
   /**
@@ -662,6 +675,14 @@ export type AgentRun = {
   effectiveTimeoutMs?: number | null;
   failureReason?: AgentFailureReason | null;
   failureMessage?: string | null;
+  /**
+   * Which generation of the task's execution ownership this run belongs to.
+   *
+   * A task claimed, lost and claimed again produces runs with different epochs. A run whose epoch is
+   * behind the task's current one has been superseded, whatever its own status still says, so a late
+   * result from it must not be allowed to settle anything.
+   */
+  ownerEpoch?: number | null;
 };
 
 export type TaskDependency = {
