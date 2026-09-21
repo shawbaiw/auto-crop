@@ -14,6 +14,7 @@ import {
 } from "../policies/capabilityGrant";
 import {
   type AgentFailureReason,
+  type AgentRun,
   type BusinessArtifact,
   type Company,
   type DependencyInputRole,
@@ -456,10 +457,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
             const failure = failureMessage(task, "timeout", timeoutResolution.effectiveTimeoutMs);
             const timedOutAfterMs = timeoutResolution.effectiveTimeoutMs;
-            input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
-              failureReason: "timeout",
-              failureMessage: failure,
-            });
+            if (!claimRun(input, agentRunId, "failed", now, { failureReason: "timeout", failureMessage: failure })) {
+              return;
+            }
             timeoutResolution = retryTimeoutResolution;
             applyTaskTransition({
               repositories: input.repositories,
@@ -536,6 +536,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               }
               const failureReason = "proof_capture_failed";
               const failure = `Task failed: ${task.title} / proof_capture_failed / ${(error as Error).message}`;
+              if (!claimRun(input, agentRunId, "failed", now, { failureReason, failureMessage: failure })) {
+                return;
+              }
               applyTaskTransition({
                 repositories: input.repositories,
                 task,
@@ -552,10 +555,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 },
                 now,
                 createId,
-              });
-              input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
-                failureReason,
-                failureMessage: failure,
               });
               appendAndEmitTaskEvent(input, {
                 task,
@@ -612,7 +611,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             environmentBlockerDegraded = Boolean(
               environmentBlockerVerification?.verified && businessArtifact.artifactKind !== "blocker",
             );
-            input.repositories.createBusinessArtifact(businessArtifact);
+            // Persisted by whichever branch settles this run, after it has claimed it: a delivery that
+            // lost the claim must leave nothing behind (ADR 0034).
           }
           createHandoffPackage({
             task: { ...task, workspacePath: runWorkspacePath },
@@ -627,6 +627,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             // not evidence for a replan either.
             if (failureReason === "timeout" && !preparationFailed && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
               const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
+              if (!claimRun(input, agentRunId, "failed", now, { failureReason: "timeout", failureMessage: failure })) {
+                return;
+              }
+              persistArtifact(input, businessArtifact);
               applyTaskTransition({
                 repositories: input.repositories,
                 task,
@@ -641,10 +645,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 hold: { kind: "needs_replan", reason: failure },
                 now,
                 createId,
-              });
-              input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
-                failureReason: "timeout",
-                failureMessage: failure,
               });
               appendAndEmitTaskEvent(input, {
                 task,
@@ -668,12 +668,16 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               result.blocked.push(task.id);
               return;
             }
-            if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
-              return;
-            }
             const failure = preparationFailed
               ? `Task failed: ${task.title} / ${failureReason} / the execution brief did not complete within ${formatExecutionBudget(preparationTimeoutMs)}; substantive work was not dispatched.`
               : failureMessage(task, failureReason, timeoutResolution.effectiveTimeoutMs, refutedCapability);
+            if (!claimRun(input, agentRunId, "failed", now, { failureReason, failureMessage: failure })) {
+              return;
+            }
+            if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
+              return;
+            }
+            persistArtifact(input, businessArtifact);
             applyTaskTransition({
               repositories: input.repositories,
               task,
@@ -686,10 +690,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               // reason added later still parks the task on an owned Hold.
               now,
               createId,
-            });
-            input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
-              failureReason,
-              failureMessage: failure,
             });
             appendAndEmitTaskEvent(input, {
               task,
@@ -726,11 +726,15 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             businessArtifact?.verification && businessArtifact.validationStatus === "valid",
           );
           if (!businessArtifact || (!isReviewableBusinessArtifact(businessArtifact) && !deliveredWithVerdict)) {
+            const failureReason = businessArtifactFailureReason(businessArtifact);
+            const failure = businessArtifactFailureMessage(task, businessArtifact);
+            if (!claimRun(input, agentRunId, "failed", now, { failureReason, failureMessage: failure })) {
+              return;
+            }
             if (endedAtRetryCeiling(input, result, task, agentRunId, timeoutResolution, now, createId)) {
               return;
             }
-            const failureReason = businessArtifactFailureReason(businessArtifact);
-            const failure = businessArtifactFailureMessage(task, businessArtifact);
+            persistArtifact(input, businessArtifact);
             applyTaskTransition({
               repositories: input.repositories,
               task,
@@ -747,10 +751,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               },
               now,
               createId,
-            });
-            input.repositories.updateAgentRunStatus(agentRunId, "failed", now().toISOString(), {
-              failureReason,
-              failureMessage: failure,
             });
             appendAndEmitTaskEvent(input, {
               task,
@@ -790,8 +790,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           if (task.artifactWorkspacePath && task.artifactWorkspacePath !== runWorkspacePath) {
             input.repositories.updateTaskArtifactWorkspacePath(task.id, runWorkspacePath);
           }
-          // The run did its job whatever the delivery's outcome — a failed verdict included.
-          input.repositories.updateAgentRunStatus(agentRunId, "complete", now().toISOString());
+          // The run did its job whatever the delivery's outcome — a failed verdict included. Claiming it
+          // first is what keeps a delivery and a timeout declaration from both landing (ADR 0034).
+          if (!claimRun(input, agentRunId, "complete", now)) {
+            return;
+          }
+          persistArtifact(input, businessArtifact);
           const finalized = finalizeDelivery({
             repositories: input.repositories,
             task,
@@ -1606,6 +1610,34 @@ function endedAtRetryCeiling(
     ...terminateAsRetryExhausted(input, task, agentRunId, timeoutResolution, now, createId),
   );
   return true;
+}
+
+/**
+ * Claim this run's outcome, and say whether this caller won.
+ *
+ * Two writers reach every run: the dispatch settling its delivery, and whoever declares the run timed
+ * out (`reconcileStaleRunningTasks`, reachable from any read of company state). The claim is a
+ * conditional update — it lands only while the run is still `running` — so the loser learns it lost
+ * before writing anything else, and settles nothing (ADR 0034).
+ */
+function claimRun(
+  input: RunSchedulerOnceInput,
+  agentRunId: string,
+  status: AgentRun["status"],
+  now: () => Date,
+  outcome: { failureReason?: AgentFailureReason; failureMessage?: string } = {},
+): boolean {
+  return input.repositories.updateAgentRunStatus(agentRunId, status, now().toISOString(), {
+    ...outcome,
+    expectedStatus: "running",
+  });
+}
+
+/** Record the delivery this settlement captured, once its run is claimed. */
+function persistArtifact(input: RunSchedulerOnceInput, artifact: BusinessArtifact | null): void {
+  if (artifact) {
+    input.repositories.createBusinessArtifact(artifact);
+  }
 }
 
 function terminateAsRetryExhausted(

@@ -5,6 +5,7 @@ import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhaust
 import { formatExecutionBudget } from "./executionProfile";
 import { buildProofContractInstructions } from "./proofContract";
 import { recoverProofIfPossible } from "./taskRefresh";
+import { ARTIFACT_SYNTAX_REPAIR_TIMEOUT_MS } from "./artifactSyntaxRepair";
 import { applyTaskTransition } from "./taskTransition";
 
 export type ReconcileStaleRunningTasksInput = {
@@ -53,7 +54,7 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
       continue;
     }
 
-    const deadline = Date.parse(run.startedAt) + run.effectiveTimeoutMs;
+    const deadline = Date.parse(run.startedAt) + run.effectiveTimeoutMs + FINALIZATION_GRACE_MS;
     if (Number.isNaN(deadline) || deadline > now().getTime()) {
       continue;
     }
@@ -64,10 +65,16 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
     }
 
     const failureMessage = `Task failed: ${task.title} / timeout after ${formatExecutionBudget(run.effectiveTimeoutMs)}.`;
-    input.repositories.updateAgentRunStatus(run.id, "failed", timestamp, {
+    // Claim the run before touching anything else. Losing means the scheduler finished this delivery
+    // while we were deciding it was dead, and then nothing here may run: not the task's status, not
+    // the lock, not the failure event (ADR 0034).
+    if (!input.repositories.updateAgentRunStatus(run.id, "failed", timestamp, {
       failureReason: "timeout",
       failureMessage,
-    });
+      expectedStatus: "running",
+    })) {
+      continue;
+    }
     // A run whose deadline passed while nobody was watching is the archetypal passive interruption:
     // the Hold is what stops it from sitting in `failed` with no offered way back.
     applyTaskTransition({
@@ -130,6 +137,19 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
 
   return { reconciledTaskIds, events, progressEvents };
 }
+
+/**
+ * How long past its budget a run may still be finishing.
+ *
+ * A run's budget covers the agent's work; capture and the Artifact Syntax Repair (ADR 0028) happen
+ * after it, while the run row is still `running`. Without this, a delivery that was still being
+ * written could be declared timed out by anyone reading company state, and both writers would then
+ * record their own outcome over the other's (ADR 0034).
+ *
+ * Derived from the repair's own cap rather than picked, so the two move together; the margin covers
+ * proof capture and artifact validation around it.
+ */
+export const FINALIZATION_GRACE_MS = ARTIFACT_SYNTAX_REPAIR_TIMEOUT_MS + 30_000;
 
 export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
   const now = input.now ?? (() => new Date());
