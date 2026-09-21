@@ -124,6 +124,12 @@ export type AgentFailureReason =
    * read as a reason the plan was wrong.
    */
   | "cancelled"
+  /**
+   * The run was signalled to stop and never seen to exit. What the agent did or did not achieve is
+   * beside the point: the fact that decides what happens next is that a process may still be writing
+   * to the workspace, so the task cannot simply be run again there.
+   */
+  | "termination_unconfirmed"
   | "needs_replan"
   | "rate_limited"
   /**

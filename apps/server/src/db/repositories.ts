@@ -980,6 +980,126 @@ export function createRepositories(database: DatabaseClient) {
       return Number(result.changes) > 0;
     },
 
+    /**
+     * Take the right to write a directory, or take it over from a lease that has run out.
+     *
+     * A task lock cannot express this: two different tasks legitimately share one directory when a
+     * consumer continues in its producer's artifact workspace, so locking the task left that
+     * directory with two writers. An isolated claim is never taken over — that is the point of it.
+     */
+    acquireWorkspaceClaim(claim: {
+      workspacePath: string;
+      taskId: string;
+      runId: string | null;
+      ownerId: string;
+      ownerEpoch: number | null;
+      acquiredAt: string;
+      leaseExpiresAt: string;
+      now: string;
+    }): boolean {
+      const held = database
+        .prepare("SELECT task_id, owner_id, lease_expires_at, isolated_reason FROM workspace_claims WHERE workspace_path = ?")
+        .get(claim.workspacePath) as
+        | { task_id: string; owner_id: string; lease_expires_at: string | null; isolated_reason: string | null }
+        | undefined;
+
+      if (held) {
+        if (held.isolated_reason) {
+          // Isolated: a previous run may still be writing here and nobody has said otherwise.
+          return false;
+        }
+        const expiry = held.lease_expires_at ? Date.parse(held.lease_expires_at) : Number.NaN;
+        if (!Number.isNaN(expiry) && expiry > Date.parse(claim.now)) {
+          return false;
+        }
+        const reclaimed = database
+          .prepare(
+            `UPDATE workspace_claims
+             SET task_id = ?, run_id = ?, owner_id = ?, owner_epoch = ?, acquired_at = ?, lease_expires_at = ?
+             WHERE workspace_path = ? AND owner_id = ? AND isolated_reason IS NULL`,
+          )
+          .run(
+            claim.taskId, claim.runId, claim.ownerId, claim.ownerEpoch,
+            claim.acquiredAt, claim.leaseExpiresAt, claim.workspacePath, held.owner_id,
+          );
+        return Number(reclaimed.changes) > 0;
+      }
+
+      try {
+        database
+          .prepare(
+            `INSERT INTO workspace_claims (workspace_path, task_id, run_id, owner_id, owner_epoch, acquired_at, lease_expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            claim.workspacePath, claim.taskId, claim.runId, claim.ownerId,
+            claim.ownerEpoch, claim.acquiredAt, claim.leaseExpiresAt,
+          );
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    renewWorkspaceClaim(workspacePath: string, runId: string, expiresAt: string): boolean {
+      const result = database
+        .prepare(
+          "UPDATE workspace_claims SET lease_expires_at = ? WHERE workspace_path = ? AND run_id = ? AND isolated_reason IS NULL",
+        )
+        .run(expiresAt, workspacePath, runId);
+      return Number(result.changes) > 0;
+    },
+
+    /** Give up a directory, but only the claim this run actually holds. */
+    releaseWorkspaceClaim(workspacePath: string, runId: string): boolean {
+      const result = database
+        .prepare("DELETE FROM workspace_claims WHERE workspace_path = ? AND run_id = ? AND isolated_reason IS NULL")
+        .run(workspacePath, runId);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * Keep a directory claimed after its run ended, because the process holding it was never
+     * confirmed gone. Survives lease expiry: only a deliberate release clears it.
+     */
+    isolateWorkspaceClaim(workspacePath: string, runId: string, reason: string): boolean {
+      const result = database
+        .prepare("UPDATE workspace_claims SET isolated_reason = ? WHERE workspace_path = ? AND run_id = ?")
+        .run(reason, workspacePath, runId);
+      return Number(result.changes) > 0;
+    },
+
+    /** Release an isolated directory, once someone has established the old process is gone. */
+    releaseIsolatedWorkspaceClaims(taskId: string): string[] {
+      const claims = database
+        .prepare("SELECT workspace_path FROM workspace_claims WHERE task_id = ? AND isolated_reason IS NOT NULL")
+        .all(taskId) as Array<{ workspace_path: string }>;
+      database.prepare("DELETE FROM workspace_claims WHERE task_id = ? AND isolated_reason IS NOT NULL").run(taskId);
+      return claims.map((claim) => claim.workspace_path);
+    },
+
+    listWorkspaceClaims(): Array<{
+      workspacePath: string;
+      taskId: string;
+      runId: string | null;
+      ownerId: string;
+      leaseExpiresAt: string | null;
+      isolatedReason: string | null;
+    }> {
+      const rows = database.prepare("SELECT * FROM workspace_claims ORDER BY workspace_path ASC").all() as Array<{
+        workspace_path: string; task_id: string; run_id: string | null;
+        owner_id: string; lease_expires_at: string | null; isolated_reason: string | null;
+      }>;
+      return rows.map((row) => ({
+        workspacePath: row.workspace_path,
+        taskId: row.task_id,
+        runId: row.run_id,
+        ownerId: row.owner_id,
+        leaseExpiresAt: row.lease_expires_at,
+        isolatedReason: row.isolated_reason,
+      }));
+    },
+
     releaseAllTaskLocks(): string[] {
       const locks = this.listTaskLocks();
       database.prepare("DELETE FROM task_locks").run();

@@ -14,6 +14,7 @@ import { reconcileStaleRunningTasks } from "../runtime/taskRecovery";
 import { finalizeDelivery } from "../runtime/deliveryFinalization";
 import { resolveDependencyReadiness } from "../runtime/dependencyReadiness";
 import { applyTaskTransition } from "../runtime/taskTransition";
+import { resolveTaskAffordanceState } from "../runtime/taskAffordances";
 import { createApiServer, type SchedulerWakeReason } from "./routes";
 
 const createdDirs: string[] = [];
@@ -856,6 +857,86 @@ describe("API routes", () => {
     expect(fixture.repositories.getTask(task.id)).toMatchObject({ status: "failed", latestFailureReason: "timeout" });
     expect(fixture.repositories.listTaskLocks()).toEqual([]);
 
+    await fixture.close();
+  });
+
+  /**
+   * The exit from an isolated workspace, end to end (execution-health P2c).
+   *
+   * A run that was signalled to stop and never seen to exit leaves its directory claimed, and the
+   * task offers no recovery — re-running there is the unsafe answer. Only a person can look and say
+   * the process is gone, so this route exists and has to actually release the claim.
+   */
+  it("releases an isolated workspace when the founder confirms the process stopped", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
+    const workspacePath = "/workspaces/isolated-task";
+    fixture.repositories.acquireWorkspaceClaim({
+      workspacePath, taskId: task.id, runId: "agent_run_1", ownerId: "worker_a", ownerEpoch: 1,
+      acquiredAt: "2026-08-17T12:00:00.000Z", leaseExpiresAt: "2026-08-17T12:01:00.000Z",
+      now: "2026-08-17T12:00:00.000Z",
+    });
+    fixture.repositories.isolateWorkspaceClaim(workspacePath, "agent_run_1", "never seen to exit");
+    applyTaskTransition({
+      repositories: fixture.repositories,
+      task: fixture.repositories.getTask(task.id)!,
+      status: "blocked",
+      executionSummary: { latestFailureReason: "termination_unconfirmed", latestFailureMessage: "never seen to exit" },
+      hold: {
+        kind: "termination_unconfirmed", resolver: "founder",
+        subjectKind: "agent_run", subjectId: "agent_run_1", reason: "never seen to exit",
+      },
+    });
+
+    // The task is offered the attestation, and deliberately not recovery.
+    const before = resolveTaskAffordanceState(fixture.repositories, fixture.repositories.getTask(task.id)!);
+    expect(before.affordances.map((affordance) => affordance.kind)).toContain("confirm_termination");
+    expect(before.affordances.map((affordance) => affordance.kind)).not.toContain("recover_task");
+
+    const confirmed = await postJson<{ releasedWorkspaces: string[] }>(
+      `${fixture.baseUrl}/api/tasks/${task.id}/confirm-termination`,
+      {},
+    );
+
+    expect(confirmed.releasedWorkspaces).toEqual([workspacePath]);
+    expect(fixture.repositories.listWorkspaceClaims()).toEqual([]);
+    // It is not silently re-queued: the run still stopped without finishing, so the task keeps a Hold
+    // that offers the ordinary way back.
+    const after = fixture.repositories.getTask(task.id)!;
+    expect(fixture.repositories.listOpenTaskHolds(task.id).map((hold) => hold.kind)).toEqual(["runtime_interrupted"]);
+    expect(resolveTaskAffordanceState(fixture.repositories, after).affordances.map((affordance) => affordance.kind))
+      .toContain("recover_task");
+
+    await fixture.close();
+  });
+
+  it("refuses a termination confirmation for a task that is not waiting on one", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
+
+    const response = await fetch(`${fixture.baseUrl}/api/tasks/${task.id}/confirm-termination`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(409);
     await fixture.close();
   });
 

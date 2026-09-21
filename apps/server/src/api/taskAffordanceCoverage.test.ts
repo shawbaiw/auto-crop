@@ -55,6 +55,7 @@ const affordanceRoutes: Record<TaskAffordanceKind, AffordanceRoute> = {
   recover_task: { path: (id) => `/api/tasks/${id}/recover` },
   request_replan: { path: (id) => `/api/tasks/${id}/replan-proposals` },
   confirm_replan: { path: (id) => `/api/replan-proposals/${id}/confirm` },
+  confirm_termination: { path: (id) => `/api/tasks/${id}/confirm-termination` },
   cancel_task: { path: (id) => `/api/tasks/${id}/cancel` },
 };
 

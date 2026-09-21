@@ -579,6 +579,72 @@ async function routeRequest(
     return;
   }
 
+  /**
+   * The founder attests that the process holding this task's workspace is gone.
+   *
+   * The runtime asked a run to stop and never saw it exit, so the directory stayed claimed and the
+   * task was parked: re-running it there is the one thing that must not happen while something may
+   * still be writing. Only a person can settle that, because only a person can look. Confirming
+   * releases the isolation and parks the task on an ordinary interrupted-run Hold, which does offer
+   * recovery.
+   */
+  const confirmTerminationMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/confirm-termination$/);
+  if (method === "POST" && confirmTerminationMatch) {
+    const task = options.repositories.getTask(confirmTerminationMatch[1]);
+    if (!task) {
+      sendJson(response, 404, { error: `Task not found: ${confirmTerminationMatch[1]}` });
+      return;
+    }
+
+    const confirmable = checkTaskAffordance(options.repositories, task, "confirm_termination");
+    if (!confirmable.ok) {
+      sendJson(response, 409, {
+        error: "Task is not waiting on a termination confirmation.",
+        ...staleAffordanceBody(task, confirmable.state, options.repositories),
+      });
+      return;
+    }
+
+    const releasedWorkspaces = options.repositories.releaseIsolatedWorkspaceClaims(task.id);
+    const hold = findOpenTaskHold(options.repositories, task.id, "termination_unconfirmed");
+    const message = `Termination confirmed for ${task.title}; its workspace is released and it can run again.`;
+    if (hold) {
+      applyTaskTransition({
+        repositories: options.repositories,
+        task,
+        status: "failed",
+        executionSummary: {
+          latestFailureReason: "worker_lost",
+          latestFailureMessage: message,
+        },
+        // It is no longer unconfirmed, but the run still stopped without finishing, so the task keeps
+        // a Hold that offers the ordinary way back rather than silently re-queuing work whose state
+        // nobody has looked at.
+        hold: {
+          kind: "runtime_interrupted",
+          resolver: "runtime",
+          subjectKind: "agent_run",
+          subjectId: hold.subjectId ?? task.id,
+          reason: message,
+        },
+        resolvesHoldIds: [hold.id],
+        now: options.now,
+        createId: options.createId,
+      });
+    }
+
+    const confirmed = options.repositories.getTask(task.id) ?? task;
+    sendJson(response, 200, {
+      task: summarizeTask(
+        confirmed,
+        options.repositories.listTaskDependencies(task.id).map((dependency) => dependency.dependsOnTaskId),
+        options.repositories,
+      ),
+      releasedWorkspaces,
+    });
+    return;
+  }
+
   const refreshTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/refresh$/);
   if (method === "POST" && refreshTaskMatch) {
     const refreshTarget = options.repositories.getTask(refreshTaskMatch[1]);

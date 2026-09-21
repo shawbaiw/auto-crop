@@ -574,6 +574,18 @@ export default function App({ apiClient }: AppProps) {
     return response;
   }
 
+  /**
+   * The founder says the process holding this task's workspace is gone.
+   *
+   * Nothing else can release an isolated workspace: the runtime asked a run to stop and never saw it
+   * exit, and only a person can look and settle that. Confirming frees the directory and leaves the
+   * task on an ordinary interrupted-run Hold, which does offer recovery.
+   */
+  async function handleConfirmTaskTermination(taskId: string) {
+    const response = await client.confirmTaskTermination(taskId);
+    setBlueprint((current) => updateBlueprintTask(current, response.task));
+  }
+
   async function handleRecoverTask(taskId: string) {
     const response = await client.recoverTask(taskId);
     setBlueprint((current) => updateBlueprintTasksAfterRecovery(current, response.task, response.followUpTask));
@@ -829,6 +841,7 @@ export default function App({ apiClient }: AppProps) {
         objectives={blueprint.objectives}
         onRefreshTask={handleRefreshTask}
         onRecoverTask={handleRecoverTask}
+        onConfirmTaskTermination={handleConfirmTaskTermination}
         onDecideFounderApproval={handleDecideFounderApproval}
         onCreateReplanProposal={handleCreateReplanProposal}
         onCreateCeoIntake={handleCreateCeoIntake}

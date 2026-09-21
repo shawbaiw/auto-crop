@@ -1,4 +1,4 @@
-import { projectCeoOfficeItems } from "@auto-crop/core";
+import { projectCeoOfficeItems, resolveTaskAffordances } from "@auto-crop/core";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -16,7 +16,7 @@ import type {
   Task,
   TaskCompletionEvent,
 } from "@auto-crop/core";
-import type { AgentAdapter } from "../adapters/types";
+import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "../adapters/types";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
@@ -580,6 +580,113 @@ describe("runSchedulerOnce", () => {
     // Stopping one company must not unlock another's live execution.
     expect(repositories.listTaskLocks().map((lock) => lock.taskId)).toEqual(["other_task"]);
     client.close();
+  });
+
+
+  /**
+   * Two writers in one directory, and what happens when a stop cannot be confirmed
+   * (execution-health P2c).
+   */
+  describe("holding a workspace", () => {
+    const deliveringAdapter = (onWork?: (request: AgentRunRequest) => Partial<AgentRunResult>): AgentAdapter => ({
+      id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      run: async (request) => {
+        if (request.metadata.phase === "execution_brief") {
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
+        }
+        writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low"), workspacePath: request.workspacePath });
+        return { status: "complete", exitCode: 0, stdout: "done", stderr: "", ...onWork?.(request) };
+      },
+    });
+
+    it("will not dispatch a task into a directory another run is writing", async () => {
+      const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+      // A run of some other task already holds this task's workspace. The task lock cannot express
+      // that: it guards the task, and the contention is over the directory.
+      const workspacePath = join(projectRoot, ".auto-crop", "workspaces", "task_1");
+      repositories.updateTaskWorkspacePath("task_1", workspacePath);
+      repositories.acquireWorkspaceClaim({
+        workspacePath, taskId: "other_task", runId: "agent_run_other", ownerId: "worker_b",
+        ownerEpoch: 1, acquiredAt: "2026-08-17T12:00:00.000Z",
+        leaseExpiresAt: "2026-08-17T12:30:00.000Z", now: "2026-08-17T12:00:00.000Z",
+      });
+      let dispatched = false;
+
+      await runSchedulerOnce({
+        projectRoot, repositories, adapters: [deliveringAdapter(() => { dispatched = true; return {}; })],
+        workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
+        now: () => new Date("2026-08-17T12:05:00.000Z"),
+        proofCollector: ({ task }) => [createProofForTask(task)], emit: () => undefined,
+      });
+
+      // No second writer, and the task is queued rather than failed: nothing is wrong with it.
+      expect(dispatched).toBe(false);
+      expect(repositories.getTask("task_1")).toMatchObject({ status: "queued" });
+      expect(repositories.listWorkspaceClaims()).toHaveLength(1);
+      client.close();
+    });
+
+    it("isolates the workspace when a stopped run was never seen to exit", async () => {
+      const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+
+      await runSchedulerOnce({
+        projectRoot, repositories, adapters: [
+          deliveringAdapter(() => ({
+            status: "failed", exitCode: null, failureReason: "cancelled",
+            stderr: "stopped", terminationConfirmed: false,
+          })),
+        ],
+        workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
+        now: () => new Date("2026-08-17T12:00:00.000Z"),
+        proofCollector: ({ task }) => [createProofForTask(task)], emit: () => undefined,
+      });
+
+      const task = repositories.getTask("task_1")!;
+      expect(task.status).toBe("blocked");
+      expect(task.latestFailureReason).toBe("termination_unconfirmed");
+      // The directory stays claimed after the run that took it, which is the whole point.
+      const claim = repositories.listWorkspaceClaims()[0];
+      expect(claim?.isolatedReason).toContain("never seen to exit");
+      // And the only ways forward are the two that do not write into that directory: recovery is
+      // deliberately not offered, because re-running there is exactly what is unsafe.
+      const holds = repositories.listOpenTaskHolds("task_1");
+      expect(holds.map((hold) => hold.kind)).toEqual(["termination_unconfirmed"]);
+      expect(resolveTaskAffordances({ status: task.status, holds }).map((affordance) => affordance.kind).sort())
+        .toEqual(["cancel_task", "confirm_termination", "request_replan"]);
+      client.close();
+    });
+
+    it("keeps an isolated directory out of use until the isolation is lifted", async () => {
+      const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+      const workspacePath = join(projectRoot, ".auto-crop", "workspaces", "task_1");
+      repositories.updateTaskWorkspacePath("task_1", workspacePath);
+      repositories.acquireWorkspaceClaim({
+        workspacePath, taskId: "task_1", runId: "agent_run_dead", ownerId: "worker_a",
+        ownerEpoch: 1, acquiredAt: "2026-08-17T12:00:00.000Z",
+        leaseExpiresAt: "2026-08-17T12:01:00.000Z", now: "2026-08-17T12:00:00.000Z",
+      });
+      repositories.isolateWorkspaceClaim(workspacePath, "agent_run_dead", "a process may still be writing here");
+
+      // An expired lease normally lets the next dispatch take the directory. Isolation does not
+      // expire: only a person saying the process is gone releases it.
+      expect(
+        repositories.acquireWorkspaceClaim({
+          workspacePath, taskId: "task_1", runId: "agent_run_new", ownerId: "worker_a",
+          ownerEpoch: 2, acquiredAt: "2026-08-17T23:00:00.000Z",
+          leaseExpiresAt: "2026-08-17T23:30:00.000Z", now: "2026-08-17T23:00:00.000Z",
+        }),
+      ).toBe(false);
+
+      expect(repositories.releaseIsolatedWorkspaceClaims("task_1")).toEqual([workspacePath]);
+      expect(
+        repositories.acquireWorkspaceClaim({
+          workspacePath, taskId: "task_1", runId: "agent_run_new", ownerId: "worker_a",
+          ownerEpoch: 2, acquiredAt: "2026-08-17T23:00:00.000Z",
+          leaseExpiresAt: "2026-08-17T23:30:00.000Z", now: "2026-08-17T23:00:00.000Z",
+        }),
+      ).toBe(true);
+      client.close();
+    });
   });
 
   describe("business artifact syntax repair", () => {

@@ -21,7 +21,7 @@ export type InlineAffordanceButton = {
 };
 
 /** Which handler performs an inline affordance. Keyed so a new inline kind must be wired up. */
-export type InlineAffordanceHandler = "refresh" | "recover" | "founderApproval" | "requestReplan";
+export type InlineAffordanceHandler = "refresh" | "recover" | "founderApproval" | "requestReplan" | "confirmTermination";
 
 export type TaskAffordanceControl =
   | { render: "inline"; handler: InlineAffordanceHandler; buttons: readonly InlineAffordanceButton[] }
@@ -38,6 +38,14 @@ export const taskAffordanceControls: Record<TaskAffordanceKind, TaskAffordanceCo
     render: "inline",
     handler: "recover",
     buttons: [{ labelKey: "department.recoverTask" }],
+  },
+  // Inline, and deliberately where `recover_task` would otherwise be: a task whose process was never
+  // seen to exit is the one case where re-running is the unsafe answer, so the founder is offered the
+  // attestation instead. It is the only way to release the workspace.
+  confirm_termination: {
+    render: "inline",
+    handler: "confirmTermination",
+    buttons: [{ labelKey: "department.confirmTermination" }],
   },
   decide_founder_approval: {
     render: "inline",

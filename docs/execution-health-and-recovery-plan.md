@@ -2,7 +2,7 @@
 
 日期：2026-09-21。已核对基线：`main@a3893bd`（包含 PR #12，结算保护实现提交 `0a82cf0`）；原方案基线为 `b70636a`。
 
-状态：实施中。**P0 已完成**，基线证据见 [execution-health-p0-baseline.md](execution-health-p0-baseline.md)；**P2a（结算一致性）已完成**，见 [ADR 0035](adr/0035-a-settlement-is-one-transaction.md)；**P1（只采集）已完成**；**P2b 大部分完成**（workspace claim 与 termination_unconfirmed 出口留给 P2c）。剩余 P2c、P3–P5 待实施。运行健康监控、健康续时和可靠恢复链仍待实施。迄今未运行真实 Agent，未调整生产预算。
+状态：实施中。**P0 已完成**，基线证据见 [execution-health-p0-baseline.md](execution-health-p0-baseline.md)；**P2a（结算一致性）已完成**，见 [ADR 0035](adr/0035-a-settlement-is-one-transaction.md)；**P1（只采集）已完成**；**P2b、P2c 已完成**。剩余 P3–P5 待实施。运行健康监控、健康续时和可靠恢复链仍待实施。迄今未运行真实 Agent，未调整生产预算。
 
 阶段顺序已按实测调整为 **P0 → P2a → P1 → P2b → P3 → P5**：P2a 修的是当前就在损坏数据的一致性缺陷（基线 F1–F4），P1 的纯观测对它们零保护，且观测要挂在结算 seam 上，先建 seam 可免于写两遍。P2b（移除 GET 判死、取消闭环）确实需要 P1 的观测数据，故留在 P1 之后。
 
@@ -362,15 +362,24 @@ P0 额外确认、需在后续阶段处理的事实：取消全链路是空实�
 - [x] 有界 `busy_timeout = 5s`（原为 0，第二连接写入立即失败）。
 - [x] 双 Worker / 双连接竞争测试通过；真实进程测试覆盖"等待退出""忽略 SIGTERM 被升级""**进程组把孙进程一并带走**"——最后一条我关掉进程组验证过会失败，不是空跑。
 
-**未完成，留给 P2c：**
+**P2b 未完成、已由 P2c 交付的部分见下。仍未完成的：**
 
 | 未做 | 现状与风险 |
 | --- | --- |
-| `workspace claim`（同一可写目录互斥） | 锁仍只按 taskId。**跨 Task 共用产物工作区时没有互斥**，方案不变量 1 的后半句尚未成立 |
-| `termination_unconfirmed` 的 Hold 与隔离出口 | `terminationConfirmed: false` 已被 adapter 如实上报并写进 run 的 stderr，但**没有消费者**：不会隔离工作区，也没有排查用的 Hold。按 ADR 0020，新 Hold 需要 core 穷举映射 + 后端 guard + 真实路由 + dashboard 控件 + 测试，半做比不做更糟，故整体留给 P2c |
 | Windows 终止 | `canGroupSignal` 在 win32 下为 false，只能终止持有的那个进程。**已显式降级，不宣称终止了进程树** |
 | 跨进程停止 | `ExecutionRegistry` 是进程内的。别的 Worker 拥有的 run 停不了，如实报为 unreachable；真正解决需要 P3 的进程外 Supervisor |
 | 迁移现有 active/legacy 数据的协议 | 新列均可空，旧行读作"租约已过期"，但没有写明的升级排空流程 |
+
+### P2c：工作区互斥与未确认终止的出口 —— 已完成（2026-09-21）
+
+`pnpm test` 57 文件 / 814 项通过，typecheck 与 lint 通过。
+
+- [x] **workspace claim**（不变量 1 的后半句）：新表 `workspace_claims` 按**路径**加锁——竞争的是目录，而 Task 锁守的是任务，两者不是一回事。消费者在生产者的产物工作区里继续工作时，两个不同 Task 合法共用一个目录，Task 锁对此无能为力。claim 与 run 在同一事务内取得，带租约并随心跳续租。
+- [x] 拿不到目录的 dispatch **放回 queued**，不是失败也不是 Hold：任务本身没有问题，没有人需要采取行动，下个 tick 再试。同一 dispatch 的重试会先交还自己上一个 run 的 claim，否则会自己挡自己。
+- [x] **`termination_unconfirmed` 的完整出口**（ADR 0020 全套）：新 Hold kind + 新失败原因 + core 穷举映射 + `taskHoldStatusBinding` + `deriveTaskHold` + `resolveTaskAffordances` + schema 枚举 + 后端 guard + **真实路由** `POST /api/tasks/:id/confirm-termination` + dashboard 控件与中英文案 + 测试。`taskAffordanceCoverage.test.ts` 与 dashboard 的 `affordanceControls.test.ts` 两道守护都必须过。
+- [x] **隔离不会过期**：普通 claim 的租约到期后可被接管，被隔离的 claim 只有人为确认才能释放。这是它与租约的根本区别。
+- [x] **刻意不提供 `recover_task`**：工作区里可能还有写入者，"再跑一次"正是唯一不能做的事。founder 的出口是"确认进程已停止"或"重新规划"。确认后任务落到 `runtime_interrupted` Hold（它**提供**恢复），而不是静默回队——没人看过的状态不该被当作没问题。
+- [x] 未确认终止**不计入** Bounded Recovery 上限：没有尝试过什么然后失败，只是运行时跟丢了。
 
 ### P3：独立监督与可靠事件
 

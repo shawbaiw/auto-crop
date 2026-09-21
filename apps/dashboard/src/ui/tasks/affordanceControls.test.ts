@@ -18,6 +18,7 @@ const serverAffordanceKinds: TaskAffordanceKind[] = [
   "recover_task",
   "request_replan",
   "confirm_replan",
+  "confirm_termination",
   "cancel_task",
 ];
 

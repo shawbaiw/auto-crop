@@ -268,6 +268,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         let stopper: AbortController | null = null;
         let stopHandle: { stopReason: string | null } | null = null;
         let releaseHandle: (() => void) | null = null;
+        // The directory this dispatch claimed and the run it claimed it for, so the release names the
+        // same pair it took rather than whatever happens to be there when it unwinds.
+        let heldWorkspacePath: string | null = null;
+        let heldWorkspaceRunId: string | null = null;
         try {
           if (approvalRequired(task)) {
             const approvalId = createId("approval");
@@ -399,7 +403,31 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             // The run, its ownership generation and the lock's binding to both are established
             // together. Apart, a crash in between left a lock bound to no run — invisible to a
             // reconciler indexed by running runs, and permanent (execution-health P2b).
-            ownerEpoch = input.repositories.transaction(() => {
+            // A retry is a new run, so it takes the directory afresh — after giving back what this
+            // dispatch's previous run held, which is otherwise a dispatch blocking itself.
+            if (heldWorkspacePath && heldWorkspaceRunId) {
+              input.repositories.releaseWorkspaceClaim(heldWorkspacePath, heldWorkspaceRunId);
+              heldWorkspacePath = null;
+              heldWorkspaceRunId = null;
+            }
+            const claimed = input.repositories.transaction(() => {
+              // The directory this run will write, claimed with the run itself. Two different tasks
+              // legitimately share one — a consumer continues in its producer's artifact workspace —
+              // so the task lock cannot express this and never did.
+              if (
+                !input.repositories.acquireWorkspaceClaim({
+                  workspacePath: runWorkspacePath,
+                  taskId: task.id,
+                  runId: agentRunId,
+                  ownerId: input.workerId,
+                  ownerEpoch: null,
+                  acquiredAt: now().toISOString(),
+                  leaseExpiresAt: leaseExpiryFrom(now(), input.executionLeaseMs),
+                  now: now().toISOString(),
+                })
+              ) {
+                return null;
+              }
               const epoch = input.repositories.nextExecutionEpoch(task.id);
               input.repositories.createAgentRun({
                 id: agentRunId,
@@ -421,6 +449,17 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               input.repositories.bindTaskLockToRun(task.id, input.workerId, agentRunId, epoch);
               return epoch;
             });
+
+            if (claimed === null) {
+              // Someone else is writing this directory, or it is isolated pending confirmation that a
+              // previous run's process is gone. Put the task back rather than run a second writer into
+              // it; the next tick tries again.
+              requeueForBusyWorkspace(input, task, runWorkspacePath, now, createId);
+              return;
+            }
+            ownerEpoch = claimed;
+            heldWorkspacePath = runWorkspacePath;
+            heldWorkspaceRunId = agentRunId;
 
             // A retry is a new run, so it observes into a new observer; the previous one is closed
             // by the settlement that ended it.
@@ -444,13 +483,11 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             const beat = () => {
               observer?.beat();
               if (ownerEpoch !== null) {
-                input.repositories.renewTaskLock(
-                  task.id,
-                  input.workerId,
-                  agentRunId,
-                  ownerEpoch,
-                  leaseExpiryFrom(now(), input.executionLeaseMs),
-                );
+                const expiresAt = leaseExpiryFrom(now(), input.executionLeaseMs);
+                input.repositories.renewTaskLock(task.id, input.workerId, agentRunId, ownerEpoch, expiresAt);
+                if (heldWorkspacePath) {
+                  input.repositories.renewWorkspaceClaim(heldWorkspacePath, agentRunId, expiresAt);
+                }
               }
             };
             heartbeat?.stop();
@@ -825,16 +862,28 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             const failure = preparationFailed
               ? `Task failed: ${task.title} / ${failureReason} / the execution brief did not complete within ${formatExecutionBudget(preparationTimeoutMs)}; substantive work was not dispatched.`
               : failureMessage(task, failureReason, timeoutResolution.effectiveTimeoutMs, refutedCapability);
-            const ceiling = atRetryCeiling(input, task);
+            // A run we asked to stop and never saw exit may still be writing to the workspace. That
+            // outranks whatever else went wrong: the task cannot be run again there, so it is not a
+            // failure to retry but a directory to isolate until someone says the process is gone.
+            const unconfirmed = agentResult.terminationConfirmed === false;
+            const ceiling = !unconfirmed && atRetryCeiling(input, task);
             if (
               settleRun(
                 input,
                 agentRunId,
-                ceiling ? retryCeilingOutcome(task) : { status: "failed", failureReason, failureMessage: failure },
+                ceiling
+                  ? retryCeilingOutcome(task)
+                  : unconfirmed
+                    ? { status: "failed", failureReason: "termination_unconfirmed", failureMessage: unconfirmedTerminationMessage(task, runWorkspacePath) }
+                    : { status: "failed", failureReason, failureMessage: failure },
                 now,
                 (settled) => {
                   if (ceiling) {
                     terminateAtRetryCeiling(settled, result, task, timeoutResolution, now, createId);
+                    return;
+                  }
+                  if (unconfirmed) {
+                    isolateForUnconfirmedTermination(settled, result, task, agentRunId, runWorkspacePath, now, createId);
                     return;
                   }
                   recordRunOutput(settled);
@@ -1013,6 +1062,11 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           } finally {
             heartbeat?.stop();
             releaseHandle?.();
+            if (heldWorkspacePath && heldWorkspaceRunId) {
+              // Isolation outlives the run on purpose, so a release that names an isolated claim
+              // leaves it standing: `releaseWorkspaceClaim` only clears one that is not isolated.
+              input.repositories.releaseWorkspaceClaim(heldWorkspacePath, heldWorkspaceRunId);
+            }
             // Flush whatever the last phase observed. Nothing here judges the run: an observation
             // that failed to land leaves the run unknown, which is not the same as failed.
             observer?.close("dispatch_ended");
@@ -1778,6 +1832,60 @@ function blockTaskForMissingDeliverable(
   });
 }
 
+function unconfirmedTerminationMessage(task: Task, workspacePath: string): string {
+  return `Task stopped: ${task.title} / termination_unconfirmed / the run was signalled to stop and never seen to exit, so ${workspacePath} may still have a writer in it.`;
+}
+
+/**
+ * Park a task whose run could not be confirmed dead, and keep its workspace out of use.
+ *
+ * The ordinary failure path offers recovery, which re-runs the work in the same directory — the one
+ * thing that must not happen while a process may still be writing there. So the claim survives the
+ * run that took it, and only a person saying the process is gone releases it. An unconfirmed
+ * termination also does not count against the Bounded Recovery ceiling: nothing was attempted and
+ * failed, the runtime simply lost track.
+ */
+function isolateForUnconfirmedTermination(
+  settled: RunSchedulerOnceInput,
+  result: RunSchedulerOnceResult,
+  task: Task,
+  agentRunId: string,
+  workspacePath: string,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): void {
+  const message = unconfirmedTerminationMessage(task, workspacePath);
+  settled.repositories.isolateWorkspaceClaim(workspacePath, agentRunId, message);
+  applyTaskTransition({
+    repositories: settled.repositories,
+    task,
+    status: "blocked",
+    executionSummary: {
+      latestFailureReason: "termination_unconfirmed",
+      latestFailureMessage: message,
+    },
+    hold: {
+      kind: "termination_unconfirmed",
+      resolver: "founder",
+      subjectKind: "agent_run",
+      subjectId: agentRunId,
+      reason: message,
+    },
+    now,
+    createId,
+  });
+  appendAndEmitTaskEvent(settled, {
+    task,
+    type: "task_blocked",
+    failureReason: "termination_unconfirmed",
+    failureMessage: message,
+    message,
+    status: "blocked",
+  });
+  result.blocked.push(task.id, ...blockDirectDependencyConsumers(settled, task));
+  emitParentTaskAggregationEvents(settled, task);
+}
+
 /** Whether this task's next failure is its last: the Bounded Recovery ceiling is reached. */
 function atRetryCeiling(input: RunSchedulerOnceInput, task: Task): boolean {
   return taskAttemptCount(input.repositories, task.id) >= MAX_TASK_ATTEMPTS;
@@ -1816,6 +1924,41 @@ function terminateAtRetryCeiling(
  * that outlives it while renewing is untouched.
  */
 export const DEFAULT_EXECUTION_LEASE_MS = 90_000;
+
+/**
+ * Put a task back because the directory it needs is being written by someone else.
+ *
+ * Not a failure and not a Hold: nothing is wrong with the task, and nobody has to act. It waits for
+ * the directory the way it waits for a dependency, and the next tick tries again.
+ */
+function requeueForBusyWorkspace(
+  input: RunSchedulerOnceInput,
+  task: Task,
+  workspacePath: string,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): void {
+  const claim = input.repositories.listWorkspaceClaims().find((held) => held.workspacePath === workspacePath);
+  const note = claim?.isolatedReason
+    ? `Workspace ${workspacePath} is isolated: ${claim.isolatedReason}`
+    : `Workspace ${workspacePath} is being written by another run.`;
+  applyTaskTransition({
+    repositories: input.repositories,
+    task,
+    status: "queued",
+    executionSummary: { dependencyNote: note },
+    resolution: "cleared",
+    now,
+    createId,
+  });
+  appendAndEmitTaskEvent(input, {
+    task,
+    type: "task_warning",
+    message: `Task warning: ${task.title} / ${note}`,
+    status: "queued",
+    dependencyNote: note,
+  });
+}
 
 function leaseExpiryFrom(now: Date, leaseMs: number | undefined): string {
   return new Date(now.getTime() + (leaseMs ?? DEFAULT_EXECUTION_LEASE_MS)).toISOString();

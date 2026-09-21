@@ -4601,6 +4601,12 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         },
       };
     },
+    async confirmTaskTermination(taskId) {
+      return {
+        task: createCompanyResponse().tasks.find((task) => task.id === taskId) ?? createCompanyResponse().tasks[0],
+        releasedWorkspaces: [],
+      };
+    },
     async recoverTask(taskId) {
       return {
         task: createCompanyResponse().tasks.find((task) => task.id === taskId) ?? createCompanyResponse().tasks[0],

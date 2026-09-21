@@ -105,6 +105,8 @@ export type DepartmentWorkspaceProps = {
   onCreateReplanProposal?: (taskId: string) => Promise<unknown> | unknown | void;
   onDecideFounderApproval?: (approvalId: string, decision: "approved" | "denied") => Promise<FounderApprovalResponse> | FounderApprovalResponse | void;
   onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
+  /** The founder attests the process holding this task's workspace is gone. */
+  onConfirmTaskTermination?: (taskId: string) => Promise<unknown> | void;
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
   onCreateCeoReviewDecision?: (input: {
     taskId: string;
@@ -130,6 +132,7 @@ export function DepartmentWorkspace({
   onCreateReplanProposal,
   onDecideFounderApproval,
   onRecoverTask,
+  onConfirmTaskTermination,
   selectedCeoAgentId,
   tasks,
   ceoIntakes = [],
@@ -225,6 +228,7 @@ export function DepartmentWorkspace({
                   onCreateReplanProposal={onCreateReplanProposal}
                   onDecideFounderApproval={onDecideFounderApproval}
                   onRecoverTask={onRecoverTask}
+                  onConfirmTaskTermination={onConfirmTaskTermination}
                   pendingItems={ceoPendingItems}
                   progressEvents={taskProgressEvents}
                   responsibility={departmentResponsibility(selectedDepartment, language)}
@@ -261,6 +265,7 @@ export function DepartmentWorkspace({
                   onRefreshTask={onRefreshTask}
                   onCreateReplanProposal={onCreateReplanProposal}
                   onRecoverTask={onRecoverTask}
+                  onConfirmTaskTermination={onConfirmTaskTermination}
                   onSelectDepartment={setSelectedRoleId}
                   onSubmit={onCreateCeoIntake}
                   pendingItems={ceoPendingItems}
@@ -352,6 +357,7 @@ function CeoIntakeWorkspace({
   onRefreshTask,
   onCreateReplanProposal,
   onRecoverTask,
+  onConfirmTaskTermination,
   onDraftChange,
   onSelectDepartment,
   onSubmit,
@@ -382,6 +388,7 @@ function CeoIntakeWorkspace({
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
   onCreateReplanProposal?: DepartmentWorkspaceProps["onCreateReplanProposal"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
+  onConfirmTaskTermination?: DepartmentWorkspaceProps["onConfirmTaskTermination"];
   onDraftChange: (value: string) => void;
   onSelectDepartment: (departmentId: string) => void;
   onSubmit?: (body: string) => Promise<void> | void;
@@ -504,6 +511,7 @@ function CeoIntakeWorkspace({
           onRefreshTask={onRefreshTask}
           onCreateReplanProposal={onCreateReplanProposal}
           onRecoverTask={onRecoverTask}
+          onConfirmTaskTermination={onConfirmTaskTermination}
           proofs={proofsByTask.get(selectedPendingItem.task.id) ?? []}
           businessArtifacts={artifactsByTask.get(selectedPendingItem.task.id) ?? []}
         />
@@ -1697,6 +1705,7 @@ function CeoTaskReviewDetail({
   onRefreshTask,
   onCreateReplanProposal,
   onRecoverTask,
+  onConfirmTaskTermination,
   proofs,
   businessArtifacts,
 }: {
@@ -1710,6 +1719,7 @@ function CeoTaskReviewDetail({
   onRefreshTask?: DepartmentWorkspaceProps["onRefreshTask"];
   onCreateReplanProposal?: DepartmentWorkspaceProps["onCreateReplanProposal"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
+  onConfirmTaskTermination?: DepartmentWorkspaceProps["onConfirmTaskTermination"];
   proofs: ProofSummary[];
   businessArtifacts: BusinessArtifactSummary[];
 }) {
@@ -1872,6 +1882,7 @@ function CeoTaskReviewDetail({
               onRefreshTask={onRefreshTask}
               onCreateReplanProposal={onCreateReplanProposal}
               onRecoverTask={onRecoverTask}
+              onConfirmTaskTermination={onConfirmTaskTermination}
               showStatusBadge={false}
               task={item.task}
             />
@@ -2401,6 +2412,7 @@ function DepartmentLeaderReport({
   onCreateReplanProposal,
   onDecideFounderApproval,
   onRecoverTask,
+  onConfirmTaskTermination,
   onRefreshTask,
   onViewCeoPending,
   pendingItems,
@@ -2419,6 +2431,7 @@ function DepartmentLeaderReport({
   onCreateReplanProposal?: DepartmentWorkspaceProps["onCreateReplanProposal"];
   onDecideFounderApproval?: DepartmentWorkspaceProps["onDecideFounderApproval"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
+  onConfirmTaskTermination?: DepartmentWorkspaceProps["onConfirmTaskTermination"];
   onViewCeoPending: () => void;
   pendingItems: CeoPendingItem[];
   progressEvents: TaskProgressEventSummary[];
@@ -2440,6 +2453,7 @@ function DepartmentLeaderReport({
         onCreateReplanProposal={onCreateReplanProposal}
         onDecideFounderApproval={onDecideFounderApproval}
         onRecoverTask={onRecoverTask}
+        onConfirmTaskTermination={onConfirmTaskTermination}
         onViewCeoPending={onViewCeoPending}
         pendingItems={pendingItems}
         progressEvents={progressEvents}
@@ -2457,6 +2471,7 @@ function DepartmentProgressFlows({
   onCreateReplanProposal,
   onDecideFounderApproval,
   onRecoverTask,
+  onConfirmTaskTermination,
   onViewCeoPending,
   pendingItems,
   progressEvents,
@@ -2467,6 +2482,7 @@ function DepartmentProgressFlows({
   onCreateReplanProposal?: DepartmentWorkspaceProps["onCreateReplanProposal"];
   onDecideFounderApproval?: DepartmentWorkspaceProps["onDecideFounderApproval"];
   onRecoverTask?: DepartmentWorkspaceProps["onRecoverTask"];
+  onConfirmTaskTermination?: DepartmentWorkspaceProps["onConfirmTaskTermination"];
   onViewCeoPending: () => void;
   pendingItems: CeoPendingItem[];
   progressEvents: TaskProgressEventSummary[];
@@ -2518,6 +2534,7 @@ function DepartmentProgressFlows({
                         onCreateReplanProposal={onCreateReplanProposal}
                         onDecideFounderApproval={onDecideFounderApproval}
                         onRecoverTask={onRecoverTask}
+                        onConfirmTaskTermination={onConfirmTaskTermination}
                         showStatusBadge={false}
                         task={subjectTask}
                       />
@@ -2532,6 +2549,7 @@ function DepartmentProgressFlows({
             onCreateReplanProposal={onCreateReplanProposal}
             onDecideFounderApproval={onDecideFounderApproval}
             onRecoverTask={onRecoverTask}
+            onConfirmTaskTermination={onConfirmTaskTermination}
             showStatusBadge={false}
             task={flow.task}
           />
@@ -2945,6 +2963,7 @@ function TaskStatusAction({
   onCreateReplanProposal,
   onDecideFounderApproval,
   onRecoverTask,
+  onConfirmTaskTermination,
   onRefreshTask,
   showStatusBadge = true,
   task,
@@ -2955,6 +2974,8 @@ function TaskStatusAction({
     decision: "approved" | "denied",
   ) => Promise<FounderApprovalResponse> | FounderApprovalResponse | void;
   onRecoverTask?: (taskId: string) => Promise<TaskRecoveryResponse> | TaskRecoveryResponse | void;
+  /** The founder attests the process holding this task's workspace is gone. */
+  onConfirmTaskTermination?: (taskId: string) => Promise<unknown> | void;
   onRefreshTask?: (taskId: string) => Promise<TaskRefreshResponse> | TaskRefreshResponse | void;
   showStatusBadge?: boolean;
   task: TaskSummary;
@@ -2984,6 +3005,14 @@ function TaskStatusAction({
       run: async () => {
         const response = await onRecoverTask?.(task.id);
         setActionMessage(response?.recovery?.message ?? null);
+      },
+    },
+    confirmTermination: {
+      available: Boolean(onConfirmTaskTermination),
+      icon: <ShieldCheck size={14} aria-hidden="true" />,
+      run: async () => {
+        await onConfirmTaskTermination?.(task.id);
+        setActionMessage(null);
       },
     },
     founderApproval: {

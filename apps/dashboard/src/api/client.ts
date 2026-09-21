@@ -140,6 +140,7 @@ export type TaskAffordanceKind =
   | "recover_task"
   | "request_replan"
   | "confirm_replan"
+  | "confirm_termination"
   | "cancel_task";
 
 export type TaskAffordanceSummary = {
@@ -564,6 +565,8 @@ export type ApiClient = {
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
   refreshTask(taskId: string): Promise<TaskRefreshResponse>;
   recoverTask(taskId: string): Promise<TaskRecoveryResponse>;
+  /** The founder attests the process holding this task's workspace is gone, releasing its isolation. */
+  confirmTaskTermination(taskId: string): Promise<{ task: TaskSummary; releasedWorkspaces: string[] }>;
   decideFounderApproval(approvalId: string, input: { decision: "approved" | "denied"; note?: string }): Promise<FounderApprovalResponse>;
   createReplanProposal(taskId: string): Promise<{ proposal: ReplanProposalSummary }>;
   confirmReplanProposal(proposalId: string): Promise<{
@@ -623,6 +626,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     },
     async recoverTask(taskId) {
       return postJson(`${baseUrl}/api/tasks/${taskId}/recover`, {}, requestTimeoutMs);
+    },
+    async confirmTaskTermination(taskId) {
+      return postJson(`${baseUrl}/api/tasks/${taskId}/confirm-termination`, {}, requestTimeoutMs);
     },
     async decideFounderApproval(approvalId, input) {
       return postJson(`${baseUrl}/api/approvals/${approvalId}`, input, requestTimeoutMs);

@@ -250,6 +250,22 @@ export function migrate(database: DatabaseClient): void {
 
     CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id, seq);
 
+    -- Who may write a directory (execution-health P2b/P2c). The task lock guards a task; it cannot
+    -- guard a directory, and two different tasks legitimately run in one: a consumer continues in its
+    -- producer's artifact workspace. Keyed by the path itself, because the path is what is contended.
+    CREATE TABLE IF NOT EXISTS workspace_claims (
+      workspace_path TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      run_id TEXT,
+      owner_id TEXT NOT NULL,
+      owner_epoch INTEGER,
+      acquired_at TEXT NOT NULL,
+      lease_expires_at TEXT,
+      -- Set when a run that held this directory could not be confirmed dead. The claim then outlives
+      -- its run on purpose: nothing may write here until a person says the process is gone.
+      isolated_reason TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS task_dependencies (
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
