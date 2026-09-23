@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { acquireSupervisorOwnership } from "./supervisorOwnership";
 import { createId } from "@auto-crop/core";
 import { createDatabaseClient, createRepositories, migrate, Supervisor } from "@auto-crop/server";
 
@@ -27,7 +29,7 @@ export type SuperviseOptions = {
 };
 
 export type SupervisedAutoCrop = {
-  /** Resolves once the supervisor has stopped and the worker has been asked to go. */
+  /** Resolves after the worker exits and the local launch claim is released. */
   close(): Promise<void>;
 };
 
@@ -47,9 +49,22 @@ export async function superviseAutoCrop(options: SuperviseOptions): Promise<Supe
   const stateDir = join(options.projectRoot, ".auto-crop");
   mkdirSync(stateDir, { recursive: true });
 
+  const projectRoot = realpathSync(options.projectRoot);
+  const ownership = acquireSupervisorOwnership(join(stateDir, "supervisor.sqlite"));
+
   // Its own connection. Sharing the worker's would tie this process's liveness to the worker's.
-  const database = createDatabaseClient(join(stateDir, "state.sqlite"));
-  migrate(database);
+  const database = (() => {
+    let connection: ReturnType<typeof createDatabaseClient> | undefined;
+    try {
+      connection = createDatabaseClient(join(stateDir, "state.sqlite"));
+      migrate(connection);
+      return connection;
+    } catch (error) {
+      connection?.close();
+      ownership.close();
+      throw error;
+    }
+  })();
   const repositories = createRepositories(database);
   const supervisor = new Supervisor({
     repositories,
@@ -62,8 +77,9 @@ export async function superviseAutoCrop(options: SuperviseOptions): Promise<Supe
   let worker: ChildProcess | null = null;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let scanning = false;
+  let scanFinished: Promise<void> = Promise.resolve();
 
-  async function scan(reason: string): Promise<void> {
+  async function performScan(reason: string): Promise<void> {
     if (scanning || stopped) {
       return;
     }
@@ -84,48 +100,81 @@ export async function superviseAutoCrop(options: SuperviseOptions): Promise<Supe
     }
   }
 
+  function scan(reason: string): Promise<void> {
+    if (!scanning) scanFinished = performScan(reason);
+    return scanFinished;
+  }
+
   function startWorker(): void {
     if (stopped) {
       return;
     }
     worker = options.spawnWorker
       ? options.spawnWorker()
-      : spawn(process.execPath, [process.argv[1]!, "start"], { stdio: "inherit", env: process.env });
+      : spawn(process.execPath, [...process.execArgv, fileURLToPath(new URL("../index.ts", import.meta.url)), "__worker"], {
+        stdio: ["inherit", "inherit", "inherit", "ipc"],
+        env: { ...process.env, INIT_CWD: projectRoot },
+      });
+    const child = worker;
+    if (child.pid) ownership.recordWorker(child.pid);
+    child.on("message", (message) => {
+      if (message === "worker-ready" && !stopped && child.connected) {
+        child.send("worker-start", (error) => {
+          if (error) log(`Supervisor: worker handshake failed: ${error.message}`);
+        });
+      }
+    });
+    child.once("error", (error) => log(`Supervisor: worker launch failed: ${error.message}`));
     log(`Supervisor: worker started (pid ${worker.pid ?? "unknown"})`);
 
-    worker.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       worker = null;
+      ownership.recordWorker(null);
       if (stopped) {
         return;
       }
-      // Seen directly, so the tasks it abandoned are reconciled now rather than when their leases
-      // expire. This is the whole advantage of being the parent.
+      // Trigger a scan immediately. Associating this exit with a specific owner/run is K3;
+      // the current reconciler still applies its existing expiry rules.
       log(`Supervisor: worker exited (code ${code ?? "null"}, signal ${signal ?? "none"}); reconciling its work.`);
       void scan("worker exit");
       restartTimer = setTimeout(startWorker, options.restartDelayMs ?? WORKER_RESTART_DELAY_MS);
-      restartTimer.unref?.();
     });
   }
 
-  // Before anything is dispatched: whatever the last run of this system left behind is settled first.
+  // Attempt startup reconciliation before dispatch; fail-closed reconciliation is tracked by K3.
   await scan("startup");
-  startWorker();
+  try {
+    startWorker();
+  } catch (error) {
+    database.close();
+    ownership.close();
+    throw error;
+  }
 
   const interval = setInterval(() => void scan("interval"), options.scanIntervalMs ?? SUPERVISOR_SCAN_INTERVAL_MS);
-  interval.unref?.();
+
   log(`Supervisor: scanning every ${options.scanIntervalMs ?? SUPERVISOR_SCAN_INTERVAL_MS}ms`);
 
+  let closing: Promise<void> | undefined;
   return {
-    async close(): Promise<void> {
-      stopped = true;
-      clearInterval(interval);
-      if (restartTimer) {
-        clearTimeout(restartTimer);
-      }
-      if (worker) {
-        worker.kill("SIGTERM");
-      }
-      database.close();
+    close(): Promise<void> {
+      return closing ??= (async () => {
+        stopped = true;
+        clearInterval(interval);
+        if (restartTimer) clearTimeout(restartTimer);
+        const child = worker;
+        if (child) {
+          await new Promise<void>((resolve) => {
+            child.once("close", resolve);
+            child.kill("SIGTERM");
+            const force = setTimeout(() => child.kill("SIGKILL"), 5_000);
+            child.once("close", () => clearTimeout(force));
+          });
+        }
+        await scanFinished;
+        database.close();
+        ownership.close();
+      })();
     },
   };
 }

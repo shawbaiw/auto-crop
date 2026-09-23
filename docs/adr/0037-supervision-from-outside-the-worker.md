@@ -23,7 +23,11 @@ Two constraints shaped the answer. A supervisor must not depend on anything the 
 - Local decision comes **before** external forwarding, and does not depend on it. An operator's webhook being down must not stop the runtime deciding what to do about its own failed run.
 - The coordinator's default is **`report_only`**: it says what it sees and records that, and schedules nothing. The Hold model already guarantees a stopped task carries a way forward; automatic recovery is a narrower, evidenced subset (P5), and enabling it before the observation exists to justify it is how a recovery storm starts.
 
-**The supervisor is a parent process, and the worker is its child** (`auto-crop supervise`). Considered against a standalone `watch` command driven by a system process manager, and chosen because it delivers a working start/stop/restart today with no supervisor of its own to install: the parent sees the child's exit directly rather than inferring it from a lease, so a crashed worker is reconciled in the same second rather than ninety of them later. `start` is unchanged and still runs alone, which is what the tests and the existing workflow use.
+**The supervisor is a parent process, and the worker is its child.** As of K1, both `auto-crop start` and `auto-crop supervise` enter supervision. The child uses an internal IPC-gated `__worker` command, preserving Node loader arguments and the resolved project root. The parent observes exit directly and requests a scan; immediate owner-specific reconciliation remains K3 work.
+
+**One local supervised launch per state directory.** Before opening/migrating the application database, startup claims a row in `.auto-crop/supervisor.sqlite` under `BEGIN IMMEDIATE`. It records the hostname, Supervisor PID and Worker PID; the Worker receives permission to start only after its PID is persisted. A competing starter refuses while either recorded local PID is present. Stale claims are reclaimed only after both are confirmed absent. PID reuse, permission errors and a different hostname cause conservative refusal instead of takeover. This avoids time-based takeover of a paused process and file-unlink races without adding distributed leader election.
+
+SIGINT/SIGTERM waits for Worker exit before releasing ownership. A Worker exits when its parent IPC channel closes. If it is stuck and cannot handle disconnect, its recorded PID continues blocking another supervised launch. This is local process admission, not proof that detached Agent descendants have stopped; K3 still owns that reconciliation. Direct library calls to `startAutoCrop` remain a low-level unsupervised API for embedding and tests.
 
 ## Considered options
 
@@ -35,7 +39,7 @@ Two constraints shaped the answer. A supervisor must not depend on anything the 
 
 ## Consequences
 
-- A worker that dies is noticed by something that did not die with it, and its abandoned tasks are recovered and reported in the same pass.
+- A worker exit triggers a scan outside the worker. Current expiry-based reconciliation and its event transaction gaps remain K2/K3 acceptance items; this ADR describes the intended reliable chain, not proof that all P3 acceptance criteria passed.
 - The supervisor cannot stop a process owned by a different worker — it has no control channel to one — and reports those as unreachable rather than as stopped. It also cannot survive its own machine going down; no part of this claims otherwise, and the docs say so where a founder will read it.
-- Two supervisors on one database are safe with respect to the outbox, because claims are conditional. Nothing yet elects a leader between them, so they would both reconcile; that is idempotent but wasteful, and it is the next thing to fix if a second supervisor ever becomes real.
+- A second local supervised launch is refused before spawning. Cross-host leadership and control remain outside this local startup guard.
 - The outbox grows without bound. Delivered events are kept deliberately — they are the audit trail for what was decided and when — but there is no retention policy yet, the same gap `run_activity` has.

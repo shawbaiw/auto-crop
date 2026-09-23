@@ -44,6 +44,21 @@ pnpm typecheck
 AUTO_CROP_PORT=8787 pnpm --filter @auto-crop/cli start
 ```
 
+`start` launches a Supervisor and its Worker. The Supervisor consumes execution events even when
+no dashboard is open; `supervise` is an alias for the same supervised entry point. Ctrl-C or SIGTERM
+stops the Supervisor and waits for the Worker to exit. The existing port, scheduler interval and
+project-root environment settings are inherited by the Worker.
+
+Only one Supervisor may run against a project's state directory. A second launch exits with an error
+before starting a Worker. Startup records live in `.auto-crop/supervisor.sqlite`; after a crash, they
+are reclaimed only when both recorded local processes are confirmed absent. A surviving Worker,
+reused PID, unavailable process check or another hostname causes a conservative refusal. Stop and
+verify the recorded processes before retrying; do not delete the ownership file while they run.
+This guards local CLI startup, not remote hosts or direct programmatic `startAutoCrop` callers.
+Worker death does not prove its Agent descendants stopped; termination reconciliation remains a
+separate safety requirement. Supervisor/host failure still needs a system process manager for restart.
+
+
 5. In another terminal, start the dashboard:
 
 ```bash

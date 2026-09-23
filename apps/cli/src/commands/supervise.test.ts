@@ -1,10 +1,12 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { once } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Company, Department, KeyResult, Objective, Task } from "@auto-crop/core";
-import { createDatabaseClient, createRepositories, migrate } from "@auto-crop/server";
+import { createDatabaseClient, createRepositories, migrate, recordExecutionEvent } from "@auto-crop/server";
 import { superviseAutoCrop } from "./supervise";
 
 const createdDirs: string[] = [];
@@ -34,6 +36,103 @@ describe("superviseAutoCrop", () => {
     }
     throw new Error("Timed out waiting for the supervised system to settle.");
   };
+
+  it("refuses a second supervisor before spawning, and releases ownership on close", async () => {
+    const projectRoot = createTempProjectRoot();
+    let launches = 0;
+    const options = {
+      projectRoot,
+      log: () => undefined,
+      spawnWorker: () => {
+        launches++;
+        return spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+      },
+    };
+    const first = await superviseAutoCrop(options);
+    try {
+      await expect(superviseAutoCrop(options)).rejects.toThrow("already running");
+      expect(launches).toBe(1);
+    } finally {
+      await first.close();
+    }
+    const next = await superviseAutoCrop(options);
+    await next.close();
+    expect(launches).toBe(2);
+  });
+
+  it("the start CLI runs a supervised worker and consumes failures without opening a page", async () => {
+    const projectRoot = createTempProjectRoot();
+    const { repositories, client } = openState(projectRoot);
+    // A settled failure fixture avoids invoking any real model. Delivery must happen after startup.
+    repositories.writeTaskStatusUnchecked("task_1", "failed");
+    const first = launchCli(projectRoot);
+    try {
+      await untilTrue(() => first.output().includes("Dashboard:")).catch(() => { throw new Error(first.output()); });
+      expect(first.output().match(/Supervisor: worker started/g)).toHaveLength(1);
+      const url = first.output().match(/Dashboard: (http:\/\/[^\s]+)/)![1];
+      repositories.transaction(() => recordExecutionEvent(repositories, {
+        id: "failure_after_start", type: "execution_failed", companyId: "company_1",
+        taskId: "task_1", reason: "process_exit", observedAt: new Date().toISOString(),
+      }));
+      await untilTrue(() => repositories.listRecoveryDecisions("company_1").length === 1, 25_000);
+      const response = await fetch(`${url}/api/companies/company_1/execution-events`);
+      expect(await response.json()).toMatchObject({ pending: 0, decisions: [{ sourceEventId: "failure_after_start" }] });
+      const second = launchCli(projectRoot);
+      try {
+        await untilTrue(() => second.child.exitCode !== null);
+        expect(second.child.exitCode).toBe(1);
+        expect(second.output()).toContain("already running");
+        expect(second.output()).not.toContain("worker started");
+      } finally {
+        await stopChild(second.child);
+      }
+    } finally {
+      await stopChild(first.child);
+      client.close();
+    }
+    const next = launchCli(projectRoot);
+    try {
+      await untilTrue(() => next.output().includes("Dashboard:"));
+    } finally {
+      await stopChild(next.child);
+    }
+  }, 40_000);
+
+  it.skipIf(process.platform === "win32")("refuses takeover while an orphan worker lives, then recovers a stale claim", async () => {
+    const projectRoot = createTempProjectRoot();
+    const first = launchCli(projectRoot);
+    let workerPid: number | undefined;
+    try {
+      await untilTrue(() => first.output().includes("Dashboard:")).catch(() => { throw new Error(first.output()); });
+      workerPid = Number(first.output().match(/worker started \(pid (\d+)\)/)![1]);
+      process.kill(workerPid, "SIGSTOP");
+      const exited = once(first.child, "exit");
+      first.child.kill("SIGKILL");
+      await exited;
+      const refused = launchCli(projectRoot);
+      try {
+        await untilTrue(() => refused.child.exitCode !== null);
+        expect(refused.output()).toContain("already running");
+        expect(refused.output()).not.toContain("worker started");
+      } finally {
+        await stopChild(refused.child);
+      }
+      process.kill(workerPid, "SIGKILL");
+      await untilTrue(() => {
+        try { process.kill(workerPid!, 0); return false; } catch { return true; }
+      });
+      workerPid = undefined;
+      const recovered = launchCli(projectRoot);
+      try {
+        await untilTrue(() => recovered.output().includes("Dashboard:"));
+      } finally {
+        await stopChild(recovered.child);
+      }
+    } finally {
+      if (workerPid) { try { process.kill(workerPid, "SIGKILL"); } catch { /* Already exited. */ } }
+      await stopChild(first.child);
+    }
+  }, 30_000);
 
   it("outlives its worker, recovers the task it abandoned, and starts a replacement", async () => {
     const projectRoot = createTempProjectRoot();
@@ -147,4 +246,25 @@ function createTempProjectRoot(): string {
   createdDirs.push(projectRoot);
   mkdirSync(join(projectRoot, ".auto-crop"), { recursive: true });
   return projectRoot;
+}
+
+function launchCli(projectRoot: string) {
+  const entry = fileURLToPath(new URL("../index.ts", import.meta.url));
+  const child = spawn(process.execPath, ["--import", "tsx", entry, "start"], {
+    cwd: fileURLToPath(new URL("../../../../", import.meta.url)),
+    env: { ...process.env, INIT_CWD: projectRoot, AUTO_CROP_PORT: "0" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk.toString(); });
+  child.stderr.on("data", (chunk) => { output += chunk.toString(); });
+  return { child, output: () => output };
+}
+
+async function stopChild(child: ChildProcess) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, "exit");
+  child.kill("SIGTERM");
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 7_000);
+  try { await exited; } finally { clearTimeout(timeout); }
 }
