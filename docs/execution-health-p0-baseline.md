@@ -2,7 +2,7 @@
 
 日期：2026-09-21。基线：`main@a3893bd`（工作区含本文与方案文档的未提交修改）。
 
-> **后续状态（2026-09-21，P2a）**：F1、F2、F3、F4 已修复，见 [ADR 0035](adr/0035-a-settlement-is-one-transaction.md)。下文第 2 节保留发现时的描述作为"改之前是什么样"的记录；第 4 节的测试清单已全部改写为断言修复后的行为。F5 部分缓解、F6 未动，详见各条末尾的状态行。
+> **后续状态（2026-09-23，K4）**：F1–F4 已在 P2a 修复；F5/F6 已在 P2b/P2c 修复，K2/K3 补齐同事务事件与 Worker 退出隔离。见 [ADR 0035](adr/0035-a-settlement-is-one-transaction.md)、[实施记录](execution-health-and-recovery-plan.md)及 [ADR 0037](adr/0037-supervision-from-outside-the-worker.md)。第 2、3 节保留历史发现与当时未验证项，各条状态和第 4 节注明当前证据；不要将基线缺口当作现状。
 
 ## 与实施方案的关系
 
@@ -131,9 +131,11 @@ ADR 0034 的 claim 只保护 run 行、Task 状态与 Business Artifact。`appen
 | running + 锁，无 run | 同上，且 Task 已转 running | Task 永久 `running`，无 Hold |
 | 终态 run + 残留锁 | 结算中断（F3）或异常退出 | 锁永久残留，`acquireTaskLock` 永远失败 |
 
-证据：`taskRecovery.test.ts` › `leftover state combinations reconciliation does not reach`（3 条，仍断言当前行为）
+证据：`taskRecovery.test.ts` › `leftover state combinations reconciliation does not reach`（基线时 3 条；现已改写，见第 4 节）
 
-**状态：P2a 部分缓解，未修复。** 结算中断不再制造新的"终态 run + 残留锁"（F3 已修）。但锁与 run 仍分两步创建，"queued/running + 锁无 run"的窗口依旧存在，对账仍看不见这三种组合。需要 P2b 把锁、run 与 running 转换放进同一事务。
+**历史状态（P2a）：部分缓解，未修复。** 结算中断不再制造新的"终态 run + 残留锁"（F3 已修）。但锁与 run 仍分两步创建，"queued/running + 锁无 run"的窗口依旧存在，对账仍看不见这三种组合。需要 P2b 把锁、run 与 running 转换放进同一事务。
+
+**当前状态：P2b/P2c 已修复。** queued 或终态 run 的残留 Task 锁可在租约过期后重新获取；running 且无 run 的孤儿在有过期锁证据时结算为 `worker_lost` 并建立 Hold。无锁的 running Task 保守保留。K2（`e1811fd`）使该结算、释放锁与 outbox 同事务；K3（`74906e7`）让已确认退出的 owner 无需等租约，无法确认 Agent 停止的工作区持续隔离。终态 run 遗留未分类工作区 claim 仍需人工核实，不承诺自动清理。
 
 ### F6 —— 取消是空实现
 
@@ -143,7 +145,7 @@ ADR 0034 的 claim 只保护 run 行、Task 状态与 Business Artifact。`appen
 
 证据：代码审计（1.2/1.3 表）。进程行为的实测属于 P2b/P5。
 
-**状态：未修复，留给 P2b。**
+**当前状态：P2b/P2c 已修复。** 本 Worker 内的取消通过 execution registry 下达 AbortSignal；CLI adapter 按进程组 SIGTERM、宽限后 SIGKILL 并等待确认，未确认停止则隔离工作区。Emergency Stop 按公司/run 释放 Task 锁；K2（`e1811fd`）补齐结算与事件事务。Windows 进程树、跨 Worker 控制仍在边界外；K3（`74906e7`）对死亡 Worker 的后代选择隔离，不冒充已终止。
 
 ## 3. 三分类结论
 
@@ -182,7 +184,7 @@ pnpm exec vitest run apps/server/src/runtime/scheduler.test.ts apps/server/src/r
 - rolls the claim back with the settlement when committing the delivery is interrupted → F3 ✅
 - leaves the winner's settlement alone when the loser reaches the retry ceiling → F4 ✅
 
-`taskRecovery.test.ts` › `leftover state combinations reconciliation does not reach`（新 3 条）→ F5，**仍断言当前行为**，待 P2b 改写。
+`taskRecovery.test.ts` › `leftover state after a worker dies mid-dispatch` → F5，现断言过期锁重新获取、孤儿恢复及无锁 running 保守保留。F6 由 `adapters/registry.test.ts` 的真实取消/升级终止和 `runtime/killSwitch.test.ts` 覆盖。K4 新增 `pnpm smoke:execution-health`，通过真实 `start` 入口验证死亡对账、隔离和重复消费。
 
 P2a 另新增：`db/multiConnection.test.ts`（4 条，多连接竞争语义）与 `scheduler.test.ts` › `the settlement transaction`（扫描源码，禁止事务内 await 与文件 I/O）。
 
@@ -195,3 +197,5 @@ P2a 另新增：`db/multiConnection.test.ts`（4 条，多连接竞争语义）�
 - `pnpm typecheck`、`pnpm lint`：通过。
 - 未运行真实 Agent。
 - `pnpm smoke:mock` 在本机失败（`SSE endpoint should connect.`）。已用 `git stash` 在干净的 `a3893bd` 上复现，**属既有问题，与本次改动无关**；未在本轮排查。
+
+K4 复测补充（2026-09-23）：`pnpm smoke:mock` 仍在连接 SSE 时失败。脚本请求 `/api/events` 未带 `companyId`，`routes.ts` 对该请求明确返回 400，属于旧冒烟与公司事件流接口不匹配；本轮未扩大范围修复该业务冒烟，由独立的 `smoke:execution-health` 验收监督链路。

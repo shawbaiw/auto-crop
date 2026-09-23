@@ -34,7 +34,7 @@ export type ExecutionEventPayload = {
   lastHeartbeatAt: string | null;
   lastActivityAt: string | null;
   effectiveTimeoutMs: number | null;
-  /** Whether a signalled process was seen to exit. Null when no stop was requested. */
+  /** Whether termination was confirmed. Null when no confirmation evidence is available, including Worker loss. */
   terminationConfirmed: boolean | null;
   /** Where the full output lives. A reference, never the output itself. */
   logPath: string | null;

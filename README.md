@@ -153,7 +153,15 @@ Run type checks:
 pnpm typecheck
 ```
 
-Run the mock smoke test:
+Run the execution-health smoke (macOS/Linux; Windows skips this POSIX process test):
+
+```bash
+pnpm smoke:execution-health
+```
+
+This uses the real `start` CLI and production adapter with a local mock executable, temporary SQLite databases, and no paid model calls. It checks Worker death, rollback and restart after a reconciliation failure, workspace isolation while an Agent still writes, and duplicate delivery after a lost acknowledgement. The delivery lease is advanced in the disposable database to avoid waiting 30 seconds.
+
+Run the older business-workflow mock smoke test (currently fails at SSE connection because the script omits the required `companyId`; see the [baseline record](docs/execution-health-p0-baseline.md)):
 
 ```bash
 pnpm smoke:mock

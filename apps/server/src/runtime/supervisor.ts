@@ -103,8 +103,6 @@ export class Supervisor {
         createId: this.input.createId,
       });
       reconciledTaskIds.push(...reconciled.reconciledTaskIds);
-
-
     }
 
     const drained = await this.dispatcher.drainOnce();

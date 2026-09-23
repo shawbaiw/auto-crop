@@ -11,8 +11,9 @@ import { createDatabaseClient, createRepositories, migrate, Supervisor } from "@
  *
  * Short enough that a lost worker's tasks are recovered promptly, long enough that an idle machine
  * is not doing constant database work. The worker's own exit is not waited for on this clock — that
- * is observed directly — so this covers the cases the parent cannot see: a wedged event loop, a
- * worker on another machine, an event whose delivery failed and is due for another try.
+ * is observed directly. This periodic scan handles legacy deadline reconciliation and events due
+ * for another delivery.
+ * It does not yet diagnose a live Worker whose event loop is wedged (P4).
  */
 const SUPERVISOR_SCAN_INTERVAL_MS = 15_000;
 
