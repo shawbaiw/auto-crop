@@ -22,7 +22,7 @@ const WORKER_RESTART_DELAY_MS = 2_000;
 export type SuperviseOptions = {
   projectRoot: string;
   /** How to start the worker. Injected so tests can supervise something that is not a real server. */
-  spawnWorker?: () => ChildProcess;
+  spawnWorker?: (ownerId: string) => ChildProcess;
   scanIntervalMs?: number;
   restartDelayMs?: number;
   log?: (line: string) => void;
@@ -75,75 +75,101 @@ export async function superviseAutoCrop(options: SuperviseOptions): Promise<Supe
 
   let stopped = false;
   let worker: ChildProcess | null = null;
+  let activeOwnerId: string | null = null;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let scanning = false;
   let scanFinished: Promise<void> = Promise.resolve();
 
-  async function performScan(reason: string): Promise<void> {
-    if (scanning || stopped) {
-      return;
-    }
-    scanning = true;
-    try {
-      const result = await supervisor.scanOnce();
-      if (result.reconciledTaskIds.length > 0 || result.deliveredEventIds.length > 0 || result.deadLetteredEventIds.length > 0) {
-        log(
-          `Supervisor scan (${reason}): recovered=${result.reconciledTaskIds.length} delivered=${result.deliveredEventIds.length} `
-          + `retrying=${result.failedEventIds.length} deadLettered=${result.deadLetteredEventIds.length}`,
-        );
-      }
-    } catch (error) {
-      // A supervisor that throws is a supervisor that has stopped supervising.
-      log(`Supervisor scan failed: ${(error as Error).message}`);
-    } finally {
-      scanning = false;
-    }
-  }
-
   function scan(reason: string): Promise<void> {
-    if (!scanning) scanFinished = performScan(reason);
+    // Exit scans queue behind an in-flight scan instead of silently disappearing behind its guard.
+    scanFinished = scanFinished.catch(() => undefined).then(async () => {
+      scanning = true;
+      try {
+        const exitedOwners = ownership.pendingWorkers().filter((id) => id !== activeOwnerId);
+        const result = await supervisor.scanOnce(exitedOwners);
+        for (const ownerId of exitedOwners) ownership.reconciledWorker(ownerId);
+        if (result.reconciledTaskIds.length > 0 || result.deliveredEventIds.length > 0 || result.deadLetteredEventIds.length > 0) {
+          log(`Supervisor scan (${reason}): recovered=${result.reconciledTaskIds.length} delivered=${result.deliveredEventIds.length} `
+            + `retrying=${result.failedEventIds.length} deadLettered=${result.deadLetteredEventIds.length}`);
+        }
+      } finally { scanning = false; }
+    });
     return scanFinished;
   }
 
-  function startWorker(): void {
-    if (stopped) {
-      return;
-    }
-    worker = options.spawnWorker
-      ? options.spawnWorker()
-      : spawn(process.execPath, [...process.execArgv, fileURLToPath(new URL("../index.ts", import.meta.url)), "__worker"], {
-        stdio: ["inherit", "inherit", "inherit", "ipc"],
-        env: { ...process.env, INIT_CWD: projectRoot },
-      });
-    const child = worker;
-    if (child.pid) ownership.recordWorker(child.pid);
-    child.on("message", (message) => {
-      if (message === "worker-ready" && !stopped && child.connected) {
-        child.send("worker-start", (error) => {
-          if (error) log(`Supervisor: worker handshake failed: ${error.message}`);
-        });
-      }
-    });
-    child.once("error", (error) => log(`Supervisor: worker launch failed: ${error.message}`));
-    log(`Supervisor: worker started (pid ${worker.pid ?? "unknown"})`);
-
-    child.once("close", (code, signal) => {
-      worker = null;
-      ownership.recordWorker(null);
-      if (stopped) {
-        return;
-      }
-      // Trigger a scan immediately. Associating this exit with a specific owner/run is K3;
-      // the current reconciler still applies its existing expiry rules.
-      log(`Supervisor: worker exited (code ${code ?? "null"}, signal ${signal ?? "none"}); reconciling its work.`);
-      void scan("worker exit");
-      restartTimer = setTimeout(startWorker, options.restartDelayMs ?? WORKER_RESTART_DELAY_MS);
-    });
+  function scheduleRestart(): void {
+    if (stopped || restartTimer) return;
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      void restart();
+    }, options.restartDelayMs ?? WORKER_RESTART_DELAY_MS);
   }
 
-  // Attempt startup reconciliation before dispatch; fail-closed reconciliation is tracked by K3.
-  await scan("startup");
+  async function restart(): Promise<void> {
+    try {
+      await scan("worker exit");
+      if (!stopped && !restartTimer) {
+        restartTimer = setTimeout(() => {
+          restartTimer = null;
+          try { startWorker(); }
+          catch (error) {
+            log(`Supervisor: worker restart failed: ${(error as Error).message}`);
+            scheduleRestart();
+          }
+        }, options.restartDelayMs ?? WORKER_RESTART_DELAY_MS);
+      }
+    } catch (error) {
+      log(`Supervisor: restart blocked by reconciliation: ${(error as Error).message}`);
+      scheduleRestart();
+    }
+  }
+
+  function startWorker(): void {
+    if (stopped || worker) return;
+    const ownerId = createId("cli-worker");
+    ownership.beginWorker(ownerId);
+    activeOwnerId = ownerId;
+    try {
+      worker = options.spawnWorker
+        ? options.spawnWorker(ownerId)
+        : spawn(process.execPath, [...process.execArgv, fileURLToPath(new URL("../index.ts", import.meta.url)), "__worker"], {
+          stdio: ["inherit", "inherit", "inherit", "ipc"],
+          env: { ...process.env, INIT_CWD: projectRoot },
+        });
+      const child = worker;
+      if (child.pid) ownership.recordWorker(child.pid);
+      child.on("message", (message) => {
+        if (message === "worker-ready" && !stopped && child.connected) {
+          child.send({ type: "worker-start", ownerId }, (error) => {
+            if (error) log(`Supervisor: worker handshake failed: ${error.message}`);
+          });
+        }
+      });
+      child.once("error", (error) => log(`Supervisor: worker launch failed: ${error.message}`));
+      log(`Supervisor: worker started (pid ${child.pid ?? "unknown"}, owner ${ownerId})`);
+      // Use exit, not close: an Agent inheriting a pipe can keep close pending after Worker death.
+      const exited = (code: number | null, signal: NodeJS.Signals | null) => {
+        if (worker !== child) return;
+        worker = null;
+        activeOwnerId = null;
+        ownership.recordWorker(null);
+        log(`Supervisor: worker exited (code ${code ?? "null"}, signal ${signal ?? "none"}); reconciling its work.`);
+        if (!stopped) void restart();
+      };
+      child.once("exit", exited);
+      // A failed spawn emits error/close without exit.
+      child.once("close", exited);
+    } catch (error) {
+      activeOwnerId = null;
+      // The production child has not received its IPC start permission on this failure path.
+      worker?.kill("SIGKILL");
+      worker = null;
+      throw error;
+    }
+  }
+
   try {
+    await scan("startup");
     startWorker();
   } catch (error) {
     database.close();
@@ -151,8 +177,9 @@ export async function superviseAutoCrop(options: SuperviseOptions): Promise<Supe
     throw error;
   }
 
-  const interval = setInterval(() => void scan("interval"), options.scanIntervalMs ?? SUPERVISOR_SCAN_INTERVAL_MS);
-
+  const interval = setInterval(() => {
+    if (!scanning && !stopped) void scan("interval").catch((error) => log(`Supervisor scan failed: ${(error as Error).message}`));
+  }, options.scanIntervalMs ?? SUPERVISOR_SCAN_INTERVAL_MS);
   log(`Supervisor: scanning every ${options.scanIntervalMs ?? SUPERVISOR_SCAN_INTERVAL_MS}ms`);
 
   let closing: Promise<void> | undefined;
@@ -165,15 +192,20 @@ export async function superviseAutoCrop(options: SuperviseOptions): Promise<Supe
         const child = worker;
         if (child) {
           await new Promise<void>((resolve) => {
-            child.once("close", resolve);
-            child.kill("SIGTERM");
+            const done = () => { clearTimeout(force); resolve(); };
             const force = setTimeout(() => child.kill("SIGKILL"), 5_000);
-            child.once("close", () => clearTimeout(force));
+            child.once("exit", done);
+            child.once("close", done);
+            child.kill("SIGTERM");
           });
         }
-        await scanFinished;
-        database.close();
-        ownership.close();
+        try {
+          await scan("shutdown");
+        } finally {
+          // Pending owner rows survive a failed scan, even after the launch claim is released.
+          database.close();
+          ownership.close();
+        }
       })();
     },
   };

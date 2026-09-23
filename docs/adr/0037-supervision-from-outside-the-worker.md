@@ -23,11 +23,23 @@ Two constraints shaped the answer. A supervisor must not depend on anything the 
 - Local decision comes **before** external forwarding, and does not depend on it. An operator's webhook being down must not stop the runtime deciding what to do about its own failed run.
 - The coordinator's default is **`report_only`**: it says what it sees and records that, and schedules nothing. The Hold model already guarantees a stopped task carries a way forward; automatic recovery is a narrower, evidenced subset (P5), and enabling it before the observation exists to justify it is how a recovery storm starts.
 
-**The supervisor is a parent process, and the worker is its child.** As of K1, both `auto-crop start` and `auto-crop supervise` enter supervision. The child uses an internal IPC-gated `__worker` command, preserving Node loader arguments and the resolved project root. The parent observes exit directly and requests a scan; immediate owner-specific reconciliation remains K3 work.
+**The supervisor is a parent process, and the worker is its child.** As of K1, both `auto-crop start` and `auto-crop supervise` enter supervision. The child uses an internal IPC-gated `__worker` command, preserving Node loader arguments and the resolved project root. The parent observes exit directly and reconciles that startup identity before scheduling its replacement (K3).
 
 **One local supervised launch per state directory.** Before opening/migrating the application database, startup claims a row in `.auto-crop/supervisor.sqlite` under `BEGIN IMMEDIATE`. It records the hostname, Supervisor PID and Worker PID; the Worker receives permission to start only after its PID is persisted. A competing starter refuses while either recorded local PID is present. Stale claims are reclaimed only after both are confirmed absent. PID reuse, permission errors and a different hostname cause conservative refusal instead of takeover. This avoids time-based takeover of a paused process and file-unlink races without adding distributed leader election.
 
-SIGINT/SIGTERM waits for Worker exit before releasing ownership. A Worker exits when its parent IPC channel closes. If it is stuck and cannot handle disconnect, its recorded PID continues blocking another supervised launch. This is local process admission, not proof that detached Agent descendants have stopped; K3 still owns that reconciliation. Direct library calls to `startAutoCrop` remain a low-level unsupervised API for embedding and tests.
+SIGINT/SIGTERM waits for Worker exit before releasing ownership. A Worker exits when its parent IPC channel closes. If it is stuck and cannot handle disconnect, its recorded PID continues blocking another supervised launch. This is local process admission, not proof that detached Agent descendants have stopped. K3 isolates the departed owner's active run workspaces rather than claiming its process tree has stopped. Direct library calls to `startAutoCrop` remain a low-level unsupervised API for embedding and tests.
+
+## K3 amendment (2026-09-23)
+
+Each Worker launch gets a fresh owner UUID. The Supervisor persists it in `pending_workers` in its ownership database before spawn, and grants the Worker that identity through the existing IPC handshake after PID registration. Scheduler run creation records the owner in the same transaction as the run and its workspace claim, before the first observation or Agent invocation. A missing invocation PID therefore cannot hide a run from exit reconciliation.
+
+The parent listens to `exit`, not pipe `close`, and queues an owner-specific scan behind any in-flight scan. A fresh run or retrying Task is handled without waiting for its budget or lease. SQL checks owner identity and epoch before settlement. The event records `worker_lost`; the Task receives the existing `termination_unconfirmed` Hold and its workspace claim is isolated without expiry. A pre-run orphan belonging to the known-dead owner can be reconciled before its lock expires. Other owners are not treated as dead because this Worker exited.
+
+Startup scan errors propagate before any Worker is spawned. Replacement startup waits for successful reconciliation, then uses the restart delay; failures remain gated and retry with delay. Pending owner rows are deleted only after the scan succeeds and survive Supervisor shutdown/reopen. Shutdown also reconciles the departing Worker. Missing workspace claims, unclassified residual claims after a terminal run, or inconsistent Task ownership cause a conservative startup/restart refusal instead of releasing unknown execution rights.
+
+This version deliberately uses the manual confirmation path for active runs after Worker loss. It neither guesses Agent PIDs nor claims to kill detached descendants, on Unix or Windows. The founder must verify those processes have stopped before confirming termination; only then can the existing route release isolation. Legacy Workers without persisted startup identities and live-but-wedged Worker detection are not newly solved here.
+
+Evidence: a local fixture runs the real scheduler, creates a fresh run and lease, then spawns a detached writer and exits before any Agent PID is persisted. The writer keeps changing its file while isolation rejects a different Task's claim even beyond lease expiry. Injected outbox failure blocks replacement until reconciliation succeeds, including after Supervisor close/reopen. Separate tests cover startup refusal, owner scoping, retrying Tasks, pre-run orphans and duplicate delivery.
 
 ## Considered options
 
@@ -39,7 +51,7 @@ SIGINT/SIGTERM waits for Worker exit before releasing ownership. A Worker exits 
 
 ## Consequences
 
-- A worker exit triggers a scan outside the worker. K2 now persists reconciliation and its event together; owner-specific exit handling and descendant termination remain K3 acceptance items. This ADR is not proof that all P3 acceptance criteria passed.
+- A worker exit triggers a scan outside the worker. K2 persists reconciliation and its event together. K3 associates exit with a startup UUID and isolates active workspaces; it does not implement cross-process Agent termination. This ADR is not proof that all P3 acceptance criteria passed.
 - The supervisor cannot stop a process owned by a different worker — it has no control channel to one — and reports those as unreachable rather than as stopped. It also cannot survive its own machine going down; no part of this claims otherwise, and the docs say so where a founder will read it.
 - A second local supervised launch is refused before spawning. Cross-host leadership and control remain outside this local startup guard.
 - The outbox grows without bound. Delivered events are kept deliberately — they are the audit trail for what was decided and when — but there is no retention policy yet, the same gap `run_activity` has.

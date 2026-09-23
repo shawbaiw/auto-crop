@@ -31,15 +31,17 @@ if (command === "start" || command === "supervise") {
   process.on("disconnect", () => process.exit(0));
   process.on("SIGTERM", () => process.exit(0));
   process.on("SIGINT", () => process.exit(0));
-  const permitted = new Promise<void>((resolve) => {
+  const permitted = new Promise<string>((resolve) => {
     process.once("message", (message) => {
-      if (message !== "worker-start" || !process.connected) process.exit(1);
-      resolve();
+      if (!message || typeof message !== "object" || !("type" in message) || message.type !== "worker-start"
+        || !("ownerId" in message) || typeof message.ownerId !== "string" || !message.ownerId || !process.connected) process.exit(1);
+      resolve(message.ownerId);
     });
   });
   process.send("worker-ready");
-  await permitted;
+  const workerId = await permitted;
   await startAutoCrop({
+    workerId,
     projectRoot: resolveProjectRoot(),
     port: Number(process.env.AUTO_CROP_PORT ?? 0),
   });

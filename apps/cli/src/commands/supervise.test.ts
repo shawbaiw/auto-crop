@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,7 +104,7 @@ describe("superviseAutoCrop", () => {
     let workerPid: number | undefined;
     try {
       await untilTrue(() => first.output().includes("Dashboard:")).catch(() => { throw new Error(first.output()); });
-      workerPid = Number(first.output().match(/worker started \(pid (\d+)\)/)![1]);
+      workerPid = Number(first.output().match(/worker started \(pid (\d+)/)![1]);
       process.kill(workerPid, "SIGSTOP");
       const exited = once(first.child, "exit");
       first.child.kill("SIGKILL");
@@ -133,6 +133,98 @@ describe("superviseAutoCrop", () => {
       await stopChild(first.child);
     }
   }, 30_000);
+
+  it("refuses startup when reconciliation fails, then starts after the fault is removed", async () => {
+    const projectRoot = createTempProjectRoot();
+    const { repositories, client } = openState(projectRoot);
+    repositories.writeTaskStatusUnchecked("task_1", "running");
+    repositories.acquireTaskLock("task_1", "old_worker", "2020-01-01T00:00:00.000Z");
+    client.exec("CREATE TRIGGER fail_outbox BEFORE INSERT ON outbox_events BEGIN SELECT RAISE(ABORT, 'injected reconciliation failure'); END");
+    let starts = 0;
+    const options = { projectRoot, log: () => undefined, spawnWorker: () => {
+      starts++;
+      return spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    } };
+    try {
+      await expect(superviseAutoCrop(options)).rejects.toThrow("injected reconciliation failure");
+      expect(starts).toBe(0);
+      expect(repositories.getTask("task_1")?.status).toBe("running");
+      client.exec("DROP TRIGGER fail_outbox");
+      const running = await superviseAutoCrop(options);
+      await running.close();
+      expect(starts).toBe(1);
+    } finally { client.close(); }
+  });
+
+  it.skipIf(process.platform === "win32").each(["retry", "supervisor_restart"] as const)("isolates a fresh run after Worker death before PID registration, with %s after a reconciliation failure", async (mode) => {
+    const projectRoot = createTempProjectRoot();
+    const { repositories, client } = openState(projectRoot);
+    let first: ChildProcess | undefined;
+    let writerPid: number | undefined;
+    let writerPath: string | undefined;
+    let owner: string | undefined;
+    let starts = 0;
+    let replacementSawIsolation = false;
+    const logs: string[] = [];
+    const options: Parameters<typeof superviseAutoCrop>[0] = {
+      projectRoot, scanIntervalMs: 60_000, restartDelayMs: 30, log: (line) => logs.push(line),
+      spawnWorker: (ownerId) => {
+        starts++;
+        if (starts > 1) {
+          replacementSawIsolation = repositories.getTask("task_1")?.status === "blocked"
+            && repositories.listWorkspaceClaims()[0]?.isolatedReason !== null;
+          return spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        }
+        owner = ownerId;
+        first = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./fixtures/exitingWorker.ts", import.meta.url)), projectRoot, ownerId], {
+          stdio: ["ignore", "ignore", "pipe", "ipc"],
+        });
+        first.on("message", (message) => {
+          const data = message as { type: string; pid: number; path: string };
+          if (data.type === "writer-started") { writerPid = data.pid; writerPath = data.path; }
+        });
+        return first;
+      },
+    };
+    let supervised = await superviseAutoCrop(options);
+    try {
+      await untilTrue(() => writerPid !== undefined);
+      const run = repositories.listRunningAgentRuns("company_1")[0];
+      expect(repositories.listRunningAgentRunsForOwner(owner!)[0].id).toBe(run.id);
+      expect(Date.parse(repositories.listTaskLocks()[0].leaseExpiresAt!)).toBeGreaterThan(Date.now());
+      // Fail after receiving real exit evidence. Replacement must remain gated, not just delayed.
+      client.exec("CREATE TRIGGER fail_outbox BEFORE INSERT ON outbox_events BEGIN SELECT RAISE(ABORT, 'exit reconciliation failed'); END");
+      first!.send("crash");
+      await untilTrue(() => logs.some((line) => line.includes("restart blocked by reconciliation")));
+      expect(starts).toBe(1);
+      expect(repositories.getTask("task_1")?.status).toBe("running");
+      if (mode === "supervisor_restart") {
+        await expect(supervised.close()).rejects.toThrow("exit reconciliation failed");
+      }
+      client.exec("DROP TRIGGER fail_outbox");
+      if (mode === "supervisor_restart") supervised = await superviseAutoCrop(options);
+      await untilTrue(() => starts === 2, 3_000);
+      expect(replacementSawIsolation).toBe(true);
+      expect(repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["termination_unconfirmed"]);
+      const events = repositories.listOutboxEvents({ companyId: "company_1" });
+      expect(events).toHaveLength(1);
+      expect(events[0].payload).toMatchObject({ runId: run.id, reason: "worker_lost", terminationConfirmed: null });
+      expect(repositories.listRecoveryDecisions("company_1")).toHaveLength(1);
+      await untilTrue(() => { try { return statSync(join(writerPath!, "still-writing.txt")).size > 0; } catch { return false; } });
+      const before = statSync(join(writerPath!, "still-writing.txt")).size;
+      await untilTrue(() => statSync(join(writerPath!, "still-writing.txt")).size > before);
+      // Even another Task cannot take this directory, long after the original lease expires.
+      expect(repositories.acquireWorkspaceClaim({
+        workspacePath: writerPath!, taskId: "other_task", runId: "other_run", ownerId: "other_worker", ownerEpoch: 1,
+        acquiredAt: "2099-01-01T00:00:00.000Z", leaseExpiresAt: "2099-01-01T01:00:00.000Z", now: "2099-01-01T00:00:00.000Z",
+      })).toBe(false);
+    } finally {
+      if (writerPid) { try { process.kill(-writerPid, "SIGKILL"); } catch { /* Already stopped. */ } }
+      client.exec("DROP TRIGGER IF EXISTS fail_outbox");
+      await supervised.close();
+      client.close();
+    }
+  }, 25_000);
 
   it("outlives its worker, recovers the task it abandoned, and starts a replacement", async () => {
     const projectRoot = createTempProjectRoot();
@@ -236,7 +328,7 @@ function openState(projectRoot: string) {
     id: "task_1", companyId: "company_1", departmentId: "department_1", keyResultId: "key_result_1",
     title: "Record implementation changes", description: "Record implementation changes.",
     assigneeAgentId: "codex", requiredCapabilities: ["code"], proofSchemaId: "repo-diff",
-    workspacePath: ".auto-crop/workspaces/task_1", status: "queued", riskLevel: "medium", position: 0,
+    workspacePath: join(projectRoot, ".auto-crop", "workspaces", "task_1"), status: "queued", riskLevel: "medium", position: 0,
   } satisfies Task);
   return { repositories, client };
 }

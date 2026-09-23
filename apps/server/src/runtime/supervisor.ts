@@ -1,6 +1,7 @@
 import type { createRepositories } from "../db/repositories";
 import { OutboxDispatcher, type DeliveryOutcome, type OutboxEvent } from "./executionEvents";
 import { RecoveryCoordinator } from "./recoveryCoordinator";
+import { reconcileExitedWorker } from "./workerExit";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 
 type Repositories = ReturnType<typeof createRepositories>;
@@ -86,14 +87,18 @@ export class Supervisor {
    * Reconciliation runs first so a worker that died leaves its tasks recoverable *and* produces the
    * events that say so in the same pass, rather than a pass later.
    */
-  async scanOnce(): Promise<SupervisorScanResult> {
+  async scanOnce(exitedOwnerIds: string[] = []): Promise<SupervisorScanResult> {
     this.decisions.length = 0;
     const reconciledTaskIds: string[] = [];
+    for (const ownerId of exitedOwnerIds) {
+      reconciledTaskIds.push(...reconcileExitedWorker({ ...this.input, ownerId }));
+    }
 
     for (const company of this.input.repositories.listCompanies()) {
       const reconciled = reconcileStaleRunningTasks({
         repositories: this.input.repositories,
         companyId: company.id,
+        exitedOwnerIds,
         now: this.input.now,
         createId: this.input.createId,
       });

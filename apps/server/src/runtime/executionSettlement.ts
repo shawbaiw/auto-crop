@@ -28,7 +28,8 @@ export function settleAgentRun(input: {
   outcome: RunOutcome;
   at: string;
   createId: (prefix: string) => string;
-  expectedTaskStatus?: "running";
+  expectedTaskStatus?: "running" | "retrying";
+  expectedOwnerId?: string;
   commit: () => void;
 }): boolean {
   const { repositories, runId, outcome } = input;
@@ -37,6 +38,7 @@ export function settleAgentRun(input: {
     failureMessage: outcome.failureMessage,
     expectedStatus: "running",
     expectedTaskStatus: input.expectedTaskStatus,
+    expectedOwnerId: input.expectedOwnerId,
     requireCurrentEpoch: true,
   }), () => {
     input.commit();

@@ -19,6 +19,7 @@ export function acquireSupervisorOwnership(path: string) {
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       token TEXT NOT NULL, host TEXT NOT NULL, supervisor_pid INTEGER NOT NULL, worker_pid INTEGER
     )`);
+    database.exec("CREATE TABLE IF NOT EXISTS pending_workers (owner_id TEXT PRIMARY KEY)");
     database.exec("BEGIN IMMEDIATE");
     const previous = database.prepare("SELECT * FROM ownership WHERE singleton = 1").get() as
       | { host: string; supervisor_pid: number; worker_pid: number | null }
@@ -37,6 +38,17 @@ export function acquireSupervisorOwnership(path: string) {
 
   let closed = false;
   return {
+    // These rows survive claim release and Supervisor crashes until reconciliation succeeds.
+    beginWorker(ownerId: string) {
+      database.prepare("INSERT INTO pending_workers (owner_id) VALUES (?)").run(ownerId);
+    },
+    pendingWorkers(): string[] {
+      return (database.prepare("SELECT owner_id FROM pending_workers ORDER BY rowid").all() as Array<{ owner_id: string }>)
+        .map((row) => row.owner_id);
+    },
+    reconciledWorker(ownerId: string) {
+      database.prepare("DELETE FROM pending_workers WHERE owner_id = ?").run(ownerId);
+    },
     recordWorker(pid: number | null) {
       const result = database.prepare("UPDATE ownership SET worker_pid = ? WHERE singleton = 1 AND token = ?")
         .run(pid, token);

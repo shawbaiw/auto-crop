@@ -55,8 +55,11 @@ are reclaimed only when both recorded local processes are confirmed absent. A su
 reused PID, unavailable process check or another hostname causes a conservative refusal. Stop and
 verify the recorded processes before retrying; do not delete the ownership file while they run.
 This guards local CLI startup, not remote hosts or direct programmatic `startAutoCrop` callers.
-Worker death does not prove its Agent descendants stopped; termination reconciliation remains a
-separate safety requirement. Supervisor/host failure still needs a system process manager for restart.
+When a Worker exits, the Supervisor reconciles its startup identity before launching a replacement.
+Active run workspaces enter termination-confirmation isolation because detached Agents may still run.
+Verify those processes have stopped before using the task's **Confirm termination** action. Isolation
+has no lease expiry. Startup/restart reconciliation errors block Worker startup; pending identities
+survive Supervisor restarts. Supervisor/host failure still needs a system process manager for restart.
 
 
 5. In another terminal, start the dashboard:

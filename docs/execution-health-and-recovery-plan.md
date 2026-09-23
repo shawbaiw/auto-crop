@@ -385,8 +385,8 @@ P0 额外确认、需在后续阶段处理的事实：取消全链路是空实�
 
 决策记录见 [ADR 0037](adr/0037-supervision-from-outside-the-worker.md)（含架构选型理由，按方案要求在实现前写定）。`pnpm test` 59 文件 / 827 项通过，typecheck 与 lint 通过。
 
-- [x] **进程外 Supervisor**：`auto-crop supervise` 以 Worker 为子进程。选型理由已记录——相比"独立 `watch` + 系统进程管理器"，父进程**直接看到子进程退出并触发扫描**，不需要用户先安装配置任何东西。当前扫描尚未利用退出身份立即结算对应 run；该能力由 K3 补齐。`start` 已由 K1 接入监督。
-- [x] **启动前先对账**：`superviseAutoCrop` 在 spawn Worker 之前尝试一次 `scanOnce`；已有测试证明预置过期孤儿先得到处理。扫描失败仍可能继续启动的缺口由 K3 处理。
+- [x] **进程外 Supervisor**：`auto-crop supervise` 以 Worker 为子进程。选型理由已记录——相比"独立 `watch` + 系统进程管理器"，父进程**直接看到子进程退出并触发扫描**，不需要用户先安装配置任何东西。K3 已把退出身份接到对应 run 的结算与隔离。`start` 已由 K1 接入监督。
+- [x] **启动前先对账**：`superviseAutoCrop` 在 spawn Worker 之前尝试一次 `scanOnce`；已有测试证明预置过期孤儿先得到处理。K3 已改为扫描失败时阻止启动。
 - [x] **结算 outbox**：原 P3 仅 scheduler 路径满足同事务保证；K2 已将对账与 Emergency Stop 接入共同结算事务，移除 Supervisor 返回后补写事件的缺口，见下方实现记录。
 - [x] **Dispatcher**：持久 claim + **过期**。中途死掉的 dispatcher 不会把事件一起带走，下一个接手。失败指数退避，超限进**死信**而非丢弃，操作员修好消费者后可重放。
 - [x] **至少一次投递 + 幂等消费者**：`recovery_decisions.source_event_id` 唯一约束。这是机制本身不是细节——它防的正是崩溃，所以必须在数据库里而不是代码判断里。
@@ -395,7 +395,7 @@ P0 额外确认、需在后续阶段处理的事实：取消全链路是空实�
 - [x] **默认 `report_only`**：只报告不调度。Hold 模型已保证停摆任务带着出路，在观测数据足以支撑之前打开自动恢复正是恢复风暴的起点。
 - [x] 诊断接口：`GET /api/companies/:id/execution-events`（含 pending/deadLettered 计数与决策）、`POST /api/execution-events/:id/replay`。
 - [x] 已有测试覆盖真实子进程退出与替代进程启动、启动时处理预先过期的孤儿任务、重复投递去重、转发失败不阻止本地决策及投递接管。
-- [ ] **死亡证据与在途执行关联**：现有进程测试在启动前建立了 2020 年过期且无 run 的孤儿任务；尚未证明刚创建、租约未过期的 run 在其 Worker 退出后立即得到处理。退出回调仅触发普通扫描，扫描仍按旧 deadline 判断；补验收见 K3。
+- [x] **死亡证据与在途执行关联**：K3 新增真实 scheduler/新鲜 run/未过期租约及 detached 写入者测试，证明 owner 退出后及时结算、隔离并在成功对账后重启。旧的 2020 年过期孤儿测试仅作为启动对账证据保留。
 
 **本阶段明确未做的事：**
 
@@ -409,7 +409,7 @@ P0 额外确认、需在后续阶段处理的事实：取消全链路是空实�
 
 ### 接下来任务清单（2026-09-23 调整）
 
-本清单以 `b853491` 为核对基线。未勾选项均待实现与验证；K1、K2 已实现，验收范围见各项记录。目标是先闭合默认运行链路，再交付“健康长任务同 run 续时、失败可见、预算有界”。
+本清单以 `b853491` 为核对基线。未勾选项均待实现与验证；K1、K2、K3 已实现，验收范围见各项记录。目标是先闭合默认运行链路，再交付“健康长任务同 run 续时、失败可见、预算有界”。
 
 执行顺序：**K1–K4 关键修复 → P4.1–P4.3 → 持续运行门槛 → P5**。K1–K4 完成即进入 P4，不再开启一轮全面审计。新发现仅在破坏执行互斥、结算/事件一致性、预算正确性，或直接使当前验收无法进行时阻塞；记录具体反例及受影响验收项，其余进入后续清单。实现可以按依赖拆成提交，阶段完成以跨模块结果为准。
 
@@ -436,10 +436,18 @@ K2 实现记录：新增 `executionSettlement` 共同事务边界；所有直接
 
 #### K3：把 Worker 退出证据接到其真实执行
 
-- [ ] 将受监督 Worker 的启动身份与 owner/run 关联；exit 触发针对该 owner 的处理，不等待 run 旧 deadline，也不影响其他 owner。
-- [ ] 分别处理“Worker 已退出”和“Agent 后代已停止”：已确认停止才释放工作区；无法确认的保持隔离与人工出口。替代 Worker 启动不等于允许该 Task 或同目录新执行。
-- [ ] 启动/重启对账失败时保留派发门槛，避免 `scan` 吞错后继续启动派发；重启流程等待必要的对账/隔离结果。
-- [ ] 验收：子 Worker 实际建立 run 和未过期租约，握手确认后再退出；在受控环境及时产生其故障决策，确认无需等旧预算。另让 Agent 后代继续写入，证明未确认停止时同目录新执行被挡住；覆盖 spawn 后 PID 登记前退出的未知窗口。旧“预置过期孤儿”测试保留为启动对账测试。
+- [x] 将受监督 Worker 的启动身份与 owner/run 关联；exit 触发针对该 owner 的处理，不等待 run 旧 deadline，也不影响其他 owner。
+- [x] 分别处理“Worker 已退出”和“Agent 后代已停止”：已确认停止才释放工作区；无法确认的保持隔离与人工出口。替代 Worker 启动不等于允许该 Task 或同目录新执行。
+- [x] 启动/重启对账失败时保留派发门槛，避免 `scan` 吞错后继续启动派发；重启流程等待必要的对账/隔离结果。
+- [x] 验收：子 Worker 实际建立 run 和未过期租约，握手确认后再退出；在受控环境及时产生其故障决策，确认无需等旧预算。另让 Agent 后代继续写入，证明未确认停止时同目录新执行被挡住；覆盖 spawn 后 PID 登记前退出的未知窗口。旧“预置过期孤儿”测试保留为启动对账测试。
+
+K3 实现记录：Supervisor 在 spawn 前持久化每次启动的唯一 owner，通过 IPC 授权传给 Worker；scheduler 在认领 run 的事务内写 owner，覆盖首次观测及 invocation PID 登记前的窗口。exit 触发按 owner/epoch 的条件结算，不等待旧 deadline 或租约；Task 为 running/retrying 均可处理，同 owner 的未建 run 孤儿也立即对账。
+
+当前选择保守隔离：Worker 退出只证明 Worker 已死，不能证明 detached Agent 已停止；对应 run 记录 `worker_lost` 事件、未知 terminationConfirmed，Task 进入 `termination_unconfirmed` Hold，工作区 claim 永不过期，沿用人工确认停止后释放的路由。**本轮未实现跨进程终止 Agent 或自动确认进程树停止**。无法找到匹配工作区 claim、终态 run 留下未分类 claim、Task/epoch 不一致时拒绝启动替代 Worker，需先人工核实终止并修复该记录；旧版缺少启动身份的遗留执行、Worker 活着但卡住仍是后续边界。
+
+启动对账失败直接返回错误，不 spawn；exit 对账排在在途扫描之后，失败时延迟重试且不启动替代 Worker。pending owner 只有对账成功才删除，跨 Supervisor 关闭/重开保留；正常 shutdown 也对账。
+
+验收：真实 scheduler 子 Worker 建立新鲜 run/租约并启动 detached 文件写入者，PID 未持久化便退出；对账后写入者仍在写，其他 Task 即使跨过租约也拿不到同目录。outbox 故障期间无替代 Worker，解除后先隔离再启动；同进程重试及 Supervisor 重开均覆盖。另覆盖不同 owner 不被误处理、retrying、未建 run 孤儿、启动故障拒绝及幂等消费。未调用真实模型。 验证：最终全量 59 文件 / 851 项通过，typecheck、lint、`git diff --check` 通过。中途一轮 `routes.test.ts` 的 `returns the task to the department with a reason and discards recorded picks` 出现一次 5s 超时；单例复跑 49ms 通过，随后全量复跑通过，保留该抖动记录，未修改该路由用例。
 
 #### K4：用一条真实入口集成冒烟收口
 

@@ -14,6 +14,7 @@ export type ReconcileStaleRunningTasksInput = {
   repositories: ReturnType<typeof createRepositories>;
   companyId: string;
   now?: () => Date;
+  exitedOwnerIds?: string[];
   createId?: (prefix: string) => string;
 };
 
@@ -177,14 +178,15 @@ function reconcileOrphanedRunningTasks(context: {
       // tasks in bulk; leave it to a deliberate reconciliation with a human behind it.
       continue;
     }
-    if (!leaseHasExpired(lock.leaseExpiresAt, now())) {
+    const confirmedOwnerExit = input.exitedOwnerIds?.includes(lock.ownerId) ?? false;
+    if (!confirmedOwnerExit && !leaseHasExpired(lock.leaseExpiresAt, now())) {
       // Someone is still renewing: this is a dispatch mid-flight, not a leftover.
       continue;
     }
 
     settleExecution(repositories, () => repositories.claimOrphanedTask({
       taskId: task.id, ownerId: lock.ownerId, runId: lock.runId,
-      acquiredAt: lock.acquiredAt, leaseExpiresAt: lock.leaseExpiresAt, at: timestamp,
+      acquiredAt: lock.acquiredAt, leaseExpiresAt: lock.leaseExpiresAt, at: timestamp, confirmedOwnerExit,
     }), () => {
       const failureMessage = `Task failed: ${task.title} / the worker executing it stopped reporting before its run was recorded.`;
       applyTaskTransition({

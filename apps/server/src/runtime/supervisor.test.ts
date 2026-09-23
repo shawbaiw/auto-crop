@@ -7,6 +7,62 @@ import { OutboxDispatcher, OUTBOX_MAX_ATTEMPTS, recordExecutionEvent, type Outbo
 import { RecoveryCoordinator } from "./recoveryCoordinator";
 import { Supervisor } from "./supervisor";
 
+describe("Worker exit evidence", () => {
+  it.each(["running", "retrying"] as const)("settles only the exited startup identity in %s, before either run's deadline", async (status) => {
+    const { repositories, client } = createFixture();
+    const at = "2026-09-21T00:00:00.000Z";
+    const now = () => new Date("2026-09-21T00:00:01.000Z");
+    try {
+      repositories.createTask({ ...repositories.getTask("task_1")!, id: "task_2" });
+      for (const [taskId, ownerId] of [["task_1", "dead_startup"], ["task_2", "live_startup"]]) {
+        repositories.writeTaskStatusUnchecked(taskId, taskId === "task_1" ? status : "running");
+        const epoch = repositories.nextExecutionEpoch(taskId);
+        repositories.createAgentRun({ id: `run_${taskId}`, taskId, agentId: "codex", status: "running", startedAt: at,
+          finishedAt: null, logPath: "fixture.log", effectiveTimeoutMs: 600_000, ownerEpoch: epoch });
+        repositories.updateAgentRunObservation(`run_${taskId}`, { ownerId });
+        repositories.acquireWorkspaceClaim({ workspacePath: `/fixture/${taskId}`, taskId, ownerId, runId: `run_${taskId}`,
+          ownerEpoch: epoch, acquiredAt: at, leaseExpiresAt: "2026-09-21T00:01:30.000Z", now: at });
+      }
+      const supervisor = new Supervisor({ repositories, supervisorId: "test", now });
+      const result = await supervisor.scanOnce(["dead_startup"]);
+      expect(result.reconciledTaskIds).toEqual(["task_1"]);
+      expect(repositories.getTask("task_1")?.status).toBe("blocked");
+      expect(repositories.getTask("task_2")?.status).toBe("running");
+      expect(repositories.listWorkspaceClaims().find((claim) => claim.taskId === "task_2")?.isolatedReason).toBeNull();
+      await supervisor.scanOnce(["dead_startup"]);
+      expect(repositories.listOutboxEvents({ companyId: "company_1" })).toHaveLength(1);
+      expect(repositories.listRecoveryDecisions("company_1")).toHaveLength(1);
+    } finally { client.close(); }
+  });
+
+  it("refuses to forget an exited owner's workspace claim without an active run", async () => {
+    const { repositories, client } = createFixture();
+    try {
+      repositories.acquireWorkspaceClaim({ workspacePath: "/fixture/leftover", taskId: "task_1", runId: "finished_run",
+        ownerId: "dead_startup", ownerEpoch: 1, acquiredAt: "2026-09-21T00:00:00.000Z",
+        leaseExpiresAt: "2026-09-21T00:01:30.000Z", now: "2026-09-21T00:00:00.000Z" });
+      await expect(new Supervisor({ repositories, supervisorId: "test" }).scanOnce(["dead_startup"]))
+        .rejects.toThrow("unclassified workspace claim");
+      expect(repositories.listWorkspaceClaims()).toHaveLength(1);
+      expect(repositories.getTask("task_1")?.status).toBe("queued");
+    } finally { client.close(); }
+  });
+
+  it("handles a dead owner's pre-run orphan without waiting for its fresh lease", async () => {
+    const { repositories, client } = createFixture();
+    try {
+      repositories.writeTaskStatusUnchecked("task_1", "running");
+      repositories.acquireTaskLock("task_1", "dead_startup", "2026-09-21T00:00:00.000Z", {
+        now: "2026-09-21T00:00:00.000Z", expiresAt: "2026-09-21T00:01:30.000Z",
+      });
+      const supervisor = new Supervisor({ repositories, supervisorId: "test", now: () => new Date("2026-09-21T00:00:01.000Z") });
+      expect((await supervisor.scanOnce()).reconciledTaskIds).toEqual([]);
+      expect((await supervisor.scanOnce(["dead_startup"])).reconciledTaskIds).toEqual(["task_1"]);
+      expect(repositories.listOutboxEvents({ companyId: "company_1" })[0].payload.reason).toBe("worker_lost");
+    } finally { client.close(); }
+  });
+});
+
 describe("the outbox", () => {
   it("gives an event to exactly one of two dispatchers", async () => {
     const { repositories, client } = createFixture();

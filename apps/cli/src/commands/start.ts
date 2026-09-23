@@ -30,6 +30,7 @@ const HEARTBEAT_INTERVAL_MS = 20_000;
 export type StartAutoCropOptions = {
   projectRoot: string;
   host?: string;
+  workerId?: string;
   port?: number;
   agents?: AgentAdapter[];
   schedulerIntervalMs?: number;
@@ -74,6 +75,7 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
   });
   scheduler = startSchedulerLoop({
     agents,
+    workerId: options.workerId,
     intervalMs: schedulerIntervalMs,
     log,
     projectRoot: options.projectRoot,
@@ -109,6 +111,7 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
 
 export function startSchedulerLoop(input: {
   agents: AgentAdapter[];
+  workerId?: string;
   intervalMs: number;
   log: (line: string) => void;
   projectRoot: string;
@@ -116,7 +119,7 @@ export function startSchedulerLoop(input: {
   repositories: ReturnType<typeof createRepositories>;
   createId?: (prefix: string) => string;
 }) {
-  const workerId = `cli-worker-${process.pid}`;
+  const workerId = input.workerId ?? createId("cli-worker");
   const proofCollector = createProofCollector({ proofSchemas: aiSaasPlaybook.proofSchemas });
   let running = false;
   let stopped = false;

@@ -848,15 +848,15 @@ export function createRepositories(database: DatabaseClient) {
     /** Acquire a write lock and revalidate the exact orphan/lease snapshot before its transition. */
     claimOrphanedTask(input: {
       taskId: string; ownerId: string; runId: string | null;
-      acquiredAt: string; leaseExpiresAt: string | null; at: string;
+      acquiredAt: string; leaseExpiresAt: string | null; at: string; confirmedOwnerExit?: boolean;
     }): boolean {
       const result = database.prepare(`UPDATE tasks SET execution_epoch = execution_epoch
         WHERE id = ? AND status = 'running'
           AND NOT EXISTS (SELECT 1 FROM agent_runs WHERE task_id = tasks.id AND status = 'running')
           AND EXISTS (SELECT 1 FROM task_locks WHERE task_id = tasks.id
             AND owner_id = ? AND run_id IS ? AND acquired_at = ? AND lease_expires_at IS ?
-            AND (julianday(lease_expires_at) IS NULL OR julianday(lease_expires_at) <= julianday(?)))`)
-        .run(input.taskId, input.ownerId, input.runId, input.acquiredAt, input.leaseExpiresAt, input.at);
+            AND (? OR julianday(lease_expires_at) IS NULL OR julianday(lease_expires_at) <= julianday(?)))`)
+        .run(input.taskId, input.ownerId, input.runId, input.acquiredAt, input.leaseExpiresAt, input.confirmedOwnerExit ? 1 : 0, input.at);
       return Number(result.changes) > 0;
     },
 
@@ -1456,7 +1456,8 @@ export function createRepositories(database: DatabaseClient) {
         failureReason?: AgentFailureReason | null;
         failureMessage?: string | null;
         expectedStatus?: AgentRun["status"];
-        expectedTaskStatus?: "running";
+        expectedTaskStatus?: "running" | "retrying";
+        expectedOwnerId?: string;
         requireCurrentEpoch?: boolean;
       } = {},
     ): boolean {
@@ -1469,6 +1470,7 @@ export function createRepositories(database: DatabaseClient) {
                failure_message = COALESCE(?, failure_message)
            WHERE id = ?${outcome.expectedStatus ? " AND status = ?" : ""}
              ${outcome.expectedTaskStatus ? "AND EXISTS (SELECT 1 FROM tasks WHERE tasks.id = agent_runs.task_id AND tasks.status = ?)" : ""}
+             ${outcome.expectedOwnerId ? "AND owner_id = ?" : ""}
              ${outcome.requireCurrentEpoch ? "AND (owner_epoch IS NULL OR owner_epoch = (SELECT execution_epoch FROM tasks WHERE tasks.id = agent_runs.task_id))" : ""}`,
         )
         .run(
@@ -1479,6 +1481,7 @@ export function createRepositories(database: DatabaseClient) {
           id,
           ...(outcome.expectedStatus ? [outcome.expectedStatus] : []),
           ...(outcome.expectedTaskStatus ? [outcome.expectedTaskStatus] : []),
+          ...(outcome.expectedOwnerId ? [outcome.expectedOwnerId] : []),
         );
       return Number(result.changes) > 0;
     },
@@ -1950,6 +1953,11 @@ export function createRepositories(database: DatabaseClient) {
            ON CONFLICT(key) DO NOTHING`,
         )
         .run(finalFounderReportUpgradeKey(companyId), at);
+    },
+
+    listRunningAgentRunsForOwner(ownerId: string): AgentRun[] {
+      return (database.prepare("SELECT * FROM agent_runs WHERE status = 'running' AND owner_id = ? ORDER BY id")
+        .all(ownerId) as AgentRunRow[]).map(mapAgentRun);
     },
 
     listRunningAgentRuns(companyId: string): AgentRun[] {
