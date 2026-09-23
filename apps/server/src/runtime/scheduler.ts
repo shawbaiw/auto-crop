@@ -45,6 +45,7 @@ import { generateFinalFounderReport, hasWorkCompletedSinceReport } from "./final
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { finalizeDelivery } from "./deliveryFinalization";
 import { RunObserver } from "./executionObservation";
+import { recordExecutionEvent } from "./executionEvents";
 import { defaultExecutionRegistry, type ExecutionRegistry } from "./executionControl";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
@@ -2004,6 +2005,42 @@ function reportObservationFailures(
   });
 }
 
+/**
+ * Publish what this settlement decided, for consumers that are not this process.
+ *
+ * The task event stream is a narrative for the founder; this is the fact a recovery decision is made
+ * from. Written from the run row rather than from the caller's variables so it carries what actually
+ * landed — including the observation the run recorded about itself, which is the part a reader
+ * cannot reconstruct later.
+ */
+function recordSettlementEvent(
+  input: RunSchedulerOnceInput,
+  agentRunId: string,
+  outcome: RunOutcome,
+  now: () => Date,
+): void {
+  const observed = input.repositories.getAgentRunObservation(agentRunId);
+  if (!observed) {
+    return;
+  }
+  recordExecutionEvent(input.repositories, {
+    id: (input.createId ?? defaultCreateId)("outbox_event"),
+    type: outcome.status === "complete" ? "execution_completed" : "execution_failed",
+    companyId: observed.companyId,
+    taskId: observed.taskId,
+    runId: agentRunId,
+    ownerEpoch: observed.ownerEpoch,
+    phase: observed.phase,
+    reason: outcome.failureReason ?? null,
+    observedAt: now().toISOString(),
+    lastHeartbeatAt: observed.lastHeartbeatAt,
+    lastActivityAt: observed.lastActivityAt,
+    effectiveTimeoutMs: observed.effectiveTimeoutMs,
+    terminationConfirmed: null,
+    logPath: observed.logPath,
+  });
+}
+
 export type RunOutcome = {
   status: AgentRun["status"];
   failureReason?: AgentFailureReason;
@@ -2055,6 +2092,10 @@ function settleRun(
       return false;
     }
     commit(settled);
+    // In the same transaction as the settlement it describes: outside it, a settlement can commit
+    // with no event (nothing downstream ever hears) or an event can outlive a settlement that rolled
+    // back (recovery acts on something that never happened).
+    recordSettlementEvent(input, agentRunId, outcome, now);
     return true;
   });
 

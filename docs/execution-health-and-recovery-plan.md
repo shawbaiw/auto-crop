@@ -2,7 +2,7 @@
 
 日期：2026-09-21。已核对基线：`main@a3893bd`（包含 PR #12，结算保护实现提交 `0a82cf0`）；原方案基线为 `b70636a`。
 
-状态：实施中。**P0 已完成**，基线证据见 [execution-health-p0-baseline.md](execution-health-p0-baseline.md)；**P2a（结算一致性）已完成**，见 [ADR 0035](adr/0035-a-settlement-is-one-transaction.md)；**P1（只采集）已完成**；**P2b、P2c 已完成**。剩余 P3–P5 待实施。运行健康监控、健康续时和可靠恢复链仍待实施。迄今未运行真实 Agent，未调整生产预算。
+状态：实施中。**P0 已完成**，基线证据见 [execution-health-p0-baseline.md](execution-health-p0-baseline.md)；**P2a（结算一致性）已完成**，见 [ADR 0035](adr/0035-a-settlement-is-one-transaction.md)；**P1（只采集）已完成**；**P2b、P2c、P3 已完成**。剩余 P4–P5 待实施。运行健康监控、健康续时和可靠恢复链仍待实施。迄今未运行真实 Agent，未调整生产预算。
 
 阶段顺序已按实测调整为 **P0 → P2a → P1 → P2b → P3 → P5**：P2a 修的是当前就在损坏数据的一致性缺陷（基线 F1–F4），P1 的纯观测对它们零保护，且观测要挂在结算 seam 上，先建 seam 可免于写两遍。P2b（移除 GET 判死、取消闭环）确实需要 P1 的观测数据，故留在 P1 之后。
 
@@ -381,11 +381,30 @@ P0 额外确认、需在后续阶段处理的事实：取消全链路是空实�
 - [x] **刻意不提供 `recover_task`**：工作区里可能还有写入者，"再跑一次"正是唯一不能做的事。founder 的出口是"确认进程已停止"或"重新规划"。确认后任务落到 `runtime_interrupted` Hold（它**提供**恢复），而不是静默回队——没人看过的状态不该被当作没问题。
 - [x] 未确认终止**不计入** Bounded Recovery 上限：没有尝试过什么然后失败，只是运行时跟丢了。
 
-### P3：独立监督与可靠事件
+### P3：独立监督与可靠事件 —— 已完成（2026-09-23）
 
-- 落地进程外 Supervisor、Worker 生命周期、owner 失联扫描；启动前完成一次对账。
-- outbox、Dispatcher、实际恢复消费者、webhook/诊断接口，默认只报告恢复建议。
-- 完成条件：测试 Worker 被杀后 Supervisor 仍运行并生成一次故障事件；重复事件不重复恢复；API 挂掉不阻止事件投递；Supervisor 自身重启能接着排空队列。
+决策记录见 [ADR 0037](adr/0037-supervision-from-outside-the-worker.md)（含架构选型理由，按方案要求在实现前写定）。`pnpm test` 59 文件 / 827 项通过，typecheck 与 lint 通过。
+
+- [x] **进程外 Supervisor**：`auto-crop supervise` 以 Worker 为子进程。选型理由已记录——相比"独立 `watch` + 系统进程管理器"，父进程**直接看到子进程退出**，崩溃的 Worker 在同一秒被对账，而不是等 90 秒租约过期；且不需要用户先安装配置任何东西。`start` 未改动，仍可单独运行。
+- [x] **启动前先对账**：`superviseAutoCrop` 在 spawn Worker 之前跑一次 `scanOnce`，测试断言"Worker 启动时那个遗留任务已经不是 running 了"。
+- [x] **outbox**：事件与它描述的状态变更**同事务**写入。事务外有两种真实故障：结算提交了但没有事件（下游永远听不到），以及结算回滚了但事件留下了（恢复对着没发生的事行动）。
+- [x] **Dispatcher**：持久 claim + **过期**。中途死掉的 dispatcher 不会把事件一起带走，下一个接手。失败指数退避，超限进**死信**而非丢弃，操作员修好消费者后可重放。
+- [x] **至少一次投递 + 幂等消费者**：`recovery_decisions.source_event_id` 唯一约束。这是机制本身不是细节——它防的正是崩溃，所以必须在数据库里而不是代码判断里。
+- [x] **消费者在记录决策的同一事务内重读 Task**：事件描述的是 run 结束时的世界；等到有人行动时，founder 可能已取消任务、replan 可能已替换它、或另一个 run 已拥有它。
+- [x] **本地决策先于外部转发，且不依赖它**：操作员的 webhook 挂掉不能阻止运行时对自己的失败做出决策——否则别人系统的故障会卡住这里的恢复。
+- [x] **默认 `report_only`**：只报告不调度。Hold 模型已保证停摆任务带着出路，在观测数据足以支撑之前打开自动恢复正是恢复风暴的起点。
+- [x] 诊断接口：`GET /api/companies/:id/execution-events`（含 pending/deadLettered 计数与决策）、`POST /api/execution-events/:id/replay`。
+- [x] 完成条件全部覆盖，且用**真实子进程**测试：Worker 被杀后 Supervisor 仍在、恢复了它遗弃的任务、产生一次故障事件并重启了替代进程；重复投递只产生一个决策；外部转发抛异常不阻止本地决策；换一个 Supervisor 接着排空队列且不重复决策。
+
+**本阶段明确未做的事：**
+
+| 未做 | 现状与风险 |
+| --- | --- |
+| Supervisor 选主 | 两个 Supervisor 对 outbox 是安全的（claim 有条件），但都会做对账——幂等但浪费。真出现第二个 Supervisor 时再修 |
+| webhook 适配器 | `forward` 钩子已就位并测试，但没有内置的签名/超时 webhook 实现。**不宣称已支持通知第三方** |
+| outbox 保留期 | 已投递事件**刻意保留**作为审计轨迹，但没有清理策略——与 `run_activity` 同一个缺口，**本地库会无界增长** |
+| 健康类事件 | `execution_suspected` / `execution_responsive` / `execution_budget_exhausted` 尚未产生，它们需要 P4 的健康策略 |
+| 整机掉电 | Supervisor 自身或机器退出则无人监督。需要系统进程管理器；**文档如实说明，不宣称停电后仍能通知** |
 
 ### P4：健康与预算新策略
 

@@ -266,6 +266,45 @@ export function migrate(database: DatabaseClient): void {
       isolated_reason TEXT
     );
 
+    -- Events that must survive the process that produced them (execution-health P3). Written in the
+    -- same transaction as the state change they describe, so there is never a settled run with no
+    -- event or an event for a settlement that rolled back. Delivery is at-least-once: consumers are
+    -- idempotent on the event id, and nothing here claims exactly-once across a process boundary.
+    CREATE TABLE IF NOT EXISTS outbox_events (
+      id TEXT PRIMARY KEY,
+      version INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      company_id TEXT NOT NULL,
+      task_id TEXT,
+      run_id TEXT,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      -- Who is currently trying to deliver it, and until when. A dispatcher that dies mid-delivery
+      -- leaves a claim that expires, so another one picks the event up rather than it being stuck.
+      claimed_by TEXT,
+      claim_expires_at TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT,
+      last_error TEXT,
+      delivered_at TEXT,
+      dead_lettered_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(delivered_at, dead_lettered_at, next_attempt_at);
+
+    -- One recovery decision per source event, ever (execution-health section 8.2). The uniqueness is the
+    -- whole mechanism: at-least-once delivery means a consumer will see the same failure twice, and
+    -- without this each delivery would queue another replacement execution.
+    CREATE TABLE IF NOT EXISTS recovery_decisions (
+      id TEXT PRIMARY KEY,
+      source_event_id TEXT NOT NULL UNIQUE,
+      company_id TEXT NOT NULL,
+      task_id TEXT,
+      decision TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS task_dependencies (
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

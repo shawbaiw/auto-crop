@@ -328,6 +328,62 @@ async function routeRequest(
     return;
   }
 
+  /**
+   * What the runtime has decided about executions, and what is still waiting to be delivered.
+   *
+   * Read-only, and deliberately separate from company state: this is operational, not business. An
+   * operator needs to see a stuck queue and a dead letter without reading the founder's dashboard,
+   * and a founder's dashboard should not grow a queue depth.
+   */
+  const executionEventsMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/execution-events$/);
+  if (method === "GET" && executionEventsMatch) {
+    const companyId = executionEventsMatch[1];
+    if (!options.repositories.getCompany(companyId)) {
+      sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      return;
+    }
+    const events = options.repositories.listOutboxEvents({ companyId });
+    sendJson(response, 200, {
+      events: events.map((event) => ({
+        id: event.id,
+        type: event.type,
+        taskId: event.taskId,
+        runId: event.runId,
+        createdAt: event.createdAt,
+        attempts: event.attempts,
+        nextAttemptAt: event.nextAttemptAt,
+        lastError: event.lastError,
+        deliveredAt: event.deliveredAt,
+        deadLetteredAt: event.deadLetteredAt,
+        // The payload's own summary, not the run's output: full logs stay behind the log path.
+        reason: event.payload.reason,
+        phase: event.payload.phase,
+      })),
+      pending: events.filter((event) => !event.deliveredAt && !event.deadLetteredAt).length,
+      deadLettered: events.filter((event) => event.deadLetteredAt).length,
+      decisions: options.repositories.listRecoveryDecisions(companyId),
+    });
+    return;
+  }
+
+  /** Put a dead-lettered event back in the queue, once whatever refused it has been fixed. */
+  const replayEventMatch = url.pathname.match(/^\/api\/execution-events\/([^/]+)\/replay$/);
+  if (method === "POST" && replayEventMatch) {
+    const eventId = replayEventMatch[1];
+    const event = options.repositories.getOutboxEvent(eventId);
+    if (!event) {
+      sendJson(response, 404, { error: `Execution event not found: ${eventId}` });
+      return;
+    }
+    const now = (options.now ?? (() => new Date()))().toISOString();
+    if (!options.repositories.replayDeadLetteredOutboxEvent(eventId, now)) {
+      sendJson(response, 409, { error: "Only a dead-lettered event can be replayed." });
+      return;
+    }
+    sendJson(response, 200, { event: { id: eventId, nextAttemptAt: now } });
+    return;
+  }
+
   const stateMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/state$/);
   if (method === "GET" && stateMatch) {
     const companyId = stateMatch[1];

@@ -15,6 +15,7 @@ import { finalizeDelivery } from "../runtime/deliveryFinalization";
 import { resolveDependencyReadiness } from "../runtime/dependencyReadiness";
 import { applyTaskTransition } from "../runtime/taskTransition";
 import { resolveTaskAffordanceState } from "../runtime/taskAffordances";
+import { recordExecutionEvent } from "../runtime/executionEvents";
 import { createApiServer, type SchedulerWakeReason } from "./routes";
 
 const createdDirs: string[] = [];
@@ -931,6 +932,75 @@ describe("API routes", () => {
     const task = activatedTasks(fixture, created.company.id, 1)[0]!;
 
     const response = await fetch(`${fixture.baseUrl}/api/tasks/${task.id}/confirm-termination`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(409);
+    await fixture.close();
+  });
+
+  /**
+   * The operational view of delivery (execution-health P3). An operator has to be able to see a queue
+   * that is stuck and a consumer that is refusing, without reading the founder's dashboard.
+   */
+  it("reports execution events, their delivery state, and the decisions made from them", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
+    recordExecutionEvent(fixture.repositories, {
+      id: "outbox_event_1",
+      type: "execution_failed",
+      companyId: created.company.id,
+      taskId: task.id,
+      runId: "agent_run_1",
+      reason: "agent_failed",
+      observedAt: "2026-09-21T00:00:00.000Z",
+    });
+    fixture.repositories.markOutboxEventDeadLettered("outbox_event_1", "2026-09-21T00:05:00.000Z", "webhook offline");
+
+    const before = await getJson<{ pending: number; deadLettered: number; events: Array<{ id: string; lastError: string }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/execution-events`,
+    );
+    expect(before).toMatchObject({ pending: 0, deadLettered: 1 });
+    expect(before.events[0]).toMatchObject({ id: "outbox_event_1", lastError: "webhook offline" });
+
+    // A dead letter is kept so it can be replayed once the consumer is fixed, not dropped.
+    await postJson(`${fixture.baseUrl}/api/execution-events/outbox_event_1/replay`, {});
+    const after = await getJson<{ pending: number; deadLettered: number }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/execution-events`,
+    );
+    expect(after).toMatchObject({ pending: 1, deadLettered: 0 });
+
+    await fixture.close();
+  });
+
+  it("refuses to replay an event that was never dead-lettered", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    recordExecutionEvent(fixture.repositories, {
+      id: "outbox_event_1",
+      type: "execution_failed",
+      companyId: created.company.id,
+      observedAt: "2026-09-21T00:00:00.000Z",
+    });
+
+    const response = await fetch(`${fixture.baseUrl}/api/execution-events/outbox_event_1/replay`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",

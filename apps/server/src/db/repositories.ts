@@ -47,6 +47,7 @@ import type {
 import { isLocale } from "@auto-crop/core";
 import type { DatabaseClient } from "./client";
 import type { RunActivity, RunInvocation } from "../runtime/executionObservation";
+import type { OutboxEvent } from "../runtime/executionEvents";
 
 export type ReviewRecord = {
   id: string;
@@ -1572,6 +1573,218 @@ export function createRepositories(database: DatabaseClient) {
       }));
     },
 
+    /** Everything an execution event needs to say about a run, read back from the run itself. */
+    getAgentRunObservation(runId: string): {
+      companyId: string;
+      taskId: string;
+      ownerEpoch: number | null;
+      phase: string | null;
+      lastHeartbeatAt: string | null;
+      lastActivityAt: string | null;
+      effectiveTimeoutMs: number | null;
+      logPath: string;
+    } | null {
+      const row = database
+        .prepare(
+          `SELECT r.task_id, r.owner_epoch, r.phase, r.last_heartbeat_at, r.last_activity_at,
+                  r.effective_timeout_ms, r.log_path, t.company_id
+           FROM agent_runs r JOIN tasks t ON t.id = r.task_id
+           WHERE r.id = ?`,
+        )
+        .get(runId) as
+        | {
+            task_id: string; owner_epoch: number | null; phase: string | null;
+            last_heartbeat_at: string | null; last_activity_at: string | null;
+            effective_timeout_ms: number | null; log_path: string; company_id: string;
+          }
+        | undefined;
+      if (!row) {
+        return null;
+      }
+      return {
+        companyId: row.company_id,
+        taskId: row.task_id,
+        ownerEpoch: row.owner_epoch,
+        phase: row.phase,
+        lastHeartbeatAt: row.last_heartbeat_at,
+        lastActivityAt: row.last_activity_at,
+        effectiveTimeoutMs: row.effective_timeout_ms,
+        logPath: row.log_path,
+      };
+    },
+
+    appendOutboxEvent(event: OutboxEvent): void {
+      database
+        .prepare(
+          `INSERT INTO outbox_events (id, version, type, company_id, task_id, run_id, payload, created_at, attempts, next_attempt_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          event.id, event.version, event.type, event.companyId, event.taskId, event.runId,
+          JSON.stringify(event.payload), event.createdAt, event.attempts, event.nextAttemptAt,
+        );
+    },
+
+    /**
+     * Take the events that are due, so this dispatcher is the only one delivering them.
+     *
+     * The claim is conditional and expiring: two dispatchers cannot take the same event, and one
+     * that dies mid-delivery does not take its events with it.
+     */
+    claimOutboxEvents(input: {
+      dispatcherId: string;
+      now: string;
+      claimExpiresAt: string;
+      limit: number;
+    }): OutboxEvent[] {
+      const due = database
+        .prepare(
+          `SELECT id FROM outbox_events
+           WHERE delivered_at IS NULL AND dead_lettered_at IS NULL
+             AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+             AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
+           ORDER BY created_at ASC, rowid ASC
+           LIMIT ?`,
+        )
+        .all(input.now, input.now, input.limit) as Array<{ id: string }>;
+
+      const taken: OutboxEvent[] = [];
+      for (const row of due) {
+        const claimed = database
+          .prepare(
+            `UPDATE outbox_events SET claimed_by = ?, claim_expires_at = ?
+             WHERE id = ? AND delivered_at IS NULL AND dead_lettered_at IS NULL
+               AND (claim_expires_at IS NULL OR claim_expires_at <= ?)`,
+          )
+          .run(input.dispatcherId, input.claimExpiresAt, row.id, input.now);
+        if (Number(claimed.changes) > 0) {
+          const event = this.getOutboxEvent(row.id);
+          if (event) {
+            taken.push(event);
+          }
+        }
+      }
+      return taken;
+    },
+
+    getOutboxEvent(id: string): OutboxEvent | null {
+      const row = database.prepare("SELECT * FROM outbox_events WHERE id = ?").get(id) as OutboxEventRow | undefined;
+      return row ? mapOutboxEvent(row) : null;
+    },
+
+    markOutboxEventDelivered(id: string, deliveredAt: string): void {
+      database
+        .prepare("UPDATE outbox_events SET delivered_at = ?, claimed_by = NULL, claim_expires_at = NULL, attempts = attempts + 1 WHERE id = ?")
+        .run(deliveredAt, id);
+    },
+
+    rescheduleOutboxEvent(id: string, nextAttemptAt: string, error: string): void {
+      database
+        .prepare(
+          `UPDATE outbox_events
+           SET attempts = attempts + 1, next_attempt_at = ?, last_error = ?, claimed_by = NULL, claim_expires_at = NULL
+           WHERE id = ?`,
+        )
+        .run(nextAttemptAt, error, id);
+    },
+
+    markOutboxEventDeadLettered(id: string, at: string, error: string): void {
+      database
+        .prepare(
+          `UPDATE outbox_events
+           SET attempts = attempts + 1, dead_lettered_at = ?, last_error = ?, claimed_by = NULL, claim_expires_at = NULL
+           WHERE id = ?`,
+        )
+        .run(at, error, id);
+    },
+
+    /** Put a dead-lettered event back in the queue, for an operator replaying after a fix. */
+    replayDeadLetteredOutboxEvent(id: string, at: string): boolean {
+      const result = database
+        .prepare(
+          `UPDATE outbox_events
+           SET dead_lettered_at = NULL, attempts = 0, next_attempt_at = ?, last_error = NULL
+           WHERE id = ? AND dead_lettered_at IS NOT NULL`,
+        )
+        .run(at, id);
+      return Number(result.changes) > 0;
+    },
+
+    listOutboxEvents(filter: { companyId?: string; pendingOnly?: boolean } = {}): OutboxEvent[] {
+      const clauses: string[] = [];
+      const values: string[] = [];
+      if (filter.companyId) {
+        clauses.push("company_id = ?");
+        values.push(filter.companyId);
+      }
+      if (filter.pendingOnly) {
+        clauses.push("delivered_at IS NULL AND dead_lettered_at IS NULL");
+      }
+      const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+      const rows = database
+        .prepare(`SELECT * FROM outbox_events ${where} ORDER BY created_at ASC, rowid ASC`)
+        .all(...values) as OutboxEventRow[];
+      return rows.map(mapOutboxEvent);
+    },
+
+    /**
+     * Record a recovery decision, or report that this source event already has one.
+     *
+     * Uniqueness on `source_event_id` is what makes at-least-once delivery safe: the same failure
+     * delivered twice produces one decision and at most one replacement execution.
+     */
+    createRecoveryDecision(decision: {
+      id: string;
+      sourceEventId: string;
+      companyId: string;
+      taskId: string | null;
+      decision: string;
+      reason: string;
+      createdAt: string;
+    }): boolean {
+      try {
+        database
+          .prepare(
+            `INSERT INTO recovery_decisions (id, source_event_id, company_id, task_id, decision, reason, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            decision.id, decision.sourceEventId, decision.companyId,
+            decision.taskId, decision.decision, decision.reason, decision.createdAt,
+          );
+        return true;
+      } catch {
+        // The unique constraint: this event already produced a decision.
+        return false;
+      }
+    },
+
+    listRecoveryDecisions(companyId?: string): Array<{
+      id: string;
+      sourceEventId: string;
+      companyId: string;
+      taskId: string | null;
+      decision: string;
+      reason: string;
+      createdAt: string;
+    }> {
+      const rows = (companyId
+        ? database.prepare("SELECT * FROM recovery_decisions WHERE company_id = ? ORDER BY created_at ASC").all(companyId)
+        : database.prepare("SELECT * FROM recovery_decisions ORDER BY created_at ASC").all()) as Array<{
+        id: string; source_event_id: string; company_id: string;
+        task_id: string | null; decision: string; reason: string; created_at: string;
+      }>;
+      return rows.map((row) => ({
+        id: row.id,
+        sourceEventId: row.source_event_id,
+        companyId: row.company_id,
+        taskId: row.task_id,
+        decision: row.decision,
+        reason: row.reason,
+        createdAt: row.created_at,
+      }));
+    },
+
     countAgentRunsForTask(taskId: string): number {
       // Counts attempts since the last reset marker (if any) so agent-run history is preserved
       // for diagnosis (ADR 0002) rather than deleted when the count is reset. A run that stopped
@@ -2030,6 +2243,22 @@ function mapVerificationRework(row: VerificationReworkRow): VerificationRework {
   };
 }
 
+type OutboxEventRow = {
+  id: string;
+  version: number;
+  type: string;
+  company_id: string;
+  task_id: string | null;
+  run_id: string | null;
+  payload: string;
+  created_at: string;
+  attempts: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+  delivered_at: string | null;
+  dead_lettered_at: string | null;
+};
+
 type RunInvocationRow = {
   id: string;
   run_id: string;
@@ -2468,6 +2697,24 @@ function mapBusinessArtifact(row: BusinessArtifactRow): BusinessArtifact {
     ...(row.verification ? { verification: JSON.parse(row.verification) as ArtifactVerification } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapOutboxEvent(row: OutboxEventRow): OutboxEvent {
+  return {
+    id: row.id,
+    version: row.version,
+    type: row.type as OutboxEvent["type"],
+    companyId: row.company_id,
+    taskId: row.task_id,
+    runId: row.run_id,
+    payload: JSON.parse(row.payload) as OutboxEvent["payload"],
+    createdAt: row.created_at,
+    attempts: row.attempts,
+    nextAttemptAt: row.next_attempt_at,
+    lastError: row.last_error,
+    deliveredAt: row.delivered_at,
+    deadLetteredAt: row.dead_lettered_at,
   };
 }
 
