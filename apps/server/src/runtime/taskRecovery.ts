@@ -53,6 +53,9 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
   const progressEvents: TaskProgressEvent[] = [];
 
   for (const run of input.repositories.listRunningAgentRuns(input.companyId)) {
+    // New-policy runs are fenced by their owner meter and owner-exit reconciliation, never the
+    // legacy deadline plus grace. Missing snapshots throw rather than silently selecting legacy.
+    if (input.repositories.executionBudget.snapshot(run.id)) continue;
     if (!run.startedAt || !run.effectiveTimeoutMs) {
       continue;
     }

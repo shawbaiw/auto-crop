@@ -1,3 +1,5 @@
+import { resolveBudgetSnapshot, systemExecutionClock, type BudgetPolicy, type ExecutionClock } from "./budgetPolicy";
+import { BudgetInterrupted, RunBudget } from "./runBudget";
 import { EXECUTION_BRIEF_TIMEOUT_MS, prepareExecutionBrief } from "./executionBrief";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -83,6 +85,9 @@ export type SchedulerEvent = {
 
 export type RunSchedulerOnceInput = {
   projectRoot: string;
+  /** Internal opt-in; production defaults to observe until P4.2/P4.3 are complete. */
+  executionBudget?: Partial<BudgetPolicy>;
+  executionClock?: ExecutionClock;
   repositories: ReturnType<typeof createRepositories>;
   adapters: AgentAdapter[];
   workerId: string;
@@ -179,6 +184,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
     reconcileFinalFounderReportUpgrade(input, company, now, createId);
   }
 
+  if (input.repositories.executionBudget.ownerBlocked(input.workerId)) return result;
   const queuedTasks = input.repositories.fetchQueuedTasks(Math.max(input.maxTasks * 5, 20));
   const dispatches: Array<Promise<void>> = [];
 
@@ -245,6 +251,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
     dispatches.push(
       (async (handoffs: TaskHandoff[]) => {
+        const existingBudget = input.repositories.executionBudget.getTask(task.id);
+        // Rollback to observe must not mint new time for a task that already has an authorization.
+        if (existingBudget && (input.executionBudget === undefined
+          || existingBudget.authorizedMs <= existingBudget.consumedMs + existingBudget.reservedMs)) return;
         const acquiredAt = now().toISOString();
 
         if (
@@ -263,6 +273,20 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         // Observation state lives outside the try: the `finally` has to flush and close it however
         // the dispatch ends.
         let observer: RunObserver | null = null;
+        let budget: RunBudget | null = null;
+        function settleRun(...args: Parameters<typeof settleObservedRun>): boolean {
+          if (budget) args[2] = { ...args[2], budgetCheck: () => budget!.settlementUsage(args[2].status === "complete") };
+          const lengths = { completed: result.completed.length, failed: result.failed.length, blocked: result.blocked.length };
+          try { return settleObservedRun(...args); }
+          catch (error) {
+            // The final budget check may reject a prepared success inside the transaction. Its
+            // database writes and buffered announcements roll back; so must the returned tick result.
+            result.completed.length = lengths.completed;
+            result.failed.length = lengths.failed;
+            result.blocked.length = lengths.blocked;
+            throw error;
+          }
+        }
         let heartbeat: { stop: () => void } | null = null;
         // The ownership generation this dispatch is executing under. Null until the run exists.
         let ownerEpoch: number | null = null;
@@ -330,8 +354,13 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           const launchWarnings = launch.support?.warnings ?? [];
 
           const initialTimeoutResolution = resolveEffectiveTimeout(task, process.env, grant);
+          const budgetSnapshot = input.executionBudget === undefined ? null
+            : resolveBudgetSnapshot(input.executionBudget, initialTimeoutResolution);
+          if (budgetSnapshot && budgetSnapshot.persistMs * 3 >= (input.executionLeaseMs ?? DEFAULT_EXECUTION_LEASE_MS)) {
+            throw new Error("Budget persistMs must be less than one third of the execution lease");
+          }
           // Dispatch resolves whatever parked this task: the runtime owns it again.
-          applyTaskTransition({
+          const markRunning = () => applyTaskTransition({
             repositories: input.repositories,
             task,
             status: "running",
@@ -347,7 +376,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             now,
             createId,
           });
-          result.started.push(task.id);
+          if (!budgetSnapshot) { markRunning(); result.started.push(task.id); }
           // Compatible launch isolation still dispatches (Auto-Crop is local-first), but the downgrade is
           // recorded on the task, not only in server stdout.
           for (const warning of [...launchWarnings, ...initialTimeoutResolution.warnings]) {
@@ -416,6 +445,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               heldWorkspacePath = null;
               heldWorkspaceRunId = null;
             }
+            const budgetClock = input.executionClock ?? systemExecutionClock;
+            const originMono = budgetClock.monotonicMs();
+            const originUtc = budgetClock.utcNow().getTime();
             const claimed = input.repositories.transaction(() => {
               // The directory this run will write, claimed with the run itself. Two different tasks
               // legitimately share one — a consumer continues in its producer's artifact workspace —
@@ -455,6 +487,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               input.repositories.updateAgentRunObservation(agentRunId, { ownerId: input.workerId });
               // Each attempt binds the newly acquired lock to its own run and epoch.
               input.repositories.bindTaskLockToRun(task.id, input.workerId, agentRunId, epoch);
+              if (budgetSnapshot) {
+                input.repositories.executionBudget.reserve(agentRunId, task.id, epoch, budgetSnapshot, now().toISOString());
+                markRunning();
+              }
               return epoch;
             });
 
@@ -465,6 +501,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               requeueForBusyWorkspace(input, task, runWorkspacePath, now, createId);
               return;
             }
+            if (budgetSnapshot) result.started.push(task.id);
             heldForRunId = agentRunId;
             ownerEpoch = claimed;
             heldWorkspacePath = runWorkspacePath;
@@ -500,7 +537,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               }
             };
             heartbeat?.stop();
-            heartbeat = startHeartbeat(beat, input.heartbeatIntervalMs);
+            heartbeat = startHeartbeat(beat, budgetSnapshot ? 0 : input.heartbeatIntervalMs);
 
             // Publish a way to stop this run while it runs. Without it, "stop the company" was a
             // status change that left the agent processes running and spending.
@@ -519,6 +556,16 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             };
             releaseHandle = registry.register(handle);
             stopHandle = handle;
+            if (budgetSnapshot) budget = new RunBudget({
+              repositories: input.repositories, runId: agentRunId, snapshot: budgetSnapshot,
+              reservedMs: input.repositories.executionBudget.getRun(agentRunId)!.reserved_ms,
+              clock: budgetClock, originMono, originUtc, abort: () => stopper?.abort(), renewOwnership: beat,
+            });
+            const controlledAdapter: AgentAdapter = budget ? { ...adapter, run: async (request) => {
+              const timeoutMs = budget!.beginInvocation();
+              const returned = await adapter.run({ ...request, timeoutMs, signal: stopper!.signal });
+              return budget!.returned(returned, stopHandle?.stopReason !== null);
+            } } : adapter;
 
             const company = input.repositories.getCompany(task.companyId);
             if (!company) {
@@ -536,10 +583,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             };
             const preparationStartedAt = now().getTime();
             preparationTimeoutMs = Math.min(request.timeoutMs, EXECUTION_BRIEF_TIMEOUT_MS);
+            budget?.enter("preparing_brief");
             observer.enterPhase("preparing_brief");
             beat();
-            const preparation = await prepareExecutionBrief({ adapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs });
-            const remainingMs = request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
+            const preparation = await prepareExecutionBrief({ adapter: controlledAdapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs });
+            const remainingMs = budget ? (budget.reason ? 0 : budget.remainingMs())
+              : request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
             if (preparation.brief && remainingMs > 0) {
               appendAndEmitTaskEvent(input, {
                 task, type: "task_started", status: "running",
@@ -553,9 +602,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 task, step: "executing", status: "current",
                 label: `Task ${task.position + 1} (${task.title}) in progress`, subjectTaskId: task.id,
               });
+              budget?.enter("executing");
               observer.enterPhase("executing", "brief_returned");
               beat();
-              agentResult = await adapter.run({
+              agentResult = await controlledAdapter.run({
                 ...request,
                 signal: stopper.signal,
                 timeoutMs: remainingMs,
@@ -577,7 +627,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               agentResult = {
                 ...preparation.result,
                 status: "failed",
-                failureReason: remainingMs <= 0 ? "timeout" : (preparation.result.failureReason ?? "agent_failed"),
+                failureReason: budget?.reason ?? (remainingMs <= 0 ? "timeout" : (preparation.result.failureReason ?? "agent_failed")),
                 stderr: preparation.result.stderr.trim()
                   || `The execution brief did not complete within ${formatExecutionBudget(preparationTimeoutMs)}; substantive work was not dispatched.`,
               };
@@ -608,7 +658,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             // A preparation timeout is capped by the brief's own budget, so a longer task budget
             // cannot change its outcome; only a substantive run earns an escalation.
             const retryTimeoutResolution =
-              failureReason === "timeout" && !preparationFailed && agentResult.terminationConfirmed !== false ? resolveRetryTimeout(timeoutResolution) : null;
+              !budget && failureReason === "timeout" && !preparationFailed && agentResult.terminationConfirmed !== false ? resolveRetryTimeout(timeoutResolution) : null;
 
             if (!retryTimeoutResolution) {
               break;
@@ -659,10 +709,16 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           // A delivery whose artifact file does not parse gets one narrow syntax repair before capture,
           // so everything downstream — proof, validation, finalization — reads the file it leaves.
           if (agentResult.status === "complete") {
+            budget?.enter("repairing_artifact");
             observer?.enterPhase("repairing_artifact", "work_returned");
             observer?.beat();
+            const repairAdapter: AgentAdapter = budget ? { ...adapter, run: async (request) => {
+              const timeoutMs = budget!.beginInvocation();
+              const returned = await adapter.run({ ...request, timeoutMs, signal: stopper!.signal });
+              return budget!.returned(returned, stopHandle?.stopReason !== null);
+            } } : adapter;
             const repair = await repairBusinessArtifactSyntax({
-              adapter,
+              adapter: repairAdapter,
               request: {
                 taskId: task.id,
                 promptPath: "",
@@ -672,6 +728,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               },
               grant,
             });
+            if (budget?.reason) throw new BudgetInterrupted(`Execution stopped: ${budget.reason}`);
             if (repair) {
               appendFileSync(
                 logPath,
@@ -687,6 +744,11 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             }
           }
 
+          if (budget && !budget.reason) {
+            budget.enter("finalizing");
+            observer?.enterPhase("finalizing", agentResult.status === "complete" ? "work_complete" : "work_failed");
+            observer?.beat();
+          }
           let proof: Proof[] = [];
           if (agentResult.status === "complete") {
             try {
@@ -746,8 +808,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
 
           // Everything from here is the runtime's own work on the run's output. It is still the run's
           // time, and it is the phase a settlement is interrupted in, so it is observed like the rest.
-          observer?.enterPhase("finalizing", agentResult.status === "complete" ? "work_complete" : "work_failed");
-          observer?.beat();
+          if (!budget || budget.reason) {
+            observer?.enterPhase("finalizing", agentResult.status === "complete" ? "work_complete" : "work_failed");
+            observer?.beat();
+          }
 
           let businessArtifact: BusinessArtifact | null = null;
           let environmentBlockerDegraded = false;
@@ -822,7 +886,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
             // A brief that timed out says nothing about whether the task fits its budget, so it is
             // not evidence for a replan either.
-            if (failureReason === "timeout" && agentResult.terminationConfirmed !== false && !preparationFailed && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
+            if (!budget && failureReason === "timeout" && agentResult.terminationConfirmed !== false && !preparationFailed && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
               const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
               if (
                 settleRun(input, agentRunId, { status: "failed", failureReason: "timeout", failureMessage: failure, terminationConfirmed: agentResult.terminationConfirmed }, now, (settled) => {
@@ -1061,7 +1125,27 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           ) {
             publishHandoff();
           }
+        } catch (error) {
+          if (budget) stopper?.abort();
+          if (!budget || !(error instanceof BudgetInterrupted) || !heldForRunId) throw error;
+          const reason = budget.reason ?? "clock_untrusted";
+          const failure = `Task stopped: ${task.title} / ${reason}.`;
+          settleRun(input, heldForRunId, {
+            status: "failed", failureReason: budget.activeInvocation ? "termination_unconfirmed" : reason,
+            failureMessage: failure, terminationConfirmed: budget.activeInvocation ? false : undefined,
+          }, now, (settled) => {
+            if (budget!.activeInvocation && heldWorkspacePath) {
+              isolateForUnconfirmedTermination(settled, result, task, heldForRunId!, heldWorkspacePath, now, createId);
+            } else {
+              applyTaskTransition({ repositories: settled.repositories, task, status: "failed",
+                executionSummary: { latestFailureReason: reason, latestFailureMessage: failure }, now, createId });
+              appendAndEmitTaskEvent(settled, { task, type: "task_failed", status: "failed", message: failure,
+                failureReason: reason, failureMessage: failure });
+              result.failed.push(task.id);
+            }
+          });
         } finally {
+          budget?.close();
           try {
             if (taskWorkspaceRoot) {
               try {
@@ -2052,7 +2136,7 @@ function reportObservationFailures(
  * the transaction has committed, so a settlement that rolls back never announces itself. Persisting
  * those events is still part of the transaction.
  */
-function settleRun(
+function settleObservedRun(
   input: RunSchedulerOnceInput,
   agentRunId: string,
   outcome: RunOutcome,

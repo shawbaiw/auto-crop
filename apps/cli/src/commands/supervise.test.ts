@@ -156,9 +156,10 @@ describe("superviseAutoCrop", () => {
     } finally { client.close(); }
   });
 
-  it.skipIf(process.platform === "win32").each(["retry", "supervisor_restart"] as const)("isolates a fresh run after Worker death before PID registration, with %s after a reconciliation failure", async (mode) => {
+  it.skipIf(process.platform === "win32").each(["retry", "supervisor_restart", "budget_retry", "budget_supervisor_restart"] as const)("isolates a fresh run after Worker death before PID registration, with %s after a reconciliation failure", async (mode) => {
     const projectRoot = createTempProjectRoot();
     const { repositories, client } = openState(projectRoot);
+    const budgetMode = mode.startsWith("budget_");
     let first: ChildProcess | undefined;
     let writerPid: number | undefined;
     let writerPath: string | undefined;
@@ -176,7 +177,8 @@ describe("superviseAutoCrop", () => {
           return spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
         }
         owner = ownerId;
-        first = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./fixtures/exitingWorker.ts", import.meta.url)), projectRoot, ownerId], {
+        first = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./fixtures/exitingWorker.ts", import.meta.url)), projectRoot, ownerId, budgetMode ? "budget" : "observe"], {
+          env: { ...process.env, ...(budgetMode ? { AUTO_CROP_FORCE_AGENT_TIMEOUT_MS: "60" } : {}) },
           stdio: ["ignore", "ignore", "pipe", "ipc"],
         });
         first.on("message", (message) => {
@@ -198,18 +200,22 @@ describe("superviseAutoCrop", () => {
       await untilTrue(() => logs.some((line) => line.includes("restart blocked by reconciliation")));
       expect(starts).toBe(1);
       expect(repositories.getTask("task_1")?.status).toBe("running");
-      if (mode === "supervisor_restart") {
+      if (mode.endsWith("supervisor_restart")) {
         await expect(supervised.close()).rejects.toThrow("exit reconciliation failed");
       }
       client.exec("DROP TRIGGER fail_outbox");
-      if (mode === "supervisor_restart") supervised = await superviseAutoCrop(options);
+      if (mode.endsWith("supervisor_restart")) supervised = await superviseAutoCrop(options);
       await untilTrue(() => starts === 2, 3_000);
       expect(replacementSawIsolation).toBe(true);
       expect(repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["termination_unconfirmed"]);
-      const events = repositories.listOutboxEvents({ companyId: "company_1" });
+      const events = repositories.listOutboxEvents({ companyId: "company_1" }).filter(event => event.type === "execution_failed");
       expect(events).toHaveLength(1);
       expect(events[0].payload).toMatchObject({ runId: run.id, reason: "worker_lost", terminationConfirmed: null });
-      expect(repositories.listRecoveryDecisions("company_1")).toHaveLength(1);
+      expect(repositories.listRecoveryDecisions("company_1").filter(decision => decision.sourceEventId === events[0].id)).toHaveLength(1);
+      if (budgetMode) {
+        expect(repositories.executionBudget.getRun(run.id)).toMatchObject({ consumed_ms: 10_000, settled: 1, estimated: 1 });
+        expect(repositories.executionBudget.ledger(run.id).filter(row => row.kind === "settled")).toHaveLength(1);
+      }
       await untilTrue(() => { try { return statSync(join(writerPath!, "still-writing.txt")).size > 0; } catch { return false; } });
       const before = statSync(join(writerPath!, "still-writing.txt")).size;
       await untilTrue(() => statSync(join(writerPath!, "still-writing.txt")).size > before);

@@ -8,6 +8,9 @@ export type RunOutcome = {
   failureReason?: AgentFailureReason;
   failureMessage?: string;
   terminationConfirmed?: boolean | null;
+  /** Only supplied by the owning monotonic meter; absence settles the reservation conservatively. */
+  budgetUsedMs?: number;
+  budgetCheck?: () => number | undefined;
 };
 
 /** Claim must be the first SQL statement, so competing SQLite writers cannot upgrade a stale read.
@@ -42,6 +45,9 @@ export function settleAgentRun(input: {
     requireCurrentEpoch: true,
   }), () => {
     input.commit();
+    const usedMs = outcome.budgetCheck ? outcome.budgetCheck() : outcome.budgetUsedMs;
+    repositories.executionBudget.settle(runId, input.at, outcome.terminationConfirmed === false ? undefined : usedMs);
+    if (outcome.failureReason === "clock_untrusted") repositories.executionBudget.blockOwner(runId, input.at);
     const observed = repositories.getAgentRunObservation(runId);
     if (!observed) throw new Error(`Missing settlement observation for ${runId}`);
     repositories.releaseTaskLockForRun(observed.taskId, runId, observed.ownerEpoch === null);

@@ -5,12 +5,13 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createDatabaseClient, createRepositories, migrate, runSchedulerOnce } from "@auto-crop/server";
 
-const [projectRoot, ownerId] = process.argv.slice(2);
+const [projectRoot, ownerId, budgetMode] = process.argv.slice(2);
 const database = createDatabaseClient(join(projectRoot, ".auto-crop", "state.sqlite"));
 migrate(database);
 process.on("message", (message) => { if (message === "crash") process.exit(1); });
 await runSchedulerOnce({
   projectRoot, repositories: createRepositories(database), workerId: ownerId, maxTasks: 1,
+  executionBudget: budgetMode === "budget" ? { runHardMs: 10_000, taskTotalMs: 15_000, persistMs: 20 } : undefined,
   approvalRequired: () => false, heartbeatIntervalMs: 20, executionLeaseMs: 90_000,
   proofCollector: () => [], emit: () => undefined,
   adapters: [{

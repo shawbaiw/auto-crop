@@ -11,6 +11,7 @@ type Repositories = ReturnType<typeof createRepositories>;
  * how a diagnostic ends up impersonating a completion (execution-health §8.1).
  */
 export type ExecutionEventType =
+  | "execution_budget_review"
   | "execution_completed"
   | "execution_failed"
   | "execution_stop_requested"

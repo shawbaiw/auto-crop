@@ -223,6 +223,34 @@ export function migrate(database: DatabaseClient): void {
     -- One launch of an agent process within a run (ADR 0035 / execution-health P1). A run's brief,
     -- its substantive work and its Artifact Syntax Repair are separate invocations of the same run,
     -- so "how long did it take" and "what ended it" are answerable per phase rather than per run.
+    CREATE TABLE IF NOT EXISTS budget_owner_guards (owner_id TEXT PRIMARY KEY, detected_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS task_budgets (
+      task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+      authorized_ms INTEGER NOT NULL CHECK (authorized_ms > 0)
+    );
+    CREATE TABLE IF NOT EXISTS run_budgets (
+      run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
+      task_id TEXT NOT NULL REFERENCES task_budgets(task_id),
+      owner_epoch INTEGER NOT NULL,
+      reserved_ms INTEGER NOT NULL CHECK (reserved_ms > 0),
+      consumed_ms INTEGER NOT NULL CHECK (consumed_ms >= 0 AND consumed_ms <= reserved_ms),
+      settled INTEGER NOT NULL DEFAULT 0,
+      estimated INTEGER NOT NULL DEFAULT 0,
+      seq INTEGER NOT NULL DEFAULT 0,
+      next_checkpoint_ms INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS run_budgets_task ON run_budgets(task_id);
+    CREATE TABLE IF NOT EXISTS budget_ledger (
+      run_id TEXT NOT NULL REFERENCES run_budgets(run_id),
+      seq INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      consumed_ms INTEGER NOT NULL,
+      reserved_ms INTEGER NOT NULL,
+      estimated INTEGER NOT NULL,
+      recorded_at TEXT NOT NULL,
+      PRIMARY KEY (run_id, seq)
+    );
+
     CREATE TABLE IF NOT EXISTS run_invocations (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
@@ -650,6 +678,7 @@ function migrateAgentRunsExecutionFields(database: DatabaseClient): void {
   addColumnIfMissing(database, columns, "agent_runs", "last_heartbeat_at TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "last_activity_at TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "policy_version TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "budget_snapshot TEXT");
   // Which generation of ownership this run belongs to. A run whose epoch is not the task's current
   // one has been superseded, whatever its status says.
   addColumnIfMissing(database, columns, "agent_runs", "owner_epoch INTEGER");

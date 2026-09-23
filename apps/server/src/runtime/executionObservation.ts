@@ -162,7 +162,7 @@ export class RunObserver {
         ownerId: this.ownerId,
         phase,
         phaseStartedAt: at,
-        policyVersion: OBSERVATION_POLICY_VERSION,
+        policyVersion: this.repositories.executionBudget.snapshot(this.runId) ? undefined : OBSERVATION_POLICY_VERSION,
       });
     });
   }

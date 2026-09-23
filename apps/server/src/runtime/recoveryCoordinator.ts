@@ -78,6 +78,7 @@ export class RecoveryCoordinator {
    * stage is to notice and say so, not to duplicate the founder's judgement.
    */
   private decide(event: OutboxEvent): RecoveryDecision {
+    if (event.type === "execution_budget_review") return { kind: "no_action", reason: "The same run continues within its pinned budget." };
     if (event.type === "execution_completed") {
       return { kind: "no_action", reason: "The run completed; there is nothing to recover." };
     }

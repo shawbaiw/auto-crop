@@ -1,3 +1,4 @@
+import { createExecutionBudgetStore } from "./executionBudget";
 import type {
   ArtifactVerification,
   DependencyInputRole,
@@ -61,6 +62,7 @@ export function createRepositories(database: DatabaseClient) {
   let savepointDepth = 0;
 
   return {
+    executionBudget: createExecutionBudgetStore(database),
     /**
      * Run `work` as one atomic unit: either every write inside lands, or none does.
      *

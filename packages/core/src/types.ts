@@ -86,6 +86,10 @@ export type CeoIntakeStatus =
 export type CeoReviewDecisionKind = "approve" | "return";
 export type CeoReviewReturnReason = "needs_changes" | "unclear_task_definition" | "scope_too_large" | "wrong_direction";
 export type AgentFailureReason =
+  | "run_budget_exhausted"
+  | "phase_budget_exhausted"
+  | "task_budget_exhausted"
+  | "clock_untrusted"
   | "timeout"
   | "agent_failed"
   /**
