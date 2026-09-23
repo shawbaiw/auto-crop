@@ -9,6 +9,35 @@ import { triggerKillSwitch } from "./killSwitch";
 import { runSchedulerOnce } from "./scheduler";
 
 describe("triggerKillSwitch", () => {
+  it.each(["before", "after"])("rolls cancellation back when outbox fails %s insertion", (when) => {
+    const { client, repositories } = createKillSwitchFixture();
+    repositories.writeTaskStatusUnchecked("task_1", "running");
+    repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T00:00:00.000Z");
+    repositories.createAgentRun({
+      id: "agent_run_1", taskId: "task_1", agentId: "codex", status: "running",
+      startedAt: "2026-08-17T00:00:00.000Z", finishedAt: null, logPath: "test.log",
+    });
+    try {
+      expect(() => triggerKillSwitch({
+        companyId: "company_1", repositories: { ...repositories, appendOutboxEvent: (event) => {
+          if (when === "after") repositories.appendOutboxEvent(event);
+          throw new Error("outbox failed");
+        } },
+      })).toThrow("outbox failed");
+      // Pause remains a control request; a failed settlement cannot announce a completed stop.
+      expect(repositories.isGlobalPaused()).toBe(true);
+      expect(repositories.getTask("task_1")?.status).toBe("running");
+      expect(repositories.listRunningAgentRuns("company_1")).toHaveLength(1);
+      expect(repositories.listTaskLocks()).toHaveLength(1);
+      expect(repositories.listOutboxEvents({ companyId: "company_1" })).toEqual([]);
+      triggerKillSwitch({ companyId: "company_1", repositories });
+      triggerKillSwitch({ companyId: "company_1", repositories });
+      const events = repositories.listOutboxEvents({ companyId: "company_1" });
+      expect(events).toHaveLength(1);
+      expect(events[0].payload).toMatchObject({ runId: "agent_run_1", reason: "cancelled", terminationConfirmed: null });
+    } finally { client.close(); }
+  });
+
   it("sets global pause, cancels active runs, releases locks, and moves company to review", () => {
     const { client, repositories } = createKillSwitchFixture();
     const stopped: Array<{ taskId: string; reason: string }> = [];

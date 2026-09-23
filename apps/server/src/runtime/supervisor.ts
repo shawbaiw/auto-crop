@@ -1,5 +1,5 @@
 import type { createRepositories } from "../db/repositories";
-import { OutboxDispatcher, recordExecutionEvent, type DeliveryOutcome, type OutboxEvent } from "./executionEvents";
+import { OutboxDispatcher, type DeliveryOutcome, type OutboxEvent } from "./executionEvents";
 import { RecoveryCoordinator } from "./recoveryCoordinator";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 
@@ -59,10 +59,6 @@ export class Supervisor {
     });
   }
 
-  private now(): Date {
-    return this.input.now?.() ?? new Date();
-  }
-
   private readonly decisions: SupervisorScanResult["decisions"] = [];
 
   /**
@@ -103,18 +99,7 @@ export class Supervisor {
       });
       reconciledTaskIds.push(...reconciled.reconciledTaskIds);
 
-      // A task the worker abandoned produces an event here, because the worker that would normally
-      // have written one is the thing that stopped.
-      for (const taskId of reconciled.reconciledTaskIds) {
-        recordExecutionEvent(this.input.repositories, {
-          id: (this.input.createId ?? ((prefix: string) => `${prefix}_${crypto.randomUUID()}`))("outbox_event"),
-          type: "execution_failed",
-          companyId: company.id,
-          taskId,
-          reason: "worker_lost",
-          observedAt: this.now().toISOString(),
-        });
-      }
+
     }
 
     const drained = await this.dispatcher.drainOnce();

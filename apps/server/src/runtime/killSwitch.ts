@@ -1,5 +1,6 @@
 import type { createRepositories } from "../db/repositories";
 import { defaultExecutionRegistry, type ExecutionRegistry } from "./executionControl";
+import { settleAgentRun } from "./executionSettlement";
 import { applyTaskTransition } from "./taskTransition";
 
 export type TriggerKillSwitchInput = {
@@ -45,37 +46,28 @@ export function triggerKillSwitch(input: TriggerKillSwitchInput): TriggerKillSwi
   // agent still runs is the state this exists to prevent.
   const reachable = new Set(registry.requestStopForCompany(input.companyId, "emergency_stop"));
 
-  for (const taskId of cancelledTasks) {
-    // Cancelling is terminal, so the seam closes every open Hold: a stopped company must not leave
-    // the founder a queue of Holds on tasks that will never run again.
-    applyTaskTransition({
-      repositories: input.repositories,
-      task: taskId,
-      status: "cancelled",
-      resolution: "cancelled",
-      now: input.now,
-    });
-  }
-
-  for (const run of runningRuns) {
-    // Conditional: a run that settled while we were deciding to stop it keeps its own outcome.
-    input.repositories.updateAgentRunStatus(run.id, "cancelled", finishedAt, {
-      failureReason: "cancelled",
-      failureMessage: "Execution was stopped by an Emergency Stop.",
-      expectedStatus: "running",
-    });
-  }
-
-  // This company's locks only. Clearing the table took other companies' running work out from under
-  // them — a stop for one company must not unlock another's live execution.
   const releasedLocks: string[] = [];
+  for (const run of runningRuns) {
+    settleAgentRun({
+      repositories: input.repositories, runId: run.id,
+      outcome: { status: "cancelled", failureReason: "cancelled", failureMessage: "Execution was stopped by an Emergency Stop." },
+      at: finishedAt, createId: (prefix) => `${prefix}_${crypto.randomUUID()}`,
+      commit: () => {
+        applyTaskTransition({
+          repositories: input.repositories, task: run.taskId, status: "cancelled",
+          resolution: "cancelled", now: input.now,
+        });
+        if (input.repositories.releaseTaskLockForRun(run.taskId, run.id, run.ownerEpoch == null)) releasedLocks.push(run.taskId);
+      },
+    });
+  }
+
+  // Legacy unbound locks with no running run retain their existing scoped cleanup behavior.
   const companyTaskIds = new Set(input.repositories.listTasksForCompany(input.companyId).map((task) => task.id));
   for (const lock of input.repositories.listTaskLocks()) {
-    if (!companyTaskIds.has(lock.taskId)) {
-      continue;
+    if (companyTaskIds.has(lock.taskId) && lock.runId === null && !cancelledTasks.includes(lock.taskId)) {
+      if (input.repositories.releaseTaskLock(lock.taskId, lock.ownerId, null)) releasedLocks.push(lock.taskId);
     }
-    input.repositories.releaseTaskLock(lock.taskId, lock.ownerId, lock.runId);
-    releasedLocks.push(lock.taskId);
   }
 
   const stoppedSessions = input.stopCompanySessions?.(input.companyId, "emergency_stop") ?? [];

@@ -290,6 +290,9 @@ describe("runSchedulerOnce", () => {
       expect(repositories.getTask("task_1")?.status).toBe("running");
       expect(repositories.listProofsForTask("task_1")).toEqual([]);
       expect(repositories.listBusinessArtifactsForTask("task_1")).toEqual([]);
+      expect(repositories.listTaskLocks()).toHaveLength(1);
+      expect(repositories.listWorkspaceClaims()).toHaveLength(1);
+      expect(repositories.listOutboxEvents({ companyId: "company_1" })).toEqual([]);
       // …so the run is still one a reconcile reads, and its deadline still governs it.
       expect(
         reconcileStaleRunningTasks({
@@ -626,13 +629,13 @@ describe("runSchedulerOnce", () => {
       client.close();
     });
 
-    it("isolates the workspace when a stopped run was never seen to exit", async () => {
+    it.each(["cancelled", "timeout"] as const)("isolates the workspace when %s was never confirmed stopped, without retrying", async (failureReason) => {
       const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
 
       await runSchedulerOnce({
         projectRoot, repositories, adapters: [
           deliveringAdapter(() => ({
-            status: "failed", exitCode: null, failureReason: "cancelled",
+            status: "failed", exitCode: null, failureReason,
             stderr: "stopped", terminationConfirmed: false,
           })),
         ],
@@ -644,6 +647,9 @@ describe("runSchedulerOnce", () => {
       const task = repositories.getTask("task_1")!;
       expect(task.status).toBe("blocked");
       expect(task.latestFailureReason).toBe("termination_unconfirmed");
+      const events = repositories.listOutboxEvents({ companyId: "company_1" });
+      expect(events).toHaveLength(1);
+      expect(events[0].payload).toMatchObject({ reason: "termination_unconfirmed", terminationConfirmed: false, ownerEpoch: 1 });
       // The directory stays claimed after the run that took it, which is the whole point.
       const claim = repositories.listWorkspaceClaims()[0];
       expect(claim?.isolatedReason).toContain("never seen to exit");
@@ -654,6 +660,22 @@ describe("runSchedulerOnce", () => {
       expect(resolveTaskAffordances({ status: task.status, holds }).map((affordance) => affordance.kind).sort())
         .toEqual(["cancel_task", "confirm_termination", "request_replan"]);
       client.close();
+    });
+
+    it.each([true, undefined])("preserves adapter termination evidence %s in the settlement event", async (terminationConfirmed) => {
+      const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+      try {
+        await runSchedulerOnce({
+          projectRoot, repositories,
+          adapters: [deliveringAdapter(() => ({ status: "failed", failureReason: "cancelled", terminationConfirmed }))],
+          workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
+          proofCollector: ({ task }) => [createProofForTask(task)], emit: () => undefined,
+        });
+        expect(repositories.getTask("task_1")?.status).toBe("cancelled");
+        expect(repositories.listOpenTaskHolds("task_1")).toEqual([]);
+        expect(repositories.listOutboxEvents({ companyId: "company_1" })[0].payload)
+          .toMatchObject({ reason: "cancelled", terminationConfirmed: terminationConfirmed ?? null });
+      } finally { client.close(); }
     });
 
     it("keeps an isolated directory out of use until the isolation is lifted", async () => {

@@ -6,6 +6,8 @@ import { formatExecutionBudget } from "./executionProfile";
 import { buildProofContractInstructions } from "./proofContract";
 import { recoverProofIfPossible } from "./taskRefresh";
 import { ARTIFACT_SYNTAX_REPAIR_TIMEOUT_MS } from "./artifactSyntaxRepair";
+import { settleAgentRun, settleExecution } from "./executionSettlement";
+import { recordExecutionEvent } from "./executionEvents";
 import { applyTaskTransition } from "./taskTransition";
 
 export type ReconcileStaleRunningTasksInput = {
@@ -65,74 +67,71 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
     }
 
     const failureMessage = `Task failed: ${task.title} / timeout after ${formatExecutionBudget(run.effectiveTimeoutMs)}.`;
-    // Claim the run before touching anything else. Losing means the scheduler finished this delivery
-    // while we were deciding it was dead, and then nothing here may run: not the task's status, not
-    // the lock, not the failure event (ADR 0034).
-    if (!input.repositories.updateAgentRunStatus(run.id, "failed", timestamp, {
-      failureReason: "timeout",
-      failureMessage,
-      expectedStatus: "running",
-    })) {
-      continue;
-    }
-    // A run whose deadline passed while nobody was watching is the archetypal passive interruption:
-    // the Hold is what stops it from sitting in `failed` with no offered way back.
-    applyTaskTransition({
-      repositories: input.repositories,
-      task,
-      status: "failed",
-      executionSummary: {
-        latestFailureReason: "timeout",
-        latestFailureMessage: failureMessage,
-        latestExecutionProfileName: run.executionProfileName ?? null,
-        latestRequestedTimeoutMs: run.requestedTimeoutMs ?? null,
-        latestEffectiveTimeoutMs: run.effectiveTimeoutMs,
+    settleAgentRun({
+      repositories: input.repositories, runId: run.id,
+      outcome: { status: "failed", failureReason: "timeout", failureMessage },
+      at: timestamp, createId, expectedTaskStatus: "running",
+      commit: () => {
+        const task = input.repositories.getTask(run.taskId)!;
+        // A run whose deadline passed while nobody was watching is the archetypal passive interruption:
+        // the Hold is what stops it from sitting in `failed` with no offered way back.
+        applyTaskTransition({
+          repositories: input.repositories,
+          task,
+          status: "failed",
+          executionSummary: {
+            latestFailureReason: "timeout",
+            latestFailureMessage: failureMessage,
+            latestExecutionProfileName: run.executionProfileName ?? null,
+            latestRequestedTimeoutMs: run.requestedTimeoutMs ?? null,
+            latestEffectiveTimeoutMs: run.effectiveTimeoutMs,
+          },
+          hold: {
+            kind: "runtime_interrupted",
+            subjectKind: "agent_run",
+            subjectId: run.id,
+            reason: failureMessage,
+          },
+          now: input.now,
+          createId: input.createId,
+        });
+
+        const event: TaskEvent = {
+          id: createId("task_event"),
+          companyId: task.companyId,
+          taskId: task.id,
+          type: "task_failed",
+          message: failureMessage,
+          createdAt: timestamp,
+          status: "failed",
+          failureReason: "timeout",
+          failureMessage,
+          executionProfileName: run.executionProfileName ?? null,
+          requestedTimeoutMs: run.requestedTimeoutMs ?? null,
+          effectiveTimeoutMs: run.effectiveTimeoutMs ?? null,
+          dependencyNote: null,
+          artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+        };
+        input.repositories.appendTaskEvent(event);
+        events.push(event);
+
+        const progressEvent: TaskProgressEvent = {
+          id: createId("task_progress"),
+          companyId: task.companyId,
+          departmentId: task.departmentId,
+          parentTaskId: task.parentTaskId ?? task.id,
+          subjectTaskId: task.id,
+          step: "blocked",
+          status: "blocked",
+          label: "Task timed out and is waiting for recovery.",
+          detail: failureMessage,
+          createdAt: timestamp,
+        };
+        input.repositories.appendTaskProgressEvent(progressEvent);
+        progressEvents.push(progressEvent);
+        reconciledTaskIds.push(task.id);
       },
-      hold: {
-        kind: "runtime_interrupted",
-        subjectKind: "agent_run",
-        subjectId: run.id,
-        reason: failureMessage,
-      },
-      now: input.now,
-      createId: input.createId,
     });
-    releaseTaskLockForRun(input.repositories, task.id, run.id);
-
-    const event: TaskEvent = {
-      id: createId("task_event"),
-      companyId: task.companyId,
-      taskId: task.id,
-      type: "task_failed",
-      message: failureMessage,
-      createdAt: timestamp,
-      status: "failed",
-      failureReason: "timeout",
-      failureMessage,
-      executionProfileName: run.executionProfileName ?? null,
-      requestedTimeoutMs: run.requestedTimeoutMs ?? null,
-      effectiveTimeoutMs: run.effectiveTimeoutMs,
-      dependencyNote: null,
-      artifactWorkspacePath: task.artifactWorkspacePath ?? null,
-    };
-    input.repositories.appendTaskEvent(event);
-    events.push(event);
-
-    const progressEvent: TaskProgressEvent = {
-      id: createId("task_progress"),
-      companyId: task.companyId,
-      departmentId: task.departmentId,
-      parentTaskId: task.parentTaskId ?? task.id,
-      subjectTaskId: task.id,
-      step: "blocked",
-      status: "blocked",
-      label: "Task timed out and is waiting for recovery.",
-      detail: failureMessage,
-      createdAt: timestamp,
-    };
-    input.repositories.appendTaskProgressEvent(progressEvent);
-    progressEvents.push(progressEvent);
-    reconciledTaskIds.push(task.id);
   }
 
   reconcileOrphanedRunningTasks({ input, now, createId, timestamp, reconciledTaskIds, events, progressEvents });
@@ -183,60 +182,71 @@ function reconcileOrphanedRunningTasks(context: {
       continue;
     }
 
-    const failureMessage = `Task failed: ${task.title} / the worker executing it stopped reporting before its run was recorded.`;
-    applyTaskTransition({
-      repositories,
-      task,
-      status: "failed",
-      executionSummary: {
-        latestFailureReason: "worker_lost",
-        latestFailureMessage: failureMessage,
-      },
-      hold: {
-        kind: "runtime_interrupted",
-        subjectKind: "task",
-        subjectId: task.id,
-        reason: failureMessage,
-      },
-      now: input.now,
-      createId: input.createId,
+    settleExecution(repositories, () => repositories.claimOrphanedTask({
+      taskId: task.id, ownerId: lock.ownerId, runId: lock.runId,
+      acquiredAt: lock.acquiredAt, leaseExpiresAt: lock.leaseExpiresAt, at: timestamp,
+    }), () => {
+      const failureMessage = `Task failed: ${task.title} / the worker executing it stopped reporting before its run was recorded.`;
+      applyTaskTransition({
+        repositories,
+        task,
+        status: "failed",
+        executionSummary: {
+          latestFailureReason: "worker_lost",
+          latestFailureMessage: failureMessage,
+        },
+        hold: {
+          kind: "runtime_interrupted",
+          subjectKind: "task",
+          subjectId: task.id,
+          reason: failureMessage,
+        },
+        now: input.now,
+        createId: input.createId,
+      });
+      repositories.releaseTaskLock(task.id, lock.ownerId, lock.runId);
+
+      const event: TaskEvent = {
+        id: createId("task_event"),
+        companyId: task.companyId,
+        taskId: task.id,
+        type: "task_failed",
+        message: failureMessage,
+        createdAt: timestamp,
+        status: "failed",
+        failureReason: "worker_lost",
+        failureMessage,
+        executionProfileName: null,
+        requestedTimeoutMs: null,
+        effectiveTimeoutMs: null,
+        dependencyNote: null,
+        artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+      };
+      repositories.appendTaskEvent(event);
+      context.events.push(event);
+
+      const progressEvent: TaskProgressEvent = {
+        id: createId("task_progress"),
+        companyId: task.companyId,
+        departmentId: task.departmentId,
+        parentTaskId: task.parentTaskId ?? task.id,
+        subjectTaskId: task.id,
+        step: "blocked",
+        status: "blocked",
+        label: "Task lost its worker and is waiting for recovery.",
+        detail: failureMessage,
+        createdAt: timestamp,
+      };
+      repositories.appendTaskProgressEvent(progressEvent);
+      context.progressEvents.push(progressEvent);
+      context.reconciledTaskIds.push(task.id);
+      recordExecutionEvent(repositories, {
+        id: createId("outbox_event"), type: "execution_failed", companyId: task.companyId,
+        taskId: task.id, reason: "worker_lost", observedAt: timestamp,
+        // This historical orphan has no run or termination evidence; never invent either.
+        runId: null, ownerEpoch: null, terminationConfirmed: null,
+      });
     });
-    repositories.releaseTaskLock(task.id, lock.ownerId, lock.runId);
-
-    const event: TaskEvent = {
-      id: createId("task_event"),
-      companyId: task.companyId,
-      taskId: task.id,
-      type: "task_failed",
-      message: failureMessage,
-      createdAt: timestamp,
-      status: "failed",
-      failureReason: "worker_lost",
-      failureMessage,
-      executionProfileName: null,
-      requestedTimeoutMs: null,
-      effectiveTimeoutMs: null,
-      dependencyNote: null,
-      artifactWorkspacePath: task.artifactWorkspacePath ?? null,
-    };
-    repositories.appendTaskEvent(event);
-    context.events.push(event);
-
-    const progressEvent: TaskProgressEvent = {
-      id: createId("task_progress"),
-      companyId: task.companyId,
-      departmentId: task.departmentId,
-      parentTaskId: task.parentTaskId ?? task.id,
-      subjectTaskId: task.id,
-      step: "blocked",
-      status: "blocked",
-      label: "Task lost its worker and is waiting for recovery.",
-      detail: failureMessage,
-      createdAt: timestamp,
-    };
-    repositories.appendTaskProgressEvent(progressEvent);
-    context.progressEvents.push(progressEvent);
-    context.reconciledTaskIds.push(task.id);
   }
 }
 
@@ -506,20 +516,6 @@ function isPartialOutputFollowUpTask(task: Task): boolean {
 
 function partialOutputSourceMarker(taskId: string): string {
   return `Partial Output Source Task: ${taskId}`;
-}
-
-/**
- * Release the lock for the run this reconcile just claimed.
- *
- * It used to release whatever lock the task had, by any owner and for any run, which meant declaring
- * one run dead could unlock a different run that was still live.
- */
-function releaseTaskLockForRun(
-  repositories: ReturnType<typeof createRepositories>,
-  taskId: string,
-  runId: string,
-): void {
-  repositories.releaseTaskLockForRun(taskId, runId);
 }
 
 function defaultCreateId(prefix: string): string {

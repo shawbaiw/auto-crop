@@ -39,7 +39,7 @@ SIGINT/SIGTERM waits for Worker exit before releasing ownership. A Worker exits 
 
 ## Consequences
 
-- A worker exit triggers a scan outside the worker. Current expiry-based reconciliation and its event transaction gaps remain K2/K3 acceptance items; this ADR describes the intended reliable chain, not proof that all P3 acceptance criteria passed.
+- A worker exit triggers a scan outside the worker. K2 now persists reconciliation and its event together; owner-specific exit handling and descendant termination remain K3 acceptance items. This ADR is not proof that all P3 acceptance criteria passed.
 - The supervisor cannot stop a process owned by a different worker — it has no control channel to one — and reports those as unreachable rather than as stopped. It also cannot survive its own machine going down; no part of this claims otherwise, and the docs say so where a founder will read it.
 - A second local supervised launch is refused before spawning. Cross-host leadership and control remain outside this local startup guard.
 - The outbox grows without bound. Delivered events are kept deliberately — they are the audit trail for what was decided and when — but there is no retention policy yet, the same gap `run_activity` has.

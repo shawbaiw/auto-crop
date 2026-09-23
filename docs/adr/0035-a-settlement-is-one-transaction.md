@@ -28,6 +28,16 @@ One more fact shaped the fix. Under a second connection — which the planned ou
 
 **A task lock records which run it is held for.** `task_locks.run_id` is bound when the run is created; a release must name the same run. A dispatch can therefore only ever release its own lock. Whoever settles a run they did not dispatch releases by run id instead, which also refuses to unlock a *different* run that is still live.
 
+## K2 amendment (2026-09-23)
+
+`executionSettlement.ts` now owns the shared transaction used by scheduler finalization, expired-run reconciliation (including explicit recovery and Supervisor scans), and Emergency Stop. Its first write conditionally claims the running run and checks a recorded owner epoch against the Task. The commit includes business state, Holds, release of that run's task lock and the outbox event. Historical orphan tasks use the same transaction helper with a conditional write that rechecks Task status, absence of a running run and the exact expired lock snapshot. Supervisor only reconciles and dispatches; it no longer writes a second event after reconciliation or labels every timeout `worker_lost`.
+
+The scheduler still publishes the handoff filesystem package after commit. Its workspace claim remains held through that publication and is then released by run id; explicitly isolated claims remain held. If settlement rolls back, the dispatch's `finally` retains its claims for reconciliation. A timeout retry reacquires and binds a fresh task lock for its own run rather than keeping the first attempt's binding. This preserves the file-publication boundary without putting filesystem work inside SQLite transactions.
+
+Events carry the adapter's actual termination evidence; missing evidence remains null. An unconfirmed timeout takes the existing isolation path before budget escalation or replanning, and a cancelled result settles as cancellation instead of attempting to derive a Hold for `failed + cancelled`. These rules do not establish Worker/descendant liveness: K3 still owns exit identity, termination confirmation and containment after Worker loss. Budget accounting will join this boundary in P4.
+
+Regression evidence covers rollback before and after outbox insertion, reopen and retry, all reconciliation entry points, cross-connection settlement competition, a lease renewed after an orphan scan, stale epochs, and true/false/unknown termination evidence. Emergency Stop's pause and stop request remain control actions outside the settlement transaction; failure to persist cancellation does not undo the stop request or pretend the run was settled.
+
 ## Considered options
 
 - **Keep the claim-only guard and accept partial settlements.** What ADR 0034 did, deliberately and temporarily. The stranded-`running` task is not a rare interleaving; it follows from any throw in a multi-statement sequence, and it has no exit at all.

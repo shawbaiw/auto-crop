@@ -14,7 +14,6 @@ import {
 } from "../policies/capabilityGrant";
 import {
   type AgentFailureReason,
-  type AgentRun,
   type BusinessArtifact,
   type Company,
   type DependencyInputRole,
@@ -45,7 +44,8 @@ import { generateFinalFounderReport, hasWorkCompletedSinceReport } from "./final
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { finalizeDelivery } from "./deliveryFinalization";
 import { RunObserver } from "./executionObservation";
-import { recordExecutionEvent } from "./executionEvents";
+import { settleAgentRun, type RunOutcome } from "./executionSettlement";
+export type { RunOutcome } from "./executionSettlement";
 import { defaultExecutionRegistry, type ExecutionRegistry } from "./executionControl";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
@@ -399,8 +399,13 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           let preparationTimeoutMs = EXECUTION_BRIEF_TIMEOUT_MS;
 
           while (true) {
+            // A settled attempt releases its task lock atomically. A retry must acquire it again;
+            // another dispatcher may have won in between, in which case this dispatch stops here.
+            if (agentRunId && !input.repositories.acquireTaskLock(task.id, input.workerId, now().toISOString(), {
+              expiresAt: leaseExpiryFrom(now(), input.executionLeaseMs), now: now().toISOString(),
+            })) return;
             agentRunId = createId("agent_run");
-            heldForRunId = agentRunId;
+            heldForRunId = null;
             // The run, its ownership generation and the lock's binding to both are established
             // together. Apart, a crash in between left a lock bound to no run — invisible to a
             // reconciler indexed by running runs, and permanent (execution-health P2b).
@@ -445,8 +450,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 failureMessage: null,
                 ownerEpoch: epoch,
               });
-              // A retry rebinds nothing: the lock stays bound to this dispatch's first run, which is
-              // the one the release will name.
+              // Each attempt binds the newly acquired lock to its own run and epoch.
               input.repositories.bindTaskLockToRun(task.id, input.workerId, agentRunId, epoch);
               return epoch;
             });
@@ -458,6 +462,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               requeueForBusyWorkspace(input, task, runWorkspacePath, now, createId);
               return;
             }
+            heldForRunId = agentRunId;
             ownerEpoch = claimed;
             heldWorkspacePath = runWorkspacePath;
             heldWorkspaceRunId = agentRunId;
@@ -600,7 +605,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             // A preparation timeout is capped by the brief's own budget, so a longer task budget
             // cannot change its outcome; only a substantive run earns an escalation.
             const retryTimeoutResolution =
-              failureReason === "timeout" && !preparationFailed ? resolveRetryTimeout(timeoutResolution) : null;
+              failureReason === "timeout" && !preparationFailed && agentResult.terminationConfirmed !== false ? resolveRetryTimeout(timeoutResolution) : null;
 
             if (!retryTimeoutResolution) {
               break;
@@ -610,7 +615,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             const timedOutAfterMs = timeoutResolution.effectiveTimeoutMs;
             const escalated = retryTimeoutResolution;
             if (
-              !settleRun(input, agentRunId, { status: "failed", failureReason: "timeout", failureMessage: failure }, now, (settled) => {
+              !settleRun(input, agentRunId, { status: "failed", failureReason: "timeout", failureMessage: failure, terminationConfirmed: agentResult.terminationConfirmed }, now, (settled) => {
                 applyTaskTransition({
                   repositories: settled.repositories,
                   task,
@@ -695,7 +700,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               settleRun(
                 input,
                 agentRunId,
-                ceiling ? retryCeilingOutcome(task) : { status: "failed", failureReason, failureMessage: failure },
+                { ...(ceiling ? retryCeilingOutcome(task) : { status: "failed" as const, failureReason, failureMessage: failure }), terminationConfirmed: agentResult.terminationConfirmed },
                 now,
                 (settled) => {
                   if (ceiling) {
@@ -814,10 +819,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
             // A brief that timed out says nothing about whether the task fits its budget, so it is
             // not evidence for a replan either.
-            if (failureReason === "timeout" && !preparationFailed && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
+            if (failureReason === "timeout" && agentResult.terminationConfirmed !== false && !preparationFailed && timeoutResolution.executionProfile.name === "long" && !task.artifactWorkspacePath) {
               const failure = replanMessage(task, timeoutResolution.effectiveTimeoutMs);
               if (
-                settleRun(input, agentRunId, { status: "failed", failureReason: "timeout", failureMessage: failure }, now, (settled) => {
+                settleRun(input, agentRunId, { status: "failed", failureReason: "timeout", failureMessage: failure, terminationConfirmed: agentResult.terminationConfirmed }, now, (settled) => {
                   recordRunOutput(settled);
                   applyTaskTransition({
                     repositories: settled.repositories,
@@ -867,16 +872,17 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             // outranks whatever else went wrong: the task cannot be run again there, so it is not a
             // failure to retry but a directory to isolate until someone says the process is gone.
             const unconfirmed = agentResult.terminationConfirmed === false;
-            const ceiling = !unconfirmed && atRetryCeiling(input, task);
+            const cancelled = failureReason === "cancelled";
+            const ceiling = !unconfirmed && !cancelled && atRetryCeiling(input, task);
             if (
               settleRun(
                 input,
                 agentRunId,
-                ceiling
+                { ...(ceiling
                   ? retryCeilingOutcome(task)
                   : unconfirmed
-                    ? { status: "failed", failureReason: "termination_unconfirmed", failureMessage: unconfirmedTerminationMessage(task, runWorkspacePath) }
-                    : { status: "failed", failureReason, failureMessage: failure },
+                    ? { status: "failed" as const, failureReason: "termination_unconfirmed" as const, failureMessage: unconfirmedTerminationMessage(task, runWorkspacePath) }
+                    : { status: cancelled ? "cancelled" as const : "failed" as const, failureReason, failureMessage: failure }), terminationConfirmed: agentResult.terminationConfirmed },
                 now,
                 (settled) => {
                   if (ceiling) {
@@ -885,6 +891,14 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                   }
                   if (unconfirmed) {
                     isolateForUnconfirmedTermination(settled, result, task, agentRunId, runWorkspacePath, now, createId);
+                    return;
+                  }
+                  if (cancelled) {
+                    applyTaskTransition({ repositories: settled.repositories, task, status: "cancelled",
+                      executionSummary: { latestFailureReason: "cancelled", latestFailureMessage: failure },
+                      resolution: "cancelled", now, createId });
+                    appendAndEmitTaskEvent(settled, { task, type: "task_warning", status: "cancelled",
+                      failureReason: "cancelled", failureMessage: failure, message: `Task cancelled: ${task.title}.` });
                     return;
                   }
                   recordRunOutput(settled);
@@ -930,7 +944,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 },
               )
             ) {
-              publishHandoff();
+              if (!unconfirmed && !cancelled) publishHandoff();
             }
             return;
           }
@@ -948,7 +962,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               settleRun(
                 input,
                 agentRunId,
-                ceiling ? retryCeilingOutcome(task) : { status: "failed", failureReason, failureMessage: failure },
+                { ...(ceiling ? retryCeilingOutcome(task) : { status: "failed" as const, failureReason, failureMessage: failure }), terminationConfirmed: agentResult.terminationConfirmed },
                 now,
                 (settled) => {
                   if (ceiling) {
@@ -1018,7 +1032,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           // rest of the settlement rides in the same transaction, so a delivery is recorded whole or
           // not at all.
           if (
-            settleRun(input, agentRunId, { status: "complete" }, now, (settled) => {
+            settleRun(input, agentRunId, { status: "complete", terminationConfirmed: agentResult.terminationConfirmed }, now, (settled) => {
               if (task.artifactWorkspacePath && task.artifactWorkspacePath !== runWorkspacePath) {
                 settled.repositories.updateTaskArtifactWorkspacePath(task.id, runWorkspacePath);
               }
@@ -1063,7 +1077,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           } finally {
             heartbeat?.stop();
             releaseHandle?.();
-            if (heldWorkspacePath && heldWorkspaceRunId) {
+            const unsettled = heldForRunId !== null && input.repositories.listRunningAgentRuns(task.companyId)
+              .some((run) => run.id === heldForRunId);
+            // A rolled-back settlement retains its claims for reconciliation. A winning settlement
+            // keeps its directory until post-commit handoff publication finishes; never unlock it
+            // while that filesystem work is still in flight.
+            if (!unsettled && heldWorkspacePath && heldWorkspaceRunId) {
               // Isolation outlives the run on purpose, so a release that names an isolated claim
               // leaves it standing: `releaseWorkspaceClaim` only clears one that is not isolated.
               input.repositories.releaseWorkspaceClaim(heldWorkspacePath, heldWorkspaceRunId);
@@ -1074,7 +1093,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             reportObservationFailures(input, task, observer);
             // Only this dispatch's own lock. One process dispatches under one `workerId`, so without
             // the run id an unwinding dispatch released whatever lock its successor had just taken.
-            input.repositories.releaseTaskLock(task.id, input.workerId, heldForRunId);
+            if (!unsettled) input.repositories.releaseTaskLock(task.id, input.workerId, heldForRunId);
           }
         }
       })(dependencyDecision.handoffs),
@@ -2006,52 +2025,10 @@ function reportObservationFailures(
 }
 
 /**
- * Publish what this settlement decided, for consumers that are not this process.
- *
- * The task event stream is a narrative for the founder; this is the fact a recovery decision is made
- * from. Written from the run row rather than from the caller's variables so it carries what actually
- * landed — including the observation the run recorded about itself, which is the part a reader
- * cannot reconstruct later.
- */
-function recordSettlementEvent(
-  input: RunSchedulerOnceInput,
-  agentRunId: string,
-  outcome: RunOutcome,
-  now: () => Date,
-): void {
-  const observed = input.repositories.getAgentRunObservation(agentRunId);
-  if (!observed) {
-    return;
-  }
-  recordExecutionEvent(input.repositories, {
-    id: (input.createId ?? defaultCreateId)("outbox_event"),
-    type: outcome.status === "complete" ? "execution_completed" : "execution_failed",
-    companyId: observed.companyId,
-    taskId: observed.taskId,
-    runId: agentRunId,
-    ownerEpoch: observed.ownerEpoch,
-    phase: observed.phase,
-    reason: outcome.failureReason ?? null,
-    observedAt: now().toISOString(),
-    lastHeartbeatAt: observed.lastHeartbeatAt,
-    lastActivityAt: observed.lastActivityAt,
-    effectiveTimeoutMs: observed.effectiveTimeoutMs,
-    terminationConfirmed: null,
-    logPath: observed.logPath,
-  });
-}
-
-export type RunOutcome = {
-  status: AgentRun["status"];
-  failureReason?: AgentFailureReason;
-  failureMessage?: string;
-};
-
-/**
  * Settle a run and everything that settlement owns, or leave the database exactly as it was.
  *
  * Two writers reach every run: the dispatch settling its delivery, and whoever declares the run timed
- * out (`reconcileStaleRunningTasks`, reachable from any read of company state). Claiming the run is a
+ * out (`reconcileStaleRunningTasks`, called by supervision, scheduling or explicit recovery). Claiming the run is a
  * conditional update that lands only while it is still `running`, so the loser learns it lost before
  * writing anything (ADR 0034).
  *
@@ -2082,21 +2059,10 @@ function settleRun(
   const announcements: SchedulerEvent[] = [];
   const settled: RunSchedulerOnceInput = { ...input, emit: (event) => announcements.push(event) };
 
-  const won = input.repositories.transaction(() => {
-    const claimed = input.repositories.updateAgentRunStatus(agentRunId, outcome.status, now().toISOString(), {
-      failureReason: outcome.failureReason,
-      failureMessage: outcome.failureMessage,
-      expectedStatus: "running",
-    });
-    if (!claimed) {
-      return false;
-    }
-    commit(settled);
-    // In the same transaction as the settlement it describes: outside it, a settlement can commit
-    // with no event (nothing downstream ever hears) or an event can outlive a settlement that rolled
-    // back (recovery acts on something that never happened).
-    recordSettlementEvent(input, agentRunId, outcome, now);
-    return true;
+  const won = settleAgentRun({
+    repositories: input.repositories, runId: agentRunId, outcome,
+    at: now().toISOString(), createId: input.createId ?? defaultCreateId,
+    commit: () => commit(settled),
   });
 
   if (won) {

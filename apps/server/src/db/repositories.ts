@@ -845,6 +845,21 @@ export function createRepositories(database: DatabaseClient) {
       return row.next_position;
     },
 
+    /** Acquire a write lock and revalidate the exact orphan/lease snapshot before its transition. */
+    claimOrphanedTask(input: {
+      taskId: string; ownerId: string; runId: string | null;
+      acquiredAt: string; leaseExpiresAt: string | null; at: string;
+    }): boolean {
+      const result = database.prepare(`UPDATE tasks SET execution_epoch = execution_epoch
+        WHERE id = ? AND status = 'running'
+          AND NOT EXISTS (SELECT 1 FROM agent_runs WHERE task_id = tasks.id AND status = 'running')
+          AND EXISTS (SELECT 1 FROM task_locks WHERE task_id = tasks.id
+            AND owner_id = ? AND run_id IS ? AND acquired_at = ? AND lease_expires_at IS ?
+            AND (julianday(lease_expires_at) IS NULL OR julianday(lease_expires_at) <= julianday(?)))`)
+        .run(input.taskId, input.ownerId, input.runId, input.acquiredAt, input.leaseExpiresAt, input.at);
+      return Number(result.changes) > 0;
+    },
+
     /**
      * Take the execution lock for a task, or take it over from a lease that has run out.
      *
@@ -974,9 +989,9 @@ export function createRepositories(database: DatabaseClient) {
      * Closing the unbound window itself needs the lock and the run to be created together, which is
      * execution-health P2b.
      */
-    releaseTaskLockForRun(taskId: string, runId: string): boolean {
+    releaseTaskLockForRun(taskId: string, runId: string, allowUnbound = true): boolean {
       const result = database
-        .prepare("DELETE FROM task_locks WHERE task_id = ? AND (run_id = ? OR run_id IS NULL)")
+        .prepare(`DELETE FROM task_locks WHERE task_id = ? AND (run_id = ?${allowUnbound ? " OR run_id IS NULL" : ""})`)
         .run(taskId, runId);
       return Number(result.changes) > 0;
     },
@@ -1441,6 +1456,8 @@ export function createRepositories(database: DatabaseClient) {
         failureReason?: AgentFailureReason | null;
         failureMessage?: string | null;
         expectedStatus?: AgentRun["status"];
+        expectedTaskStatus?: "running";
+        requireCurrentEpoch?: boolean;
       } = {},
     ): boolean {
       const result = database
@@ -1450,7 +1467,9 @@ export function createRepositories(database: DatabaseClient) {
                finished_at = ?,
                failure_reason = COALESCE(?, failure_reason),
                failure_message = COALESCE(?, failure_message)
-           WHERE id = ?${outcome.expectedStatus ? " AND status = ?" : ""}`,
+           WHERE id = ?${outcome.expectedStatus ? " AND status = ?" : ""}
+             ${outcome.expectedTaskStatus ? "AND EXISTS (SELECT 1 FROM tasks WHERE tasks.id = agent_runs.task_id AND tasks.status = ?)" : ""}
+             ${outcome.requireCurrentEpoch ? "AND (owner_epoch IS NULL OR owner_epoch = (SELECT execution_epoch FROM tasks WHERE tasks.id = agent_runs.task_id))" : ""}`,
         )
         .run(
           status,
@@ -1459,6 +1478,7 @@ export function createRepositories(database: DatabaseClient) {
           outcome.failureMessage ?? null,
           id,
           ...(outcome.expectedStatus ? [outcome.expectedStatus] : []),
+          ...(outcome.expectedTaskStatus ? [outcome.expectedTaskStatus] : []),
         );
       return Number(result.changes) > 0;
     },
