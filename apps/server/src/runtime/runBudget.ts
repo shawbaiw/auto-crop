@@ -91,9 +91,14 @@ export class RunBudget {
     if (this.used >= this.input.reservedMs) this.stop(this.input.reservedMs < s.runHardMs ? "task_budget_exhausted" : "run_budget_exhausted");
     else if (mono - this.phaseAt >= this.phaseLimit()) this.stop("phase_budget_exhausted");
     const durableStop = repositories.executionBudget.stopRequest(runId);
+    const facts = repositories.getAgentRunObservation(runId);
+    if (durableStop?.cancel_requested || (facts && repositories.getTask(facts.taskId)?.status === "cancelled")) {
+      this.stoppedReason = "cancelled";
+      this.stop("cancelled");
+    }
     if (durableStop && !this.stoppedReason) {
       this.used = Math.min(this.input.reservedMs, durableStop.consumed_ms);
-      this.stop(durableStop.reason as AgentFailureReason);
+      this.stop(durableStop.reason as AgentFailureReason, durableStop.reason === "worker_lost" || durableStop.reason === "clock_untrusted");
     }
     if (!persist) return;
     const review = this.phase === "executing" && this.nextReview !== null && this.used >= this.nextReview && !this.stoppedReason;
@@ -160,7 +165,8 @@ export class RunBudget {
         : this.input.reservedMs < this.input.snapshot.runHardMs ? "task_budget_exhausted" : "run_budget_exhausted");
     }
     if (result.terminationConfirmed === false) { this.unconfirmed = true; this.stop("termination_unconfirmed", true); }
-    if (!this.stoppedReason || cancelled) return result;
+    if (cancelled) return { ...result, status: "failed", failureReason: "cancelled" };
+    if (!this.stoppedReason) return result;
     return { ...result, status: "failed", failureReason: this.stoppedReason,
       stderr: `Execution stopped: ${this.stoppedReason}. ${result.stderr}` };
   }

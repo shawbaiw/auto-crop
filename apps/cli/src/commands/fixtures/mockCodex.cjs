@@ -19,6 +19,16 @@ if (args.includes("--help")) {
     const receipt = path.join(root, "writer.json");
     fs.writeFileSync(`${receipt}.tmp`, JSON.stringify({ pid: process.pid, workspace: process.cwd(), writer }));
     fs.renameSync(`${receipt}.tmp`, receipt);
-    setInterval(() => fs.appendFileSync(writer, "x"), 20);
+    if (process.env.AUTO_CROP_SMOKE_SCENARIO === "budget-success") {
+      setTimeout(() => {
+        fs.mkdirSync(path.join(process.cwd(), ".auto-crop"), { recursive: true });
+        fs.writeFileSync(path.join(process.cwd(), ".auto-crop/business-artifact.json"), JSON.stringify({
+          artifact_kind: "deliverable", artifact_role: "implementation", artifact_subtype: "prototype_implementation", task_type: "engineering.prototype_implementation",
+          payload: { summary: "Local prototype validated.", execution_report: { work_summary: "Implemented local fixture.", evidence: "Local test passed.", conclusion: "Prototype ready.", vision_impact: "Advances build milestone.", remaining_gap: "Real user validation.", recommendation: "Review the proof." },
+            outcome_summary: "Prototype ready, local test passed. Real user validation remains.", recommendation: "Review proof.", evidence: ["Local test passed"], risks: [], next_steps: ["CEO review"] }, lineage: { task_id: "task_1" }
+        }));
+        console.log("Local validation passed.");
+      }, 350);
+    } else setInterval(() => fs.appendFileSync(writer, "x"), 20);
   }
 }

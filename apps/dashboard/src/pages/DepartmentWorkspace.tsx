@@ -1,3 +1,4 @@
+import { TaskExecutionPanel } from "../ui/tasks/TaskExecutionPanel";
 import { deriveCeoPendingItems } from "@auto-crop/core";
 import {
   Building2,
@@ -3045,12 +3046,13 @@ function TaskStatusAction({
     ? resolveLocalizedValue(task.holds[0].reasonText, language, task.holds[0].reason)
     : null;
 
-  if (!showStatusBadge && controls.length === 0 && !actionMessage) {
+  if (!showStatusBadge && controls.length === 0 && !actionMessage && !task.execution && task.status !== "running" && task.status !== "retrying") {
     return null;
   }
 
   return (
     <div className="task-action-row">
+      <TaskExecutionPanel task={task} />
       {showStatusBadge ? (
         <RetroBadge tone={task.status === "blocked" || task.status === "failed" ? "danger" : "signal"}>
           {taskTitle(task, language)} / {formatTaskStatus(task, t)}

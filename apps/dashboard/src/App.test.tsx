@@ -4601,6 +4601,9 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         },
       };
     },
+    getTaskExecution: vi.fn(async () => { throw new Error("Execution fixture required"); }),
+    authorizeExecutionBudget: vi.fn(async () => { throw new Error("Authorization fixture required"); }),
+    cancelTask: vi.fn(async () => { throw new Error("Cancellation fixture required"); }),
     async confirmTaskTermination(taskId) {
       return {
         task: createCompanyResponse().tasks.find((task) => task.id === taskId) ?? createCompanyResponse().tasks[0],

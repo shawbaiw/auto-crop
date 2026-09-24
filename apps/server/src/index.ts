@@ -28,3 +28,6 @@ export * from "./runtime/recoveryCoordinator";
 export * from "./runtime/supervisor";
 export * from "./api/routes";
 export * from "./events/sse";
+
+export * from "./runtime/budgetPolicy";
+export * from "./runtime/executionHealth";

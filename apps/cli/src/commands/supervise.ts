@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireSupervisorOwnership } from "./supervisorOwnership";
 import { createId } from "@auto-crop/core";
-import { createDatabaseClient, createRepositories, migrate, Supervisor } from "@auto-crop/server";
+import { createDatabaseClient, createRepositories, migrate, Supervisor, executionBudgetFromEnvironment } from "@auto-crop/server";
 
 /**
  * How often the supervisor sweeps for work the worker cannot report itself.
@@ -13,9 +13,9 @@ import { createDatabaseClient, createRepositories, migrate, Supervisor } from "@
  * is not doing constant database work. The worker's own exit is not waited for on this clock — that
  * is observed directly. This periodic scan handles legacy deadline reconciliation and events due
  * for another delivery.
- * It does not yet diagnose a live Worker whose event loop is wedged (P4).
+ * Budget-policy runs also receive independent liveness assessment and containment.
  */
-const SUPERVISOR_SCAN_INTERVAL_MS = 15_000;
+const SUPERVISOR_SCAN_INTERVAL_MS = 5_000;
 
 /** How long to wait before restarting a worker that exited, so a crash loop does not spin. */
 const WORKER_RESTART_DELAY_MS = 2_000;
@@ -46,6 +46,7 @@ export type SupervisedAutoCrop = {
  * so it can be driven by one later.
  */
 export async function superviseAutoCrop(options: SuperviseOptions): Promise<SupervisedAutoCrop> {
+  executionBudgetFromEnvironment(); // Fail before starting any Worker if opt-in configuration is invalid.
   const log = options.log ?? console.log;
   const stateDir = join(options.projectRoot, ".auto-crop");
   mkdirSync(stateDir, { recursive: true });
@@ -69,11 +70,26 @@ export async function superviseAutoCrop(options: SuperviseOptions): Promise<Supe
   const repositories = createRepositories(database);
   const supervisor = new Supervisor({
     repositories,
+    probeOwner: (ownerId) => {
+      if (ownerId === activeOwnerId && worker?.connected) worker.send({ type: "worker-probe" }, error => {
+        if (error) log(`Supervisor probe failed: ${error.message}`);
+      });
+    },
+    stopOwner: (ownerId) => {
+      const child = worker;
+      if (!child || ownerId !== activeOwnerId || stoppingOwner === ownerId) return;
+      stoppingOwner = ownerId;
+      // Stop only our recorded child. Detached Agent descendants remain isolated by exit reconciliation.
+      const force = setTimeout(() => { if (worker === child) child.kill("SIGKILL"); }, 5_000);
+      child.once("exit", () => clearTimeout(force));
+      child.kill("SIGTERM");
+    },
     supervisorId: `supervisor-${process.pid}-${createId("run")}`,
     createId,
     log,
   });
 
+  let stoppingOwner: string | null = null;
   let stopped = false;
   let worker: ChildProcess | null = null;
   let activeOwnerId: string | null = null;
@@ -128,6 +144,7 @@ export async function superviseAutoCrop(options: SuperviseOptions): Promise<Supe
   function startWorker(): void {
     if (stopped || worker) return;
     const ownerId = createId("cli-worker");
+    stoppingOwner = null;
     ownership.beginWorker(ownerId);
     activeOwnerId = ownerId;
     try {

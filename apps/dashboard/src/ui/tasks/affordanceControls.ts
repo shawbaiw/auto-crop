@@ -66,13 +66,8 @@ export const taskAffordanceControls: Record<TaskAffordanceKind, TaskAffordanceCo
   resolve_founder_decision: { render: "surface", surface: "CEO Office decision card" },
   confirm_human_action: { render: "surface", surface: "Human Action panel" },
   confirm_replan: { render: "surface", surface: "Company Operations replan proposals" },
-  authorize_execution_budget: { render: "unsurfaced", reason: "Budget policy is internal-only during P4.2. Its authorization form and visible balance ship in P4.3 before public opt-in." },
-  cancel_task: {
-    render: "unsurfaced",
-    reason:
-      "Cancelling is the founder's escape hatch, never a task's only way forward — every Hold kind "
-      + "offers something else — so no surface draws it yet. Exposing it needs a confirmation flow.",
-  },
+  authorize_execution_budget: { render: "surface", surface: "Task execution panel: explicit budget authorization form" },
+  cancel_task: { render: "surface", surface: "Task execution panel: cancellation confirmation" },
 };
 
 /** The inline buttons to draw for a task, in the order its affordances were offered. */

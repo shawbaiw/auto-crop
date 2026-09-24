@@ -40,6 +40,11 @@ if (command === "start" || command === "supervise") {
   });
   process.send("worker-ready");
   const workerId = await permitted;
+  process.on("message", message => {
+    if (message && typeof message === "object" && "type" in message && message.type === "worker-probe" && process.connected) {
+      process.send?.({ type: "worker-responsive", ownerId: workerId });
+    }
+  });
   await startAutoCrop({
     workerId,
     projectRoot: resolveProjectRoot(),

@@ -22,7 +22,8 @@ export function reconcileExitedWorker(input: {
       repositories, runId: run.id, at, createId,
       outcome: { status: "failed", failureReason: "worker_lost", failureMessage: message, terminationConfirmed: null },
       expectedOwnerId: input.ownerId,
-      expectedTaskStatus: repositories.getTask(run.taskId)?.status === "retrying" ? "retrying" : "running",
+      expectedTaskStatus: repositories.getTask(run.taskId)?.status === "cancelled" ? undefined
+        : repositories.getTask(run.taskId)?.status === "retrying" ? "retrying" : "running",
       commit: () => {
         const claims = repositories.listWorkspaceClaims().filter((claim) => claim.runId === run.id && claim.ownerId === input.ownerId);
         if (claims.length === 0) throw new Error(`Cannot safely isolate ${run.id}: its workspace claim is missing.`);

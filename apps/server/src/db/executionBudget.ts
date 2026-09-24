@@ -19,6 +19,28 @@ export function createExecutionBudgetStore(database: DatabaseClient) {
     .run(row.run_id, row.seq, kind, row.consumed_ms, row.settled ? 0 : row.reserved_ms, row.estimated, at);
   return {
     getRun, getTask,
+    taskUsage(taskId: string) {
+      return database.prepare(`SELECT COALESCE(SUM(consumed_ms), 0) AS consumedMs,
+        COALESCE(SUM(CASE WHEN settled = 0 THEN consumed_ms ELSE 0 END), 0) AS activeConsumedMs,
+        COALESCE(MAX(estimated), 0) AS estimated FROM run_budgets WHERE task_id = ?`).get(taskId) as
+        { consumedMs: number; activeConsumedMs: number; estimated: number };
+    },
+    owner(runId: string): string | null {
+      return (database.prepare("SELECT owner_id FROM agent_runs WHERE id = ?").get(runId) as { owner_id: string | null } | undefined)?.owner_id ?? null;
+    },
+    latestRun(taskId: string) {
+      return database.prepare("SELECT id, status, phase, policy_version, failure_reason, manual_termination_confirmed_at FROM agent_runs WHERE task_id = ? ORDER BY rowid DESC LIMIT 1").get(taskId) as
+        { id: string; status: string; phase: string | null; policy_version: string | null; failure_reason: string | null; manual_termination_confirmed_at: string | null } | undefined;
+    },
+    health(runId: string) {
+      return database.prepare("SELECT state, reason, action, checked_at AS checkedAt FROM run_health WHERE run_id = ?").get(runId) as
+        { state: string; reason: string; action: string; checkedAt: string } | undefined;
+    },
+    recordHealth(runId: string, health: { state: string; reason: string; action: string }, at: string): void {
+      database.prepare(`INSERT INTO run_health(run_id, state, reason, action, checked_at) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(run_id) DO UPDATE SET state = excluded.state, reason = excluded.reason, action = excluded.action, checked_at = excluded.checked_at`)
+        .run(runId, health.state, health.reason, health.action, at);
+    },
     requestStop(runId: string, reason: string, phase: string, at: string, usedMs: number): boolean {
       const result = database.prepare(`INSERT OR IGNORE INTO run_stop_requests(run_id, reason, phase, requested_at, consumed_ms)
         SELECT r.id, ?, ?, ?, ? FROM agent_runs r JOIN tasks t ON t.id = r.task_id
@@ -30,7 +52,13 @@ export function createExecutionBudgetStore(database: DatabaseClient) {
     stopRequest(runId: string) {
       return database.prepare("SELECT * FROM run_stop_requests WHERE run_id = ?").get(runId) as
         { run_id: string; reason: string; phase: string; requested_at: string; consumed_ms: number;
-          termination_wait_ms: number | null; termination_confirmed: number | null } | undefined;
+          cancel_requested: number; termination_wait_ms: number | null; termination_confirmed: number | null } | undefined;
+    },
+    confirmTermination(runId: string, at: string): void {
+      database.prepare("UPDATE agent_runs SET manual_termination_confirmed_at = ? WHERE id = ?").run(at, runId);
+    },
+    requestCancellation(runId: string): void {
+      database.prepare("UPDATE run_stop_requests SET cancel_requested = 1 WHERE run_id = ?").run(runId);
     },
     recordTerminationWait(runId: string, waitMs: number, confirmed?: boolean): void {
       database.prepare(`UPDATE run_stop_requests SET termination_wait_ms = ?, termination_confirmed = ? WHERE run_id = ?`)

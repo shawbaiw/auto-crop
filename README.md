@@ -62,6 +62,12 @@ has no lease expiry. Startup/restart reconciliation errors block Worker startup;
 survive Supervisor restarts. Supervisor/host failure still needs a system process manager for restart.
 
 
+Execution scheduling defaults to `observe`. The new lifecycle budget and independent health policy
+can be explicitly enabled with `AUTO_CROP_EXECUTION_POLICY=budget-v1`. See the
+[isolated trial, controls and rollback guide](docs/execution-budget-opt-in.md) before enabling it.
+The Task execution panel exposes budget balances, stop evidence and explicit continuation authorization;
+real-adapter thresholds and automatic recovery remain P5 work.
+
 5. In another terminal, start the dashboard:
 
 ```bash

@@ -1,3 +1,4 @@
+import { ExecutionActionsContext } from "./ui/tasks/TaskExecutionPanel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   createApiClient,
@@ -833,6 +834,7 @@ export default function App({ apiClient }: AppProps) {
 
   if (view === "department-workspace" && blueprint) {
     return renderAppFrame(
+      <ExecutionActionsContext.Provider value={{ client, update: task => setBlueprint(current => updateBlueprintTask(current, task)) }}>
       <DepartmentWorkspace
         agents={agents}
         company={blueprint.company}
@@ -863,7 +865,8 @@ export default function App({ apiClient }: AppProps) {
         tasks={blueprint.tasks}
         taskProgressEvents={taskProgressEvents}
         ceoIntakes={ceoIntakes}
-      />,
+      />
+      </ExecutionActionsContext.Provider>,
     );
   }
 

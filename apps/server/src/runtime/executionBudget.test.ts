@@ -1,3 +1,6 @@
+import { Supervisor } from "./supervisor";
+import { ExecutionHealthMonitor } from "./executionHealth";
+import { RecoveryCoordinator } from "./recoveryCoordinator";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -542,4 +545,138 @@ it("keeps ordinary Partial Output recovery on the authorized Task instead of min
   const result = await runSchedulerOnce(f.input(adapter(async req => req.metadata.phase === "execution_brief" ? brief : complete)));
   expect(result.completed).toEqual(["task_1"]);
   expect(f.repositories.executionBudget.getTask("task_1")!.consumedMs).toBeGreaterThanOrEqual(40);
+});
+
+
+it("independently records suspect/recovery/lost events and delivers each once without GET", async () => {
+  const f = fixture();
+  let mono = 0;
+  const base = Date.now();
+  const stops: string[] = [], probes: string[] = [];
+  const supervisor = new Supervisor({ repositories: f.repositories, supervisorId: "monitor", now: () => new Date(base + mono),
+    clock: { monotonicMs: () => mono, utcNow: () => new Date(base + mono) },
+    probeOwner: id => probes.push(id), stopOwner: id => stops.push(id) });
+  const config = f.input(adapter(async req => {
+    if (req.metadata.phase === "execution_brief") return brief;
+    const run = f.repositories.listRunningAgentRuns("company_1")[0];
+    f.client.prepare("UPDATE agent_runs SET last_heartbeat_at = ?, last_activity_at = NULL WHERE id = ?").run(new Date(base).toISOString(), run.id);
+    await supervisor.scanOnce();
+    expect(f.repositories.executionBudget.health(run.id)?.state).toBe("unknown");
+    config.executionBudget = { ...config.executionBudget, lostAfterMs: 100000 }; // A later config cannot alter this run's pinned health windows.
+    mono = 60; await supervisor.scanOnce();
+    expect(f.repositories.executionBudget.health(run.id)?.state).toBe("suspect");
+    mono = 70;
+    f.client.prepare("UPDATE agent_runs SET last_heartbeat_at = ?, last_activity_at = ? WHERE id = ?").run(new Date(base + mono).toISOString(), new Date(base + mono).toISOString(), run.id);
+    await supervisor.scanOnce();
+    expect(f.repositories.executionBudget.health(run.id)?.state).toBe("responsive");
+    mono = 180; await supervisor.scanOnce();
+    expect(f.repositories.executionBudget.health(run.id)?.state).toBe("lost");
+    expect(stops).toEqual(["owner"]);
+    expect(probes).toContain("owner");
+    expect(f.repositories.listWorkspaceClaims()).toHaveLength(1);
+    return { ...complete, terminationConfirmed: true };
+  }));
+  config.executionBudget = { ...config.executionBudget, suspectAfterMs: 45, lostAfterMs: 100, resumeGraceMs: 10 };
+  expect((await runSchedulerOnce(config)).completed).toEqual([]);
+  await supervisor.scanOnce();
+  const events = f.repositories.listOutboxEvents({ companyId: "company_1" });
+  expect(events.filter(e => e.type === "execution_suspected")).toHaveLength(2);
+  expect(events.filter(e => e.type === "execution_responsive")).toHaveLength(1);
+  expect(events.every(e => e.deliveredAt)).toBe(true);
+  const coordinator = new RecoveryCoordinator({ repositories: f.repositories });
+  for (const event of events) expect(coordinator.consume(event).alreadyDecided).toBe(true);
+  expect(f.repositories.listRecoveryDecisions("company_1")).toHaveLength(events.length);
+});
+
+it.each(["forward", "backward", "suspend"])("probes after %s instead of treating sleep or clock changes as immediate loss", async kind => {
+  const f = fixture();
+  let mono = 0, wall = Date.now();
+  const probes: string[] = [], stops: string[] = [];
+  const monitor = new ExecutionHealthMonitor({ repositories: f.repositories,
+    clock: { monotonicMs: () => mono, utcNow: () => new Date(wall) }, probeOwner: id => probes.push(id), stopOwner: id => stops.push(id) });
+  await runSchedulerOnce(f.input(adapter(async req => {
+    if (req.metadata.phase === "execution_brief") return brief;
+    const run = f.repositories.listRunningAgentRuns("company_1")[0];
+    monitor.scan();
+    mono += kind === "suspend" ? 100000 : 100;
+    wall += kind === "backward" ? -100000 : 100000;
+    monitor.scan();
+    expect(f.repositories.executionBudget.health(run.id)).toMatchObject({ state: "unknown", action: "probe" });
+    expect(stops).toEqual([]);
+    expect(f.repositories.executionBudget.stopRequest(run.id)).toBeUndefined();
+    // The owner responds during recovery grace; a new heartbeat prevents loss after the grace.
+    for (const step of [10000, 10000, 10000, 100]) {
+      mono += step; wall += step;
+      f.client.prepare("UPDATE agent_runs SET last_heartbeat_at = ? WHERE id = ?").run(new Date(wall).toISOString(), run.id);
+      monitor.scan();
+    }
+    expect(f.repositories.executionBudget.health(run.id)?.action).toBe("continue");
+    expect(stops).toEqual([]);
+    expect(probes).toContain("owner");
+    return complete;
+  })));
+});
+
+it.each([0, 25])("keeps %i GET polls read-only and honours cancellation before any continuation", async polls => {
+  const f = fixture();
+  const server = createApiServer({ projectRoot: f.root, repositories: f.repositories, agents: [] });
+  await new Promise<void>(resolve => server.httpServer.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.httpServer.address() as { port: number }).port}`;
+  try {
+    const result = await runSchedulerOnce(f.input(adapter(async req => {
+      if (req.metadata.phase === "execution_brief") return brief;
+      const run = f.repositories.listRunningAgentRuns("company_1")[0];
+      const before = f.repositories.executionBudget.health(run.id);
+      for (let i = 0; i < polls; i++) {
+        const response = await fetch(`${base}/api/tasks/task_1/execution`);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ task: { execution: { runId: run.id, policyVersion: "budget-v1", budget: { authorizedMs: 7000 } } } });
+      }
+      expect(f.repositories.executionBudget.health(run.id)).toEqual(before);
+      const cancel = await fetch(`${base}/api/tasks/task_1/cancel`, { method: "POST" });
+      expect(cancel.status).toBe(200);
+      expect(req.signal!.aborted).toBe(true);
+      return { ...complete, terminationConfirmed: true }; // A deliberately late successful adapter reply.
+    })));
+    expect(result.completed).toEqual([]);
+    expect(f.repositories.getTask("task_1")?.status).toBe("cancelled");
+    expect(f.repositories.listOutboxEvents({ companyId: "company_1" }).some(e => e.type === "execution_completed")).toBe(false);
+    expect((await fetch(`${base}/api/tasks/task_1/execution-budget`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "cancelled", additionalMs: 100, expectedAuthorizedMs: 7000, reason: "must not resume" }) })).status).toBe(409);
+  } finally { await new Promise<void>(resolve => server.httpServer.close(() => resolve())); }
+});
+
+
+it.each(["unconfirmed", "worker_exit"])("keeps cancellation final after %s and manual containment confirmation", async mode => {
+  const f = fixture();
+  const server = createApiServer({ projectRoot: f.root, repositories: f.repositories, agents: [] });
+  await new Promise<void>(resolve => server.httpServer.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.httpServer.address() as { port: number }).port}`;
+  try {
+    await runSchedulerOnce(f.input(adapter(async req => {
+      if (req.metadata.phase === "execution_brief") return brief;
+      expect((await fetch(`${base}/api/tasks/task_1/cancel`, { method: "POST" })).status).toBe(200);
+      if (mode === "worker_exit") reconcileExitedWorker({ repositories: f.repositories, ownerId: "owner" });
+      return { ...complete, terminationConfirmed: false };
+    })));
+    expect(f.repositories.listWorkspaceClaims()[0]?.isolatedReason).toBeTruthy();
+    expect((await fetch(`${base}/api/tasks/task_1/confirm-termination`, { method: "POST" })).status).toBe(200);
+    expect(f.repositories.getTask("task_1")?.status).toBe("cancelled");
+    expect(f.repositories.listWorkspaceClaims()).toEqual([]);
+    const response = await fetch(`${base}/api/tasks/task_1/execution`);
+    expect(await response.json()).toMatchObject({ task: { status: "cancelled", execution: { stop: { reason: "cancelled", manualConfirmedAt: expect.any(String) } } } });
+  } finally { await new Promise<void>(resolve => server.httpServer.close(() => resolve())); }
+});
+
+it("keeps observe runs on their sole legacy policy path", async () => {
+  const f = fixture();
+  const monitor = new ExecutionHealthMonitor({ repositories: f.repositories, stopOwner: () => { throw new Error("legacy adjudicated twice"); } });
+  const config = f.input(adapter(async req => {
+    monitor.scan();
+    return req.metadata.phase === "execution_brief" ? brief : complete;
+  }));
+  config.executionBudget = undefined;
+  await runSchedulerOnce(config);
+  expect(f.client.prepare("SELECT * FROM run_health").all()).toEqual([]);
+  expect(f.repositories.executionBudget.getTask("task_1")).toBeUndefined();
 });

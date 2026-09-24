@@ -1142,17 +1142,17 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           const reason = budget.reason ?? "clock_untrusted";
           const failure = `Task stopped: ${task.title} / ${reason}.`;
           settleRun(input, heldForRunId, {
-            status: "failed", failureReason: budget.activeInvocation ? "termination_unconfirmed" : reason,
+            status: reason === "cancelled" && !budget.activeInvocation ? "cancelled" : "failed", failureReason: budget.activeInvocation ? "termination_unconfirmed" : reason,
             failureMessage: failure, terminationConfirmed: budget.activeInvocation ? false : budget.terminationConfirmed,
           }, now, (settled) => {
             if (budget!.activeInvocation && heldWorkspacePath) {
               isolateForUnconfirmedTermination(settled, result, task, heldForRunId!, heldWorkspacePath, now, createId);
             } else {
-              applyTaskTransition({ repositories: settled.repositories, task, status: "failed",
+              applyTaskTransition({ repositories: settled.repositories, task, status: reason === "cancelled" ? "cancelled" : "failed",
                 executionSummary: { latestFailureReason: reason, latestFailureMessage: failure }, now, createId });
-              appendAndEmitTaskEvent(settled, { task, type: "task_failed", status: "failed", message: failure,
+              appendAndEmitTaskEvent(settled, { task, type: reason === "cancelled" ? "task_warning" : "task_failed", status: reason === "cancelled" ? "cancelled" : "failed", message: failure,
                 failureReason: reason, failureMessage: failure });
-              result.failed.push(task.id);
+              if (reason !== "cancelled") result.failed.push(task.id);
             }
           });
         } finally {

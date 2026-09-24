@@ -234,3 +234,14 @@ describe("deriveTaskHold", () => {
     });
   });
 });
+
+it("offers budget authorization only after every other Hold is resolved, while retaining cancellation", () => {
+  const budget = hold("execution_budget_exhausted");
+  const isolated = hold("termination_unconfirmed");
+  const kinds = (holds: TaskHold[]) => resolveTaskAffordances({ status: "blocked", holds }).map(a => a.kind);
+  expect(kinds([budget])).toContain("authorize_execution_budget");
+  expect(kinds([budget, isolated])).not.toContain("authorize_execution_budget");
+  expect(kinds([budget, isolated])).toContain("confirm_termination");
+  expect(kinds([budget, isolated])).toContain("cancel_task");
+  expect(kinds([budget, { ...isolated, resolvedAt: "2026-09-24" }])).toContain("authorize_execution_budget");
+});

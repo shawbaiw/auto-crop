@@ -1,3 +1,6 @@
+import { executionOverview } from "../runtime/executionOverview";
+import { requestBudgetStop } from "../runtime/budgetStop";
+import { defaultExecutionRegistry } from "../runtime/executionControl";
 import { isBudgetExhaustion } from "../runtime/budgetPolicy";
 import { assertOrdinaryRecoveryAllowed, authorizeExecutionBudget, BudgetAuthorizationError } from "../runtime/budgetAuthorization";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -602,6 +605,14 @@ async function routeRequest(
     return;
   }
 
+  const executionMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/execution$/);
+  if (method === "GET" && executionMatch) {
+    const task = options.repositories.getTask(executionMatch[1]);
+    if (!task) { sendJson(response, 404, { error: "Task not found" }); return; }
+    sendJson(response, 200, { task: summarizeTask(task, options.repositories.listTaskDependencies(task.id).map(d => d.dependsOnTaskId), options.repositories) });
+    return;
+  }
+
   const cancelMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
   if (method === "POST" && cancelMatch) {
     const task = options.repositories.getTask(cancelMatch[1]);
@@ -619,14 +630,29 @@ async function routeRequest(
       return;
     }
 
-    const cancelled = applyTaskTransition({
-      repositories: options.repositories,
-      task,
-      status: "cancelled",
-      resolution: "cancelled",
-      now: options.now,
-      createId: options.createId,
+    const cancelled = options.repositories.transaction(() => {
+      options.repositories.executionBudget.lockAuthorization(task.id);
+      const current = options.repositories.getTask(task.id);
+      if (!current || !checkTaskAffordance(options.repositories, current, "cancel_task").ok) return null;
+      for (const run of options.repositories.listRunningAgentRuns(task.companyId).filter(run => run.taskId === task.id)) {
+        const budget = options.repositories.executionBudget.getRun(run.id);
+        if (budget) { requestBudgetStop({ repositories: options.repositories, runId: run.id, reason: "cancelled",
+          phase: options.repositories.getAgentRunObservation(run.id)?.phase ?? "unknown",
+          at: (options.now?.() ?? new Date()).toISOString(), usedMs: budget.consumed_ms });
+          options.repositories.executionBudget.requestCancellation(run.id);
+        }
+      }
+      return applyTaskTransition({
+        repositories: options.repositories,
+        task,
+        status: "cancelled",
+        resolution: "cancelled",
+        now: options.now,
+        createId: options.createId,
+      });
     });
+    if (!cancelled) { sendJson(response, 409, { error: "Task changed before cancellation; refresh the task." }); return; }
+    defaultExecutionRegistry.requestStop(task.id, "cancelled");
     sendJson(response, 200, {
       task: summarizeTask(
         cancelled.task,
@@ -663,38 +689,47 @@ async function routeRequest(
       return;
     }
 
-    const releasedWorkspaces = options.repositories.releaseIsolatedWorkspaceClaims(task.id);
-    const hold = findOpenTaskHold(options.repositories, task.id, "termination_unconfirmed");
-    const taskBudget = options.repositories.executionBudget.getTask(task.id);
-    const stop = hold?.subjectId ? options.repositories.executionBudget.stopRequest(hold.subjectId) : undefined;
-    const needsBudgetAuthorization = taskBudget && (taskBudget.authorizedMs <= taskBudget.consumedMs + taskBudget.reservedMs || isBudgetExhaustion(stop?.reason));
-    const message = needsBudgetAuthorization
-      ? `Termination confirmed for ${task.title}; its workspace is released, but execution still requires budget authorization.`
-      : `Termination confirmed for ${task.title}; its workspace is released and it can run again.`;
-    if (hold) {
-      applyTaskTransition({
-        repositories: options.repositories,
-        task,
-        status: "failed",
-        executionSummary: {
-          latestFailureReason: needsBudgetAuthorization ? "task_budget_exhausted" : "worker_lost",
-          latestFailureMessage: message,
-        },
-        // It is no longer unconfirmed, but the run still stopped without finishing, so the task keeps
-        // a Hold that offers the ordinary way back rather than silently re-queuing work whose state
-        // nobody has looked at.
-        hold: {
-          kind: needsBudgetAuthorization ? "execution_budget_exhausted" : "runtime_interrupted",
-          resolver: needsBudgetAuthorization ? "founder" : "runtime",
-          subjectKind: "agent_run",
-          subjectId: hold.subjectId ?? task.id,
-          reason: message,
-        },
-        resolvesHoldIds: [hold.id],
-        now: options.now,
-        createId: options.createId,
-      });
-    }
+    const releasedWorkspaces = options.repositories.transaction(() => {
+      options.repositories.executionBudget.lockAuthorization(task.id);
+      const hold = findOpenTaskHold(options.repositories, task.id, "termination_unconfirmed");
+      if (!hold) return null;
+      const releasedWorkspaces = options.repositories.releaseIsolatedWorkspaceClaims(task.id);
+
+      const taskBudget = options.repositories.executionBudget.getTask(task.id);
+      const stop = hold?.subjectId ? options.repositories.executionBudget.stopRequest(hold.subjectId) : undefined;
+      if (hold.subjectId) options.repositories.executionBudget.confirmTermination(hold.subjectId, (options.now?.() ?? new Date()).toISOString());
+      const wasCancelled = Boolean(stop?.cancel_requested);
+      const needsBudgetAuthorization = !wasCancelled && taskBudget && (taskBudget.authorizedMs <= taskBudget.consumedMs + taskBudget.reservedMs || isBudgetExhaustion(stop?.reason));
+      const message = wasCancelled ? `Termination confirmed for ${task.title}; the task remains cancelled.` : needsBudgetAuthorization
+        ? `Termination confirmed for ${task.title}; its workspace is released, but execution still requires budget authorization.`
+        : `Termination confirmed for ${task.title}; its workspace is released and it can run again.`;
+      if (hold) {
+        applyTaskTransition({
+          repositories: options.repositories,
+          task,
+          status: wasCancelled ? "cancelled" : "failed",
+          executionSummary: {
+            latestFailureReason: wasCancelled ? "cancelled" : needsBudgetAuthorization ? "task_budget_exhausted" : "worker_lost",
+            latestFailureMessage: message,
+          },
+          // It is no longer unconfirmed, but the run still stopped without finishing, so the task keeps
+          // a Hold that offers the ordinary way back rather than silently re-queuing work whose state
+          // nobody has looked at.
+          hold: {
+            kind: needsBudgetAuthorization ? "execution_budget_exhausted" : "runtime_interrupted",
+            resolver: needsBudgetAuthorization ? "founder" : "runtime",
+            subjectKind: "agent_run",
+            subjectId: hold.subjectId ?? task.id,
+            reason: message,
+          },
+          resolvesHoldIds: [hold.id],
+          now: options.now,
+          createId: options.createId,
+        });
+      }
+      return releasedWorkspaces;
+    });
+    if (releasedWorkspaces === null) { sendJson(response, 409, { error: "Termination Hold changed; refresh the task." }); return; }
 
     const confirmed = options.repositories.getTask(task.id) ?? task;
     sendJson(response, 200, {
@@ -770,7 +805,7 @@ async function routeRequest(
       const result = authorizeExecutionBudget({ ...body, taskId: budgetAuthorizationMatch[1], repositories: options.repositories,
         now: options.now, createId: options.createId });
       if (!result.replayed) options.requestSchedulerWake?.("budget_authorized");
-      sendJson(response, 200, { ...result, budget: options.repositories.executionBudget.getTask(result.task.id) });
+      sendJson(response, 200, { ...result, task: summarizeTask(result.task, options.repositories.listTaskDependencies(result.task.id).map(d => d.dependsOnTaskId), options.repositories), budget: options.repositories.executionBudget.getTask(result.task.id) });
     } catch (error) {
       if (error instanceof SyntaxError) { sendJson(response, 400, { error: "Invalid authorization JSON" }); return; }
       if (!(error instanceof BudgetAuthorizationError)) throw error;
@@ -2600,6 +2635,7 @@ function summarizeTask(
   const { holds, affordances } = resolveTaskAffordanceState(repositories, task);
 
   return {
+    execution: executionOverview(repositories, task.id),
     holds: holds.map(summarizeTaskHold),
     affordances,
     id: task.id,

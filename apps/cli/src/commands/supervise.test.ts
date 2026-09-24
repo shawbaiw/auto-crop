@@ -37,6 +37,43 @@ describe("superviseAutoCrop", () => {
     throw new Error("Timed out waiting for the supervised system to settle.");
   };
 
+  it.skipIf(process.platform === "win32")("detects a frozen live Worker independently and isolates its surviving writer before replacement", async () => {
+    const projectRoot = createTempProjectRoot();
+    const { client, repositories } = openState(projectRoot);
+    let child: ChildProcess | undefined, writerPid: number | undefined, launches = 0, isolatedBeforeRestart = false;
+    const supervisor = await superviseAutoCrop({ projectRoot, scanIntervalMs: 20, restartDelayMs: 20, log: () => undefined,
+      spawnWorker: ownerId => {
+        launches++;
+        if (launches > 1) {
+          isolatedBeforeRestart = Boolean(repositories.listWorkspaceClaims()[0]?.isolatedReason);
+          return spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        }
+        child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./fixtures/exitingWorker.ts", import.meta.url)), projectRoot, ownerId, "wedged"], {
+          env: { ...process.env, AUTO_CROP_FORCE_AGENT_TIMEOUT_MS: "60" }, stdio: ["ignore", "ignore", "pipe", "ipc"],
+        });
+        child.on("message", message => { const data = message as { type: string; pid: number }; if (data.type === "writer-started") writerPid = data.pid; });
+        return child;
+      },
+    });
+    try {
+      await untilTrue(() => Boolean(writerPid));
+      process.kill(child!.pid!, "SIGSTOP");
+      await untilTrue(() => launches > 1);
+      expect(isolatedBeforeRestart).toBe(true);
+      expect(repositories.getTask("task_1")?.latestFailureReason).toBe("termination_unconfirmed");
+      const events = repositories.listOutboxEvents({ companyId: "company_1" });
+      expect(events.some(e => e.type === "execution_suspected")).toBe(true);
+      expect(events.some(e => e.type === "execution_stop_requested")).toBe(true);
+      expect(events.some(e => e.type === "execution_failed" && e.payload.reason === "worker_lost")).toBe(true);
+      process.kill(writerPid!, 0); // The child exit alone did not prove its detached writer stopped.
+      expect(repositories.executionBudget.getTask("task_1")).toMatchObject({ consumedMs: 10000, reservedMs: 0 });
+    } finally {
+      await supervisor.close();
+      if (writerPid) { try { process.kill(-writerPid, "SIGKILL"); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e; } }
+      client.close();
+    }
+  }, 20000);
+
   it("refuses a second supervisor before spawning, and releases ownership on close", async () => {
     const projectRoot = createTempProjectRoot();
     let launches = 0;

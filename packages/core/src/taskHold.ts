@@ -355,7 +355,7 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
         offer(hold, "request_replan", "founder");
         break;
       case "execution_budget_exhausted":
-        offer(hold, "authorize_execution_budget", "founder");
+        if (input.holds.every(other => other.kind === "execution_budget_exhausted" || Boolean(other.resolvedAt))) offer(hold, "authorize_execution_budget", "founder");
         break;
       case "runtime_interrupted":
         // Nothing is known about why the run stopped, so the way back is to run it again; a refresh

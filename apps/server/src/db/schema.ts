@@ -223,6 +223,10 @@ export function migrate(database: DatabaseClient): void {
     -- One launch of an agent process within a run (ADR 0035 / execution-health P1). A run's brief,
     -- its substantive work and its Artifact Syntax Repair are separate invocations of the same run,
     -- so "how long did it take" and "what ended it" are answerable per phase rather than per run.
+    CREATE TABLE IF NOT EXISTS run_health (
+      run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
+      state TEXT NOT NULL, reason TEXT NOT NULL, action TEXT NOT NULL, checked_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS run_stop_requests (
       run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
       reason TEXT NOT NULL,
@@ -500,6 +504,8 @@ export function migrate(database: DatabaseClient): void {
     addColumnIfMissing(database, lockColumns, "task_locks", "lease_expires_at TEXT");
     addColumnIfMissing(database, lockColumns, "task_locks", "owner_epoch INTEGER");
   }
+  addColumnIfMissing(database, getColumnNames(database, "run_stop_requests"), "run_stop_requests", "cancel_requested INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, getColumnNames(database, "agent_runs"), "agent_runs", "manual_termination_confirmed_at TEXT");
   addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "execution_brief TEXT");
   addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "blocked_by_task_id TEXT");
   addColumnIfMissing(database, getColumnNames(database, "company_events"), "company_events", "plan_snapshot TEXT");

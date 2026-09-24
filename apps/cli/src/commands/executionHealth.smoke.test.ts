@@ -120,3 +120,68 @@ async function stop(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
   const timeout = setTimeout(() => child.kill("SIGKILL"), 7_000);
   try { await exited; } finally { clearTimeout(timeout); }
 }
+
+
+it.skipIf(process.platform === "win32").each(["budget-success", "budget-stop"])("public opt-in %s keeps authorization across the production entry and restart", async scenario => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "auto-crop-budget-smoke-")));
+  const bin = join(root, "bin"); mkdirSync(bin); mkdirSync(join(root, ".auto-crop"));
+  writeFileSync(join(bin, "codex"), `#!${process.execPath}\n${readFileSync(new URL("./fixtures/mockCodex.cjs", import.meta.url), "utf8")}`, { mode: 0o755 });
+  writeFileSync(join(bin, "claude"), `#!${process.execPath}\nprocess.exit(1);\n`, { mode: 0o755 });
+  const { client, repositories } = openState(root);
+  client.prepare("UPDATE tasks SET proof_schema_id = 'test-output' WHERE id = 'task_1'").run();
+  mkdirSync(repositories.getTask("task_1")!.workspacePath!, { recursive: true });
+  const children: ChildProcess[] = [];
+  let output = "";
+  const launch = () => {
+    const child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("../index.ts", import.meta.url)), "start"], {
+      cwd: fileURLToPath(new URL("../../../../", import.meta.url)),
+      env: { ...process.env, PATH: `${bin}:/usr/bin:/bin`, INIT_CWD: root, AUTO_CROP_SMOKE_ROOT: root,
+        AUTO_CROP_SMOKE_SCENARIO: scenario, AUTO_CROP_PORT: "0", AUTO_CROP_SCHEDULER_INTERVAL_MS: "50",
+        AUTO_CROP_EXECUTION_POLICY: "budget-v1", AUTO_CROP_FORCE_AGENT_TIMEOUT_MS: "60",
+        AUTO_CROP_EXECUTION_BUDGET_JSON: JSON.stringify({ runHardMs: 2000, taskTotalMs: scenario === "budget-stop" ? 800 : 3000, persistMs: 20, checkpointMs: 100 }) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    children.push(child); child.stdout!.on("data", chunk => { output += chunk; }); child.stderr!.on("data", chunk => { output += chunk; });
+    return child;
+  };
+  const until = async (check: () => boolean) => {
+    const deadline = Date.now() + 20000;
+    while (!check()) { if (Date.now() > deadline) throw new Error(output); await new Promise(resolve => setTimeout(resolve, 25)); }
+  };
+  try {
+    const first = launch();
+    await until(() => repositories.executionBudget.getTask("task_1")?.reservedMs === 0);
+    const rows = client.prepare("SELECT id, status, owner_epoch FROM agent_runs WHERE task_id = 'task_1'").all() as Array<{ id: string; status: string; owner_epoch: number }>;
+    expect(rows, output).toHaveLength(1);
+    const [run] = rows;
+    if (scenario === "budget-success") {
+      expect(run.status, output).toBe("complete");
+      expect(repositories.listRunInvocations(run.id).filter(i => i.phase === "executing")).toHaveLength(1);
+      expect(repositories.executionBudget.getRun(run.id)!.consumed_ms).toBeGreaterThan(350);
+      expect(repositories.listOutboxEvents({ companyId: "company_1" }).some(e => e.type === "execution_budget_review")).toBe(true);
+    } else {
+      expect(repositories.getTask("task_1")?.latestFailureReason, output).toBe("task_budget_exhausted");
+      expect(repositories.executionBudget.getTask("task_1")).toEqual({ authorizedMs: 800, consumedMs: 800, reservedMs: 0 });
+      expect(repositories.executionBudget.stopRequest(run.id)?.termination_confirmed).toBe(1);
+      await stop(first);
+      // Exercise startup and the dispatch gate after a legitimate attempt reset; no new run may spend this balance.
+      repositories.markTaskAttemptsReset("task_1", new Date().toISOString());
+      output = ""; launch();
+      await until(() => output.includes("Dashboard:"));
+      const url = output.match(/Dashboard: (http:\/\/[^\s]+)/)![1];
+      const view = await fetch(`${url}/api/tasks/task_1/execution`);
+      expect(await view.json()).toMatchObject({ task: { execution: { budget: { remainingMs: 0, availableMs: 0 } } } });
+      expect(client.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE task_id = 'task_1'").get()).toMatchObject({ n: 1 });
+      expect(repositories.listOpenTaskHolds("task_1").map(h => h.kind)).toContain("execution_budget_exhausted");
+    }
+    await until(() => repositories.listOutboxEvents({ companyId: "company_1" }).every(e => Boolean(e.deliveredAt)));
+    expect(repositories.listRecoveryDecisions("company_1").length).toBeGreaterThan(0);
+  } finally {
+    for (const child of children) await stop(child);
+    if (existsSync(join(root, "writer.json"))) {
+      const { pid } = JSON.parse(readFileSync(join(root, "writer.json"), "utf8"));
+      try { process.kill(-pid, "SIGKILL"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    }
+    client.close(); rmSync(root, { recursive: true, force: true });
+  }
+}, 45000);

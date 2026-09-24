@@ -1,3 +1,5 @@
+import { ExecutionHealthMonitor } from "./executionHealth";
+import type { ExecutionClock } from "./budgetPolicy";
 import type { createRepositories } from "../db/repositories";
 import { OutboxDispatcher, type DeliveryOutcome, type OutboxEvent } from "./executionEvents";
 import { RecoveryCoordinator } from "./recoveryCoordinator";
@@ -16,9 +18,9 @@ type Repositories = ReturnType<typeof createRepositories>;
  * HTTP API, not its scheduler loop, not its in-memory state. A supervisor that asked a wedged worker
  * whether it was healthy would be asking the patient.
  *
- * What it cannot do is also part of the design. It cannot stop a process another worker owns (that
- * needs a control channel this does not have, and the honest report is "unreachable"), and it cannot
- * survive its own machine going down. Neither is claimed anywhere.
+ * The host may supply containment for its exact owned Worker. Arbitrary Agent descendants and
+ * remote owners remain outside that control channel and must stay isolated until confirmed gone.
+ * This process cannot survive its own machine going down.
  */
 export type SupervisorScanResult = {
   reconciledTaskIds: string[];
@@ -30,6 +32,9 @@ export type SupervisorScanResult = {
 
 export type SupervisorInput = {
   repositories: Repositories;
+  clock?: ExecutionClock;
+  probeOwner?: (ownerId: string) => void;
+  stopOwner?: (ownerId: string) => void;
   /** This supervisor's identity. Two supervisors on one database must not share it. */
   supervisorId: string;
   now?: () => Date;
@@ -43,10 +48,12 @@ export type SupervisorInput = {
 };
 
 export class Supervisor {
+  private readonly health: ExecutionHealthMonitor;
   private readonly coordinator: RecoveryCoordinator;
   private readonly dispatcher: OutboxDispatcher;
 
   constructor(private readonly input: SupervisorInput) {
+    this.health = new ExecutionHealthMonitor(input);
     this.coordinator = new RecoveryCoordinator({
       repositories: input.repositories,
       now: input.now,
@@ -105,6 +112,7 @@ export class Supervisor {
       reconciledTaskIds.push(...reconciled.reconciledTaskIds);
     }
 
+    this.health.scan();
     const drained = await this.dispatcher.drainOnce();
     return {
       reconciledTaskIds,
