@@ -140,6 +140,7 @@ export type TaskAffordanceKind =
   | "recover_task"
   | "request_replan"
   | "confirm_replan"
+  | "authorize_execution_budget"
   | "confirm_termination"
   | "cancel_task";
 

@@ -42,3 +42,8 @@ export type ExecutionClock = { monotonicMs(): number; utcNow(): Date };
 export const systemExecutionClock: ExecutionClock = {
   monotonicMs: () => performance.now(), utcNow: () => new Date(),
 };
+
+export type BudgetStopReason = "phase_budget_exhausted" | "run_budget_exhausted" | "task_budget_exhausted";
+export function isBudgetExhaustion(reason: string | null | undefined): reason is BudgetStopReason {
+  return reason === "phase_budget_exhausted" || reason === "run_budget_exhausted" || reason === "task_budget_exhausted";
+}

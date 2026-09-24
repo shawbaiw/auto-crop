@@ -12,6 +12,7 @@ type Repositories = ReturnType<typeof createRepositories>;
  */
 export type ExecutionEventType =
   | "execution_budget_review"
+  | "execution_budget_exhausted"
   | "execution_completed"
   | "execution_failed"
   | "execution_stop_requested"
@@ -21,7 +22,14 @@ export type ExecutionEventType =
 /** Bumped when the payload shape changes, so an old event is read under the rules it was written by. */
 export const EXECUTION_EVENT_VERSION = 1;
 
+export type ExecutionBudgetFacts = {
+  reservedMs: number; consumedMs: number; estimated: boolean;
+  stopReason: string | null; stopPhase: string | null; stopRequestedAt: string | null;
+  terminationWaitMs: number | null;
+};
+
 export type ExecutionEventPayload = {
+  budget?: ExecutionBudgetFacts;
   version: number;
   eventId: string;
   type: ExecutionEventType;
@@ -69,6 +77,7 @@ export function recordExecutionEvent(
   repositories: Repositories,
   input: {
     id: string;
+    budget?: ExecutionBudgetFacts;
     type: ExecutionEventType;
     companyId: string;
     taskId?: string | null;
@@ -85,6 +94,7 @@ export function recordExecutionEvent(
   },
 ): OutboxEvent {
   const payload: ExecutionEventPayload = {
+    ...(input.budget ? { budget: input.budget } : {}),
     version: EXECUTION_EVENT_VERSION,
     eventId: input.id,
     type: input.type,

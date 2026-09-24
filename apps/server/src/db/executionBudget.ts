@@ -19,6 +19,40 @@ export function createExecutionBudgetStore(database: DatabaseClient) {
     .run(row.run_id, row.seq, kind, row.consumed_ms, row.settled ? 0 : row.reserved_ms, row.estimated, at);
   return {
     getRun, getTask,
+    requestStop(runId: string, reason: string, phase: string, at: string, usedMs: number): boolean {
+      const result = database.prepare(`INSERT OR IGNORE INTO run_stop_requests(run_id, reason, phase, requested_at, consumed_ms)
+        SELECT r.id, ?, ?, ?, ? FROM agent_runs r JOIN tasks t ON t.id = r.task_id
+        WHERE r.id = ? AND r.status = 'running' AND r.owner_epoch = t.execution_epoch
+          AND EXISTS (SELECT 1 FROM run_budgets b WHERE b.run_id = r.id AND b.settled = 0)`)
+        .run(reason, phase, at, Math.ceil(usedMs), runId);
+      return Boolean(result.changes);
+    },
+    stopRequest(runId: string) {
+      return database.prepare("SELECT * FROM run_stop_requests WHERE run_id = ?").get(runId) as
+        { run_id: string; reason: string; phase: string; requested_at: string; consumed_ms: number;
+          termination_wait_ms: number | null; termination_confirmed: number | null } | undefined;
+    },
+    recordTerminationWait(runId: string, waitMs: number, confirmed?: boolean): void {
+      database.prepare(`UPDATE run_stop_requests SET termination_wait_ms = ?, termination_confirmed = ? WHERE run_id = ?`)
+        .run(Math.max(0, Math.ceil(waitMs)), confirmed === undefined ? null : confirmed ? 1 : 0, runId);
+    },
+    authorization(id: string) {
+      return database.prepare("SELECT * FROM budget_authorizations WHERE id = ?").get(id) as
+        { id: string; task_id: string; additional_ms: number; authorized_before_ms: number; authorized_after_ms: number;
+          reason: string; actor: string; created_at: string } | undefined;
+    },
+    lockAuthorization(taskId: string): boolean {
+      return Boolean(database.prepare("UPDATE task_budgets SET authorized_ms = authorized_ms WHERE task_id = ?").run(taskId).changes);
+    },
+    authorize(input: { id: string; taskId: string; additionalMs: number; reason: string; at: string }): void {
+      const before = getTask(input.taskId)!;
+      const after = before.authorizedMs + input.additionalMs;
+      if (!Number.isSafeInteger(after)) throw new Error("Authorization exceeds safe integer range");
+      database.prepare(`INSERT INTO budget_authorizations(id, task_id, additional_ms, authorized_before_ms,
+        authorized_after_ms, reason, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, 'founder', ?)`)
+        .run(input.id, input.taskId, input.additionalMs, before.authorizedMs, after, input.reason, input.at);
+      database.prepare("UPDATE task_budgets SET authorized_ms = ? WHERE task_id = ?").run(after, input.taskId);
+    },
     ownerBlocked(ownerId: string): boolean {
       return Boolean(database.prepare("SELECT 1 FROM budget_owner_guards WHERE owner_id = ?").get(ownerId));
     },

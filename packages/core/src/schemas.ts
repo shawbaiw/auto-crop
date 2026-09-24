@@ -45,6 +45,7 @@ export const taskHoldKindSchema = z.enum([
   "verification_failed",
   "agent_quota_exhausted",
   "termination_unconfirmed",
+  "execution_budget_exhausted",
   "runtime_interrupted",
 ]);
 export const taskHoldResolverSchema = z.enum(["ceo_office", "founder", "upstream_task", "runtime", "time"]);
@@ -68,10 +69,15 @@ export const taskAffordanceKindSchema = z.enum([
   "request_replan",
   "confirm_replan",
   "confirm_termination",
+  "authorize_execution_budget",
   "cancel_task",
 ]);
 
 export const agentFailureReasonSchema = z.enum([
+  "run_budget_exhausted",
+  "phase_budget_exhausted",
+  "task_budget_exhausted",
+  "clock_untrusted",
   "timeout",
   "agent_failed",
   "invalid_agent_output",

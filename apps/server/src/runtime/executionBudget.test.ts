@@ -10,10 +10,14 @@ import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { openState } from "./fixtures/budgetState";
 import { runSchedulerOnce, type RunSchedulerOnceInput } from "./scheduler";
-import { reconcileStaleRunningTasks } from "./taskRecovery";
+import { recoverTask, reconcileStaleRunningTasks } from "./taskRecovery";
 import { reconcileExitedWorker } from "./workerExit";
 import { settleAgentRun } from "./executionSettlement";
 import { resolveBudgetSnapshot } from "./budgetPolicy";
+import { requestBudgetStop } from "./budgetStop";
+import { authorizeExecutionBudget, assertOrdinaryRecoveryAllowed } from "./budgetAuthorization";
+import { applyTaskTransition } from "./taskTransition";
+import { createApiServer } from "../api/routes";
 import { resolveEffectiveTimeout } from "./executionProfile";
 
 const cleanup: Array<() => void> = [];
@@ -275,3 +279,267 @@ function writeValidBusinessArtifact(task: Task): void {
   );
 }
 
+
+
+it.each(["preparing_brief", "executing", "repairing_artifact", "finalizing"] as const)("attributes a hard stop to %s and rejects late success", async phase => {
+  const f = fixture();
+  let mono = 0, calls = 0;
+  const config = f.input(adapter(async request => {
+    calls++;
+    if (request.metadata.phase === "execution_brief") { if (phase === "preparing_brief") mono += 1100; return brief; }
+    if (phase === "executing") mono += 5100;
+    if (phase === "repairing_artifact") {
+      mkdirSync(join(request.workspacePath, ".auto-crop"), { recursive: true });
+      writeFileSync(join(request.workspacePath, ".auto-crop/business-artifact.json"), '{"text":"OK",}');
+      if (calls === 3) mono += 1100;
+    }
+    return complete;
+  }));
+  config.executionClock = { monotonicMs: () => mono, utcNow: () => new Date(1700000000000 + mono) };
+  config.executionBudget = { ...config.executionBudget, clockToleranceMs: 10000 };
+  const collect = config.proofCollector;
+  config.proofCollector = req => { if (phase === "finalizing") mono += 1100; return collect(req); };
+  const result = await runSchedulerOnce(config);
+  expect(result.completed).toEqual([]);
+  const run = f.client.prepare("SELECT id FROM agent_runs").get() as { id: string };
+  expect(f.repositories.executionBudget.stopRequest(run.id)).toMatchObject({ phase,
+    reason: phase === "executing" ? "run_budget_exhausted" : "phase_budget_exhausted" });
+  expect(f.repositories.listOpenTaskHolds("task_1").map(h => h.kind)).toContain("execution_budget_exhausted");
+  expect(f.repositories.listOutboxEvents({ companyId: "company_1" }).filter(e => e.type === "execution_budget_exhausted")).toHaveLength(1);
+  expect(f.repositories.countAgentRunsForTask("task_1")).toBe(0);
+  if (phase === "preparing_brief") expect(calls).toBe(1);
+});
+
+it("kills a real output flood after the durable stop claim and accounts for termination grace separately", async () => {
+  const f = fixture();
+  const script = join(f.root, "flood.cjs");
+  writeFileSync(script, "process.on('SIGTERM', () => {}); setInterval(() => process.stdout.write('same\\n'), 5);");
+  const cli = createCliAgentAdapter({ id: "codex", name: "flood", capabilities: ["code"], commandTemplate: `"${process.execPath}" "${script}"` });
+  let sawStopBeforeSignal = false;
+  const config = f.input(adapter(async request => {
+    if (request.metadata.phase === "execution_brief") return brief;
+    const run = f.repositories.listRunningAgentRuns("company_1")[0];
+    request.signal!.addEventListener("abort", () => {
+      sawStopBeforeSignal = Boolean(f.repositories.executionBudget.stopRequest(run.id));
+    }, { once: true });
+    return cli.run({ ...request, graceMs: 60, confirmMs: 300 });
+  }));
+  config.executionBudget = { ...config.executionBudget, runHardMs: 300 };
+  const result = await runSchedulerOnce(config);
+  expect(result.completed).toEqual([]);
+  expect(sawStopBeforeSignal).toBe(true);
+  const run = f.client.prepare("SELECT id FROM agent_runs").get() as { id: string };
+  const stop = f.repositories.executionBudget.stopRequest(run.id)!;
+  expect(stop).toMatchObject({ reason: "run_budget_exhausted", termination_confirmed: 1 });
+  expect(stop.termination_wait_ms).toBeGreaterThanOrEqual(40);
+  expect(f.repositories.executionBudget.getRun(run.id)).toMatchObject({ consumed_ms: 300, estimated: 0, settled: 1 });
+  expect(f.repositories.listWorkspaceClaims()).toEqual([]);
+  const events = f.repositories.listOutboxEvents({ companyId: "company_1" });
+  expect(events.filter(e => e.type === "execution_stop_requested")).toHaveLength(1);
+  expect(events.filter(e => e.type === "execution_budget_exhausted")).toEqual([expect.objectContaining({ payload: expect.objectContaining({ terminationConfirmed: true }) })]);
+});
+
+it("lets only one of stop and success win across connections and rolls a stop event fault back", async () => {
+  const f = fixture();
+  const other = createDatabaseClient(join(f.root, ".auto-crop/state.sqlite"));
+  cleanup.push(() => other.close());
+  const r = createRepositories(other);
+  await runSchedulerOnce(f.input(adapter(async request => {
+    if (request.metadata.phase === "execution_brief") return brief;
+    const run = r.listRunningAgentRuns("company_1")[0];
+    const stop = () => requestBudgetStop({ repositories: r, runId: run.id, reason: "run_budget_exhausted", phase: "executing", at: new Date().toISOString(), usedMs: 100 });
+    other.exec("CREATE TRIGGER fail_stop BEFORE INSERT ON outbox_events WHEN NEW.type = 'execution_stop_requested' BEGIN SELECT RAISE(ABORT, 'stop fault'); END");
+    expect(stop).toThrow("stop fault");
+    expect(r.executionBudget.stopRequest(run.id)).toBeUndefined();
+    other.exec("DROP TRIGGER fail_stop");
+    expect(stop()).toBe(true);
+    expect(stop()).toBe(false);
+    expect(settleAgentRun({ repositories: f.repositories, runId: run.id, outcome: { status: "complete" },
+      at: new Date().toISOString(), createId: () => "must-not-publish", commit: () => { throw new Error("late success committed"); } })).toBe(false);
+    return complete;
+  })));
+  expect(f.repositories.getTask("task_1")?.latestFailureReason).toBe("run_budget_exhausted");
+  expect(r.listOutboxEvents({ companyId: "company_1" }).filter(e => e.type === "execution_completed")).toEqual([]);
+  const success = fixture();
+  await runSchedulerOnce(success.input(adapter(async req => req.metadata.phase === "execution_brief" ? brief : complete)));
+  const row = success.client.prepare("SELECT id FROM agent_runs").get() as { id: string };
+  expect(requestBudgetStop({ repositories: success.repositories, runId: row.id, reason: "run_budget_exhausted", phase: "executing", at: new Date().toISOString(), usedMs: 5000 })).toBe(false);
+  expect(success.repositories.executionBudget.stopRequest(row.id)).toBeUndefined();
+});
+
+async function exhaustedFixture(unconfirmed = false) {
+  const f = fixture();
+  let mono = 0;
+  const config = f.input(adapter(async req => {
+    if (req.metadata.phase === "execution_brief") return brief;
+    mono += 300;
+    return { ...complete, terminationConfirmed: unconfirmed ? false : undefined };
+  }));
+  config.executionClock = { monotonicMs: () => mono, utcNow: () => new Date(1700000000000 + mono) };
+  config.executionBudget = { ...config.executionBudget, taskTotalMs: 200 };
+  await runSchedulerOnce(config);
+  return f;
+}
+
+it("preserves exhausted authorization through reset/reopen and does not spawn before a new grant", async () => {
+  const f = await exhaustedFixture();
+  expect(f.repositories.getTask("task_1")?.latestFailureReason).toBe("task_budget_exhausted");
+  const run = f.client.prepare("SELECT id FROM agent_runs").get() as { id: string };
+  f.repositories.markTaskAttemptsReset("task_1", new Date().toISOString());
+  applyTaskTransition({ repositories: f.repositories, task: "task_1", status: "queued", resolvesHoldKinds: ["execution_budget_exhausted"] });
+  f.client.close();
+  const reopened = createDatabaseClient(join(f.root, ".auto-crop/state.sqlite"));
+  cleanup.push(() => reopened.close());
+  const r = createRepositories(reopened);
+  const config = { ...f.input(adapter(async () => { throw new Error("exhausted task spawned"); })), repositories: r, workerId: "new-owner" };
+  expect((await runSchedulerOnce(config)).blocked).toEqual(["task_1"]);
+  expect((await runSchedulerOnce(config)).completed).toEqual([]);
+  expect(r.executionBudget.getTask("task_1")).toEqual({ authorizedMs: 200, consumedMs: 200, reservedMs: 0 });
+  expect(r.executionBudget.snapshot(run.id)?.taskTotalMs).toBe(200);
+  expect(() => assertOrdinaryRecoveryAllowed(r, "task_1")).toThrow("explicit founder");
+});
+
+it("charges quota time without consuming a failure attempt", async () => {
+  const f = fixture();
+  let mono = 0;
+  const config = f.input(adapter(async req => {
+    mono += 20;
+    return req.metadata.phase === "execution_brief" ? brief : { ...complete, status: "failed", failureReason: "agent_quota_exhausted" };
+  }));
+  config.executionClock = { monotonicMs: () => mono, utcNow: () => new Date(1700000000000 + mono) };
+  await runSchedulerOnce(config);
+  expect(f.repositories.countAgentRunsForTask("task_1")).toBe(0);
+  expect(f.repositories.executionBudget.getTask("task_1")).toMatchObject({ consumedMs: 40, reservedMs: 0 });
+  f.repositories.markTaskAttemptsReset("task_1", new Date().toISOString());
+  expect(f.repositories.executionBudget.getTask("task_1")?.consumedMs).toBe(40);
+});
+
+it("authorizes once, preserves the old snapshot and rejects stale concurrent grants and cancelled tasks", async () => {
+  const f = await exhaustedFixture();
+  const input = { repositories: f.repositories, taskId: "task_1", id: "grant-1", additionalMs: 500, expectedAuthorizedMs: 200, reason: "finish the task" };
+  expect(() => authorizeExecutionBudget({ ...input, additionalMs: 0 })).toThrow("No remaining");
+  f.client.exec("CREATE TRIGGER fail_authorize BEFORE INSERT ON task_events WHEN NEW.id = 'budget-authorization:grant-1' BEGIN SELECT RAISE(ABORT, 'audit fault'); END");
+  expect(() => authorizeExecutionBudget(input)).toThrow("audit fault");
+  expect(f.repositories.executionBudget.getTask("task_1")?.authorizedMs).toBe(200);
+  expect(f.repositories.executionBudget.authorization("grant-1")).toBeUndefined();
+  expect(f.repositories.listOpenTaskHolds("task_1").map(h => h.kind)).toContain("execution_budget_exhausted");
+  f.client.exec("DROP TRIGGER fail_authorize");
+  const other = createDatabaseClient(join(f.root, ".auto-crop/state.sqlite"));
+  cleanup.push(() => other.close());
+  const r = createRepositories(other);
+  expect(authorizeExecutionBudget(input)).toMatchObject({ replayed: false, task: { status: "queued" } });
+  expect(authorizeExecutionBudget({ ...input, repositories: r })).toMatchObject({ replayed: true });
+  expect(() => authorizeExecutionBudget({ ...input, repositories: r, id: "grant-2" })).toThrow();
+  expect(() => authorizeExecutionBudget({ ...input, additionalMs: 501 })).toThrow("different input");
+  expect(r.executionBudget.getTask("task_1")).toMatchObject({ authorizedMs: 700, consumedMs: 200 });
+  const run = f.client.prepare("SELECT id FROM agent_runs").get() as { id: string };
+  expect(r.executionBudget.snapshot(run.id)?.taskTotalMs).toBe(200);
+  applyTaskTransition({ repositories: r, task: "task_1", status: "cancelled" });
+  expect(() => authorizeExecutionBudget({ ...input, id: "after-cancel", expectedAuthorizedMs: 700 })).toThrow("not parked");
+});
+
+it("validates the authorization HTTP route and refuses unconfirmed termination", async () => {
+  const f = await exhaustedFixture(true);
+  expect(f.repositories.listWorkspaceClaims()[0]?.isolatedReason).toBeTruthy();
+  const server = createApiServer({ projectRoot: f.root, repositories: f.repositories, agents: [adapter(async () => complete)] });
+  await new Promise<void>(resolve => server.httpServer.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = (server.httpServer.address() as { port: number }).port;
+    const post = (body: unknown, task = "task_1") => fetch(`http://127.0.0.1:${port}/api/tasks/${task}/execution-budget`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const grant = { id: "http-grant", additionalMs: 500, expectedAuthorizedMs: 200, reason: "continue" };
+    expect((await post(grant, "missing")).status).toBe(404);
+    expect((await post({ ...grant, additionalMs: -1 })).status).toBe(400);
+    expect((await post(grant)).status).toBe(409);
+    // The founder must first confirm the old writer is gone; that still grants no new budget.
+    const confirm = await fetch(`http://127.0.0.1:${port}/api/tasks/task_1/confirm-termination`, { method: "POST" });
+    expect(confirm.status).toBe(200);
+    expect(f.repositories.listWorkspaceClaims()).toEqual([]);
+    expect(f.repositories.listOpenTaskHolds("task_1").map(h => h.kind)).toContain("execution_budget_exhausted");
+    expect((await post({ ...grant, expectedAuthorizedMs: 201 })).status).toBe(409);
+    expect((await post(grant)).status).toBe(200);
+    const replay = await post(grant);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ replayed: true, budget: { authorizedMs: 700 } });
+  } finally { await new Promise<void>((resolve, reject) => server.httpServer.close(error => error ? reject(error) : resolve())); }
+});
+
+
+it("handles a stop that wins exactly between the success precheck and SQL claim", async () => {
+  const f = fixture();
+  const other = createDatabaseClient(join(f.root, ".auto-crop/state.sqlite"));
+  cleanup.push(() => other.close());
+  const r = createRepositories(other);
+  const original = f.repositories.updateAgentRunStatus;
+  const spy = vi.spyOn(f.repositories, "updateAgentRunStatus").mockImplementation((...args) => {
+    if (args[1] === "complete") requestBudgetStop({ repositories: r, runId: args[0], reason: "run_budget_exhausted",
+      phase: "finalizing", at: new Date().toISOString(), usedMs: 100 });
+    return original(...args);
+  });
+  try {
+    const result = await runSchedulerOnce(f.input(adapter(async req => req.metadata.phase === "execution_brief" ? brief : complete)));
+    expect(result.completed).toEqual([]);
+    expect(result.failed).toEqual(["task_1"]);
+    expect(f.repositories.listRunningAgentRuns("company_1")).toEqual([]);
+    expect(f.client.prepare("SELECT * FROM proofs").all()).toEqual([]);
+    expect(f.repositories.listOpenTaskHolds("task_1").map(h => h.kind)).toContain("execution_budget_exhausted");
+  } finally { spy.mockRestore(); }
+});
+
+it("can explicitly resume a phase stop using remaining funds without changing authorization", async () => {
+  const f = fixture();
+  let mono = 0;
+  const config = f.input(adapter(async () => { mono += 1100; return brief; }));
+  config.executionClock = { monotonicMs: () => mono, utcNow: () => new Date(1700000000000 + mono) };
+  await runSchedulerOnce(config);
+  const granted = authorizeExecutionBudget({ repositories: f.repositories, taskId: "task_1", id: "resume", reason: "retry brief within existing allowance", additionalMs: 0, expectedAuthorizedMs: 7000 });
+  expect(granted.task.status).toBe("queued");
+  expect(granted.authorization).toMatchObject({ additional_ms: 0, authorized_after_ms: 7000 });
+  const result = await runSchedulerOnce(f.input(adapter(async req => req.metadata.phase === "execution_brief" ? brief : complete)));
+  expect(result.completed).toEqual(["task_1"]);
+  expect(f.client.prepare("SELECT * FROM agent_runs").all()).toHaveLength(2);
+  expect(f.repositories.executionBudget.getTask("task_1")!.consumedMs).toBeGreaterThanOrEqual(1100);
+  expect(f.repositories.executionBudget.getTask("task_1")!.authorizedMs).toBe(7000);
+});
+
+it("does not replenish the entire reservation lost to a crashed owner", async () => {
+  const f = fixture();
+  f.client.exec("CREATE TRIGGER fail_settlement BEFORE INSERT ON outbox_events WHEN NEW.type = 'execution_completed' BEGIN SELECT RAISE(ABORT, 'crash'); END");
+  const config = f.input(adapter(async req => req.metadata.phase === "execution_brief" ? brief : complete));
+  config.executionBudget = { ...config.executionBudget, runHardMs: 200, taskTotalMs: 200 };
+  await expect(runSchedulerOnce(config)).rejects.toThrow("crash");
+  f.client.close();
+  const reopened = createDatabaseClient(join(f.root, ".auto-crop/state.sqlite"));
+  cleanup.push(() => reopened.close());
+  reopened.exec("DROP TRIGGER fail_settlement");
+  const r = createRepositories(reopened);
+  reconcileExitedWorker({ repositories: r, ownerId: "owner" });
+  reconcileExitedWorker({ repositories: r, ownerId: "owner" });
+  expect(r.executionBudget.getTask("task_1")).toEqual({ authorizedMs: 200, consumedMs: 200, reservedMs: 0 });
+  const next = { ...f.input(adapter(async () => { throw new Error("crashed reservation reset"); })), repositories: r, workerId: "replacement" };
+  expect((await runSchedulerOnce(next)).completed).toEqual([]);
+  expect(() => assertOrdinaryRecoveryAllowed(r, "task_1")).toThrow("explicit founder");
+  expect(reopened.prepare("SELECT * FROM agent_runs").all()).toHaveLength(1);
+});
+
+
+it("keeps ordinary Partial Output recovery on the authorized Task instead of minting a follow-up budget", async () => {
+  const f = fixture();
+  let mono = 0;
+  const config = f.input(adapter(async req => {
+    mono += 20;
+    return req.metadata.phase === "execution_brief" ? brief : { ...complete, status: "failed", failureReason: "agent_failed" };
+  }));
+  config.executionClock = { monotonicMs: () => mono, utcNow: () => new Date(1700000000000 + mono) };
+  await runSchedulerOnce(config);
+  applyTaskTransition({ repositories: f.repositories, task: "task_1", status: "failed",
+    executionSummary: { artifactWorkspacePath: f.repositories.getTask("task_1")!.workspacePath } });
+  const recovered = recoverTask({ repositories: f.repositories, taskId: "task_1", proofSchemas: [] });
+  expect(recovered.task.id).toBe("task_1");
+  expect(recovered.task.status).toBe("queued");
+  expect(recovered.followUpTask).toBeUndefined();
+  expect(f.repositories.executionBudget.getTask("task_1")).toEqual({ authorizedMs: 7000, consumedMs: 40, reservedMs: 0 });
+  const result = await runSchedulerOnce(f.input(adapter(async req => req.metadata.phase === "execution_brief" ? brief : complete)));
+  expect(result.completed).toEqual(["task_1"]);
+  expect(f.repositories.executionBudget.getTask("task_1")!.consumedMs).toBeGreaterThanOrEqual(40);
+});

@@ -1,3 +1,5 @@
+import { isBudgetExhaustion } from "../runtime/budgetPolicy";
+import { assertOrdinaryRecoveryAllowed, authorizeExecutionBudget, BudgetAuthorizationError } from "../runtime/budgetAuthorization";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type {
   BusinessArtifact,
@@ -74,7 +76,7 @@ export type ApiServerOptions = {
   requestSchedulerWake?: (reason: SchedulerWakeReason) => void;
 };
 
-export type SchedulerWakeReason = "dependency_cascade_queued" | "parent_aggregation_queued";
+export type SchedulerWakeReason = "dependency_cascade_queued" | "parent_aggregation_queued" | "budget_authorized";
 const creationAttemptTimeoutMs = 10 * 60 * 1000;
 const creationAttemptGraceMs = 30 * 1000;
 
@@ -663,22 +665,27 @@ async function routeRequest(
 
     const releasedWorkspaces = options.repositories.releaseIsolatedWorkspaceClaims(task.id);
     const hold = findOpenTaskHold(options.repositories, task.id, "termination_unconfirmed");
-    const message = `Termination confirmed for ${task.title}; its workspace is released and it can run again.`;
+    const taskBudget = options.repositories.executionBudget.getTask(task.id);
+    const stop = hold?.subjectId ? options.repositories.executionBudget.stopRequest(hold.subjectId) : undefined;
+    const needsBudgetAuthorization = taskBudget && (taskBudget.authorizedMs <= taskBudget.consumedMs + taskBudget.reservedMs || isBudgetExhaustion(stop?.reason));
+    const message = needsBudgetAuthorization
+      ? `Termination confirmed for ${task.title}; its workspace is released, but execution still requires budget authorization.`
+      : `Termination confirmed for ${task.title}; its workspace is released and it can run again.`;
     if (hold) {
       applyTaskTransition({
         repositories: options.repositories,
         task,
         status: "failed",
         executionSummary: {
-          latestFailureReason: "worker_lost",
+          latestFailureReason: needsBudgetAuthorization ? "task_budget_exhausted" : "worker_lost",
           latestFailureMessage: message,
         },
         // It is no longer unconfirmed, but the run still stopped without finishing, so the task keeps
         // a Hold that offers the ordinary way back rather than silently re-queuing work whose state
         // nobody has looked at.
         hold: {
-          kind: "runtime_interrupted",
-          resolver: "runtime",
+          kind: needsBudgetAuthorization ? "execution_budget_exhausted" : "runtime_interrupted",
+          resolver: needsBudgetAuthorization ? "founder" : "runtime",
           subjectKind: "agent_run",
           subjectId: hold.subjectId ?? task.id,
           reason: message,
@@ -752,6 +759,26 @@ async function routeRequest(
     return;
   }
 
+  const budgetAuthorizationMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/execution-budget$/);
+  if (method === "POST" && budgetAuthorizationMatch) {
+    if (!options.repositories.getTask(budgetAuthorizationMatch[1])) {
+      sendJson(response, 404, { error: "Task not found" }); return;
+    }
+    try {
+      const body = await readJson<{ id: string; additionalMs: number; reason: string; expectedAuthorizedMs: number }>(request);
+      if (!body || typeof body !== "object") throw new BudgetAuthorizationError("Expected an authorization object", 400);
+      const result = authorizeExecutionBudget({ ...body, taskId: budgetAuthorizationMatch[1], repositories: options.repositories,
+        now: options.now, createId: options.createId });
+      if (!result.replayed) options.requestSchedulerWake?.("budget_authorized");
+      sendJson(response, 200, { ...result, budget: options.repositories.executionBudget.getTask(result.task.id) });
+    } catch (error) {
+      if (error instanceof SyntaxError) { sendJson(response, 400, { error: "Invalid authorization JSON" }); return; }
+      if (!(error instanceof BudgetAuthorizationError)) throw error;
+      sendJson(response, error.status, { error: error.message });
+    }
+    return;
+  }
+
   const recoverTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/recover$/);
   if (method === "POST" && recoverTaskMatch) {
     const recoverTarget = options.repositories.getTask(recoverTaskMatch[1]);
@@ -767,6 +794,12 @@ async function routeRequest(
         ...staleAffordanceBody(recoverTarget, recoverable.state, options.repositories),
       });
       return;
+    }
+
+    try { assertOrdinaryRecoveryAllowed(options.repositories, recoverTarget.id); }
+    catch (error) {
+      if (!(error instanceof BudgetAuthorizationError)) throw error;
+      sendJson(response, error.status, { error: error.message }); return;
     }
 
     const result = recoverTask({

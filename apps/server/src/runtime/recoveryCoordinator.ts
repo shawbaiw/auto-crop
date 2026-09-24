@@ -106,6 +106,7 @@ export class RecoveryCoordinator {
         reason: "A process that held this task's workspace was never confirmed stopped; a person must confirm it before anything runs there.",
       };
     }
+    if (holds.some(hold => hold.kind === "execution_budget_exhausted")) return { kind: "blocked", reason: "Execution budget stopped this task; explicit founder authorization is required to resume." };
     const quota = holds.find((hold) => hold.kind === "agent_quota_exhausted");
     if (quota) {
       // Waiting is the action, and the reset time is not something to guess at (ADR 0032).

@@ -19,6 +19,7 @@ const serverAffordanceKinds: TaskAffordanceKind[] = [
   "request_replan",
   "confirm_replan",
   "confirm_termination",
+  "authorize_execution_budget",
   "cancel_task",
 ];
 

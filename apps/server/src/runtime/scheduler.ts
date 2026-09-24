@@ -1,4 +1,5 @@
-import { resolveBudgetSnapshot, systemExecutionClock, type BudgetPolicy, type ExecutionClock } from "./budgetPolicy";
+import { parkExhaustedTask } from "./budgetAuthorization";
+import { isBudgetExhaustion, resolveBudgetSnapshot, systemExecutionClock, type BudgetPolicy, type ExecutionClock } from "./budgetPolicy";
 import { BudgetInterrupted, RunBudget } from "./runBudget";
 import { EXECUTION_BRIEF_TIMEOUT_MS, prepareExecutionBrief } from "./executionBrief";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -254,7 +255,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         const existingBudget = input.repositories.executionBudget.getTask(task.id);
         // Rollback to observe must not mint new time for a task that already has an authorization.
         if (existingBudget && (input.executionBudget === undefined
-          || existingBudget.authorizedMs <= existingBudget.consumedMs + existingBudget.reservedMs)) return;
+          || existingBudget.authorizedMs <= existingBudget.consumedMs + existingBudget.reservedMs)) {
+          if (input.executionBudget !== undefined && parkExhaustedTask(input.repositories, task.id, now().toISOString())) result.blocked.push(task.id);
+          return;
+        }
         const acquiredAt = now().toISOString();
 
         if (
@@ -275,9 +279,15 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         let observer: RunObserver | null = null;
         let budget: RunBudget | null = null;
         function settleRun(...args: Parameters<typeof settleObservedRun>): boolean {
+          if (budget && args[2].status === "complete") budget.ensure();
           if (budget) args[2] = { ...args[2], budgetCheck: () => budget!.settlementUsage(args[2].status === "complete") };
           const lengths = { completed: result.completed.length, failed: result.failed.length, blocked: result.blocked.length };
-          try { return settleObservedRun(...args); }
+          try {
+            const won = settleObservedRun(...args);
+            // A different connection may claim stop between ensure() and the conditional write.
+            if (!won && budget && args[2].status === "complete") budget.ensure();
+            return won;
+          }
           catch (error) {
             // The final budget check may reject a prepared success inside the transaction. Its
             // database writes and buffered announcements roll back; so must the returned tick result.
@@ -940,7 +950,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             // failure to retry but a directory to isolate until someone says the process is gone.
             const unconfirmed = agentResult.terminationConfirmed === false;
             const cancelled = failureReason === "cancelled";
-            const ceiling = !unconfirmed && !cancelled && atRetryCeiling(input, task);
+            const ceiling = !unconfirmed && !cancelled && !isBudgetExhaustion(failureReason) && atRetryCeiling(input, task);
             if (
               settleRun(
                 input,
@@ -1128,11 +1138,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
         } catch (error) {
           if (budget) stopper?.abort();
           if (!budget || !(error instanceof BudgetInterrupted) || !heldForRunId) throw error;
+          budget.persistStop();
           const reason = budget.reason ?? "clock_untrusted";
           const failure = `Task stopped: ${task.title} / ${reason}.`;
           settleRun(input, heldForRunId, {
             status: "failed", failureReason: budget.activeInvocation ? "termination_unconfirmed" : reason,
-            failureMessage: failure, terminationConfirmed: budget.activeInvocation ? false : undefined,
+            failureMessage: failure, terminationConfirmed: budget.activeInvocation ? false : budget.terminationConfirmed,
           }, now, (settled) => {
             if (budget!.activeInvocation && heldWorkspacePath) {
               isolateForUnconfirmedTermination(settled, result, task, heldForRunId!, heldWorkspacePath, now, createId);

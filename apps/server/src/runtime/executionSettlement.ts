@@ -1,3 +1,5 @@
+import { isBudgetExhaustion } from "./budgetPolicy";
+import { executionBudgetFacts } from "./budgetStop";
 import type { AgentFailureReason, AgentRun } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { recordExecutionEvent } from "./executionEvents";
@@ -51,10 +53,14 @@ export function settleAgentRun(input: {
     const observed = repositories.getAgentRunObservation(runId);
     if (!observed) throw new Error(`Missing settlement observation for ${runId}`);
     repositories.releaseTaskLockForRun(observed.taskId, runId, observed.ownerEpoch === null);
+    const budget = executionBudgetFacts(repositories, runId);
     recordExecutionEvent(repositories, {
+      budget,
       ...observed,
       id: input.createId("outbox_event"),
-      type: outcome.status === "complete" ? "execution_completed" : "execution_failed",
+      type: outcome.status === "complete" ? "execution_completed"
+        : outcome.status !== "cancelled" && (isBudgetExhaustion(outcome.failureReason) || isBudgetExhaustion(budget?.stopReason))
+          ? "execution_budget_exhausted" : "execution_failed",
       runId,
       reason: outcome.failureReason ?? null,
       observedAt: input.at,

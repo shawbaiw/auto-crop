@@ -492,14 +492,25 @@ P4.1 实现记录（2026-09-23）：新增内部 `runSchedulerOnce.executionBudg
 - 前跳、倒退、休眠模拟均进入明确的不可信时间分支；旧数据库不补造历史预算，重复迁移保留已有数据；observe 回退和增加配置值不能重置授权。
 - K3 的真实 Worker 死亡场景新增两种预算模式（同 Supervisor 重试/关闭重开），证明 Agent 仍写入时工作区持续隔离且预留只估算结算一次。
 
-验证：`pnpm test` **61 文件 / 867 项通过**（含 K4 真实入口冒烟），`pnpm typecheck`、`pnpm lint`、`git diff --check` 通过。可单独运行 `pnpm exec vitest run apps/server/src/runtime/executionBudget.test.ts`。未调用付费模型、未修改用户运行库。新策略仍仅内部显式启用；P4.2 的专用预算停止/追加授权，以及 P4.3 的用户入口和 opt-in 门槛未标为完成。
+验证：`pnpm test` **61 文件 / 867 项通过**（含 K4 真实入口冒烟），`pnpm typecheck`、`pnpm lint`、`git diff --check` 通过。可单独运行 `pnpm exec vitest run apps/server/src/runtime/executionBudget.test.ts`。未调用付费模型、未修改用户运行库。P4.1 的交付范围限于内部显式启用；专用预算停止/追加授权的后续实现见 P4.2，用户入口和 opt-in 门槛仍由 P4.3 交付。
 
 #### P4.2：预算耗尽后可解释地停止，重启不能绕过
 
-- [ ] 各阶段可用时间取阶段上限、run 剩余和 Task 剩余的约束；brief、repair、finalize 均纳入从认领到最终提交的生命周期预算。无余额不 spawn。
-- [ ] 达硬预算时原子取得停止权，撤销提交资格，经真实取消链等待终止/隔离，再通过 K2 结算并发预算事件。停止信号宽限单独展示，不能用它恢复正常执行或接受超期成功。
-- [ ] 重试、换 runId、Worker/Supervisor 重启及合法失败计数 reset 均不重置 Task 授权；显式追加预算有独立记录与路由校验。quota 不增加任务失败次数，但实际消耗仍记账。
-- [ ] 验收：阶段耗尽归因正确；输出洪水无法续命；成功与硬停止竞争只有一个有效结果；两连接认领不重复预留；结算重复不重复记账；崩溃重启后预算已耗尽的 Task 无法再派发。
+- [x] 各阶段可用时间取阶段上限、run 剩余和 Task 剩余的约束；brief、repair、finalize 均纳入从认领到最终提交的生命周期预算。无余额不 spawn。
+- [x] 达硬预算时原子取得停止权，撤销提交资格，经真实取消链等待终止/隔离，再通过 K2 结算并发预算事件。停止信号宽限单独展示，不能用它恢复正常执行或接受超期成功。
+- [x] 重试、换 runId、Worker/Supervisor 重启及合法失败计数 reset 均不重置 Task 授权；显式追加预算有独立记录与路由校验。quota 不增加任务失败次数，但实际消耗仍记账。
+- [x] 验收：阶段耗尽归因正确；输出洪水无法续命；成功与硬停止竞争只有一个有效结果；两连接认领不重复预留；结算重复不重复记账；崩溃重启后预算已耗尽的 Task 无法再派发。
+
+实现说明（2026-09-24）：
+
+- 停止请求与 `execution_stop_requested` 事件同事务写入，成功认领从数据库层排除已停止 run；覆盖了停止在成功预检查和 SQL 认领之间抢先的窗口。实际终止仍走 adapter 取消链，未确认则隔离工作区。终止等待单独写入 `terminationWaitMs`，最终预算事件携带原因、阶段、计量与确认结果。
+- 新增 `execution_budget_exhausted` Hold 和 `authorize_execution_budget` affordance。内部授权接口 `POST /api/tasks/:id/execution-budget` 接受 `{id, additionalMs, expectedAuthorizedMs, reason}`；`additionalMs: 0` 表示明确使用剩余额度续做，余额为零必须追加。审计、授权更新和 Task 入队同事务；重复 ID 幂等，不同参数、旧授权版本、已取消 Task、活动执行或其他 Hold 返回拒绝。旧 run 快照保持不变。
+- 确认终止只释放隔离，不补额度。普通恢复保留 budget Task 的身份和累计账本，不通过 Partial Output follow-up Task 获得新授权。额度耗尽后即使重置失败计数或重开数据库，也不会派发新进程；queued Task 会重新停在预算 Hold。quota 和预算停止不增加失败尝试数，实际运行时间仍计入账本。
+- `executionBudget.test.ts` 现有 27 项覆盖四阶段归因、真实输出洪水与 SIGTERM 宽限、双连接停止/成功竞争、停止事件写入失败回滚、授权事务回滚与重放、HTTP 校验及隔离确认、零追加续做、普通恢复身份保持、重启后的保守扣费；沿用 P4.1 两连接预留与 K3 真实 Worker 退出验收。
+
+验证：`pnpm test` **61 文件 / 882 项通过**，`pnpm typecheck`、`pnpm lint`、`git diff --check` 通过。使用临时 SQLite、可控时钟和本地真实子进程；未调用付费模型、未修改用户运行库。
+
+生产默认仍为 observe，新预算策略仍只经内部 scheduler 参数启用。Dashboard 的授权表单、完整余额/停止原因展示和公开 opt-in 留在 P4.3；新增 affordance 在 UI 明确登记为暂未展示，不能把此接口视为 P4 全部交付。
 
 #### P4.3：用户可见、可操作，完成 opt-in 验收
 

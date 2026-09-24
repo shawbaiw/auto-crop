@@ -1,3 +1,4 @@
+import { assertOrdinaryRecoveryAllowed } from "./budgetAuthorization";
 import type { Proof, ProofSchema, Task, TaskEvent, TaskProgressEvent } from "@auto-crop/core";
 import { isAffordanceApplicable } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
@@ -295,6 +296,7 @@ export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
     throw new Error(`Task disappeared during recovery: ${input.taskId}`);
   }
 
+  assertOrdinaryRecoveryAllowed(input.repositories, currentTask.id);
   if (isRetryExhausted(input.repositories, currentTask.id)) {
     // Land it in the CEO Blocked Queue if an earlier path left it merely `failed`, then refuse.
     terminateAsRetryExhausted({
@@ -321,7 +323,7 @@ export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
     throw new Error(`Task ${currentTask.id} cannot be recovered from status ${currentTask.status}.`);
   }
 
-  if (currentTask.artifactWorkspacePath && !isPartialOutputFollowUpTask(currentTask)) {
+  if (!input.repositories.executionBudget.getTask(currentTask.id) && currentTask.artifactWorkspacePath && !isPartialOutputFollowUpTask(currentTask)) {
     const followUpTask = createRecoveryFollowUpTask(input, currentTask, timestamp);
     const event = recordRecoveryEvent(input, currentTask, {
       message: `Recovery task created: ${followUpTask.title} will continue from Partial Output at ${currentTask.artifactWorkspacePath}.`,

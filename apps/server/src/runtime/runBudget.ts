@@ -2,7 +2,8 @@ import type { AgentFailureReason } from "@auto-crop/core";
 import type { AgentRunResult } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import { recordExecutionEvent } from "./executionEvents";
-import type { BudgetPhase, BudgetSnapshot, ExecutionClock } from "./budgetPolicy";
+import { type BudgetPhase, type BudgetSnapshot, type ExecutionClock } from "./budgetPolicy";
+import { requestBudgetStop } from "./budgetStop";
 
 type Repositories = ReturnType<typeof createRepositories>;
 export class BudgetInterrupted extends Error {}
@@ -15,7 +16,9 @@ export class RunBudget {
   private previousUtc: number;
   private nextReview: number | null = null;
   private persistedAt: number;
-  private timer: ReturnType<typeof setInterval>;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private stopAt: number | null = null;
+  private confirmed: boolean | undefined;
   private stoppedReason: AgentFailureReason | null = null;
   private unknown = false;
   private used = 0;
@@ -29,16 +32,38 @@ export class RunBudget {
   }) {
     this.phaseAt = this.previousMono = this.persistedAt = input.originMono;
     this.previousUtc = input.originUtc;
-    this.timer = setInterval(() => this.poll(), input.snapshot.persistMs);
-    this.timer.unref();
+    this.arm();
   }
   get reason() { return this.stoppedReason; }
+  get terminationConfirmed() { return this.confirmed; }
   get activeInvocation() { return this.invocationActive || this.unconfirmed; }
   get estimated() { return this.unknown; }
+  private arm(): void {
+    if (this.timer) clearTimeout(this.timer);
+    if (this.closed) return;
+    const mono = this.input.clock.monotonicMs();
+    const remaining = this.stoppedReason ? this.input.snapshot.persistMs : Math.min(
+      this.input.snapshot.persistMs, this.input.reservedMs - (mono - this.input.originMono),
+      this.phaseLimit() - (mono - this.phaseAt), this.nextReview === null ? Infinity : this.nextReview - this.used);
+    this.timer = setTimeout(() => {
+      try { this.poll(); } catch { this.stop("clock_untrusted", true); }
+      this.arm();
+    }, Math.max(1, Math.ceil(remaining)));
+    this.timer.unref();
+  }
   private stop(reason: AgentFailureReason, unknown = false) {
     this.stoppedReason ??= reason;
+    this.stopAt ??= this.input.clock.monotonicMs();
     this.unknown ||= unknown;
+    try { this.persistStop(); } catch { this.unknown = true; }
+    // On storage failure the local owner still fails closed. It cannot claim success; reconciliation
+    // retains/estimates the reservation and will retry the durable write when storage recovers.
     this.input.abort();
+  }
+  persistStop(): void {
+    if (!this.stoppedReason) return;
+    requestBudgetStop({ repositories: this.input.repositories, runId: this.input.runId,
+      reason: this.stoppedReason, phase: this.phase, at: this.input.clock.utcNow().toISOString(), usedMs: this.used });
   }
   private phaseLimit() {
     const s = this.input.snapshot;
@@ -55,16 +80,21 @@ export class RunBudget {
     const wallDelta = utc - this.previousUtc;
     this.previousMono = mono;
     this.previousUtc = utc;
-    if (!Number.isFinite(mono) || !Number.isFinite(utc) || delta < 0
+    if (!this.stoppedReason && (!Number.isFinite(mono) || !Number.isFinite(utc) || delta < 0
       || Math.abs(wallDelta - delta) > s.clockToleranceMs
-      || delta > Math.max(s.persistMs * 3, s.clockToleranceMs)) {
+      || delta > Math.max(s.persistMs * 3, s.clockToleranceMs))) {
       // Sleep/clock anomalies are uncertainty, never evidence of a deadlock. Revalidate ownership
       // below, withdraw continuation permission and retain the entire reservation on settlement.
       this.stop("clock_untrusted", true);
     }
-    if (Number.isFinite(mono)) this.used = Math.min(this.input.reservedMs, Math.max(this.used, mono - this.input.originMono));
+    if (!this.stoppedReason && Number.isFinite(mono)) this.used = Math.min(this.input.reservedMs, Math.max(this.used, mono - this.input.originMono));
     if (this.used >= this.input.reservedMs) this.stop(this.input.reservedMs < s.runHardMs ? "task_budget_exhausted" : "run_budget_exhausted");
     else if (mono - this.phaseAt >= this.phaseLimit()) this.stop("phase_budget_exhausted");
+    const durableStop = repositories.executionBudget.stopRequest(runId);
+    if (durableStop && !this.stoppedReason) {
+      this.used = Math.min(this.input.reservedMs, durableStop.consumed_ms);
+      this.stop(durableStop.reason as AgentFailureReason);
+    }
     if (!persist) return;
     const review = this.phase === "executing" && this.nextReview !== null && this.used >= this.nextReview && !this.stoppedReason;
     if (!review && mono - this.persistedAt < s.persistMs && !this.stoppedReason) return;
@@ -105,10 +135,11 @@ export class RunBudget {
     this.persistedAt = -Infinity;
     this.poll();
     this.ensure();
+    this.arm();
   }
   remainingMs(): number {
     this.ensure();
-    return Math.max(1, Math.floor(Math.min(this.input.reservedMs - this.used,
+    return Math.max(1, Math.ceil(Math.min(this.input.reservedMs - this.used,
       this.phaseLimit() - (this.input.clock.monotonicMs() - this.phaseAt))));
   }
   beginInvocation(): number {
@@ -118,7 +149,7 @@ export class RunBudget {
   }
   returned(result: AgentRunResult, cancelled: boolean): AgentRunResult {
     this.invocationActive = false;
-    if (result.terminationConfirmed === false) { this.unconfirmed = true; this.stop("termination_unconfirmed", true); }
+    this.confirmed = result.terminationConfirmed;
     this.poll();
     if (result.failureReason === "timeout" && !this.stoppedReason) {
       // The adapter's timer is pinned to the minimum remaining stage/run allowance. Millisecond
@@ -128,6 +159,7 @@ export class RunBudget {
       this.stop(phaseRemaining < runRemaining ? "phase_budget_exhausted"
         : this.input.reservedMs < this.input.snapshot.runHardMs ? "task_budget_exhausted" : "run_budget_exhausted");
     }
+    if (result.terminationConfirmed === false) { this.unconfirmed = true; this.stop("termination_unconfirmed", true); }
     if (!this.stoppedReason || cancelled) return result;
     return { ...result, status: "failed", failureReason: this.stoppedReason,
       stderr: `Execution stopped: ${this.stoppedReason}. ${result.stderr}` };
@@ -135,7 +167,9 @@ export class RunBudget {
   settlementUsage(success: boolean): number | undefined {
     this.poll(false);
     if (success) this.ensure();
+    if (this.stopAt !== null) this.input.repositories.executionBudget.recordTerminationWait(this.input.runId,
+      this.input.clock.monotonicMs() - this.stopAt, this.confirmed);
     return this.unknown ? undefined : Math.ceil(this.used);
   }
-  close(): void { this.closed = true; clearInterval(this.timer); }
+  close(): void { this.closed = true; clearTimeout(this.timer); }
 }

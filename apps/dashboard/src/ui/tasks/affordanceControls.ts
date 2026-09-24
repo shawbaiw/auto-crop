@@ -66,6 +66,7 @@ export const taskAffordanceControls: Record<TaskAffordanceKind, TaskAffordanceCo
   resolve_founder_decision: { render: "surface", surface: "CEO Office decision card" },
   confirm_human_action: { render: "surface", surface: "Human Action panel" },
   confirm_replan: { render: "surface", surface: "Company Operations replan proposals" },
+  authorize_execution_budget: { render: "unsurfaced", reason: "Budget policy is internal-only during P4.2. Its authorization form and visible balance ship in P4.3 before public opt-in." },
   cancel_task: {
     render: "unsurfaced",
     reason:

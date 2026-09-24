@@ -223,6 +223,25 @@ export function migrate(database: DatabaseClient): void {
     -- One launch of an agent process within a run (ADR 0035 / execution-health P1). A run's brief,
     -- its substantive work and its Artifact Syntax Repair are separate invocations of the same run,
     -- so "how long did it take" and "what ended it" are answerable per phase rather than per run.
+    CREATE TABLE IF NOT EXISTS run_stop_requests (
+      run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
+      reason TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      requested_at TEXT NOT NULL,
+      consumed_ms INTEGER NOT NULL,
+      termination_wait_ms INTEGER,
+      termination_confirmed INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS budget_authorizations (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES task_budgets(task_id),
+      additional_ms INTEGER NOT NULL CHECK (additional_ms >= 0),
+      authorized_before_ms INTEGER NOT NULL,
+      authorized_after_ms INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      actor TEXT NOT NULL CHECK (actor = 'founder'),
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS budget_owner_guards (owner_id TEXT PRIMARY KEY, detected_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS task_budgets (
       task_id TEXT PRIMARY KEY REFERENCES tasks(id),
