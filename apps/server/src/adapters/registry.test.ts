@@ -450,6 +450,11 @@ describe("CLI command template adapter", () => {
     expect(args[args.indexOf("--json-schema") + 1]).toBe(JSON.stringify(schema));
   });
 
+  it("declares structured execution brief support only for Codex", () => {
+    expect(codexWith(CODEX_EXEC_HELP).contractCapabilities).toContain("structured_execution_brief");
+    expect(claudeWith(CLAUDE_HELP).contractCapabilities ?? []).not.toContain("structured_execution_brief");
+  });
+
   it("writes the contract to a file for Codex and removes it after the run", async () => {
     const schema = { type: "object", properties: { purpose: { type: "string" } }, required: ["purpose"] };
     let seenPath: string | undefined;

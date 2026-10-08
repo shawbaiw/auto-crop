@@ -4,6 +4,10 @@ import { noToolGrant } from "../policies/capabilityGrant";
 import type { TaskHandoff } from "./dependencyReadiness";
 
 const EXECUTION_BRIEF_FIELDS = ["purpose", "approach", "expectedOutcome"] as const;
+const KNOWN_NON_JSON_STATUS_STDOUT = new Set([
+  "Structured output submitted.",
+  "Planning brief submitted -- no execution performed.",
+]);
 
 /**
  * The Structured Output Contract for an Execution Brief.
@@ -29,13 +33,47 @@ export const executionBriefOutputSchema: Record<string, unknown> = {
  */
 export const EXECUTION_BRIEF_TIMEOUT_MS = 60_000;
 
+export type ExecutionBriefPreparation =
+  | {
+      kind: "structured";
+      result: AgentRunResult;
+      brief: ExecutionBrief;
+    }
+  | {
+      kind: "degraded";
+      result: AgentRunResult;
+      brief: ExecutionBrief;
+      warning: string;
+      cause: "unsupported_adapter_capability" | "unreadable_structured_output";
+    }
+  | {
+      kind: "failed";
+      result: AgentRunResult;
+      brief: null;
+    };
+
 export async function prepareExecutionBrief(input: {
   adapter: AgentAdapter;
   request: AgentRunRequest;
   company: Company;
   task: Task;
   handoffs: TaskHandoff[];
-}): Promise<{ result: AgentRunResult; brief: ExecutionBrief | null }> {
+}): Promise<ExecutionBriefPreparation> {
+  if (!input.adapter.contractCapabilities?.includes("structured_execution_brief")) {
+    return {
+      kind: "degraded",
+      result: {
+        status: "complete",
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      },
+      brief: createMinimalExecutionBrief(input.company, input.task),
+      warning: `${input.adapter.name} does not declare structured execution brief support; using runtime minimal brief.`,
+      cause: "unsupported_adapter_capability",
+    };
+  }
+
   const language = input.company.locale === "zh" ? "Chinese" : "English";
   const result = await input.adapter.run({
     ...input.request,
@@ -57,19 +95,33 @@ export async function prepareExecutionBrief(input: {
       `Accepted upstream handoffs: ${JSON.stringify(input.handoffs)}`,
     ].join("\n\n"),
   });
-  if (result.status !== "complete") return { result, brief: null };
+  if (result.status !== "complete") return { kind: "failed", result, brief: null };
   // The contract makes this parse reliable rather than redundant: it still has to run, and a CLI
   // that silently ignored the schema must not be read as a valid brief.
   try {
     const value = JSON.parse(result.stdout.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] ?? result.stdout.trim());
     const fields = EXECUTION_BRIEF_FIELDS;
     if (fields.some(key => typeof value?.[key] !== "string" || !value[key].trim())) throw new Error("Incomplete brief");
-    return { result, brief: Object.fromEntries(fields.map(key => [key, { [input.company.locale]: value[key].trim() }])) as ExecutionBrief };
+    return {
+      kind: "structured",
+      result,
+      brief: Object.fromEntries(fields.map(key => [key, { [input.company.locale]: value[key].trim() }])) as ExecutionBrief,
+    };
   } catch (error) {
+    if (KNOWN_NON_JSON_STATUS_STDOUT.has(result.stdout.trim())) {
+      return {
+        kind: "degraded",
+        result,
+        brief: createMinimalExecutionBrief(input.company, input.task),
+        warning: `${input.adapter.name} did not return readable structured brief output; using runtime minimal brief.`,
+        cause: "unreadable_structured_output",
+      };
+    }
     // `invalid_agent_output`, not `agent_failed`: the process exited 0 and did what it was asked.
     // What broke is the runtime's own contract, and naming it that way is what stops the next
     // person reading this failure from going to look at the agent.
     return {
+      kind: "failed",
       brief: null,
       result: {
         ...result,
@@ -79,4 +131,22 @@ export async function prepareExecutionBrief(input: {
       },
     };
   }
+}
+
+function createMinimalExecutionBrief(company: Company, task: Task): ExecutionBrief {
+  if (company.locale === "zh") {
+    return {
+      purpose: { zh: `为 ${company.name} 完成“${task.title}”。` },
+      approach: { zh: "使用任务描述、创始人愿景、已接受的上游交接和已授予能力，产出所需证明。" },
+      expectedOutcome: { zh: `一份符合证明模式 ${task.proofSchemaId} 的交付物。` },
+    };
+  }
+
+  return {
+    purpose: { en: `Complete "${task.title}" for ${company.name}.` },
+    approach: {
+      en: "Use the task description, founder vision, accepted upstream handoffs, and granted capabilities to produce the required proof.",
+    },
+    expectedOutcome: { en: `A deliverable matching proof schema ${task.proofSchemaId}.` },
+  };
 }

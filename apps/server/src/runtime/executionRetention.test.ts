@@ -303,7 +303,7 @@ describe("execution retention with a real failed run", () => {
     const f = fixture();
     mkdirSync(f.r.getTask("task_1")!.workspacePath!, { recursive: true });
     vi.stubEnv("AUTO_CROP_FORCE_AGENT_TIMEOUT_MS", "60");
-    const adapter: AgentAdapter = { id: "codex", name: "fixture", capabilities: ["code"], detect: async () => true,
+    const adapter: AgentAdapter = { id: "codex", name: "fixture", capabilities: ["code"], contractCapabilities: ["structured_execution_brief"], detect: async () => true,
       run: async () => ({ status: "failed", stdout: "", stderr: "connection closed", exitCode: 1,
         failureReason: "agent_failed", terminationConfirmed: true }) };
     adapter.launchPlan = async (): Promise<LaunchPlan> => ({ policy: DEFAULT_LAUNCH_POLICY,

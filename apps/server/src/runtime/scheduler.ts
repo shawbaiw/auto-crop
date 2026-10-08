@@ -602,7 +602,15 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             const preparation = await prepareExecutionBrief({ adapter: controlledAdapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs });
             const remainingMs = budget ? (budget.reason ? 0 : budget.remainingMs())
               : request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
-            if (preparation.brief && remainingMs > 0) {
+            const willDispatchSubstantiveWork = preparation.kind !== "failed" && remainingMs > 0;
+            if (preparation.kind === "degraded") {
+              appendAndEmitTaskEvent(input, {
+                task,
+                type: "task_warning",
+                message: `Task warning: ${task.title} / execution brief degraded / ${preparation.warning}`,
+              });
+            }
+            if (willDispatchSubstantiveWork) {
               appendAndEmitTaskEvent(input, {
                 task, type: "task_started", status: "running",
                 message: `Task started: ${task.title}`,
@@ -630,7 +638,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                   verification: verificationPromptContext,
                   rework: pendingReworkFeedback(input.repositories, task),
                 }) +
-                  `\n\n## Your announced execution plan\n${JSON.stringify(preparation.brief)}\nCarry out this plan. Explain material deviations in the final report.`,
+                  executionBriefPrompt(preparation),
               });
             } else {
               // Preparation failed, so substantive work was never dispatched. Its budget is the
@@ -656,6 +664,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               "",
               "## Preparation",
               preparation.result.stdout,
+              ...(preparation.kind === "degraded" ? ["", `preparationWarning: ${preparation.warning}`, `preparationDegradationCause: ${preparation.cause}`, `substantiveWorkDispatched: ${willDispatchSubstantiveWork}`] : []),
               "",
               "## stdout",
               agentResult.stdout,
@@ -2260,6 +2269,24 @@ function appendAndEmitTaskEvent(
   };
   input.repositories.appendTaskEvent(record);
   emitTaskEvent(input, record);
+}
+
+function executionBriefPrompt(preparation: Awaited<ReturnType<typeof prepareExecutionBrief>>): string {
+  if (preparation.kind === "degraded") {
+    return [
+      "",
+      "## Runtime-generated degraded execution brief",
+      JSON.stringify(preparation.brief),
+      "This brief was synthesized by the runtime because the adapter did not provide a structured execution brief. Use it as task context, not as a claim that planning work was already performed.",
+    ].join("\n");
+  }
+
+  return [
+    "",
+    "## Your announced execution plan",
+    JSON.stringify(preparation.brief),
+    "Carry out this plan. Explain material deviations in the final report.",
+  ].join("\n");
 }
 
 function emitParentTaskAggregationEvents(input: RunSchedulerOnceInput, task: Task): void {

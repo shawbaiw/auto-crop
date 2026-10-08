@@ -4,6 +4,11 @@ import type { LaunchPlan } from "./launchPolicy";
 
 export type AgentCapability = string;
 
+export type AdapterContractCapability =
+  | "structured_execution_brief"
+  | "restricted_launch_isolation"
+  | "artifact_envelope";
+
 export type AgentRunRequest = {
   taskId: string;
   prompt: string;
@@ -114,6 +119,11 @@ export type AgentAdapter = {
   id: string;
   name: string;
   capabilities: AgentCapability[];
+  /**
+   * Runtime-facing contracts this adapter can satisfy reliably. Kept separate from work skills such
+   * as `research` or `code`: these are about the adapter protocol, not what task work it can do.
+   */
+  contractCapabilities?: AdapterContractCapability[];
   /**
    * Whether this adapter can run a task under Auto-Crop's launch semantics — not merely whether its
    * executable exists. An adapter whose launch plan is `unavailable` is not detected.
