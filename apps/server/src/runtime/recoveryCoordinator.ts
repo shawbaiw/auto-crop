@@ -1,17 +1,18 @@
 import { isAffordanceApplicable } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import type { OutboxEvent } from "./executionEvents";
+import { briefRecoveryEligibility, RECOVERY_DELAY_MS, type RecoveryMode } from "./automaticRecovery";
 
 type Repositories = ReturnType<typeof createRepositories>;
 
 /**
  * What a failure is worth doing about, decided once per source event.
  *
- * `report_only` is the default and the honest one for now: the coordinator says what it would do and
- * records that, without queueing work. Automatic recovery is a narrower safe subset (execution-health
- * P5), and turning it on before the observation exists to justify it is how a recovery storm starts.
+ * `report_only` remains the default. Explicit brief-only opt-in records a bounded delayed recovery;
+ * the normal scheduler still owns dispatch, permissions and cumulative execution accounting.
  */
 export type RecoveryDecisionKind =
+  | "scheduled"
   /** The runtime already offers a way back and a person can take it. Nothing to schedule. */
   | "report_only"
   /** Nothing to do: the run finished, or the task moved on under its own power. */
@@ -40,6 +41,7 @@ export class RecoveryCoordinator {
   constructor(
     private readonly input: {
       repositories: Repositories;
+      mode?: RecoveryMode;
       now?: () => Date;
       createId?: (prefix: string) => string;
     },
@@ -56,7 +58,21 @@ export class RecoveryCoordinator {
     const createId = this.input.createId ?? ((prefix: string) => `${prefix}_${crypto.randomUUID()}`);
 
     return this.input.repositories.transaction(() => {
+      this.input.repositories.executionRecovery.lock();
+      const existing = this.input.repositories.getRecoveryDecision(event.id);
+      if (existing) return { decision: { kind: existing.decision as RecoveryDecisionKind, reason: existing.reason }, alreadyDecided: true };
       const decision = this.decide(event);
+      if (decision.kind === "report_only" && this.input.mode === "brief-only-v1" && event.taskId) {
+        const eligibility = briefRecoveryEligibility(this.input.repositories, event);
+        if (eligibility.manifest && !this.input.repositories.executionRecovery.get(event.taskId)) {
+          this.input.repositories.executionRecovery.schedule({ sourceEventId: event.id, taskId: event.taskId,
+            sourceRunId: event.runId!, dueAt: new Date(now.getTime() + RECOVERY_DELAY_MS).toISOString(), manifest: eligibility.manifest });
+          decision.kind = "scheduled";
+          decision.reason = eligibility.reason;
+        } else {
+          decision.reason = eligibility.manifest ? "This Task already used its one automatic recovery." : eligibility.reason;
+        }
+      }
       const recorded = this.input.repositories.createRecoveryDecision({
         id: createId("recovery_decision"),
         sourceEventId: event.id,
@@ -73,11 +89,11 @@ export class RecoveryCoordinator {
   /**
    * What this event is worth doing about, read against the task as it stands now.
    *
-   * Deliberately conservative. Everything the runtime can already offer a person is `report_only`:
-   * the Hold model guarantees a stopped task carries a way forward, so the coordinator's job at this
-   * stage is to notice and say so, not to duplicate the founder's judgement.
+   * The baseline remains conservative. Explicit automatic recovery may promote only a report-only
+   * decision after its stricter eligibility checks; blocked and terminal outcomes never qualify.
    */
   private decide(event: OutboxEvent): RecoveryDecision {
+    if (event.type === "recovery_scheduled" || event.type === "recovery_blocked") return { kind: "no_action", reason: "Recovery outcome is informational." };
     if (event.type === "execution_budget_review") return { kind: "no_action", reason: "The same run continues within its pinned budget." };
     if (event.type === "execution_completed") {
       return { kind: "no_action", reason: "The run completed; there is nothing to recover." };

@@ -607,8 +607,16 @@ function runCommand(
       }
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      // A natural exit also needs evidence for automatic recovery. Only an absent POSIX group
+      // proves that no in-group child remains; permission errors and unsupported platforms are unknown.
+      let terminationConfirmed: true | undefined;
+      if (canGroupSignal && child.pid !== undefined) {
+        try { process.kill(-child.pid, 0); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") terminationConfirmed = true; }
+      }
       finish({
         status: code === 0 ? "complete" : "failed",
+        terminationConfirmed,
         exitCode: code,
         stdout,
         stderr,

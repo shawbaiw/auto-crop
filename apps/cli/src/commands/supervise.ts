@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireSupervisorOwnership } from "./supervisorOwnership";
 import { createId } from "@auto-crop/core";
-import { createDatabaseClient, createRepositories, migrate, Supervisor, executionBudgetFromEnvironment } from "@auto-crop/server";
+import { createDatabaseClient, createRepositories, migrate, Supervisor, executionBudgetFromEnvironment, recoveryModeFromEnvironment } from "@auto-crop/server";
 
 /**
  * How often the supervisor sweeps for work the worker cannot report itself.
@@ -47,6 +47,7 @@ export type SupervisedAutoCrop = {
  */
 export async function superviseAutoCrop(options: SuperviseOptions): Promise<SupervisedAutoCrop> {
   executionBudgetFromEnvironment(); // Fail before starting any Worker if opt-in configuration is invalid.
+  const recoveryMode = recoveryModeFromEnvironment();
   const log = options.log ?? console.log;
   const stateDir = join(options.projectRoot, ".auto-crop");
   mkdirSync(stateDir, { recursive: true });
@@ -69,6 +70,7 @@ export async function superviseAutoCrop(options: SuperviseOptions): Promise<Supe
   })();
   const repositories = createRepositories(database);
   const supervisor = new Supervisor({
+    recoveryMode,
     repositories,
     probeOwner: (ownerId) => {
       if (ownerId === activeOwnerId && worker?.connected) worker.send({ type: "worker-probe" }, error => {

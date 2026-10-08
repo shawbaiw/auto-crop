@@ -25,6 +25,7 @@ export * from "./runtime/review";
 export * from "./runtime/killSwitch";
 export * from "./runtime/executionEvents";
 export * from "./runtime/recoveryCoordinator";
+export * from "./runtime/automaticRecovery";
 export * from "./runtime/supervisor";
 export * from "./api/routes";
 export * from "./events/sse";

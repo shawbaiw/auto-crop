@@ -68,7 +68,8 @@ export type AgentRunResult = {
   /**
    * Whether the runtime saw the process actually exit after asking it to stop.
    *
-   * Absent means no stop was requested. `false` means the process was signalled, did not exit, and
+   * `true` may also record a natural exit with an absent POSIX process group. Absent means unknown.
+   * `false` means the process was signalled, did not exit, and
    * the runtime cannot prove it is gone — it may still be writing to the workspace, so the task must
    * be isolated rather than re-run there (execution-health §7).
    */

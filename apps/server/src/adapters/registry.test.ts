@@ -552,6 +552,20 @@ describe("CLI command template adapter", () => {
         commandTemplate: "node {promptPath}",
       });
 
+    it.skipIf(process.platform === "win32")("does not confirm a natural exit while an in-group descendant still exists", async () => {
+      const workspacePath = createWorkspaceWithScript(`
+        import { spawn } from "node:child_process";
+        const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 1000)"], { stdio: "ignore" });
+        child.unref();
+        process.exit(1);
+      `);
+      const result = await stoppableAdapter().run({ ...request, workspacePath,
+        promptPath: join(workspacePath, "agent-script.mjs"), timeoutMs: 5000 });
+      expect(result.failureReason).toBe("agent_failed");
+      expect(result.terminationConfirmed).toBeUndefined();
+      await new Promise(resolve => setTimeout(resolve, 1100));
+    });
+
     it("waits for the process to exit before reporting the stop, and confirms it", async () => {
       // Runs for a long time and exits promptly when asked.
       const workspacePath = createWorkspaceWithScript("setInterval(() => {}, 1000);");

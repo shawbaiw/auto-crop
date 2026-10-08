@@ -1,4 +1,5 @@
 import { createExecutionBudgetStore } from "./executionBudget";
+import { createExecutionRecoveryStore } from "./executionRecovery";
 import type {
   ArtifactVerification,
   DependencyInputRole,
@@ -63,6 +64,7 @@ export function createRepositories(database: DatabaseClient) {
 
   return {
     executionBudget: createExecutionBudgetStore(database),
+    executionRecovery: createExecutionRecoveryStore(database),
     /**
      * Run `work` as one atomic unit: either every write inside lands, or none does.
      *
@@ -1499,6 +1501,7 @@ export function createRepositories(database: DatabaseClient) {
       id: string,
       observation: {
         ownerId?: string;
+        launchIsolation?: string;
         phase?: string;
         phaseStartedAt?: string;
         lastHeartbeatAt?: string;
@@ -1515,6 +1518,7 @@ export function createRepositories(database: DatabaseClient) {
         }
       };
       set("owner_id", observation.ownerId);
+      set("launch_isolation", observation.launchIsolation);
       set("phase", observation.phase);
       set("phase_started_at", observation.phaseStartedAt);
       set("last_heartbeat_at", observation.lastHeartbeatAt);
@@ -1767,21 +1771,22 @@ export function createRepositories(database: DatabaseClient) {
       reason: string;
       createdAt: string;
     }): boolean {
-      try {
-        database
-          .prepare(
-            `INSERT INTO recovery_decisions (id, source_event_id, company_id, task_id, decision, reason, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            decision.id, decision.sourceEventId, decision.companyId,
-            decision.taskId, decision.decision, decision.reason, decision.createdAt,
-          );
-        return true;
-      } catch {
-        // The unique constraint: this event already produced a decision.
-        return false;
-      }
+      const result = database
+        .prepare(
+          `INSERT INTO recovery_decisions (id, source_event_id, company_id, task_id, decision, reason, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(source_event_id) DO NOTHING`,
+        )
+        .run(
+          decision.id, decision.sourceEventId, decision.companyId,
+          decision.taskId, decision.decision, decision.reason, decision.createdAt,
+        );
+      return Boolean(result.changes);
+    },
+
+    getRecoveryDecision(sourceEventId: string): { decision: string; reason: string } | null {
+      const row = database.prepare("SELECT decision, reason FROM recovery_decisions WHERE source_event_id = ?")
+        .get(sourceEventId) as { decision: string; reason: string } | undefined;
+      return row ?? null;
     },
 
     listRecoveryDecisions(companyId?: string): Array<{

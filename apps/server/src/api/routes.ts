@@ -367,6 +367,7 @@ async function routeRequest(
       pending: events.filter((event) => !event.deliveredAt && !event.deadLetteredAt).length,
       deadLettered: events.filter((event) => event.deadLetteredAt).length,
       decisions: options.repositories.listRecoveryDecisions(companyId),
+      recoveries: options.repositories.executionRecovery.list(companyId).map(({ manifest: _manifest, ...entry }) => entry),
     });
     return;
   }

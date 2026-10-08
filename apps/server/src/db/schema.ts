@@ -356,6 +356,18 @@ export function migrate(database: DatabaseClient): void {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS execution_recoveries (
+      source_event_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+      source_run_id TEXT NOT NULL,
+      due_at TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending',
+      manifest TEXT NOT NULL,
+      reason TEXT,
+      next_run_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_execution_recoveries_due ON execution_recoveries(state, due_at);
+
     CREATE TABLE IF NOT EXISTS task_dependencies (
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -698,6 +710,7 @@ function migrateAgentRunsExecutionFields(database: DatabaseClient): void {
   // Observation (execution-health P1). All nullable: a run that predates observation reports unknown,
   // which is not the same as "no activity" and must never be read as one.
   addColumnIfMissing(database, columns, "agent_runs", "owner_id TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "launch_isolation TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "phase TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "phase_started_at TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "last_heartbeat_at TEXT");

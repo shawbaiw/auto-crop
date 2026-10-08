@@ -1,4 +1,5 @@
 import { ExecutionHealthMonitor } from "./executionHealth";
+import { drainAutomaticRecoveries, type RecoveryMode } from "./automaticRecovery";
 import type { ExecutionClock } from "./budgetPolicy";
 import type { createRepositories } from "../db/repositories";
 import { OutboxDispatcher, type DeliveryOutcome, type OutboxEvent } from "./executionEvents";
@@ -31,6 +32,7 @@ export type SupervisorScanResult = {
 };
 
 export type SupervisorInput = {
+  recoveryMode?: RecoveryMode;
   repositories: Repositories;
   clock?: ExecutionClock;
   probeOwner?: (ownerId: string) => void;
@@ -55,6 +57,7 @@ export class Supervisor {
   constructor(private readonly input: SupervisorInput) {
     this.health = new ExecutionHealthMonitor(input);
     this.coordinator = new RecoveryCoordinator({
+      mode: input.recoveryMode,
       repositories: input.repositories,
       now: input.now,
       createId: input.createId,
@@ -114,6 +117,7 @@ export class Supervisor {
 
     this.health.scan();
     const drained = await this.dispatcher.drainOnce();
+    drainAutomaticRecoveries({ ...this.input, mode: this.input.recoveryMode });
     return {
       reconciledTaskIds,
       deliveredEventIds: drained.delivered,

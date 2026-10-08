@@ -1,6 +1,6 @@
 # 执行预算策略：隔离试运行与回退
 
-P4 允许显式启用 `budget-v1`；默认仍为 `observe`。当前证据来自本地真实子进程、模拟模型命令和临时 SQLite，尚不代表真实模型阈值已经验证。自动恢复仍为 report-only；真实 adapter 样本与默认启用门槛属于 P5。
+P4 允许显式启用 `budget-v1`；默认仍为 `observe`。P5 已交付可选的 `brief-only-v1` 有限恢复与初步 Codex 短样本，自动恢复默认仍为 report-only，真实长任务阈值尚未校准。启用边界、真实样本和恢复开关回退见 [P5 观测报告](execution-health-p5-report.md)。
 
 ## 先验证，再隔离启用
 

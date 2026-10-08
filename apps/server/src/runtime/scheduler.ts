@@ -494,7 +494,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               });
               // Ownership is durable before the transaction commits, including the window before
               // observation or an adapter invocation starts.
-              input.repositories.updateAgentRunObservation(agentRunId, { ownerId: input.workerId });
+              input.repositories.updateAgentRunObservation(agentRunId, {
+                ownerId: input.workerId, launchIsolation: launch.support?.isolationLevel ?? "unclaimed",
+              });
+              input.repositories.executionRecovery.bind(task.id, agentRunId);
               // Each attempt binds the newly acquired lock to its own run and epoch.
               input.repositories.bindTaskLockToRun(task.id, input.workerId, agentRunId, epoch);
               if (budgetSnapshot) {

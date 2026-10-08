@@ -66,7 +66,8 @@ Execution scheduling defaults to `observe`. The new lifecycle budget and indepen
 can be explicitly enabled with `AUTO_CROP_EXECUTION_POLICY=budget-v1`. See the
 [isolated trial, controls and rollback guide](docs/execution-budget-opt-in.md) before enabling it.
 The Task execution panel exposes budget balances, stop evidence and explicit continuation authorization;
-real-adapter thresholds and automatic recovery remain P5 work.
+automatic recovery remains report-only by default. P5 adds opt-in `brief-only-v1` recovery and initial
+Codex samples; see the [scope, evidence and remaining threshold gates](docs/execution-health-p5-report.md).
 
 5. In another terminal, start the dashboard:
 
