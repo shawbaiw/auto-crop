@@ -199,3 +199,6 @@ P2a 另新增：`db/multiConnection.test.ts`（4 条，多连接竞争语义）�
 - `pnpm smoke:mock` 在本机失败（`SSE endpoint should connect.`）。已用 `git stash` 在干净的 `a3893bd` 上复现，**属既有问题，与本次改动无关**；未在本轮排查。
 
 K4 复测补充（2026-09-23）：`pnpm smoke:mock` 仍在连接 SSE 时失败。脚本请求 `/api/events` 未带 `companyId`，`routes.ts` 对该请求明确返回 400，属于旧冒烟与公司事件流接口不匹配；本轮未扩大范围修复该业务冒烟，由独立的 `smoke:execution-health` 验收监督链路。
+
+
+P5 前置修复（2026-09-24）：旧 `smoke:mock` 故障已修复。冒烟按公司 ID 订阅 SSE，等待异步创建从 `creating` 进入 `draft`，由 mock 执行器生成有效产品简报，并验证自动验收、Proof、业务产物、公司复盘和 kill switch。普通简报已由 Automatic Acceptance 完成，因此公司复盘不应重复完成它。原有 P0/K4 失败记录保留为历史证据。另已注入 SSE 建连后的失败，确认退出 1、关闭进程并清理临时工作区；移除注入后 `pnpm smoke:mock` 退出 0。
