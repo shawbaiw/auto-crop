@@ -27,6 +27,36 @@ export type AgentRunRequest = {
    * any substantive work was dispatched (ADR 0022).
    */
   outputSchema?: Record<string, unknown>;
+  /**
+   * Where to report what this run is doing while it does it.
+   *
+   * Optional, and ignored by adapters that have nothing to report: a run without it is observed as
+   * unknown rather than as silent. Purely an outbound report — an adapter never reads the runtime's
+   * judgement back, and nothing an adapter reports here ends its own run.
+   */
+  observe?: RunObservationSink;
+  /**
+   * Asks this run to stop.
+   *
+   * An adapter that honours it must not resolve when the signal fires, but when the process is
+   * actually gone — or admit it could not confirm that. Resolving on the signal reports a process as
+   * finished while it is still writing to the workspace the next run is about to use.
+   */
+  signal?: AbortSignal;
+  /** How long the process gets to exit on its own after being asked, before the group is killed. */
+  graceMs?: number;
+  /** How long after the kill the runtime waits for proof the process is gone. */
+  confirmMs?: number;
+};
+
+/**
+ * The observation an adapter can offer about a run in flight.
+ *
+ * Deliberately narrow: how many bytes moved on which channel, not what they said. Storing the output
+ * again would duplicate the log and drag prompts and credentials into the observation tables.
+ */
+export type RunObservationSink = {
+  output(channel: "stdout" | "stderr", bytes: number): void;
 };
 
 export type AgentRunResult = {
@@ -35,6 +65,15 @@ export type AgentRunResult = {
   stdout: string;
   stderr: string;
   failureReason?: AgentFailureReason;
+  /**
+   * Whether the runtime saw the process actually exit after asking it to stop.
+   *
+   * `true` may also record a natural exit with an absent POSIX process group. Absent means unknown.
+   * `false` means the process was signalled, did not exit, and
+   * the runtime cannot prove it is gone — it may still be writing to the workspace, so the task must
+   * be isolated rather than re-run there (execution-health §7).
+   */
+  terminationConfirmed?: boolean;
 };
 
 export type AgentSessionKey = {

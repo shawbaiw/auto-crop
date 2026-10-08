@@ -336,6 +336,10 @@ function defaultReasonForKind(kind: TaskHoldKind, task: Task): string {
       return `${task.title} verified its target and the verification did not pass.`;
     case "agent_quota_exhausted":
       return `${task.title} stopped because its agent's account is out of quota; it can run again once that resets.`;
+    case "execution_budget_exhausted":
+      return `${task.title} reached an execution budget; the founder must authorize continuation.`;
+    case "termination_unconfirmed":
+      return `${task.title} was stopped and its process was never seen to exit; its workspace is held until that is confirmed.`;
     case "runtime_interrupted":
       return `${task.title} stopped without an attributed reason and needs a decision.`;
     default: {

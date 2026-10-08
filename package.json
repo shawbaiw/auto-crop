@@ -6,6 +6,8 @@
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev": "pnpm -r --parallel --if-present dev",
+    "smoke:execution-health": "vitest run apps/cli/src/commands/executionHealth.smoke.test.ts",
+    "sample:execution-health": "tsx scripts/execution-health-samples.ts",
     "smoke:mock": "tsx scripts/mock-smoke.ts",
     "smoke:real-agent": "tsx scripts/real-agent-smoke.ts",
     "smoke:real-planning": "tsx scripts/real-planning-contract-smoke.ts",

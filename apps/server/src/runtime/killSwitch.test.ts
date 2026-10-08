@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ExecutionRegistry } from "./executionControl";
 import type { Company, Department, KeyResult, Objective, Task } from "@auto-crop/core";
 import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
@@ -8,9 +9,47 @@ import { triggerKillSwitch } from "./killSwitch";
 import { runSchedulerOnce } from "./scheduler";
 
 describe("triggerKillSwitch", () => {
+  it.each(["before", "after"])("rolls cancellation back when outbox fails %s insertion", (when) => {
+    const { client, repositories } = createKillSwitchFixture();
+    repositories.writeTaskStatusUnchecked("task_1", "running");
+    repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T00:00:00.000Z");
+    repositories.createAgentRun({
+      id: "agent_run_1", taskId: "task_1", agentId: "codex", status: "running",
+      startedAt: "2026-08-17T00:00:00.000Z", finishedAt: null, logPath: "test.log",
+    });
+    try {
+      expect(() => triggerKillSwitch({
+        companyId: "company_1", repositories: { ...repositories, appendOutboxEvent: (event) => {
+          if (when === "after") repositories.appendOutboxEvent(event);
+          throw new Error("outbox failed");
+        } },
+      })).toThrow("outbox failed");
+      // Pause remains a control request; a failed settlement cannot announce a completed stop.
+      expect(repositories.isGlobalPaused()).toBe(true);
+      expect(repositories.getTask("task_1")?.status).toBe("running");
+      expect(repositories.listRunningAgentRuns("company_1")).toHaveLength(1);
+      expect(repositories.listTaskLocks()).toHaveLength(1);
+      expect(repositories.listOutboxEvents({ companyId: "company_1" })).toEqual([]);
+      triggerKillSwitch({ companyId: "company_1", repositories });
+      triggerKillSwitch({ companyId: "company_1", repositories });
+      const events = repositories.listOutboxEvents({ companyId: "company_1" });
+      expect(events).toHaveLength(1);
+      expect(events[0].payload).toMatchObject({ runId: "agent_run_1", reason: "cancelled", terminationConfirmed: null });
+    } finally { client.close(); }
+  });
+
   it("sets global pause, cancels active runs, releases locks, and moves company to review", () => {
     const { client, repositories } = createKillSwitchFixture();
-    const cancelled: string[] = [];
+    const stopped: Array<{ taskId: string; reason: string }> = [];
+    const registry = new ExecutionRegistry();
+    registry.register({
+      taskId: "task_1",
+      companyId: "company_1",
+      runId: "agent_run_1",
+      ownerEpoch: 1,
+      stopReason: null,
+      requestStop: (reason) => stopped.push({ taskId: "task_1", reason }),
+    });
     repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T00:00:00.000Z");
     repositories.writeTaskStatusUnchecked("task_1", "running");
     repositories.createAgentRun({
@@ -27,14 +66,16 @@ describe("triggerKillSwitch", () => {
       companyId: "company_1",
       repositories,
       now: () => new Date("2026-08-17T00:00:10.000Z"),
-      cancelActiveRun: (taskId) => cancelled.push(taskId),
+      executionRegistry: registry,
       stopCompanySessions: () => ["session_1"],
     });
 
     expect(result.cancelledTasks).toEqual(["task_1"]);
     expect(result.releasedLocks).toEqual(["task_1"]);
     expect(result.stoppedSessions).toEqual(["session_1"]);
-    expect(cancelled).toEqual(["task_1"]);
+    // The stop reached the live process, not only the row.
+    expect(stopped).toEqual([{ taskId: "task_1", reason: "emergency_stop" }]);
+    expect(result.unreachableTasks).toEqual([]);
     expect(repositories.isGlobalPaused()).toBe(true);
     expect(repositories.getCompany("company_1")?.status).toBe("review");
     expect(repositories.getTask("task_1")?.status).toBe("cancelled");

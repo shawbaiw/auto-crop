@@ -1851,3 +1851,20 @@ h3 {
   .ceo-intake-report { padding: 6px; gap: 6px; }
   .ceo-intake-report__footer .department-message-box textarea { min-height: 64px; }
 }
+
+.task-execution-panel {
+  flex-basis: 100%;
+  border-inline-start: 2px solid var(--ink);
+  padding: 0.75rem 1rem;
+  margin-block: 0.5rem;
+  overflow-wrap: anywhere;
+}
+.task-execution-panel dl {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(5rem, 1fr);
+  gap: 0.25rem 1rem;
+  max-width: 34rem;
+}
+.task-execution-panel dd { margin: 0; }
+.task-execution-panel form { display: grid; gap: 0.5rem; max-width: 34rem; }
+.task-execution-panel button { margin: 0.25rem 0.5rem 0.25rem 0; }

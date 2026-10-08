@@ -92,7 +92,15 @@ export type KeyResultSummary = {
   status: string;
 };
 
+export type ExecutionOverview = {
+  runId: string; status: string; phase: string | null; policyVersion: string | null;
+  health: { state: string; reason: string; action: string; checkedAt: string } | null;
+  budget: { authorizedMs: number; consumedMs: number; reservedMs: number; remainingMs: number; availableMs: number; estimated: boolean } | null;
+  stop: { reason: string; manualConfirmedAt?: string | null; requestedAt: string | null; terminationWaitMs: number | null; terminationConfirmed: boolean | null } | null;
+};
+export type BudgetAuthorizationInput = { id: string; additionalMs: number; expectedAuthorizedMs: number; reason: string };
 export type TaskSummary = {
+  execution?: ExecutionOverview | null;
   id: string;
   title: string;
   titleText?: CompleteLocalizedText;
@@ -140,6 +148,8 @@ export type TaskAffordanceKind =
   | "recover_task"
   | "request_replan"
   | "confirm_replan"
+  | "authorize_execution_budget"
+  | "confirm_termination"
   | "cancel_task";
 
 export type TaskAffordanceSummary = {
@@ -563,7 +573,12 @@ export type ApiClient = {
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
   refreshTask(taskId: string): Promise<TaskRefreshResponse>;
+  getTaskExecution(taskId: string): Promise<{ task: TaskSummary }>;
+  authorizeExecutionBudget(taskId: string, input: BudgetAuthorizationInput): Promise<{ task: TaskSummary; replayed: boolean }>;
+  cancelTask(taskId: string): Promise<{ task: TaskSummary }>;
   recoverTask(taskId: string): Promise<TaskRecoveryResponse>;
+  /** The founder attests the process holding this task's workspace is gone, releasing its isolation. */
+  confirmTaskTermination(taskId: string): Promise<{ task: TaskSummary; releasedWorkspaces: string[] }>;
   decideFounderApproval(approvalId: string, input: { decision: "approved" | "denied"; note?: string }): Promise<FounderApprovalResponse>;
   createReplanProposal(taskId: string): Promise<{ proposal: ReplanProposalSummary }>;
   confirmReplanProposal(proposalId: string): Promise<{
@@ -621,8 +636,14 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     async refreshTask(taskId) {
       return postJson(`${baseUrl}/api/tasks/${taskId}/refresh`, {}, requestTimeoutMs);
     },
+    async getTaskExecution(taskId) { return getJson(`${baseUrl}/api/tasks/${taskId}/execution`, requestTimeoutMs); },
+    async authorizeExecutionBudget(taskId, input) { return postJson(`${baseUrl}/api/tasks/${taskId}/execution-budget`, input, requestTimeoutMs); },
+    async cancelTask(taskId) { return postJson(`${baseUrl}/api/tasks/${taskId}/cancel`, {}, requestTimeoutMs); },
     async recoverTask(taskId) {
       return postJson(`${baseUrl}/api/tasks/${taskId}/recover`, {}, requestTimeoutMs);
+    },
+    async confirmTaskTermination(taskId) {
+      return postJson(`${baseUrl}/api/tasks/${taskId}/confirm-termination`, {}, requestTimeoutMs);
     },
     async decideFounderApproval(approvalId, input) {
       return postJson(`${baseUrl}/api/approvals/${approvalId}`, input, requestTimeoutMs);

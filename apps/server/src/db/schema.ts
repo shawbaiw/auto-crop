@@ -220,6 +220,154 @@ export function migrate(database: DatabaseClient): void {
       failure_message TEXT
     );
 
+    -- One launch of an agent process within a run (ADR 0035 / execution-health P1). A run's brief,
+    -- its substantive work and its Artifact Syntax Repair are separate invocations of the same run,
+    -- so "how long did it take" and "what ended it" are answerable per phase rather than per run.
+    CREATE TABLE IF NOT EXISTS run_health (
+      run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
+      state TEXT NOT NULL, reason TEXT NOT NULL, action TEXT NOT NULL, checked_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS run_stop_requests (
+      run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
+      reason TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      requested_at TEXT NOT NULL,
+      consumed_ms INTEGER NOT NULL,
+      termination_wait_ms INTEGER,
+      termination_confirmed INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS budget_authorizations (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES task_budgets(task_id),
+      additional_ms INTEGER NOT NULL CHECK (additional_ms >= 0),
+      authorized_before_ms INTEGER NOT NULL,
+      authorized_after_ms INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      actor TEXT NOT NULL CHECK (actor = 'founder'),
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS budget_owner_guards (owner_id TEXT PRIMARY KEY, detected_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS task_budgets (
+      task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+      authorized_ms INTEGER NOT NULL CHECK (authorized_ms > 0)
+    );
+    CREATE TABLE IF NOT EXISTS run_budgets (
+      run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
+      task_id TEXT NOT NULL REFERENCES task_budgets(task_id),
+      owner_epoch INTEGER NOT NULL,
+      reserved_ms INTEGER NOT NULL CHECK (reserved_ms > 0),
+      consumed_ms INTEGER NOT NULL CHECK (consumed_ms >= 0 AND consumed_ms <= reserved_ms),
+      settled INTEGER NOT NULL DEFAULT 0,
+      estimated INTEGER NOT NULL DEFAULT 0,
+      seq INTEGER NOT NULL DEFAULT 0,
+      next_checkpoint_ms INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS run_budgets_task ON run_budgets(task_id);
+    CREATE TABLE IF NOT EXISTS budget_ledger (
+      run_id TEXT NOT NULL REFERENCES run_budgets(run_id),
+      seq INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      consumed_ms INTEGER NOT NULL,
+      reserved_ms INTEGER NOT NULL,
+      estimated INTEGER NOT NULL,
+      recorded_at TEXT NOT NULL,
+      PRIMARY KEY (run_id, seq)
+    );
+
+    CREATE TABLE IF NOT EXISTS run_invocations (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      phase TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      ended_at TEXT,
+      end_reason TEXT
+    );
+
+    -- Bounded activity summaries, never raw output. High-frequency deltas are aggregated in memory
+    -- and landed at most once per flush window; the window keeps its own longest gap so throttling
+    -- cannot make a silent run look busy. Observation only: nothing here ends a run.
+    CREATE TABLE IF NOT EXISTS run_activity (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      invocation_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      window_started_at TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      max_gap_ms INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id, seq);
+
+    -- Who may write a directory (execution-health P2b/P2c). The task lock guards a task; it cannot
+    -- guard a directory, and two different tasks legitimately run in one: a consumer continues in its
+    -- producer's artifact workspace. Keyed by the path itself, because the path is what is contended.
+    CREATE TABLE IF NOT EXISTS workspace_claims (
+      workspace_path TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      run_id TEXT,
+      owner_id TEXT NOT NULL,
+      owner_epoch INTEGER,
+      acquired_at TEXT NOT NULL,
+      lease_expires_at TEXT,
+      -- Set when a run that held this directory could not be confirmed dead. The claim then outlives
+      -- its run on purpose: nothing may write here until a person says the process is gone.
+      isolated_reason TEXT
+    );
+
+    -- Events that must survive the process that produced them (execution-health P3). Written in the
+    -- same transaction as the state change they describe, so there is never a settled run with no
+    -- event or an event for a settlement that rolled back. Delivery is at-least-once: consumers are
+    -- idempotent on the event id, and nothing here claims exactly-once across a process boundary.
+    CREATE TABLE IF NOT EXISTS outbox_events (
+      id TEXT PRIMARY KEY,
+      version INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      company_id TEXT NOT NULL,
+      task_id TEXT,
+      run_id TEXT,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      -- Who is currently trying to deliver it, and until when. A dispatcher that dies mid-delivery
+      -- leaves a claim that expires, so another one picks the event up rather than it being stuck.
+      claimed_by TEXT,
+      claim_expires_at TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT,
+      last_error TEXT,
+      delivered_at TEXT,
+      dead_lettered_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(delivered_at, dead_lettered_at, next_attempt_at);
+
+    -- One recovery decision per source event, ever (execution-health section 8.2). The uniqueness is the
+    -- whole mechanism: at-least-once delivery means a consumer will see the same failure twice, and
+    -- without this each delivery would queue another replacement execution.
+    CREATE TABLE IF NOT EXISTS recovery_decisions (
+      id TEXT PRIMARY KEY,
+      source_event_id TEXT NOT NULL UNIQUE,
+      company_id TEXT NOT NULL,
+      task_id TEXT,
+      decision TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS execution_recoveries (
+      source_event_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+      source_run_id TEXT NOT NULL,
+      due_at TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending',
+      manifest TEXT NOT NULL,
+      reason TEXT,
+      next_run_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_execution_recoveries_due ON execution_recoveries(state, due_at);
+
     CREATE TABLE IF NOT EXISTS task_dependencies (
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -356,6 +504,20 @@ export function migrate(database: DatabaseClient): void {
       confirmed_at TEXT
     );
   `);
+  // Which run a lock is held for (ADR 0034 / execution-health P2a). A lock taken before its run
+  // exists carries NULL until `bindTaskLockToRun` fills it in, and legacy rows keep NULL forever;
+  // both release conditionally on the value, so a dispatch can only ever release its own lock.
+  {
+    const lockColumns = getColumnNames(database, "task_locks");
+    addColumnIfMissing(database, lockColumns, "task_locks", "run_id TEXT");
+    // A lease, so a lock left by a dispatch that died is reclaimable rather than permanent, and the
+    // ownership generation it was taken under, so a later owner's writes cannot be mistaken for an
+    // earlier one's (execution-health P2b). Legacy rows have NULL for both, which reads as expired.
+    addColumnIfMissing(database, lockColumns, "task_locks", "lease_expires_at TEXT");
+    addColumnIfMissing(database, lockColumns, "task_locks", "owner_epoch INTEGER");
+  }
+  addColumnIfMissing(database, getColumnNames(database, "run_stop_requests"), "run_stop_requests", "cancel_requested INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, getColumnNames(database, "agent_runs"), "agent_runs", "manual_termination_confirmed_at TEXT");
   addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "execution_brief TEXT");
   addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "blocked_by_task_id TEXT");
   addColumnIfMissing(database, getColumnNames(database, "company_events"), "company_events", "plan_snapshot TEXT");
@@ -518,6 +680,10 @@ function backfillTaskPositions(database: DatabaseClient): void {
 
 function migrateTasksExecutionFields(database: DatabaseClient): void {
   const columns = getColumnNames(database, "tasks");
+  // A monotonic counter of how many times this task has been claimed for execution. It only ever
+  // increases, so an epoch identifies one generation of ownership for the life of the task — a lock
+  // released and retaken is a new epoch, and anything still carrying the old one is stale.
+  addColumnIfMissing(database, columns, "tasks", "execution_epoch INTEGER");
   addColumnIfMissing(database, columns, "tasks", "artifact_workspace_path TEXT");
   addColumnIfMissing(database, columns, "tasks", "latest_failure_reason TEXT");
   addColumnIfMissing(database, columns, "tasks", "latest_failure_message TEXT");
@@ -541,6 +707,19 @@ function migrateAgentRunsExecutionFields(database: DatabaseClient): void {
   addColumnIfMissing(database, columns, "agent_runs", "effective_timeout_ms INTEGER");
   addColumnIfMissing(database, columns, "agent_runs", "failure_reason TEXT");
   addColumnIfMissing(database, columns, "agent_runs", "failure_message TEXT");
+  // Observation (execution-health P1). All nullable: a run that predates observation reports unknown,
+  // which is not the same as "no activity" and must never be read as one.
+  addColumnIfMissing(database, columns, "agent_runs", "owner_id TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "launch_isolation TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "phase TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "phase_started_at TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "last_heartbeat_at TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "last_activity_at TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "policy_version TEXT");
+  addColumnIfMissing(database, columns, "agent_runs", "budget_snapshot TEXT");
+  // Which generation of ownership this run belongs to. A run whose epoch is not the task's current
+  // one has been superseded, whatever its status says.
+  addColumnIfMissing(database, columns, "agent_runs", "owner_epoch INTEGER");
 }
 
 function migrateTaskDependencyContracts(database: DatabaseClient): void {

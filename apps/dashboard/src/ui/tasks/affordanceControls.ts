@@ -21,7 +21,7 @@ export type InlineAffordanceButton = {
 };
 
 /** Which handler performs an inline affordance. Keyed so a new inline kind must be wired up. */
-export type InlineAffordanceHandler = "refresh" | "recover" | "founderApproval" | "requestReplan";
+export type InlineAffordanceHandler = "refresh" | "recover" | "founderApproval" | "requestReplan" | "confirmTermination";
 
 export type TaskAffordanceControl =
   | { render: "inline"; handler: InlineAffordanceHandler; buttons: readonly InlineAffordanceButton[] }
@@ -38,6 +38,14 @@ export const taskAffordanceControls: Record<TaskAffordanceKind, TaskAffordanceCo
     render: "inline",
     handler: "recover",
     buttons: [{ labelKey: "department.recoverTask" }],
+  },
+  // Inline, and deliberately where `recover_task` would otherwise be: a task whose process was never
+  // seen to exit is the one case where re-running is the unsafe answer, so the founder is offered the
+  // attestation instead. It is the only way to release the workspace.
+  confirm_termination: {
+    render: "inline",
+    handler: "confirmTermination",
+    buttons: [{ labelKey: "department.confirmTermination" }],
   },
   decide_founder_approval: {
     render: "inline",
@@ -58,12 +66,8 @@ export const taskAffordanceControls: Record<TaskAffordanceKind, TaskAffordanceCo
   resolve_founder_decision: { render: "surface", surface: "CEO Office decision card" },
   confirm_human_action: { render: "surface", surface: "Human Action panel" },
   confirm_replan: { render: "surface", surface: "Company Operations replan proposals" },
-  cancel_task: {
-    render: "unsurfaced",
-    reason:
-      "Cancelling is the founder's escape hatch, never a task's only way forward — every Hold kind "
-      + "offers something else — so no surface draws it yet. Exposing it needs a confirmation flow.",
-  },
+  authorize_execution_budget: { render: "surface", surface: "Task execution panel: explicit budget authorization form" },
+  cancel_task: { render: "surface", surface: "Task execution panel: cancellation confirmation" },
 };
 
 /** The inline buttons to draw for a task, in the order its affordances were offered. */

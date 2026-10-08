@@ -58,6 +58,14 @@ export type TaskHoldKind =
    * cost of a vaguer reason string, instead of silently producing a task no one can move.
    */
   | "agent_quota_exhausted"
+  /**
+   * A run that held this task's workspace was signalled to stop and never seen to exit. The process
+   * may still be writing there, so the directory stays claimed and nothing may run in it — including
+   * this task's own retry. Distinct from `runtime_interrupted`, where the run is known to be over and
+   * running it again is the way forward: here running it again is precisely the thing that is unsafe.
+   */
+  | "termination_unconfirmed"
+  | "execution_budget_exhausted"
   | "runtime_interrupted";
 
 export const taskHoldKinds = [
@@ -73,6 +81,8 @@ export const taskHoldKinds = [
   "needs_replan",
   "verification_failed",
   "agent_quota_exhausted",
+  "termination_unconfirmed",
+  "execution_budget_exhausted",
   "runtime_interrupted",
 ] as const satisfies readonly TaskHoldKind[];
 
@@ -99,6 +109,8 @@ export const taskHoldStatusBinding: Record<TaskHoldKind, TaskStatus | null> = {
   recovery_exhausted: null,
   verification_failed: null,
   agent_quota_exhausted: null,
+  termination_unconfirmed: null,
+  execution_budget_exhausted: null,
   runtime_interrupted: null,
 };
 
@@ -184,6 +196,8 @@ export type TaskAffordanceKind =
   | "recover_task"
   | "request_replan"
   | "confirm_replan"
+  | "confirm_termination"
+  | "authorize_execution_budget"
   | "cancel_task";
 
 export type TaskAffordance = {
@@ -225,6 +239,9 @@ const affordanceStatusGates: Partial<Record<TaskAffordanceKind, readonly TaskSta
   refresh_task: ["blocked", "failed", "waiting_dependency"],
   // Recovery re-runs the work, or continues it from Partial Output.
   recover_task: ["blocked", "failed", "needs_replan"],
+  // Confirming a termination is only meaningful for a task whose run already stopped being watched.
+  confirm_termination: ["blocked", "failed"],
+  authorize_execution_budget: ["blocked", "failed"],
 };
 
 /**
@@ -330,6 +347,16 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
         offer(hold, "recover_task", "runtime");
         offer(hold, "request_replan", "founder");
         break;
+      case "termination_unconfirmed":
+        // Deliberately no `recover_task`. The workspace may still have a writer in it, and running
+        // the task again is exactly what must not happen until someone establishes otherwise. The
+        // founder can attest the process is gone, or replan the work somewhere else.
+        offer(hold, "confirm_termination", "founder");
+        offer(hold, "request_replan", "founder");
+        break;
+      case "execution_budget_exhausted":
+        if (input.holds.every(other => other.kind === "execution_budget_exhausted" || Boolean(other.resolvedAt))) offer(hold, "authorize_execution_budget", "founder");
+        break;
       case "runtime_interrupted":
         // Nothing is known about why the run stopped, so the way back is to run it again; a refresh
         // would only re-derive state that is not what went wrong.
@@ -410,6 +437,20 @@ export function deriveTaskHold(input: {
     // meaning "nobody modelled this" (ADR 0020).
     case "invalid_agent_output":
       return { kind: "runtime_interrupted", resolver: "runtime" };
+    // Nobody is executing it and nobody can say what happened; the way forward is to run it again.
+    // Modelled explicitly so `runtime_interrupted` keeps meaning "nobody modelled this" (ADR 0020).
+    case "phase_budget_exhausted":
+    case "run_budget_exhausted":
+    case "task_budget_exhausted":
+      return { kind: "execution_budget_exhausted", resolver: "founder" };
+    case "worker_lost":
+      return { kind: "runtime_interrupted", resolver: "runtime" };
+    // Stopping a task on purpose is not a stop it needs rescuing from: whoever stopped it decides
+    // what happens next, so a cancelled task carries no Hold of its own.
+    case "cancelled":
+      return null;
+    case "termination_unconfirmed":
+      return { kind: "termination_unconfirmed", resolver: "founder" };
     case "agent_quota_exhausted":
       return { kind: "agent_quota_exhausted", resolver: "runtime" };
     case "verification_failed":

@@ -13,14 +13,27 @@ import {
   migrate,
   runFinalFounderReportJobs,
   runSchedulerOnce,
+  executionBudgetFromEnvironment,
+  type BudgetPolicy,
   type AgentAdapter,
   type SchedulerEvent,
   type SchedulerWakeReason,
 } from "@auto-crop/server";
 
+/**
+ * How often a live run's owner records that it is still here.
+ *
+ * Short enough that a lost worker is visible within a scan or two, long enough that a slow database
+ * is not asked to take a write every second. It is an observation cadence, not a budget: nothing is
+ * declared dead by a missing heartbeat yet.
+ */
+const HEARTBEAT_INTERVAL_MS = 20_000;
+
 export type StartAutoCropOptions = {
   projectRoot: string;
   host?: string;
+  workerId?: string;
+  executionBudget?: Partial<BudgetPolicy>;
   port?: number;
   agents?: AgentAdapter[];
   schedulerIntervalMs?: number;
@@ -33,6 +46,7 @@ export type StartedAutoCrop = {
 };
 
 export async function startAutoCrop(options: StartAutoCropOptions): Promise<StartedAutoCrop> {
+  const executionBudget = options.executionBudget ?? executionBudgetFromEnvironment();
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 0;
   const log = options.log ?? console.log;
@@ -65,6 +79,8 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
   });
   scheduler = startSchedulerLoop({
     agents,
+    workerId: options.workerId,
+    executionBudget,
     intervalMs: schedulerIntervalMs,
     log,
     projectRoot: options.projectRoot,
@@ -100,6 +116,8 @@ export async function startAutoCrop(options: StartAutoCropOptions): Promise<Star
 
 export function startSchedulerLoop(input: {
   agents: AgentAdapter[];
+  workerId?: string;
+  executionBudget?: Partial<BudgetPolicy>;
   intervalMs: number;
   log: (line: string) => void;
   projectRoot: string;
@@ -107,7 +125,7 @@ export function startSchedulerLoop(input: {
   repositories: ReturnType<typeof createRepositories>;
   createId?: (prefix: string) => string;
 }) {
-  const workerId = `cli-worker-${process.pid}`;
+  const workerId = input.workerId ?? createId("cli-worker");
   const proofCollector = createProofCollector({ proofSchemas: aiSaasPlaybook.proofSchemas });
   let running = false;
   let stopped = false;
@@ -151,11 +169,15 @@ export function startSchedulerLoop(input: {
         repositories: input.repositories,
         adapters: input.agents,
         workerId,
+        executionBudget: input.executionBudget,
         maxTasks: 1,
         // No `approvalRequired` override: the scheduler resolves each task's own company Permission
         // Mode. Passing one here is what pinned every company to the `balanced` default.
         proofCollector,
         createId: input.createId,
+        // The owner runner reports in on its own clock while a run is in flight. Observation only:
+        // nothing reads a heartbeat to end a run (execution-health P1).
+        heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
         emit,
       });
 

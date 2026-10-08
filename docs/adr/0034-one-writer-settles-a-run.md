@@ -45,3 +45,7 @@ Two more facts shaped the fix. The window is not a bug in one function: the data
 - Known limitation: the claim decides who may write; it does not make the writes atomic. A crash mid-settlement can still leave part of one. Grouping those writes in `repositories.transaction()` is a separate change.
 - Known limitation: a crash between acquiring the task lock and creating the run row leaves a lock and a task no reconciler can see, because reconciliation is indexed by running runs. Unchanged here.
 - Known limitation: the grace applies to every run, including those that never reach a settlement. Making it conditional needs the phase this ADR declined.
+
+## P4.1 policy boundary
+
+The deadline plus finalization grace above applies to legacy/observe runs. An internally enabled `budget-v1` run instead pins phase, lifecycle and Task authorization limits and is excluded from this reaper; it receives no extra 150 seconds. The reciprocal conditional settlement rule still applies. See [ADR 0038](0038-a-run-spends-a-pinned-task-authorization.md) for the ledger, clock and rollout boundary.

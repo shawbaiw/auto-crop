@@ -44,6 +44,31 @@ pnpm typecheck
 AUTO_CROP_PORT=8787 pnpm --filter @auto-crop/cli start
 ```
 
+`start` launches a Supervisor and its Worker. The Supervisor consumes execution events even when
+no dashboard is open; `supervise` is an alias for the same supervised entry point. Ctrl-C or SIGTERM
+stops the Supervisor and waits for the Worker to exit. The existing port, scheduler interval and
+project-root environment settings are inherited by the Worker.
+
+Only one Supervisor may run against a project's state directory. A second launch exits with an error
+before starting a Worker. Startup records live in `.auto-crop/supervisor.sqlite`; after a crash, they
+are reclaimed only when both recorded local processes are confirmed absent. A surviving Worker,
+reused PID, unavailable process check or another hostname causes a conservative refusal. Stop and
+verify the recorded processes before retrying; do not delete the ownership file while they run.
+This guards local CLI startup, not remote hosts or direct programmatic `startAutoCrop` callers.
+When a Worker exits, the Supervisor reconciles its startup identity before launching a replacement.
+Active run workspaces enter termination-confirmation isolation because detached Agents may still run.
+Verify those processes have stopped before using the task's **Confirm termination** action. Isolation
+has no lease expiry. Startup/restart reconciliation errors block Worker startup; pending identities
+survive Supervisor restarts. Supervisor/host failure still needs a system process manager for restart.
+
+
+Execution scheduling defaults to `observe`. The new lifecycle budget and independent health policy
+can be explicitly enabled with `AUTO_CROP_EXECUTION_POLICY=budget-v1`. See the
+[isolated trial, controls and rollback guide](docs/execution-budget-opt-in.md) before enabling it.
+The Task execution panel exposes budget balances, stop evidence and explicit continuation authorization;
+automatic recovery remains report-only by default. P5 adds opt-in `brief-only-v1` recovery and initial
+Codex samples; see the [scope, evidence and remaining threshold gates](docs/execution-health-p5-report.md).
+
 5. In another terminal, start the dashboard:
 
 ```bash
@@ -135,7 +160,15 @@ Run type checks:
 pnpm typecheck
 ```
 
-Run the mock smoke test:
+Run the execution-health smoke (macOS/Linux; Windows skips this POSIX process test):
+
+```bash
+pnpm smoke:execution-health
+```
+
+This uses the real `start` CLI and production adapter with a local mock executable, temporary SQLite databases, and no paid model calls. It checks Worker death, rollback and restart after a reconciliation failure, workspace isolation while an Agent still writes, and duplicate delivery after a lost acknowledgement. The delivery lease is advanced in the disposable database to avoid waiting 30 seconds.
+
+Run the older business-workflow mock smoke test (currently fails at SSE connection because the script omits the required `companyId`; see the [baseline record](docs/execution-health-p0-baseline.md)):
 
 ```bash
 pnpm smoke:mock

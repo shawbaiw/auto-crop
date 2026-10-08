@@ -1,3 +1,5 @@
+import { createExecutionBudgetStore } from "./executionBudget";
+import { createExecutionRecoveryStore } from "./executionRecovery";
 import type {
   ArtifactVerification,
   DependencyInputRole,
@@ -46,6 +48,8 @@ import type {
 } from "@auto-crop/core";
 import { isLocale } from "@auto-crop/core";
 import type { DatabaseClient } from "./client";
+import type { RunActivity, RunInvocation } from "../runtime/executionObservation";
+import type { OutboxEvent } from "../runtime/executionEvents";
 
 export type ReviewRecord = {
   id: string;
@@ -59,6 +63,8 @@ export function createRepositories(database: DatabaseClient) {
   let savepointDepth = 0;
 
   return {
+    executionBudget: createExecutionBudgetStore(database),
+    executionRecovery: createExecutionRecoveryStore(database),
     /**
      * Run `work` as one atomic unit: either every write inside lands, or none does.
      *
@@ -843,21 +849,275 @@ export function createRepositories(database: DatabaseClient) {
       return row.next_position;
     },
 
-    acquireTaskLock(taskId: string, ownerId: string, acquiredAt: string): boolean {
+    /** Acquire a write lock and revalidate the exact orphan/lease snapshot before its transition. */
+    claimOrphanedTask(input: {
+      taskId: string; ownerId: string; runId: string | null;
+      acquiredAt: string; leaseExpiresAt: string | null; at: string; confirmedOwnerExit?: boolean;
+    }): boolean {
+      const result = database.prepare(`UPDATE tasks SET execution_epoch = execution_epoch
+        WHERE id = ? AND status = 'running'
+          AND NOT EXISTS (SELECT 1 FROM agent_runs WHERE task_id = tasks.id AND status = 'running')
+          AND EXISTS (SELECT 1 FROM task_locks WHERE task_id = tasks.id
+            AND owner_id = ? AND run_id IS ? AND acquired_at = ? AND lease_expires_at IS ?
+            AND (? OR julianday(lease_expires_at) IS NULL OR julianday(lease_expires_at) <= julianday(?)))`)
+        .run(input.taskId, input.ownerId, input.runId, input.acquiredAt, input.leaseExpiresAt, input.confirmedOwnerExit ? 1 : 0, input.at);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * Take the execution lock for a task, or take it over from a lease that has run out.
+     *
+     * A lock used to be permanent: a dispatch that died between taking it and creating its run left a
+     * row nothing could see and nothing would clear, and that task never ran again. A lease makes the
+     * leftover reclaimable without anyone having to prove the dead worker is gone — the holder renews
+     * while it works, and silence is what lets the lock go.
+     *
+     * `leaseExpiresAt` is the caller's; `now` decides whether the incumbent's has passed. A lock with
+     * no lease at all (written before leases existed) counts as expired.
+     */
+    acquireTaskLock(
+      taskId: string,
+      ownerId: string,
+      acquiredAt: string,
+      lease?: { expiresAt: string; now: string },
+    ): boolean {
+      const taken = database
+        .prepare("SELECT owner_id, lease_expires_at FROM task_locks WHERE task_id = ?")
+        .get(taskId) as { owner_id: string; lease_expires_at: string | null } | undefined;
+
+      if (taken) {
+        if (!lease) {
+          return false;
+        }
+        const expiry = taken.lease_expires_at ? Date.parse(taken.lease_expires_at) : Number.NaN;
+        const stillHeld = !Number.isNaN(expiry) && expiry > Date.parse(lease.now);
+        if (stillHeld) {
+          return false;
+        }
+        // Conditional on the incumbent we just read, so two reclaimers cannot both win.
+        const reclaimed = database
+          .prepare(
+            `UPDATE task_locks SET owner_id = ?, acquired_at = ?, lease_expires_at = ?, run_id = NULL, owner_epoch = NULL
+             WHERE task_id = ? AND owner_id = ?${taken.lease_expires_at === null ? " AND lease_expires_at IS NULL" : " AND lease_expires_at = ?"}`,
+          )
+          .run(
+            ownerId,
+            acquiredAt,
+            lease.expiresAt,
+            taskId,
+            taken.owner_id,
+            ...(taken.lease_expires_at === null ? [] : [taken.lease_expires_at]),
+          );
+        return Number(reclaimed.changes) > 0;
+      }
+
       try {
         database
-          .prepare("INSERT INTO task_locks (task_id, owner_id, acquired_at) VALUES (?, ?, ?)")
-          .run(taskId, ownerId, acquiredAt);
+          .prepare("INSERT INTO task_locks (task_id, owner_id, acquired_at, lease_expires_at) VALUES (?, ?, ?, ?)")
+          .run(taskId, ownerId, acquiredAt, lease?.expiresAt ?? null);
         return true;
       } catch {
         return false;
       }
     },
 
-    releaseTaskLock(taskId: string, ownerId: string): void {
+    /**
+     * Push this lock's lease out, but only for the holder that still owns this run.
+     *
+     * Renewal is how a live dispatch says it is still here. It is conditional on owner, run and epoch
+     * together, so a dispatch that has been superseded cannot keep a lock alive for a run nobody is
+     * waiting on. Returns whether the lease was actually extended.
+     */
+    renewTaskLock(taskId: string, ownerId: string, runId: string, ownerEpoch: number, expiresAt: string): boolean {
+      const result = database
+        .prepare(
+          `UPDATE task_locks SET lease_expires_at = ?
+           WHERE task_id = ? AND owner_id = ? AND run_id = ? AND owner_epoch = ?`,
+        )
+        .run(expiresAt, taskId, ownerId, runId, ownerEpoch);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * The next ownership generation for this task, recorded on the task so it survives the lock.
+     *
+     * Monotonic by construction: it is read and written in the same statement, so two claimers cannot
+     * be handed the same number.
+     */
+    nextExecutionEpoch(taskId: string): number {
       database
-        .prepare("DELETE FROM task_locks WHERE task_id = ? AND owner_id = ?")
-        .run(taskId, ownerId);
+        .prepare("UPDATE tasks SET execution_epoch = COALESCE(execution_epoch, 0) + 1 WHERE id = ?")
+        .run(taskId);
+      const row = database.prepare("SELECT execution_epoch FROM tasks WHERE id = ?").get(taskId) as
+        | { execution_epoch: number | null }
+        | undefined;
+      return row?.execution_epoch ?? 1;
+    },
+
+    /**
+     * Tie a lock to the run it is now held for, so releasing it can be conditional.
+     *
+     * The lock is taken before the run exists, so there is a window where it is bound to nothing.
+     * Binding is itself conditional on the lock still being unbound: a lock that has already moved on
+     * to another run is not this dispatch's to label.
+     */
+    bindTaskLockToRun(taskId: string, ownerId: string, runId: string, ownerEpoch: number): boolean {
+      const result = database
+        .prepare("UPDATE task_locks SET run_id = ?, owner_epoch = ? WHERE task_id = ? AND owner_id = ? AND run_id IS NULL")
+        .run(runId, ownerEpoch, taskId, ownerId);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * Release a lock only if it is still held for the run the caller thinks it is holding.
+     *
+     * A single process dispatches under one `ownerId`, so task id and owner cannot tell two dispatches
+     * of the same task apart: an unwinding dispatch that lost its run used to delete the lock its own
+     * successor had just taken, leaving the successor running unlocked. The run id is what separates
+     * them. `IS` rather than `=` so an unbound lock (NULL) matches a caller that never created a run.
+     */
+    releaseTaskLock(taskId: string, ownerId: string, runId: string | null): boolean {
+      const result = database
+        .prepare("DELETE FROM task_locks WHERE task_id = ? AND owner_id = ? AND run_id IS ?")
+        .run(taskId, ownerId, runId);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * Release the lock held for this run, whoever owns it — used by whoever settles a run they did not
+     * dispatch.
+     *
+     * An unbound lock (`run_id IS NULL`) is released too: it is either a row from before locks carried
+     * a run, or a dispatch caught between taking the lock and creating its run. A lock bound to a
+     * *different* run is never released, so settling one run cannot unlock another one that is live.
+     * Closing the unbound window itself needs the lock and the run to be created together, which is
+     * execution-health P2b.
+     */
+    releaseTaskLockForRun(taskId: string, runId: string, allowUnbound = true): boolean {
+      const result = database
+        .prepare(`DELETE FROM task_locks WHERE task_id = ? AND (run_id = ?${allowUnbound ? " OR run_id IS NULL" : ""})`)
+        .run(taskId, runId);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * Take the right to write a directory, or take it over from a lease that has run out.
+     *
+     * A task lock cannot express this: two different tasks legitimately share one directory when a
+     * consumer continues in its producer's artifact workspace, so locking the task left that
+     * directory with two writers. An isolated claim is never taken over — that is the point of it.
+     */
+    acquireWorkspaceClaim(claim: {
+      workspacePath: string;
+      taskId: string;
+      runId: string | null;
+      ownerId: string;
+      ownerEpoch: number | null;
+      acquiredAt: string;
+      leaseExpiresAt: string;
+      now: string;
+    }): boolean {
+      const held = database
+        .prepare("SELECT task_id, owner_id, lease_expires_at, isolated_reason FROM workspace_claims WHERE workspace_path = ?")
+        .get(claim.workspacePath) as
+        | { task_id: string; owner_id: string; lease_expires_at: string | null; isolated_reason: string | null }
+        | undefined;
+
+      if (held) {
+        if (held.isolated_reason) {
+          // Isolated: a previous run may still be writing here and nobody has said otherwise.
+          return false;
+        }
+        const expiry = held.lease_expires_at ? Date.parse(held.lease_expires_at) : Number.NaN;
+        if (!Number.isNaN(expiry) && expiry > Date.parse(claim.now)) {
+          return false;
+        }
+        const reclaimed = database
+          .prepare(
+            `UPDATE workspace_claims
+             SET task_id = ?, run_id = ?, owner_id = ?, owner_epoch = ?, acquired_at = ?, lease_expires_at = ?
+             WHERE workspace_path = ? AND owner_id = ? AND isolated_reason IS NULL`,
+          )
+          .run(
+            claim.taskId, claim.runId, claim.ownerId, claim.ownerEpoch,
+            claim.acquiredAt, claim.leaseExpiresAt, claim.workspacePath, held.owner_id,
+          );
+        return Number(reclaimed.changes) > 0;
+      }
+
+      try {
+        database
+          .prepare(
+            `INSERT INTO workspace_claims (workspace_path, task_id, run_id, owner_id, owner_epoch, acquired_at, lease_expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            claim.workspacePath, claim.taskId, claim.runId, claim.ownerId,
+            claim.ownerEpoch, claim.acquiredAt, claim.leaseExpiresAt,
+          );
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    renewWorkspaceClaim(workspacePath: string, runId: string, expiresAt: string): boolean {
+      const result = database
+        .prepare(
+          "UPDATE workspace_claims SET lease_expires_at = ? WHERE workspace_path = ? AND run_id = ? AND isolated_reason IS NULL",
+        )
+        .run(expiresAt, workspacePath, runId);
+      return Number(result.changes) > 0;
+    },
+
+    /** Give up a directory, but only the claim this run actually holds. */
+    releaseWorkspaceClaim(workspacePath: string, runId: string): boolean {
+      const result = database
+        .prepare("DELETE FROM workspace_claims WHERE workspace_path = ? AND run_id = ? AND isolated_reason IS NULL")
+        .run(workspacePath, runId);
+      return Number(result.changes) > 0;
+    },
+
+    /**
+     * Keep a directory claimed after its run ended, because the process holding it was never
+     * confirmed gone. Survives lease expiry: only a deliberate release clears it.
+     */
+    isolateWorkspaceClaim(workspacePath: string, runId: string, reason: string): boolean {
+      const result = database
+        .prepare("UPDATE workspace_claims SET isolated_reason = ? WHERE workspace_path = ? AND run_id = ?")
+        .run(reason, workspacePath, runId);
+      return Number(result.changes) > 0;
+    },
+
+    /** Release an isolated directory, once someone has established the old process is gone. */
+    releaseIsolatedWorkspaceClaims(taskId: string): string[] {
+      const claims = database
+        .prepare("SELECT workspace_path FROM workspace_claims WHERE task_id = ? AND isolated_reason IS NOT NULL")
+        .all(taskId) as Array<{ workspace_path: string }>;
+      database.prepare("DELETE FROM workspace_claims WHERE task_id = ? AND isolated_reason IS NOT NULL").run(taskId);
+      return claims.map((claim) => claim.workspace_path);
+    },
+
+    listWorkspaceClaims(): Array<{
+      workspacePath: string;
+      taskId: string;
+      runId: string | null;
+      ownerId: string;
+      leaseExpiresAt: string | null;
+      isolatedReason: string | null;
+    }> {
+      const rows = database.prepare("SELECT * FROM workspace_claims ORDER BY workspace_path ASC").all() as Array<{
+        workspace_path: string; task_id: string; run_id: string | null;
+        owner_id: string; lease_expires_at: string | null; isolated_reason: string | null;
+      }>;
+      return rows.map((row) => ({
+        workspacePath: row.workspace_path,
+        taskId: row.task_id,
+        runId: row.run_id,
+        ownerId: row.owner_id,
+        leaseExpiresAt: row.lease_expires_at,
+        isolatedReason: row.isolated_reason,
+      }));
     },
 
     releaseAllTaskLocks(): string[] {
@@ -866,7 +1126,14 @@ export function createRepositories(database: DatabaseClient) {
       return locks.map((lock) => lock.taskId);
     },
 
-    listTaskLocks(): Array<{ taskId: string; ownerId: string; acquiredAt: string }> {
+    listTaskLocks(): Array<{
+      taskId: string;
+      ownerId: string;
+      acquiredAt: string;
+      runId: string | null;
+      leaseExpiresAt: string | null;
+      ownerEpoch: number | null;
+    }> {
       const rows = database.prepare("SELECT * FROM task_locks ORDER BY task_id ASC").all();
       return rows.map((row) => {
         const lock = row as TaskLockRow;
@@ -874,6 +1141,9 @@ export function createRepositories(database: DatabaseClient) {
           taskId: lock.task_id,
           ownerId: lock.owner_id,
           acquiredAt: lock.acquired_at,
+          runId: lock.run_id,
+          leaseExpiresAt: lock.lease_expires_at,
+          ownerEpoch: lock.owner_epoch,
         };
       });
     },
@@ -1155,8 +1425,9 @@ export function createRepositories(database: DatabaseClient) {
         .prepare(
           `INSERT INTO agent_runs (
             id, task_id, agent_id, status, log_path, started_at, finished_at,
-            execution_profile_name, requested_timeout_ms, effective_timeout_ms, failure_reason, failure_message
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            execution_profile_name, requested_timeout_ms, effective_timeout_ms, failure_reason, failure_message,
+            owner_epoch
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           agentRun.id,
@@ -1171,6 +1442,7 @@ export function createRepositories(database: DatabaseClient) {
           agentRun.effectiveTimeoutMs ?? null,
           agentRun.failureReason ?? null,
           agentRun.failureMessage ?? null,
+          agentRun.ownerEpoch ?? null,
         );
     },
 
@@ -1188,6 +1460,9 @@ export function createRepositories(database: DatabaseClient) {
         failureReason?: AgentFailureReason | null;
         failureMessage?: string | null;
         expectedStatus?: AgentRun["status"];
+        expectedTaskStatus?: "running" | "retrying";
+        expectedOwnerId?: string;
+        requireCurrentEpoch?: boolean;
       } = {},
     ): boolean {
       const result = database
@@ -1197,7 +1472,10 @@ export function createRepositories(database: DatabaseClient) {
                finished_at = ?,
                failure_reason = COALESCE(?, failure_reason),
                failure_message = COALESCE(?, failure_message)
-           WHERE id = ?${outcome.expectedStatus ? " AND status = ?" : ""}`,
+           WHERE id = ?${status === "complete" ? " AND NOT EXISTS (SELECT 1 FROM run_stop_requests s WHERE s.run_id = agent_runs.id)" : ""}${outcome.expectedStatus ? " AND status = ?" : ""}
+             ${outcome.expectedTaskStatus ? "AND EXISTS (SELECT 1 FROM tasks WHERE tasks.id = agent_runs.task_id AND tasks.status = ?)" : ""}
+             ${outcome.expectedOwnerId ? "AND owner_id = ?" : ""}
+             ${outcome.requireCurrentEpoch ? "AND (owner_epoch IS NULL OR owner_epoch = (SELECT execution_epoch FROM tasks WHERE tasks.id = agent_runs.task_id))" : ""}`,
         )
         .run(
           status,
@@ -1206,8 +1484,335 @@ export function createRepositories(database: DatabaseClient) {
           outcome.failureMessage ?? null,
           id,
           ...(outcome.expectedStatus ? [outcome.expectedStatus] : []),
+          ...(outcome.expectedTaskStatus ? [outcome.expectedTaskStatus] : []),
+          ...(outcome.expectedOwnerId ? [outcome.expectedOwnerId] : []),
         );
       return Number(result.changes) > 0;
+    },
+
+    /**
+     * Record where a run is and that its owner is still alive.
+     *
+     * Observation only. Every field is independent: a heartbeat says the runner answered, activity
+     * says bytes moved, and neither implies the other. Callers pass only what they actually observed,
+     * so an unobserved field keeps its previous value rather than being reset to "nothing happened".
+     */
+    updateAgentRunObservation(
+      id: string,
+      observation: {
+        ownerId?: string;
+        launchIsolation?: string;
+        phase?: string;
+        phaseStartedAt?: string;
+        lastHeartbeatAt?: string;
+        lastActivityAt?: string;
+        policyVersion?: string;
+      },
+    ): void {
+      const assignments: string[] = [];
+      const values: Array<string> = [];
+      const set = (column: string, value: string | undefined) => {
+        if (value !== undefined) {
+          assignments.push(`${column} = ?`);
+          values.push(value);
+        }
+      };
+      set("owner_id", observation.ownerId);
+      set("launch_isolation", observation.launchIsolation);
+      set("phase", observation.phase);
+      set("phase_started_at", observation.phaseStartedAt);
+      set("last_heartbeat_at", observation.lastHeartbeatAt);
+      set("last_activity_at", observation.lastActivityAt);
+      set("policy_version", observation.policyVersion);
+      if (assignments.length === 0) {
+        return;
+      }
+      database.prepare(`UPDATE agent_runs SET ${assignments.join(", ")} WHERE id = ?`).run(...values, id);
+    },
+
+    createRunInvocation(invocation: RunInvocation): void {
+      database
+        .prepare(
+          `INSERT INTO run_invocations (id, run_id, phase, started_at, ended_at, end_reason)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          invocation.id,
+          invocation.runId,
+          invocation.phase,
+          invocation.startedAt,
+          invocation.endedAt,
+          invocation.endReason,
+        );
+    },
+
+    endRunInvocation(id: string, endedAt: string, endReason: string): void {
+      database
+        .prepare("UPDATE run_invocations SET ended_at = ?, end_reason = ? WHERE id = ? AND ended_at IS NULL")
+        .run(endedAt, endReason, id);
+    },
+
+    listRunInvocations(runId: string): RunInvocation[] {
+      return (database
+        .prepare("SELECT * FROM run_invocations WHERE run_id = ? ORDER BY started_at ASC, rowid ASC")
+        .all(runId) as RunInvocationRow[]).map((row) => ({
+        id: row.id,
+        runId: row.run_id,
+        phase: row.phase,
+        startedAt: row.started_at,
+        endedAt: row.ended_at,
+        endReason: row.end_reason,
+      }));
+    },
+
+    appendRunActivity(activity: RunActivity): void {
+      database
+        .prepare(
+          `INSERT INTO run_activity (id, run_id, invocation_id, seq, window_started_at, observed_at, phase, channel, bytes, max_gap_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          activity.id,
+          activity.runId,
+          activity.invocationId,
+          activity.seq,
+          activity.windowStartedAt,
+          activity.observedAt,
+          activity.phase,
+          activity.channel,
+          activity.bytes,
+          activity.maxGapMs,
+        );
+    },
+
+    listRunActivity(runId: string): RunActivity[] {
+      return (database
+        .prepare("SELECT * FROM run_activity WHERE run_id = ? ORDER BY seq ASC")
+        .all(runId) as RunActivityRow[]).map((row) => ({
+        id: row.id,
+        runId: row.run_id,
+        invocationId: row.invocation_id,
+        seq: row.seq,
+        windowStartedAt: row.window_started_at,
+        observedAt: row.observed_at,
+        phase: row.phase,
+        channel: row.channel as RunActivity["channel"],
+        bytes: row.bytes,
+        maxGapMs: row.max_gap_ms,
+      }));
+    },
+
+    /** Everything an execution event needs to say about a run, read back from the run itself. */
+    getAgentRunObservation(runId: string): {
+      companyId: string;
+      taskId: string;
+      ownerEpoch: number | null;
+      phase: string | null;
+      lastHeartbeatAt: string | null;
+      lastActivityAt: string | null;
+      effectiveTimeoutMs: number | null;
+      logPath: string;
+    } | null {
+      const row = database
+        .prepare(
+          `SELECT r.task_id, r.owner_epoch, r.phase, r.last_heartbeat_at, r.last_activity_at,
+                  r.effective_timeout_ms, r.log_path, t.company_id
+           FROM agent_runs r JOIN tasks t ON t.id = r.task_id
+           WHERE r.id = ?`,
+        )
+        .get(runId) as
+        | {
+            task_id: string; owner_epoch: number | null; phase: string | null;
+            last_heartbeat_at: string | null; last_activity_at: string | null;
+            effective_timeout_ms: number | null; log_path: string; company_id: string;
+          }
+        | undefined;
+      if (!row) {
+        return null;
+      }
+      return {
+        companyId: row.company_id,
+        taskId: row.task_id,
+        ownerEpoch: row.owner_epoch,
+        phase: row.phase,
+        lastHeartbeatAt: row.last_heartbeat_at,
+        lastActivityAt: row.last_activity_at,
+        effectiveTimeoutMs: row.effective_timeout_ms,
+        logPath: row.log_path,
+      };
+    },
+
+    appendOutboxEvent(event: OutboxEvent): void {
+      database
+        .prepare(
+          `INSERT INTO outbox_events (id, version, type, company_id, task_id, run_id, payload, created_at, attempts, next_attempt_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          event.id, event.version, event.type, event.companyId, event.taskId, event.runId,
+          JSON.stringify(event.payload), event.createdAt, event.attempts, event.nextAttemptAt,
+        );
+    },
+
+    /**
+     * Take the events that are due, so this dispatcher is the only one delivering them.
+     *
+     * The claim is conditional and expiring: two dispatchers cannot take the same event, and one
+     * that dies mid-delivery does not take its events with it.
+     */
+    claimOutboxEvents(input: {
+      dispatcherId: string;
+      now: string;
+      claimExpiresAt: string;
+      limit: number;
+    }): OutboxEvent[] {
+      const due = database
+        .prepare(
+          `SELECT id FROM outbox_events
+           WHERE delivered_at IS NULL AND dead_lettered_at IS NULL
+             AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+             AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
+           ORDER BY created_at ASC, rowid ASC
+           LIMIT ?`,
+        )
+        .all(input.now, input.now, input.limit) as Array<{ id: string }>;
+
+      const taken: OutboxEvent[] = [];
+      for (const row of due) {
+        const claimed = database
+          .prepare(
+            `UPDATE outbox_events SET claimed_by = ?, claim_expires_at = ?
+             WHERE id = ? AND delivered_at IS NULL AND dead_lettered_at IS NULL
+               AND (claim_expires_at IS NULL OR claim_expires_at <= ?)`,
+          )
+          .run(input.dispatcherId, input.claimExpiresAt, row.id, input.now);
+        if (Number(claimed.changes) > 0) {
+          const event = this.getOutboxEvent(row.id);
+          if (event) {
+            taken.push(event);
+          }
+        }
+      }
+      return taken;
+    },
+
+    getOutboxEvent(id: string): OutboxEvent | null {
+      const row = database.prepare("SELECT * FROM outbox_events WHERE id = ?").get(id) as OutboxEventRow | undefined;
+      return row ? mapOutboxEvent(row) : null;
+    },
+
+    markOutboxEventDelivered(id: string, deliveredAt: string): void {
+      database
+        .prepare("UPDATE outbox_events SET delivered_at = ?, claimed_by = NULL, claim_expires_at = NULL, attempts = attempts + 1 WHERE id = ?")
+        .run(deliveredAt, id);
+    },
+
+    rescheduleOutboxEvent(id: string, nextAttemptAt: string, error: string): void {
+      database
+        .prepare(
+          `UPDATE outbox_events
+           SET attempts = attempts + 1, next_attempt_at = ?, last_error = ?, claimed_by = NULL, claim_expires_at = NULL
+           WHERE id = ?`,
+        )
+        .run(nextAttemptAt, error, id);
+    },
+
+    markOutboxEventDeadLettered(id: string, at: string, error: string): void {
+      database
+        .prepare(
+          `UPDATE outbox_events
+           SET attempts = attempts + 1, dead_lettered_at = ?, last_error = ?, claimed_by = NULL, claim_expires_at = NULL
+           WHERE id = ?`,
+        )
+        .run(at, error, id);
+    },
+
+    /** Put a dead-lettered event back in the queue, for an operator replaying after a fix. */
+    replayDeadLetteredOutboxEvent(id: string, at: string): boolean {
+      const result = database
+        .prepare(
+          `UPDATE outbox_events
+           SET dead_lettered_at = NULL, attempts = 0, next_attempt_at = ?, last_error = NULL
+           WHERE id = ? AND dead_lettered_at IS NOT NULL`,
+        )
+        .run(at, id);
+      return Number(result.changes) > 0;
+    },
+
+    listOutboxEvents(filter: { companyId?: string; pendingOnly?: boolean } = {}): OutboxEvent[] {
+      const clauses: string[] = [];
+      const values: string[] = [];
+      if (filter.companyId) {
+        clauses.push("company_id = ?");
+        values.push(filter.companyId);
+      }
+      if (filter.pendingOnly) {
+        clauses.push("delivered_at IS NULL AND dead_lettered_at IS NULL");
+      }
+      const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+      const rows = database
+        .prepare(`SELECT * FROM outbox_events ${where} ORDER BY created_at ASC, rowid ASC`)
+        .all(...values) as OutboxEventRow[];
+      return rows.map(mapOutboxEvent);
+    },
+
+    /**
+     * Record a recovery decision, or report that this source event already has one.
+     *
+     * Uniqueness on `source_event_id` is what makes at-least-once delivery safe: the same failure
+     * delivered twice produces one decision and at most one replacement execution.
+     */
+    createRecoveryDecision(decision: {
+      id: string;
+      sourceEventId: string;
+      companyId: string;
+      taskId: string | null;
+      decision: string;
+      reason: string;
+      createdAt: string;
+    }): boolean {
+      const result = database
+        .prepare(
+          `INSERT INTO recovery_decisions (id, source_event_id, company_id, task_id, decision, reason, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(source_event_id) DO NOTHING`,
+        )
+        .run(
+          decision.id, decision.sourceEventId, decision.companyId,
+          decision.taskId, decision.decision, decision.reason, decision.createdAt,
+        );
+      return Boolean(result.changes);
+    },
+
+    getRecoveryDecision(sourceEventId: string): { decision: string; reason: string } | null {
+      const row = database.prepare("SELECT decision, reason FROM recovery_decisions WHERE source_event_id = ?")
+        .get(sourceEventId) as { decision: string; reason: string } | undefined;
+      return row ?? null;
+    },
+
+    listRecoveryDecisions(companyId?: string): Array<{
+      id: string;
+      sourceEventId: string;
+      companyId: string;
+      taskId: string | null;
+      decision: string;
+      reason: string;
+      createdAt: string;
+    }> {
+      const rows = (companyId
+        ? database.prepare("SELECT * FROM recovery_decisions WHERE company_id = ? ORDER BY created_at ASC").all(companyId)
+        : database.prepare("SELECT * FROM recovery_decisions ORDER BY created_at ASC").all()) as Array<{
+        id: string; source_event_id: string; company_id: string;
+        task_id: string | null; decision: string; reason: string; created_at: string;
+      }>;
+      return rows.map((row) => ({
+        id: row.id,
+        sourceEventId: row.source_event_id,
+        companyId: row.company_id,
+        taskId: row.task_id,
+        decision: row.decision,
+        reason: row.reason,
+        createdAt: row.created_at,
+      }));
     },
 
     countAgentRunsForTask(taskId: string): number {
@@ -1215,6 +1820,7 @@ export function createRepositories(database: DatabaseClient) {
       // for diagnosis (ADR 0002) rather than deleted when the count is reset. A run that stopped
       // because the agent's account was out of quota is not an attempt at the work: counting it
       // would spend the recovery ceiling on an outage the task had no part in (ADR 0032).
+      // Budget stops likewise wait for explicit authorization; their runtime is still charged.
       const marker = database
         .prepare("SELECT value FROM runtime_state WHERE key = ?")
         .get(taskAttemptsResetKey(taskId)) as { value: string } | undefined;
@@ -1224,7 +1830,7 @@ export function createRepositories(database: DatabaseClient) {
               .prepare(
                 `SELECT COUNT(*) AS count FROM agent_runs
                  WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')
-                   AND (failure_reason IS NULL OR failure_reason <> 'agent_quota_exhausted')
+                   AND (failure_reason IS NULL OR failure_reason NOT IN ('agent_quota_exhausted', 'phase_budget_exhausted', 'run_budget_exhausted', 'task_budget_exhausted'))
                    AND (started_at IS NULL OR started_at > ?)`,
               )
               .get(taskId, marker.value)
@@ -1232,7 +1838,7 @@ export function createRepositories(database: DatabaseClient) {
               .prepare(
                 `SELECT COUNT(*) AS count FROM agent_runs
                  WHERE task_id = ? AND status NOT IN ('complete', 'cancelled')
-                   AND (failure_reason IS NULL OR failure_reason <> 'agent_quota_exhausted')`,
+                   AND (failure_reason IS NULL OR failure_reason NOT IN ('agent_quota_exhausted', 'phase_budget_exhausted', 'run_budget_exhausted', 'task_budget_exhausted'))`,
               )
               .get(taskId)
       ) as { count: number };
@@ -1355,6 +1961,11 @@ export function createRepositories(database: DatabaseClient) {
            ON CONFLICT(key) DO NOTHING`,
         )
         .run(finalFounderReportUpgradeKey(companyId), at);
+    },
+
+    listRunningAgentRunsForOwner(ownerId: string): AgentRun[] {
+      return (database.prepare("SELECT * FROM agent_runs WHERE status = 'running' AND owner_id = ? ORDER BY id")
+        .all(ownerId) as AgentRunRow[]).map(mapAgentRun);
     },
 
     listRunningAgentRuns(companyId: string): AgentRun[] {
@@ -1668,10 +2279,51 @@ function mapVerificationRework(row: VerificationReworkRow): VerificationRework {
   };
 }
 
+type OutboxEventRow = {
+  id: string;
+  version: number;
+  type: string;
+  company_id: string;
+  task_id: string | null;
+  run_id: string | null;
+  payload: string;
+  created_at: string;
+  attempts: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+  delivered_at: string | null;
+  dead_lettered_at: string | null;
+};
+
+type RunInvocationRow = {
+  id: string;
+  run_id: string;
+  phase: string;
+  started_at: string;
+  ended_at: string | null;
+  end_reason: string | null;
+};
+
+type RunActivityRow = {
+  id: string;
+  run_id: string;
+  invocation_id: string;
+  seq: number;
+  window_started_at: string;
+  observed_at: string;
+  phase: string;
+  channel: string;
+  bytes: number;
+  max_gap_ms: number | null;
+};
+
 type TaskLockRow = {
   task_id: string;
   owner_id: string;
   acquired_at: string;
+  run_id: string | null;
+  lease_expires_at: string | null;
+  owner_epoch: number | null;
 };
 
 type AgentRunRow = {
@@ -1687,6 +2339,7 @@ type AgentRunRow = {
   effective_timeout_ms: number | null;
   failure_reason: AgentFailureReason | null;
   failure_message: string | null;
+  owner_epoch: number | null;
 };
 
 type ReviewRow = {
@@ -2083,6 +2736,24 @@ function mapBusinessArtifact(row: BusinessArtifactRow): BusinessArtifact {
   };
 }
 
+function mapOutboxEvent(row: OutboxEventRow): OutboxEvent {
+  return {
+    id: row.id,
+    version: row.version,
+    type: row.type as OutboxEvent["type"],
+    companyId: row.company_id,
+    taskId: row.task_id,
+    runId: row.run_id,
+    payload: JSON.parse(row.payload) as OutboxEvent["payload"],
+    createdAt: row.created_at,
+    attempts: row.attempts,
+    nextAttemptAt: row.next_attempt_at,
+    lastError: row.last_error,
+    deliveredAt: row.delivered_at,
+    deadLetteredAt: row.dead_lettered_at,
+  };
+}
+
 function mapAgentRun(row: AgentRunRow): AgentRun {
   return {
     id: row.id,
@@ -2097,6 +2768,7 @@ function mapAgentRun(row: AgentRunRow): AgentRun {
     effectiveTimeoutMs: row.effective_timeout_ms,
     failureReason: row.failure_reason,
     failureMessage: row.failure_message,
+    ownerEpoch: row.owner_epoch,
   };
 }
 

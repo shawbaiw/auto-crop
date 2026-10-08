@@ -10,9 +10,12 @@ import { createRepositories, type ReviewRecord } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { acceptTaskBusinessArtifact } from "../runtime/businessAcceptance";
+import { reconcileStaleRunningTasks } from "../runtime/taskRecovery";
 import { finalizeDelivery } from "../runtime/deliveryFinalization";
 import { resolveDependencyReadiness } from "../runtime/dependencyReadiness";
 import { applyTaskTransition } from "../runtime/taskTransition";
+import { resolveTaskAffordanceState } from "../runtime/taskAffordances";
+import { recordExecutionEvent } from "../runtime/executionEvents";
 import { createApiServer, type SchedulerWakeReason } from "./routes";
 
 const createdDirs: string[] = [];
@@ -803,7 +806,13 @@ describe("API routes", () => {
     await fixture.close();
   });
 
-  it("reconciles stale running tasks when reading company state", async () => {
+  /**
+   * Reading company state used to run the stale-run reconcile, so opening the dashboard could declare
+   * a run timed out, park its task on a Hold and release its lock — while the dispatch was still
+   * settling. Whether a run had finished depended on who had a tab open. Judging execution belongs to
+   * the scheduler tick and to an explicit recover; a read only reports (execution-health P2b).
+   */
+  it("does not judge a stale execution when reading company state", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
@@ -837,10 +846,167 @@ describe("API routes", () => {
       activity: Array<{ type: string; taskId?: string; failureReason?: string }>;
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/state`);
 
-    expect(state.tasks).toContainEqual(expect.objectContaining({ id: task.id, status: "failed", failureReason: "timeout" }));
-    expect(state.activity).toContainEqual(expect.objectContaining({ type: "task_failed", taskId: task.id, failureReason: "timeout" }));
+    // The read reports the task as it found it…
+    expect(state.tasks).toContainEqual(expect.objectContaining({ id: task.id, status: "running" }));
+    expect(state.activity).not.toContainEqual(expect.objectContaining({ type: "task_failed", taskId: task.id }));
+    // …and changed nothing: the run still stands, and its lock is still held.
+    expect(fixture.repositories.listRunningAgentRuns(created.company.id)).toHaveLength(1);
+    expect(fixture.repositories.listTaskLocks()).toHaveLength(1);
+
+    // The scheduler, which owns dispatch, is what settles it.
+    reconcileStaleRunningTasks({ repositories: fixture.repositories, companyId: created.company.id });
+    expect(fixture.repositories.getTask(task.id)).toMatchObject({ status: "failed", latestFailureReason: "timeout" });
     expect(fixture.repositories.listTaskLocks()).toEqual([]);
 
+    await fixture.close();
+  });
+
+  /**
+   * The exit from an isolated workspace, end to end (execution-health P2c).
+   *
+   * A run that was signalled to stop and never seen to exit leaves its directory claimed, and the
+   * task offers no recovery — re-running there is the unsafe answer. Only a person can look and say
+   * the process is gone, so this route exists and has to actually release the claim.
+   */
+  it("releases an isolated workspace when the founder confirms the process stopped", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
+    const workspacePath = "/workspaces/isolated-task";
+    fixture.repositories.acquireWorkspaceClaim({
+      workspacePath, taskId: task.id, runId: "agent_run_1", ownerId: "worker_a", ownerEpoch: 1,
+      acquiredAt: "2026-08-17T12:00:00.000Z", leaseExpiresAt: "2026-08-17T12:01:00.000Z",
+      now: "2026-08-17T12:00:00.000Z",
+    });
+    fixture.repositories.isolateWorkspaceClaim(workspacePath, "agent_run_1", "never seen to exit");
+    applyTaskTransition({
+      repositories: fixture.repositories,
+      task: fixture.repositories.getTask(task.id)!,
+      status: "blocked",
+      executionSummary: { latestFailureReason: "termination_unconfirmed", latestFailureMessage: "never seen to exit" },
+      hold: {
+        kind: "termination_unconfirmed", resolver: "founder",
+        subjectKind: "agent_run", subjectId: "agent_run_1", reason: "never seen to exit",
+      },
+    });
+
+    // The task is offered the attestation, and deliberately not recovery.
+    const before = resolveTaskAffordanceState(fixture.repositories, fixture.repositories.getTask(task.id)!);
+    expect(before.affordances.map((affordance) => affordance.kind)).toContain("confirm_termination");
+    expect(before.affordances.map((affordance) => affordance.kind)).not.toContain("recover_task");
+
+    const confirmed = await postJson<{ releasedWorkspaces: string[] }>(
+      `${fixture.baseUrl}/api/tasks/${task.id}/confirm-termination`,
+      {},
+    );
+
+    expect(confirmed.releasedWorkspaces).toEqual([workspacePath]);
+    expect(fixture.repositories.listWorkspaceClaims()).toEqual([]);
+    // It is not silently re-queued: the run still stopped without finishing, so the task keeps a Hold
+    // that offers the ordinary way back.
+    const after = fixture.repositories.getTask(task.id)!;
+    expect(fixture.repositories.listOpenTaskHolds(task.id).map((hold) => hold.kind)).toEqual(["runtime_interrupted"]);
+    expect(resolveTaskAffordanceState(fixture.repositories, after).affordances.map((affordance) => affordance.kind))
+      .toContain("recover_task");
+
+    await fixture.close();
+  });
+
+  it("refuses a termination confirmation for a task that is not waiting on one", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
+
+    const response = await fetch(`${fixture.baseUrl}/api/tasks/${task.id}/confirm-termination`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(409);
+    await fixture.close();
+  });
+
+  /**
+   * The operational view of delivery (execution-health P3). An operator has to be able to see a queue
+   * that is stuck and a consumer that is refusing, without reading the founder's dashboard.
+   */
+  it("reports execution events, their delivery state, and the decisions made from them", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    const task = activatedTasks(fixture, created.company.id, 1)[0]!;
+    recordExecutionEvent(fixture.repositories, {
+      id: "outbox_event_1",
+      type: "execution_failed",
+      companyId: created.company.id,
+      taskId: task.id,
+      runId: "agent_run_1",
+      reason: "agent_failed",
+      observedAt: "2026-09-21T00:00:00.000Z",
+    });
+    fixture.repositories.markOutboxEventDeadLettered("outbox_event_1", "2026-09-21T00:05:00.000Z", "webhook offline");
+
+    const before = await getJson<{ pending: number; deadLettered: number; events: Array<{ id: string; lastError: string }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/execution-events`,
+    );
+    expect(before).toMatchObject({ pending: 0, deadLettered: 1 });
+    expect(before.events[0]).toMatchObject({ id: "outbox_event_1", lastError: "webhook offline" });
+
+    // A dead letter is kept so it can be replayed once the consumer is fixed, not dropped.
+    await postJson(`${fixture.baseUrl}/api/execution-events/outbox_event_1/replay`, {});
+    const after = await getJson<{ pending: number; deadLettered: number }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/execution-events`,
+    );
+    expect(after).toMatchObject({ pending: 1, deadLettered: 0 });
+
+    await fixture.close();
+  });
+
+  it("refuses to replay an event that was never dead-lettered", async () => {
+    const fixture = await startFixtureServer();
+    const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
+      companyName: "Pricing Page Studio",
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      locale: "en",
+      selectedCeoAgentId: "codex",
+      permissionMode: "balanced",
+      assets: [],
+    });
+    recordExecutionEvent(fixture.repositories, {
+      id: "outbox_event_1",
+      type: "execution_failed",
+      companyId: created.company.id,
+      observedAt: "2026-09-21T00:00:00.000Z",
+    });
+
+    const response = await fetch(`${fixture.baseUrl}/api/execution-events/outbox_event_1/replay`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(409);
     await fixture.close();
   });
 

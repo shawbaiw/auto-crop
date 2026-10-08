@@ -1,3 +1,8 @@
+import { executionOverview } from "../runtime/executionOverview";
+import { requestBudgetStop } from "../runtime/budgetStop";
+import { defaultExecutionRegistry } from "../runtime/executionControl";
+import { isBudgetExhaustion } from "../runtime/budgetPolicy";
+import { assertOrdinaryRecoveryAllowed, authorizeExecutionBudget, BudgetAuthorizationError } from "../runtime/budgetAuthorization";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type {
   BusinessArtifact,
@@ -46,7 +51,7 @@ import {
 import { triggerKillSwitch } from "../runtime/killSwitch";
 import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
 import { reconcileReviewTasksForAutomaticAcceptance } from "../runtime/reviewReconciliation";
-import { reconcileStaleRunningTasks, recoverTask } from "../runtime/taskRecovery";
+import { recoverTask } from "../runtime/taskRecovery";
 import {
   checkTaskAffordance,
   resolveTaskAffordanceState,
@@ -74,7 +79,7 @@ export type ApiServerOptions = {
   requestSchedulerWake?: (reason: SchedulerWakeReason) => void;
 };
 
-export type SchedulerWakeReason = "dependency_cascade_queued" | "parent_aggregation_queued";
+export type SchedulerWakeReason = "dependency_cascade_queued" | "parent_aggregation_queued" | "budget_authorized";
 const creationAttemptTimeoutMs = 10 * 60 * 1000;
 const creationAttemptGraceMs = 30 * 1000;
 
@@ -328,6 +333,63 @@ async function routeRequest(
     return;
   }
 
+  /**
+   * What the runtime has decided about executions, and what is still waiting to be delivered.
+   *
+   * Read-only, and deliberately separate from company state: this is operational, not business. An
+   * operator needs to see a stuck queue and a dead letter without reading the founder's dashboard,
+   * and a founder's dashboard should not grow a queue depth.
+   */
+  const executionEventsMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/execution-events$/);
+  if (method === "GET" && executionEventsMatch) {
+    const companyId = executionEventsMatch[1];
+    if (!options.repositories.getCompany(companyId)) {
+      sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      return;
+    }
+    const events = options.repositories.listOutboxEvents({ companyId });
+    sendJson(response, 200, {
+      events: events.map((event) => ({
+        id: event.id,
+        type: event.type,
+        taskId: event.taskId,
+        runId: event.runId,
+        createdAt: event.createdAt,
+        attempts: event.attempts,
+        nextAttemptAt: event.nextAttemptAt,
+        lastError: event.lastError,
+        deliveredAt: event.deliveredAt,
+        deadLetteredAt: event.deadLetteredAt,
+        // The payload's own summary, not the run's output: full logs stay behind the log path.
+        reason: event.payload.reason,
+        phase: event.payload.phase,
+      })),
+      pending: events.filter((event) => !event.deliveredAt && !event.deadLetteredAt).length,
+      deadLettered: events.filter((event) => event.deadLetteredAt).length,
+      decisions: options.repositories.listRecoveryDecisions(companyId),
+      recoveries: options.repositories.executionRecovery.list(companyId).map(({ manifest: _manifest, ...entry }) => entry),
+    });
+    return;
+  }
+
+  /** Put a dead-lettered event back in the queue, once whatever refused it has been fixed. */
+  const replayEventMatch = url.pathname.match(/^\/api\/execution-events\/([^/]+)\/replay$/);
+  if (method === "POST" && replayEventMatch) {
+    const eventId = replayEventMatch[1];
+    const event = options.repositories.getOutboxEvent(eventId);
+    if (!event) {
+      sendJson(response, 404, { error: `Execution event not found: ${eventId}` });
+      return;
+    }
+    const now = (options.now ?? (() => new Date()))().toISOString();
+    if (!options.repositories.replayDeadLetteredOutboxEvent(eventId, now)) {
+      sendJson(response, 409, { error: "Only a dead-lettered event can be replayed." });
+      return;
+    }
+    sendJson(response, 200, { event: { id: eventId, nextAttemptAt: now } });
+    return;
+  }
+
   const stateMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/state$/);
   if (method === "GET" && stateMatch) {
     const companyId = stateMatch[1];
@@ -544,6 +606,14 @@ async function routeRequest(
     return;
   }
 
+  const executionMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/execution$/);
+  if (method === "GET" && executionMatch) {
+    const task = options.repositories.getTask(executionMatch[1]);
+    if (!task) { sendJson(response, 404, { error: "Task not found" }); return; }
+    sendJson(response, 200, { task: summarizeTask(task, options.repositories.listTaskDependencies(task.id).map(d => d.dependsOnTaskId), options.repositories) });
+    return;
+  }
+
   const cancelMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
   if (method === "POST" && cancelMatch) {
     const task = options.repositories.getTask(cancelMatch[1]);
@@ -561,20 +631,115 @@ async function routeRequest(
       return;
     }
 
-    const cancelled = applyTaskTransition({
-      repositories: options.repositories,
-      task,
-      status: "cancelled",
-      resolution: "cancelled",
-      now: options.now,
-      createId: options.createId,
+    const cancelled = options.repositories.transaction(() => {
+      options.repositories.executionBudget.lockAuthorization(task.id);
+      const current = options.repositories.getTask(task.id);
+      if (!current || !checkTaskAffordance(options.repositories, current, "cancel_task").ok) return null;
+      for (const run of options.repositories.listRunningAgentRuns(task.companyId).filter(run => run.taskId === task.id)) {
+        const budget = options.repositories.executionBudget.getRun(run.id);
+        if (budget) { requestBudgetStop({ repositories: options.repositories, runId: run.id, reason: "cancelled",
+          phase: options.repositories.getAgentRunObservation(run.id)?.phase ?? "unknown",
+          at: (options.now?.() ?? new Date()).toISOString(), usedMs: budget.consumed_ms });
+          options.repositories.executionBudget.requestCancellation(run.id);
+        }
+      }
+      return applyTaskTransition({
+        repositories: options.repositories,
+        task,
+        status: "cancelled",
+        resolution: "cancelled",
+        now: options.now,
+        createId: options.createId,
+      });
     });
+    if (!cancelled) { sendJson(response, 409, { error: "Task changed before cancellation; refresh the task." }); return; }
+    defaultExecutionRegistry.requestStop(task.id, "cancelled");
     sendJson(response, 200, {
       task: summarizeTask(
         cancelled.task,
         options.repositories.listTaskDependencies(task.id).map((dependency) => dependency.dependsOnTaskId),
         options.repositories,
       ),
+    });
+    return;
+  }
+
+  /**
+   * The founder attests that the process holding this task's workspace is gone.
+   *
+   * The runtime asked a run to stop and never saw it exit, so the directory stayed claimed and the
+   * task was parked: re-running it there is the one thing that must not happen while something may
+   * still be writing. Only a person can settle that, because only a person can look. Confirming
+   * releases the isolation and parks the task on an ordinary interrupted-run Hold, which does offer
+   * recovery.
+   */
+  const confirmTerminationMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/confirm-termination$/);
+  if (method === "POST" && confirmTerminationMatch) {
+    const task = options.repositories.getTask(confirmTerminationMatch[1]);
+    if (!task) {
+      sendJson(response, 404, { error: `Task not found: ${confirmTerminationMatch[1]}` });
+      return;
+    }
+
+    const confirmable = checkTaskAffordance(options.repositories, task, "confirm_termination");
+    if (!confirmable.ok) {
+      sendJson(response, 409, {
+        error: "Task is not waiting on a termination confirmation.",
+        ...staleAffordanceBody(task, confirmable.state, options.repositories),
+      });
+      return;
+    }
+
+    const releasedWorkspaces = options.repositories.transaction(() => {
+      options.repositories.executionBudget.lockAuthorization(task.id);
+      const hold = findOpenTaskHold(options.repositories, task.id, "termination_unconfirmed");
+      if (!hold) return null;
+      const releasedWorkspaces = options.repositories.releaseIsolatedWorkspaceClaims(task.id);
+
+      const taskBudget = options.repositories.executionBudget.getTask(task.id);
+      const stop = hold?.subjectId ? options.repositories.executionBudget.stopRequest(hold.subjectId) : undefined;
+      if (hold.subjectId) options.repositories.executionBudget.confirmTermination(hold.subjectId, (options.now?.() ?? new Date()).toISOString());
+      const wasCancelled = Boolean(stop?.cancel_requested);
+      const needsBudgetAuthorization = !wasCancelled && taskBudget && (taskBudget.authorizedMs <= taskBudget.consumedMs + taskBudget.reservedMs || isBudgetExhaustion(stop?.reason));
+      const message = wasCancelled ? `Termination confirmed for ${task.title}; the task remains cancelled.` : needsBudgetAuthorization
+        ? `Termination confirmed for ${task.title}; its workspace is released, but execution still requires budget authorization.`
+        : `Termination confirmed for ${task.title}; its workspace is released and it can run again.`;
+      if (hold) {
+        applyTaskTransition({
+          repositories: options.repositories,
+          task,
+          status: wasCancelled ? "cancelled" : "failed",
+          executionSummary: {
+            latestFailureReason: wasCancelled ? "cancelled" : needsBudgetAuthorization ? "task_budget_exhausted" : "worker_lost",
+            latestFailureMessage: message,
+          },
+          // It is no longer unconfirmed, but the run still stopped without finishing, so the task keeps
+          // a Hold that offers the ordinary way back rather than silently re-queuing work whose state
+          // nobody has looked at.
+          hold: {
+            kind: needsBudgetAuthorization ? "execution_budget_exhausted" : "runtime_interrupted",
+            resolver: needsBudgetAuthorization ? "founder" : "runtime",
+            subjectKind: "agent_run",
+            subjectId: hold.subjectId ?? task.id,
+            reason: message,
+          },
+          resolvesHoldIds: [hold.id],
+          now: options.now,
+          createId: options.createId,
+        });
+      }
+      return releasedWorkspaces;
+    });
+    if (releasedWorkspaces === null) { sendJson(response, 409, { error: "Termination Hold changed; refresh the task." }); return; }
+
+    const confirmed = options.repositories.getTask(task.id) ?? task;
+    sendJson(response, 200, {
+      task: summarizeTask(
+        confirmed,
+        options.repositories.listTaskDependencies(task.id).map((dependency) => dependency.dependsOnTaskId),
+        options.repositories,
+      ),
+      releasedWorkspaces,
     });
     return;
   }
@@ -630,6 +795,26 @@ async function routeRequest(
     return;
   }
 
+  const budgetAuthorizationMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/execution-budget$/);
+  if (method === "POST" && budgetAuthorizationMatch) {
+    if (!options.repositories.getTask(budgetAuthorizationMatch[1])) {
+      sendJson(response, 404, { error: "Task not found" }); return;
+    }
+    try {
+      const body = await readJson<{ id: string; additionalMs: number; reason: string; expectedAuthorizedMs: number }>(request);
+      if (!body || typeof body !== "object") throw new BudgetAuthorizationError("Expected an authorization object", 400);
+      const result = authorizeExecutionBudget({ ...body, taskId: budgetAuthorizationMatch[1], repositories: options.repositories,
+        now: options.now, createId: options.createId });
+      if (!result.replayed) options.requestSchedulerWake?.("budget_authorized");
+      sendJson(response, 200, { ...result, task: summarizeTask(result.task, options.repositories.listTaskDependencies(result.task.id).map(d => d.dependsOnTaskId), options.repositories), budget: options.repositories.executionBudget.getTask(result.task.id) });
+    } catch (error) {
+      if (error instanceof SyntaxError) { sendJson(response, 400, { error: "Invalid authorization JSON" }); return; }
+      if (!(error instanceof BudgetAuthorizationError)) throw error;
+      sendJson(response, error.status, { error: error.message });
+    }
+    return;
+  }
+
   const recoverTaskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/recover$/);
   if (method === "POST" && recoverTaskMatch) {
     const recoverTarget = options.repositories.getTask(recoverTaskMatch[1]);
@@ -645,6 +830,12 @@ async function routeRequest(
         ...staleAffordanceBody(recoverTarget, recoverable.state, options.repositories),
       });
       return;
+    }
+
+    try { assertOrdinaryRecoveryAllowed(options.repositories, recoverTarget.id); }
+    catch (error) {
+      if (!(error instanceof BudgetAuthorizationError)) throw error;
+      sendJson(response, error.status, { error: error.message }); return;
     }
 
     const result = recoverTask({
@@ -860,7 +1051,6 @@ async function routeRequest(
       companyId: body.companyId,
       repositories: options.repositories,
       now: options.now,
-      cancelActiveRun: () => undefined,
       stopCompanySessions: (companyId, reason) => defaultAgentSessionManager.stopCompanySessions(companyId, reason),
     });
     sendJson(response, 200, {
@@ -880,12 +1070,16 @@ function buildCompanyState(
   options?: { now?: () => Date; createId?: (prefix: string) => string; requestSchedulerWake?: (reason: SchedulerWakeReason) => void },
 ) {
   const currentCompany = reconcileStaleCompanyCreation(company, repositories, options) ?? company;
-  reconcileStaleRunningTasks({
-    repositories,
-    companyId: currentCompany.id,
-    now: options?.now,
-    createId: options?.createId,
-  });
+  // Reading company state does not decide that an execution is dead.
+  //
+  // It used to: every read ran the stale-run reconcile, so opening the dashboard could declare a run
+  // timed out, park its task on a Hold and release its lock — while the dispatch was still settling.
+  // Whether a run is finished was therefore a function of who had a browser tab open. Judging
+  // execution belongs to the scheduler tick, which owns dispatch and runs on its own clock, and to
+  // `recoverTask`, where a person has asked for it.
+  //
+  // The repairs below stay: none of them judges an execution. They repair state the runtime already
+  // settled, which is safe to do on a read and pointless to defer.
   // One-time migration pass (ADR 0017 §Migration): the first company-state read after this company
   // gets the deterministic model accepts the `review` tasks it would have accepted; a per-company
   // marker makes every later read a no-op. Its events are read back below with the rest of company
@@ -2442,6 +2636,7 @@ function summarizeTask(
   const { holds, affordances } = resolveTaskAffordanceState(repositories, task);
 
   return {
+    execution: executionOverview(repositories, task.id),
     holds: holds.map(summarizeTaskHold),
     affordances,
     id: task.id,

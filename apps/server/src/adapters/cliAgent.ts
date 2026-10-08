@@ -15,7 +15,7 @@ import {
   type LaunchPlan,
   type ReadCliHelp,
 } from "./launchPolicy";
-import type { AgentAdapter, AgentRunRequest, AgentRunResult, AgentSessionProbeResult } from "./types";
+import type { AgentAdapter, AgentRunRequest, AgentRunResult, AgentSessionProbeResult, RunObservationSink } from "./types";
 
 export type CommandValues = {
   prompt: string;
@@ -158,6 +158,10 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
           timeoutMs: resolveTimeoutMs(request.timeoutMs, options.timeoutMs),
           log: options.log,
           agentName: options.name,
+          observe: request.observe,
+          signal: request.signal,
+          graceMs: request.graceMs,
+          confirmMs: request.confirmMs,
         });
         options.log?.(`Agent ${options.name} finished task ${request.taskId} with status ${result.status}`);
         return result;
@@ -394,53 +398,199 @@ function resolveTimeoutMs(requestTimeoutMs: number | undefined, optionTimeoutMs:
   return requestTimeoutMs ?? optionTimeoutMs ?? 120_000;
 }
 
+/**
+ * How long a process gets to exit on its own after being asked, before the group is killed.
+ *
+ * Long enough for an agent CLI to finish the syscall it is in and flush what it has written; short
+ * enough that a stop request is not indistinguishable from a hang.
+ */
+export const TERMINATION_GRACE_MS = 10_000;
+
+/** How long after SIGKILL the runtime waits for proof the process is actually gone. */
+export const TERMINATION_CONFIRM_MS = 5_000;
+
+/**
+ * Stop a running agent and say what is actually known about whether it stopped.
+ *
+ * `stopped` means the process group exited and was reaped. `unconfirmed` means it did not, within the
+ * confirmation window, after SIGKILL — the runtime cannot prove the process is gone, which matters
+ * because it may still be writing to the workspace. Nothing downstream may treat `unconfirmed` as
+ * "terminated": the plan's containment rule is that an unproven termination isolates rather than
+ * re-runs (execution-health §7).
+ */
+export type TerminationOutcome = "stopped" | "unconfirmed";
+
 function runCommand(
   command: string,
   args: string[],
   cwd: string,
-  options: { timeoutMs: number; log?: (line: string) => void; agentName: string },
+  options: {
+    timeoutMs: number;
+    log?: (line: string) => void;
+    agentName: string;
+    observe?: RunObservationSink;
+    signal?: AbortSignal;
+    graceMs?: number;
+    confirmMs?: number;
+  },
 ): Promise<AgentRunResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, so stopping the agent stops what the agent started. An agent CLI
+      // spawns compilers, test runners and servers; signalling only the process we hold leaves those
+      // behind, still holding the workspace this task is about to be retried in.
+      detached: canGroupSignal,
     });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let settled = false;
-    const timeout = setTimeout(() => {
+    let exited = false;
+    let terminationOutcome: TerminationOutcome | null = null;
+    let stopping: { reason: "timeout" | "cancelled"; message: string } | null = null;
+    const pending: Array<ReturnType<typeof setTimeout>> = [];
+    const later = (fn: () => void, ms: number) => {
+      const timer = setTimeout(fn, ms);
+      timer.unref?.();
+      pending.push(timer);
+      return timer;
+    };
+    const clearPending = () => {
+      for (const timer of pending.splice(0)) {
+        clearTimeout(timer);
+      }
+    };
+
+    /**
+     * Signal the child's process group, or the child alone where groups are unavailable.
+     *
+     * Guarded on the child not having exited: after a process is reaped its pid can be reused, and
+     * signalling a reused pid kills something that has nothing to do with this run.
+     */
+    const signalTree = (signal: NodeJS.Signals): void => {
+      if (exited || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
+        return;
+      }
+      try {
+        if (canGroupSignal) {
+          process.kill(-child.pid, signal);
+        } else {
+          child.kill(signal);
+        }
+      } catch {
+        // ESRCH: it is already gone, which is the outcome we wanted.
+      }
+    };
+
+    /** Ask, then insist, then report honestly about what could not be confirmed. */
+    const terminate = (): void => {
+      signalTree("SIGTERM");
+      later(() => {
+        if (exited) {
+          return;
+        }
+        signalTree("SIGKILL");
+        later(() => {
+          if (!exited) {
+            terminationOutcome = "unconfirmed";
+            options.log?.(
+              `Agent ${options.agentName} did not exit after SIGKILL; termination is unconfirmed.`,
+            );
+          }
+        }, options.confirmMs ?? TERMINATION_CONFIRM_MS);
+      }, options.graceMs ?? TERMINATION_GRACE_MS);
+    };
+
+    const finish = (result: AgentRunResult): void => {
       if (settled) {
         return;
       }
       settled = true;
-      child.kill("SIGTERM");
+      clearPending();
+      options.signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+
+    /**
+     * Settle a stop once the process is known to be gone, or once we have to admit it is not.
+     *
+     * A stop that resolves the moment the signal is sent reports a process as finished while it is
+     * still running — which is how a second execution used to start in a directory the first one was
+     * still writing to.
+     */
+    const settleStop = (reason: "timeout" | "cancelled", message: string): void => {
+      if (stopping) {
+        return;
+      }
+      // From here the run's outcome is the stop, not whatever exit code the process produces on its
+      // way out: a process killed for running too long exits non-zero, and reporting that as the
+      // agent having failed loses the only fact that mattered.
+      stopping = { reason, message };
+      terminate();
+      // Resolve when it exits; otherwise when the confirmation window has run out, reporting the
+      // termination as unconfirmed rather than pretending it landed.
+      later(reportStop, (options.graceMs ?? TERMINATION_GRACE_MS) + (options.confirmMs ?? TERMINATION_CONFIRM_MS) + 50);
+    };
+
+    function reportStop(): void {
+      if (!stopping) {
+        return;
+      }
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
-      options.log?.(`Agent ${options.agentName} timed out after ${options.timeoutMs}ms.`);
-      resolve({
+      const confirmation =
+        terminationOutcome === "unconfirmed"
+          ? "The process did not exit after SIGKILL; termination is unconfirmed."
+          : null;
+      finish({
         status: "failed",
         exitCode: null,
         stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-        stderr: [stderr, `Agent command timed out after ${options.timeoutMs}ms.`].filter(Boolean).join("\n"),
-        failureReason: "timeout",
+        stderr: [stderr, stopping.message, confirmation].filter(Boolean).join("\n"),
+        failureReason: stopping.reason === "timeout" ? "timeout" : "cancelled",
+        terminationConfirmed: terminationOutcome !== "unconfirmed",
       });
+    }
+
+    function onAbort(): void {
+      if (settled) {
+        return;
+      }
+      options.log?.(`Agent ${options.agentName} was asked to stop.`);
+      settleStop("cancelled", "The agent was stopped by the runtime.");
+    }
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
+    later(() => {
+      if (settled) {
+        return;
+      }
+      options.log?.(`Agent ${options.agentName} timed out after ${options.timeoutMs}ms.`);
+      settleStop("timeout", `Agent command timed out after ${options.timeoutMs}ms.`);
     }, options.timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
+      // Report that bytes moved, not what they were: the log already holds the text.
+      options.observe?.output("stdout", chunk.length);
       options.log?.(`Agent ${options.agentName} stdout: ${chunk.toString("utf8").trimEnd()}`);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderrChunks.push(chunk);
+      options.observe?.output("stderr", chunk.length);
       options.log?.(`Agent ${options.agentName} stderr: ${chunk.toString("utf8").trimEnd()}`);
     });
     child.on("error", (error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      resolve({
+      exited = true;
+      finish({
         status: "failed",
         exitCode: null,
         stdout: Buffer.concat(stdoutChunks).toString("utf8"),
@@ -449,15 +599,24 @@ function runCommand(
       });
     });
     child.on("close", (code) => {
-      if (settled) {
+      exited = true;
+      if (stopping) {
+        // It exited because we asked it to. The stop is the outcome.
+        reportStop();
         return;
       }
-      settled = true;
-      clearTimeout(timeout);
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
-      resolve({
+      // A natural exit also needs evidence for automatic recovery. Only an absent POSIX group
+      // proves that no in-group child remains; permission errors and unsupported platforms are unknown.
+      let terminationConfirmed: true | undefined;
+      if (canGroupSignal && child.pid !== undefined) {
+        try { process.kill(-child.pid, 0); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") terminationConfirmed = true; }
+      }
+      finish({
         status: code === 0 ? "complete" : "failed",
+        terminationConfirmed,
         exitCode: code,
         stdout,
         stderr,
@@ -467,6 +626,15 @@ function runCommand(
     });
   });
 }
+
+/**
+ * Whether this platform can signal a whole process group.
+ *
+ * Unix gives a detached child its own group, so one signal reaches everything it started. Windows has
+ * no equivalent here, so termination covers the process we hold and no further — a containment limit
+ * to state plainly rather than a tree we can claim to have stopped.
+ */
+const canGroupSignal = process.platform !== "win32";
 
 /**
  * Whether a CLI stopped because its account is out of quota rather than because the work failed.

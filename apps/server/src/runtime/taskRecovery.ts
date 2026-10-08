@@ -1,3 +1,4 @@
+import { assertOrdinaryRecoveryAllowed } from "./budgetAuthorization";
 import type { Proof, ProofSchema, Task, TaskEvent, TaskProgressEvent } from "@auto-crop/core";
 import { isAffordanceApplicable } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
@@ -6,12 +7,15 @@ import { formatExecutionBudget } from "./executionProfile";
 import { buildProofContractInstructions } from "./proofContract";
 import { recoverProofIfPossible } from "./taskRefresh";
 import { ARTIFACT_SYNTAX_REPAIR_TIMEOUT_MS } from "./artifactSyntaxRepair";
+import { settleAgentRun, settleExecution } from "./executionSettlement";
+import { recordExecutionEvent } from "./executionEvents";
 import { applyTaskTransition } from "./taskTransition";
 
 export type ReconcileStaleRunningTasksInput = {
   repositories: ReturnType<typeof createRepositories>;
   companyId: string;
   now?: () => Date;
+  exitedOwnerIds?: string[];
   createId?: (prefix: string) => string;
 };
 
@@ -50,6 +54,9 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
   const progressEvents: TaskProgressEvent[] = [];
 
   for (const run of input.repositories.listRunningAgentRuns(input.companyId)) {
+    // New-policy runs are fenced by their owner meter and owner-exit reconciliation, never the
+    // legacy deadline plus grace. Missing snapshots throw rather than silently selecting legacy.
+    if (input.repositories.executionBudget.snapshot(run.id)) continue;
     if (!run.startedAt || !run.effectiveTimeoutMs) {
       continue;
     }
@@ -65,77 +72,197 @@ export function reconcileStaleRunningTasks(input: ReconcileStaleRunningTasksInpu
     }
 
     const failureMessage = `Task failed: ${task.title} / timeout after ${formatExecutionBudget(run.effectiveTimeoutMs)}.`;
-    // Claim the run before touching anything else. Losing means the scheduler finished this delivery
-    // while we were deciding it was dead, and then nothing here may run: not the task's status, not
-    // the lock, not the failure event (ADR 0034).
-    if (!input.repositories.updateAgentRunStatus(run.id, "failed", timestamp, {
-      failureReason: "timeout",
-      failureMessage,
-      expectedStatus: "running",
-    })) {
-      continue;
-    }
-    // A run whose deadline passed while nobody was watching is the archetypal passive interruption:
-    // the Hold is what stops it from sitting in `failed` with no offered way back.
-    applyTaskTransition({
-      repositories: input.repositories,
-      task,
-      status: "failed",
-      executionSummary: {
-        latestFailureReason: "timeout",
-        latestFailureMessage: failureMessage,
-        latestExecutionProfileName: run.executionProfileName ?? null,
-        latestRequestedTimeoutMs: run.requestedTimeoutMs ?? null,
-        latestEffectiveTimeoutMs: run.effectiveTimeoutMs,
+    settleAgentRun({
+      repositories: input.repositories, runId: run.id,
+      outcome: { status: "failed", failureReason: "timeout", failureMessage },
+      at: timestamp, createId, expectedTaskStatus: "running",
+      commit: () => {
+        const task = input.repositories.getTask(run.taskId)!;
+        // A run whose deadline passed while nobody was watching is the archetypal passive interruption:
+        // the Hold is what stops it from sitting in `failed` with no offered way back.
+        applyTaskTransition({
+          repositories: input.repositories,
+          task,
+          status: "failed",
+          executionSummary: {
+            latestFailureReason: "timeout",
+            latestFailureMessage: failureMessage,
+            latestExecutionProfileName: run.executionProfileName ?? null,
+            latestRequestedTimeoutMs: run.requestedTimeoutMs ?? null,
+            latestEffectiveTimeoutMs: run.effectiveTimeoutMs,
+          },
+          hold: {
+            kind: "runtime_interrupted",
+            subjectKind: "agent_run",
+            subjectId: run.id,
+            reason: failureMessage,
+          },
+          now: input.now,
+          createId: input.createId,
+        });
+
+        const event: TaskEvent = {
+          id: createId("task_event"),
+          companyId: task.companyId,
+          taskId: task.id,
+          type: "task_failed",
+          message: failureMessage,
+          createdAt: timestamp,
+          status: "failed",
+          failureReason: "timeout",
+          failureMessage,
+          executionProfileName: run.executionProfileName ?? null,
+          requestedTimeoutMs: run.requestedTimeoutMs ?? null,
+          effectiveTimeoutMs: run.effectiveTimeoutMs ?? null,
+          dependencyNote: null,
+          artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+        };
+        input.repositories.appendTaskEvent(event);
+        events.push(event);
+
+        const progressEvent: TaskProgressEvent = {
+          id: createId("task_progress"),
+          companyId: task.companyId,
+          departmentId: task.departmentId,
+          parentTaskId: task.parentTaskId ?? task.id,
+          subjectTaskId: task.id,
+          step: "blocked",
+          status: "blocked",
+          label: "Task timed out and is waiting for recovery.",
+          detail: failureMessage,
+          createdAt: timestamp,
+        };
+        input.repositories.appendTaskProgressEvent(progressEvent);
+        progressEvents.push(progressEvent);
+        reconciledTaskIds.push(task.id);
       },
-      hold: {
-        kind: "runtime_interrupted",
-        subjectKind: "agent_run",
-        subjectId: run.id,
-        reason: failureMessage,
-      },
-      now: input.now,
-      createId: input.createId,
     });
-    releaseAnyTaskLock(input.repositories, task.id);
-
-    const event: TaskEvent = {
-      id: createId("task_event"),
-      companyId: task.companyId,
-      taskId: task.id,
-      type: "task_failed",
-      message: failureMessage,
-      createdAt: timestamp,
-      status: "failed",
-      failureReason: "timeout",
-      failureMessage,
-      executionProfileName: run.executionProfileName ?? null,
-      requestedTimeoutMs: run.requestedTimeoutMs ?? null,
-      effectiveTimeoutMs: run.effectiveTimeoutMs,
-      dependencyNote: null,
-      artifactWorkspacePath: task.artifactWorkspacePath ?? null,
-    };
-    input.repositories.appendTaskEvent(event);
-    events.push(event);
-
-    const progressEvent: TaskProgressEvent = {
-      id: createId("task_progress"),
-      companyId: task.companyId,
-      departmentId: task.departmentId,
-      parentTaskId: task.parentTaskId ?? task.id,
-      subjectTaskId: task.id,
-      step: "blocked",
-      status: "blocked",
-      label: "Task timed out and is waiting for recovery.",
-      detail: failureMessage,
-      createdAt: timestamp,
-    };
-    input.repositories.appendTaskProgressEvent(progressEvent);
-    progressEvents.push(progressEvent);
-    reconciledTaskIds.push(task.id);
   }
 
+  reconcileOrphanedRunningTasks({ input, now, createId, timestamp, reconciledTaskIds, events, progressEvents });
+
   return { reconciledTaskIds, events, progressEvents };
+}
+
+/**
+ * Recover tasks that are `running` with no run to account for them.
+ *
+ * Reconciliation is indexed by running runs, so a task whose run was never created was invisible to
+ * it: a dispatch that died between taking the lock and creating the row left a task that said it was
+ * executing forever, with no Hold, no failure and nothing offered to move it. Nothing in the old
+ * design could even see it, let alone recover it.
+ *
+ * The evidence that nobody is working on it is the lock's lease. A live dispatch renews while it
+ * works, so an expired lease — or no lock at all — is what says the worker is gone. This never has to
+ * prove a process died; it only has to observe that nobody has spoken for the task.
+ */
+function reconcileOrphanedRunningTasks(context: {
+  input: ReconcileStaleRunningTasksInput;
+  now: () => Date;
+  createId: (prefix: string) => string;
+  timestamp: string;
+  reconciledTaskIds: string[];
+  events: TaskEvent[];
+  progressEvents: TaskProgressEvent[];
+}): void {
+  const { input, now, createId, timestamp } = context;
+  const repositories = input.repositories;
+  const liveRunTaskIds = new Set(repositories.listRunningAgentRuns(input.companyId).map((run) => run.taskId));
+  const locks = new Map(repositories.listTaskLocks().map((lock) => [lock.taskId, lock]));
+
+  for (const task of repositories.listTasksForCompany(input.companyId)) {
+    if (task.status !== "running" || liveRunTaskIds.has(task.id)) {
+      continue;
+    }
+    const lock = locks.get(task.id);
+    if (!lock) {
+      // The lock is taken before anything else and held until the dispatch unwinds, so a `running`
+      // task without one was never dispatched by this runtime — a hand-edited row, or a state from
+      // a version that predates locks. Reaping on that guess would let one wrong assumption fail
+      // tasks in bulk; leave it to a deliberate reconciliation with a human behind it.
+      continue;
+    }
+    const confirmedOwnerExit = input.exitedOwnerIds?.includes(lock.ownerId) ?? false;
+    if (!confirmedOwnerExit && !leaseHasExpired(lock.leaseExpiresAt, now())) {
+      // Someone is still renewing: this is a dispatch mid-flight, not a leftover.
+      continue;
+    }
+
+    settleExecution(repositories, () => repositories.claimOrphanedTask({
+      taskId: task.id, ownerId: lock.ownerId, runId: lock.runId,
+      acquiredAt: lock.acquiredAt, leaseExpiresAt: lock.leaseExpiresAt, at: timestamp, confirmedOwnerExit,
+    }), () => {
+      const failureMessage = `Task failed: ${task.title} / the worker executing it stopped reporting before its run was recorded.`;
+      applyTaskTransition({
+        repositories,
+        task,
+        status: "failed",
+        executionSummary: {
+          latestFailureReason: "worker_lost",
+          latestFailureMessage: failureMessage,
+        },
+        hold: {
+          kind: "runtime_interrupted",
+          subjectKind: "task",
+          subjectId: task.id,
+          reason: failureMessage,
+        },
+        now: input.now,
+        createId: input.createId,
+      });
+      repositories.releaseTaskLock(task.id, lock.ownerId, lock.runId);
+
+      const event: TaskEvent = {
+        id: createId("task_event"),
+        companyId: task.companyId,
+        taskId: task.id,
+        type: "task_failed",
+        message: failureMessage,
+        createdAt: timestamp,
+        status: "failed",
+        failureReason: "worker_lost",
+        failureMessage,
+        executionProfileName: null,
+        requestedTimeoutMs: null,
+        effectiveTimeoutMs: null,
+        dependencyNote: null,
+        artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+      };
+      repositories.appendTaskEvent(event);
+      context.events.push(event);
+
+      const progressEvent: TaskProgressEvent = {
+        id: createId("task_progress"),
+        companyId: task.companyId,
+        departmentId: task.departmentId,
+        parentTaskId: task.parentTaskId ?? task.id,
+        subjectTaskId: task.id,
+        step: "blocked",
+        status: "blocked",
+        label: "Task lost its worker and is waiting for recovery.",
+        detail: failureMessage,
+        createdAt: timestamp,
+      };
+      repositories.appendTaskProgressEvent(progressEvent);
+      context.progressEvents.push(progressEvent);
+      context.reconciledTaskIds.push(task.id);
+      recordExecutionEvent(repositories, {
+        id: createId("outbox_event"), type: "execution_failed", companyId: task.companyId,
+        taskId: task.id, reason: "worker_lost", observedAt: timestamp,
+        // This historical orphan has no run or termination evidence; never invent either.
+        runId: null, ownerEpoch: null, terminationConfirmed: null,
+      });
+    });
+  }
+}
+
+/** A lock with no lease at all predates leases, and is treated as long expired. */
+function leaseHasExpired(leaseExpiresAt: string | null, at: Date): boolean {
+  if (!leaseExpiresAt) {
+    return true;
+  }
+  const expiry = Date.parse(leaseExpiresAt);
+  return Number.isNaN(expiry) || expiry <= at.getTime();
 }
 
 /**
@@ -169,6 +296,7 @@ export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
     throw new Error(`Task disappeared during recovery: ${input.taskId}`);
   }
 
+  assertOrdinaryRecoveryAllowed(input.repositories, currentTask.id);
   if (isRetryExhausted(input.repositories, currentTask.id)) {
     // Land it in the CEO Blocked Queue if an earlier path left it merely `failed`, then refuse.
     terminateAsRetryExhausted({
@@ -195,7 +323,7 @@ export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
     throw new Error(`Task ${currentTask.id} cannot be recovered from status ${currentTask.status}.`);
   }
 
-  if (currentTask.artifactWorkspacePath && !isPartialOutputFollowUpTask(currentTask)) {
+  if (!input.repositories.executionBudget.getTask(currentTask.id) && currentTask.artifactWorkspacePath && !isPartialOutputFollowUpTask(currentTask)) {
     const followUpTask = createRecoveryFollowUpTask(input, currentTask, timestamp);
     const event = recordRecoveryEvent(input, currentTask, {
       message: `Recovery task created: ${followUpTask.title} will continue from Partial Output at ${currentTask.artifactWorkspacePath}.`,
@@ -395,13 +523,6 @@ function isPartialOutputFollowUpTask(task: Task): boolean {
 
 function partialOutputSourceMarker(taskId: string): string {
   return `Partial Output Source Task: ${taskId}`;
-}
-
-function releaseAnyTaskLock(repositories: ReturnType<typeof createRepositories>, taskId: string): void {
-  const lock = repositories.listTaskLocks().find((candidate) => candidate.taskId === taskId);
-  if (lock) {
-    repositories.releaseTaskLock(taskId, lock.ownerId);
-  }
 }
 
 function defaultCreateId(prefix: string): string {
