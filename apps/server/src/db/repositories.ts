@@ -1,5 +1,6 @@
 import { createExecutionBudgetStore } from "./executionBudget";
 import { createExecutionRecoveryStore } from "./executionRecovery";
+import { createExecutionRetentionStore } from "./executionRetention";
 import type {
   ArtifactVerification,
   DependencyInputRole,
@@ -65,6 +66,7 @@ export function createRepositories(database: DatabaseClient) {
   return {
     executionBudget: createExecutionBudgetStore(database),
     executionRecovery: createExecutionRecoveryStore(database),
+    executionRetention: createExecutionRetentionStore(database),
     /**
      * Run `work` as one atomic unit: either every write inside lands, or none does.
      *
@@ -1562,6 +1564,20 @@ export function createRepositories(database: DatabaseClient) {
         startedAt: row.started_at,
         endedAt: row.ended_at,
         endReason: row.end_reason,
+        ...(row.activity_compacted_at
+          ? {
+              activitySummary: {
+                compactedAt: row.activity_compacted_at,
+                stats: {
+                  firstActivityAfterMs: row.first_activity_after_ms,
+                  longestGapMs: row.longest_gap_ms,
+                  trailingSilenceMs: row.trailing_silence_ms,
+                  bytesByChannel: { stdout: row.stdout_bytes ?? 0, stderr: row.stderr_bytes ?? 0 },
+                  summaryCount: row.activity_summary_count ?? 0,
+                },
+              },
+            }
+          : {}),
       }));
     },
 
@@ -2302,6 +2318,13 @@ type RunInvocationRow = {
   started_at: string;
   ended_at: string | null;
   end_reason: string | null;
+  activity_compacted_at: string | null;
+  activity_summary_count: number | null;
+  first_activity_after_ms: number | null;
+  longest_gap_ms: number | null;
+  trailing_silence_ms: number | null;
+  stdout_bytes: number | null;
+  stderr_bytes: number | null;
 };
 
 type RunActivityRow = {

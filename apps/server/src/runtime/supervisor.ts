@@ -1,5 +1,6 @@
 import { ExecutionHealthMonitor } from "./executionHealth";
 import { drainAutomaticRecoveries, type RecoveryMode } from "./automaticRecovery";
+import { runDueRetentionSweep, type RetentionPolicy, type RetentionSweep } from "./executionRetention";
 import type { ExecutionClock } from "./budgetPolicy";
 import type { createRepositories } from "../db/repositories";
 import { OutboxDispatcher, type DeliveryOutcome, type OutboxEvent } from "./executionEvents";
@@ -29,10 +30,14 @@ export type SupervisorScanResult = {
   failedEventIds: string[];
   deadLetteredEventIds: string[];
   decisions: Array<{ eventId: string; kind: string; alreadyDecided: boolean }>;
+  /** The retention sweep this pass ran, if one was due. */
+  retention: RetentionSweep | null;
 };
 
 export type SupervisorInput = {
   recoveryMode?: RecoveryMode;
+  /** Null or absent: history is kept indefinitely. */
+  retention?: RetentionPolicy | null;
   repositories: Repositories;
   clock?: ExecutionClock;
   probeOwner?: (ownerId: string) => void;
@@ -118,12 +123,15 @@ export class Supervisor {
     this.health.scan();
     const drained = await this.dispatcher.drainOnce();
     drainAutomaticRecoveries({ ...this.input, mode: this.input.recoveryMode });
+    // Last, and self-contained: housekeeping must never delay or fail the pass that recovers work.
+    const retention = runDueRetentionSweep({ ...this.input, policy: this.input.retention ?? null });
     return {
       reconciledTaskIds,
       deliveredEventIds: drained.delivered,
       failedEventIds: drained.failed,
       deadLetteredEventIds: drained.deadLettered,
       decisions: [...this.decisions],
+      retention,
     };
   }
 }

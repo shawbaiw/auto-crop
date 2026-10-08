@@ -51,4 +51,24 @@ CLI 使用原有 `INIT_CWD` / 当前工作目录解析项目根目录；从其�
 3. 设置 `AUTO_CROP_EXECUTION_POLICY=observe` 后重新启动。已有预算授权的 Task 在 observe 下保持禁止派发，不会获得新的旧策略额度；无预算记录的 Task 才走原策略。需要继续预算 Task 时重新显式启用预算策略并按合法 Hold 操作。
 4. 若必须回退代码版本，先处理全部预算 run，并使用兼容该数据库的版本；旧版程序不认识预算约束，不能直接对同一个预算库继续调度。
 
-长时间持续运行仍须完成观测/outbox 的保留期与容量策略；跨主机控制、完整 Agent 进程树控制、整机掉电后的自动拉起和 webhook 不在本次交付内。
+## 执行历史保留
+
+观测与事件历史的保留期和容量上限**默认启用**，与上面的预算策略无关，observe 模式下同样生效。Supervisor 每小时至多清理一次，只删除已结束、已释放、已结算且无人再读取的历史，详见 [ADR 0039](adr/0039-retention-thins-history-it-never-decides.md)。
+
+- 关闭：`AUTO_CROP_RETENTION=off`，历史无限保留。
+- 调整：`AUTO_CROP_RETENTION_JSON`，单位为毫秒或行数，均为正安全整数；未知字段或非法值拒绝启动。`invocationMs` 不得短于 `activityMs`。
+
+| 字段 | 默认值 | 含义 |
+| --- | ---: | --- |
+| activityMs | 1209600000（14 天） | 活动窗口压缩为 invocation 统计后删除 |
+| ledgerMs | 1209600000（14 天） | 已结算 run 的中间 `consumed` 计量行删除 |
+| deliveredEventMs | 2592000000（30 天） | 已投递且已有决策的事件删除 |
+| invocationMs | 15552000000（180 天） | invocation 行（含统计）删除 |
+| maxActivityRows / maxInvocationRows / maxOutboxRows | 1000000 / 200000 / 100000 | 容量上限，超限时提前处理最旧的可删数据 |
+| capacityMinAgeMs | 3600000 | 容量清理不碰这段时间内结束的数据 |
+| batchSize / maxBatches | 100 / 50 | 每批条数 / 每次清理的批数上限 |
+| sweepIntervalMs | 3600000 | 两次清理的最小间隔 |
+
+`GET /api/execution-retention` 返回最近一次清理结果（含 truncated、overCapacity、error）和当前行数。删除不缩小数据库文件；如需回收空间，停止 Supervisor 后对备份验证再手动 `VACUUM`。关闭清理不恢复已删除数据；回退到不认识新列的旧版本前，同样按上文先排空并使用兼容版本。
+
+跨主机控制、完整 Agent 进程树控制、整机掉电后的自动拉起和 webhook 不在本次交付内。

@@ -516,6 +516,19 @@ export function migrate(database: DatabaseClient): void {
     addColumnIfMissing(database, lockColumns, "task_locks", "lease_expires_at TEXT");
     addColumnIfMissing(database, lockColumns, "task_locks", "owner_epoch INTEGER");
   }
+  // What an invocation's activity said, kept after the activity windows themselves are swept
+  // (execution-health retention). Null until compacted: a live or recent invocation is read from
+  // run_activity, and "not compacted" must never be confused with "nothing was heard".
+  {
+    const invocationColumns = getColumnNames(database, "run_invocations");
+    for (const column of [
+      "activity_compacted_at TEXT", "activity_summary_count INTEGER", "first_activity_after_ms INTEGER",
+      "longest_gap_ms INTEGER", "trailing_silence_ms INTEGER", "stdout_bytes INTEGER", "stderr_bytes INTEGER",
+    ]) addColumnIfMissing(database, invocationColumns, "run_invocations", column);
+  }
+  database.exec("CREATE INDEX IF NOT EXISTS idx_run_activity_invocation ON run_activity(invocation_id)");
+  database.exec("CREATE INDEX IF NOT EXISTS idx_run_invocations_run ON run_invocations(run_id)");
+  database.exec("CREATE INDEX IF NOT EXISTS idx_outbox_delivered ON outbox_events(delivered_at)");
   addColumnIfMissing(database, getColumnNames(database, "run_stop_requests"), "run_stop_requests", "cancel_requested INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, getColumnNames(database, "agent_runs"), "agent_runs", "manual_termination_confirmed_at TEXT");
   addColumnIfMissing(database, getColumnNames(database, "task_events"), "task_events", "execution_brief TEXT");

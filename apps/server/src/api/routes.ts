@@ -390,6 +390,18 @@ async function routeRequest(
     return;
   }
 
+  /**
+   * What retention last did and how much execution history is held now. Read-only: sweeps run in
+   * the Supervisor, never on a request.
+   */
+  if (method === "GET" && url.pathname === "/api/execution-retention") {
+    sendJson(response, 200, {
+      lastSweep: options.repositories.executionRetention.lastSweep(),
+      counts: options.repositories.executionRetention.counts(),
+    });
+    return;
+  }
+
   const stateMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/state$/);
   if (method === "GET" && stateMatch) {
     const companyId = stateMatch[1];

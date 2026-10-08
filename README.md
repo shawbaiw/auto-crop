@@ -68,6 +68,9 @@ can be explicitly enabled with `AUTO_CROP_EXECUTION_POLICY=budget-v1`. See the
 The Task execution panel exposes budget balances, stop evidence and explicit continuation authorization;
 automatic recovery remains report-only by default. P5 adds opt-in `brief-only-v1` recovery and initial
 Codex samples; see the [scope, evidence and remaining threshold gates](docs/execution-health-p5-report.md).
+Execution history retention is on by default: the Supervisor compacts old activity windows and removes
+delivered events and intermediate metering once nothing reads them. Set `AUTO_CROP_RETENTION=off` to keep
+everything; periods and ceilings are in the [guide](docs/execution-budget-opt-in.md#执行历史保留).
 
 5. In another terminal, start the dashboard:
 
