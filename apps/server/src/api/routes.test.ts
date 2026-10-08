@@ -1010,6 +1010,19 @@ describe("API routes", () => {
     await fixture.close();
   });
 
+  it("reports the last retention sweep and current history size without sweeping on read", async () => {
+    const fixture = await startFixtureServer();
+    const read = async () => (await fetch(`${fixture.baseUrl}/api/execution-retention`)).json();
+
+    expect(await read()).toEqual({
+      lastSweep: null,
+      counts: { activityRows: 0, invocations: 0, outboxEvents: 0, ledgerRows: 0 },
+    });
+    fixture.repositories.executionRetention.recordSweep({ at: "2026-10-08T00:00:00.000Z", deletedEvents: 3 });
+    expect(await read()).toMatchObject({ lastSweep: { at: "2026-10-08T00:00:00.000Z", deletedEvents: 3 } });
+    await fixture.close();
+  });
+
   it("recovers failed timeout tasks through the API", async () => {
     const fixture = await startFixtureServer();
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {

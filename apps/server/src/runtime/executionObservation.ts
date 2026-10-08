@@ -30,6 +30,11 @@ export type RunInvocation = {
   startedAt: string;
   endedAt: string | null;
   endReason: string | null;
+  /**
+   * The activity statistics this invocation's windows produced, kept once retention has swept the
+   * windows themselves. Absent until then: read `run_activity` for a live or recent invocation.
+   */
+  activitySummary?: { compactedAt: string; stats: RunActivityStats };
 };
 
 export type RunActivity = {
