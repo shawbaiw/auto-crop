@@ -2438,6 +2438,10 @@ function failureMessage(
     return `Task failed: ${task.title} / invalid_agent_output / the agent replied but the runtime could not read it; substantive work was not dispatched.`;
   }
 
+  if (failureReason === "agent_quota_exhausted") {
+    return `Task failed: ${task.title} / agent_quota_exhausted / the agent account is out of quota; it can run again once quota resets.`;
+  }
+
   return `Task failed: ${task.title} / agent_failed.`;
 }
 

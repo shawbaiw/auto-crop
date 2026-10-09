@@ -1968,6 +1968,55 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("records quota exhaustion as a wait on the agent account, not a generic agent failure", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "You've reached your 5-hour usage limit.",
+          status: "failed",
+          failureReason: "agent_quota_exhausted",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    const task = repositories.getTask("task_1");
+    expect(result.failed).toEqual(["task_1"]);
+    expect(task).toMatchObject({
+      status: "failed",
+      latestFailureReason: "agent_quota_exhausted",
+      latestFailureMessage: expect.stringContaining("agent account is out of quota"),
+    });
+    expect(task?.latestFailureMessage).not.toContain("agent_failed");
+    expect(repositories.listOpenTaskHolds("task_1")).toEqual([
+      expect.objectContaining({ kind: "agent_quota_exhausted" }),
+    ]);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "task_failed",
+      taskId: "task_1",
+      failureReason: "agent_quota_exhausted",
+      message: expect.stringContaining("agent account is out of quota"),
+    }));
+
+    client.close();
+  });
+
   it("retries timed-out short tasks once with a medium execution budget", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low", "product-brief"),
