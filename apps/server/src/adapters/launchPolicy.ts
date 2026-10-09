@@ -181,7 +181,7 @@ export const CLAUDE_CODE_LAUNCH_PROBE: CliHelpProbe = {
             warning: "Claude Code does not support --no-session-persistence; the run's session may be persisted.",
           },
         ],
-        optional: [["--permission-prompts"]],
+        optional: [["--permission-prompts"], ["--mcp-config"]],
       },
       output,
     ),

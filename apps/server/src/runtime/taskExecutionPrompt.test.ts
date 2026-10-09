@@ -71,6 +71,28 @@ describe("buildTaskExecutionPrompt", () => {
     expect(prompt).not.toContain("## Granted Capabilities");
   });
 
+  it("selects the action channel or deprecated file shim as the delivery surface", () => {
+    const actionPrompt = buildTaskExecutionPrompt({
+      company: createCompanyRecord({}),
+      task: createTaskRecord({}),
+      handoffs: [],
+      deliverySurface: "artifact_envelope",
+    });
+    const filePrompt = buildTaskExecutionPrompt({
+      company: createCompanyRecord({}),
+      task: createTaskRecord({}),
+      handoffs: [],
+      deliverySurface: "file_shim",
+    });
+
+    expect(actionPrompt).toContain("Submit exactly one task delivery by calling `submit_artifact_envelope`");
+    expect(actionPrompt).toContain("The tool accepts only the Artifact Envelope payload");
+    expect(actionPrompt).not.toContain("Write a structured business artifact to `.auto-crop/business-artifact.json`");
+    expect(filePrompt).toContain("Write a structured business artifact to `.auto-crop/business-artifact.json`");
+    expect(filePrompt).toContain("deprecated migration shim");
+    expect(filePrompt).not.toContain("submit_artifact_envelope");
+  });
+
   it("tells the agent to author founder-facing prose in the company language, exempting machine text", () => {
     const zhPrompt = buildTaskExecutionPrompt({
       company: createCompanyRecord({ locale: "zh" }),

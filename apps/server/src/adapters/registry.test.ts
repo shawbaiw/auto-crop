@@ -49,6 +49,7 @@ Options:
                                         --tools names them, and ignores user settings; add
                                         --strict-mcp-config to skip host MCP servers
   --strict-mcp-config                   Only use MCP servers from --mcp-config
+  --mcp-config <file>                   MCP server configuration file
   --tools <tools...>                    Specify the list of available tools
 `;
 
@@ -450,9 +451,11 @@ describe("CLI command template adapter", () => {
     expect(args[args.indexOf("--json-schema") + 1]).toBe(JSON.stringify(schema));
   });
 
-  it("declares structured execution brief support only for Codex", () => {
+  it("declares structured execution brief support only for Codex", async () => {
     expect(codexWith(CODEX_EXEC_HELP).contractCapabilities).toContain("structured_execution_brief");
     expect(claudeWith(CLAUDE_HELP).contractCapabilities ?? []).not.toContain("structured_execution_brief");
+    await expect(claudeWith(CLAUDE_HELP).resolveContractCapabilities?.()).resolves.toContain("artifact_envelope");
+    await expect(claudeWith(withoutFlag(CLAUDE_HELP, "--mcp-config")).resolveContractCapabilities?.()).resolves.not.toContain("artifact_envelope");
   });
 
   it("writes the contract to a file for Codex and removes it after the run", async () => {
@@ -474,6 +477,62 @@ describe("CLI command template adapter", () => {
     await adapter.run({ ...request, workspacePath: process.cwd(), outputSchema: schema });
 
     expect(contentDuringRun).toBe(JSON.stringify(schema));
+    expect(seenPath && existsSync(seenPath)).toBe(false);
+  });
+
+  it("writes an isolated runtime action MCP config for action-capable CLI runs", async () => {
+    let seenPath: string | undefined;
+    let configDuringRun: unknown;
+    const adapter = createCliAgentAdapter({
+      id: "fake-claude",
+      name: "Fake Claude",
+      capabilities: ["code"],
+      launchProbe: {
+        command: "fake",
+        args: ["--help"],
+        parse: () => ({
+          adapterId: "fake-claude",
+          isolationLevel: "strong",
+          supportedFlags: ["--mcp-config"],
+          missingFlags: [],
+          warnings: [],
+        }),
+      },
+      readHelp: async () => "ok",
+      buildCommand: ({ runtimeActionMcpConfigPath }) => {
+        seenPath = runtimeActionMcpConfigPath;
+        configDuringRun = runtimeActionMcpConfigPath ? JSON.parse(readFileSync(runtimeActionMcpConfigPath, "utf8")) : undefined;
+        return { command: "node", args: ["--version"] };
+      },
+    });
+
+    await adapter.run({
+      ...request,
+      workspacePath: process.cwd(),
+      runtimeActions: {
+        submitArtifactEnvelope: () => ({ ok: true }),
+        mcp: {
+          candidateDir: "/tmp/auto-crop-runtime-actions",
+          companyId: "company_1",
+          taskId: "task_1",
+          runId: "run_1",
+        },
+      },
+    });
+
+    expect(configDuringRun).toMatchObject({
+      mcpServers: {
+        "auto-crop-runtime-actions": {
+          command: process.execPath,
+          env: {
+            AUTO_CROP_RUNTIME_ACTION_DIR: "/tmp/auto-crop-runtime-actions",
+            AUTO_CROP_RUNTIME_ACTION_COMPANY_ID: "company_1",
+            AUTO_CROP_RUNTIME_ACTION_TASK_ID: "task_1",
+            AUTO_CROP_RUNTIME_ACTION_RUN_ID: "run_1",
+          },
+        },
+      },
+    });
     expect(seenPath && existsSync(seenPath)).toBe(false);
   });
 

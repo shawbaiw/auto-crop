@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
 import {
   CLAUDE_CODE_LAUNCH_PROBE,
@@ -37,6 +38,7 @@ export type CommandValues = {
    * the flag. See `createCodexAdapter`.
    */
   outputSchemaPath?: string;
+  runtimeActionMcpConfigPath?: string;
   /**
    * What the installed CLI can enforce, for an adapter with a `launchProbe`. A builder passes only
    * flags this declares; it is never called with an `unavailable` support.
@@ -60,6 +62,7 @@ export type CliAgentOptions = {
    * adapter makes no launch-isolation claim and is detected by its executable alone.
    */
   launchProbe?: CliHelpProbe;
+  resolveContractCapabilities?: (support: AdapterLaunchSupport | undefined) => AdapterContractCapability[];
   /** Injectable help reader, so tests can supply help text without spawning a real CLI. */
   readHelp?: ReadCliHelp;
   timeoutMs?: number;
@@ -117,6 +120,9 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
     name: options.name,
     capabilities: options.capabilities,
     ...(options.contractCapabilities ? { contractCapabilities: options.contractCapabilities } : {}),
+    ...(options.resolveContractCapabilities
+      ? { resolveContractCapabilities: async () => options.resolveContractCapabilities!(launchProbe ? (await resolveLaunchPlan(launchProbe)).support : undefined) }
+      : {}),
     ...(options.probeSession ? { session: { probe: options.probeSession, getOrStart: async () => null } } : {}),
     ...(launchProbe ? { launchPlan: () => resolveLaunchPlan(launchProbe) } : {}),
 
@@ -158,9 +164,16 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
       if (outputSchemaPath && request.outputSchema) {
         writeFileSync(outputSchemaPath, JSON.stringify(request.outputSchema), "utf8");
       }
+      const mcpConfigDir = request.runtimeActions?.mcp && launchSupport && supportsFlag(launchSupport, "--mcp-config")
+        ? mkdtempSync(join(tmpdir(), "auto-crop-runtime-action-mcp-"))
+        : null;
+      const runtimeActionMcpConfigPath = mcpConfigDir ? join(mcpConfigDir, "mcp.json") : undefined;
+      if (runtimeActionMcpConfigPath && request.runtimeActions?.mcp) {
+        writeFileSync(runtimeActionMcpConfigPath, JSON.stringify(runtimeActionMcpConfig(request.runtimeActions.mcp)), "utf8");
+      }
 
       try {
-        const { command, args } = build({ ...commandValues(request), outputSchemaPath, launchSupport });
+        const { command, args } = build({ ...commandValues(request), outputSchemaPath, runtimeActionMcpConfigPath, launchSupport });
 
         options.log?.(`Agent ${options.name} starting task ${request.taskId}`);
         const result = await runCommand(command, args, request.workspacePath, {
@@ -177,6 +190,9 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
       } finally {
         if (schemaDir) {
           rmSync(schemaDir, { recursive: true, force: true });
+        }
+        if (mcpConfigDir) {
+          rmSync(mcpConfigDir, { recursive: true, force: true });
         }
       }
     },
@@ -258,7 +274,8 @@ export function createClaudeCodeAdapter(
     name: "Claude Code",
     capabilities: ["code", "frontend", "research", "writing"],
     launchProbe: CLAUDE_CODE_LAUNCH_PROBE,
-    buildCommand: ({ prompt, grant, outputSchema, launchSupport }) => {
+    resolveContractCapabilities: (support) => supportsFlagIfPresent(support, "--mcp-config") ? ["artifact_envelope"] : [],
+    buildCommand: ({ prompt, grant, outputSchema, runtimeActionMcpConfigPath, launchSupport }) => {
       const support = requireLaunchSupport("claude-code", launchSupport);
       const tools = claudeToolsForGrant(grant);
       const when = (flag: string, ...args: string[]) => (supportsFlag(support, flag) ? [flag, ...args] : []);
@@ -268,6 +285,9 @@ export function createClaudeCodeAdapter(
           flagSpelling(support, "-p", "--print"),
           ...when("--restricted"),
           "--strict-mcp-config",
+          ...(runtimeActionMcpConfigPath && supportsFlag(support, "--mcp-config")
+            ? [flagSpelling(support, "--mcp-config"), runtimeActionMcpConfigPath]
+            : []),
           ...when("--permission-prompts", "none"),
           // `--tools ""` is the CLI's "no built-in tools at all", which is what an empty grant means.
           "--tools",
@@ -332,6 +352,30 @@ export function createCodexAdapter(
     },
     ...options,
   });
+}
+
+function supportsFlagIfPresent(support: AdapterLaunchSupport | undefined, flag: string): boolean {
+  return Boolean(support && support.isolationLevel !== "unavailable" && supportsFlag(support, flag));
+}
+
+type RuntimeActionMcpContext = NonNullable<NonNullable<AgentRunRequest["runtimeActions"]>["mcp"]>;
+
+function runtimeActionMcpConfig(context: RuntimeActionMcpContext): object {
+  const serverPath = fileURLToPath(new URL("../runtime/runtimeActionMcpServer.ts", import.meta.url));
+  return {
+    mcpServers: {
+      "auto-crop-runtime-actions": {
+        command: process.execPath,
+        args: ["--import", "tsx", serverPath],
+        env: {
+          AUTO_CROP_RUNTIME_ACTION_DIR: context.candidateDir,
+          AUTO_CROP_RUNTIME_ACTION_COMPANY_ID: context.companyId,
+          AUTO_CROP_RUNTIME_ACTION_TASK_ID: context.taskId,
+          AUTO_CROP_RUNTIME_ACTION_RUN_ID: context.runId,
+        },
+      },
+    },
+  };
 }
 
 function requireLaunchSupport(adapterId: string, support: AdapterLaunchSupport | undefined): AdapterLaunchSupport {

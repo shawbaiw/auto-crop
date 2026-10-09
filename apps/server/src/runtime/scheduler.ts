@@ -6,6 +6,7 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveLaunchableAdapter } from "../adapters/registry";
 import type { AdapterLaunchSupport } from "../adapters/launchPolicy";
+import { supportsFlag } from "../adapters/launchPolicy";
 import type { AgentAdapter, AgentRunResult, RunObservationSink } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import { resolvePolicyForPermissionMode } from "../policies/defaults";
@@ -34,6 +35,7 @@ import {
 } from "./boundedRecovery";
 import {
   captureBusinessArtifact,
+  captureBusinessArtifactFromEnvelope,
   isReviewableBusinessArtifact,
   readEnvironmentBlockerClaim,
   verifyEnvironmentBlockerClaim,
@@ -49,6 +51,7 @@ import { finalizeDelivery } from "./deliveryFinalization";
 import { RunObserver } from "./executionObservation";
 import { settleAgentRun, type RunOutcome } from "./executionSettlement";
 export type { RunOutcome } from "./executionSettlement";
+import { createRuntimeActionChannel, type RuntimeActionChannel } from "./runtimeActionChannel";
 import { defaultExecutionRegistry, type ExecutionRegistry } from "./executionControl";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
@@ -59,6 +62,7 @@ import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
 import { applyTaskTransition } from "./taskTransition";
 import { pendingReworkFeedback } from "./verificationRework";
+import type { ProofReference } from "./artifactEnvelope";
 import {
   isVerifyingTask,
   prepareVerificationInputs,
@@ -131,6 +135,7 @@ export type RunSchedulerOnceInput = {
    * Defaults to the process-wide registry; tests pass their own.
    */
   executionRegistry?: ExecutionRegistry;
+  runtimeActionChannel?: RuntimeActionChannel;
   emit: (event: SchedulerEvent) => void;
 };
 
@@ -145,6 +150,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
   const now = input.now ?? (() => new Date());
   const createId = input.createId ?? defaultCreateId;
   const registry = input.executionRegistry ?? defaultExecutionRegistry;
+  const runtimeActionCandidateDir = join(input.projectRoot, ".auto-crop", "runtime-actions");
+  const runtimeActionChannel = input.runtimeActionChannel ?? createRuntimeActionChannel({ candidateDir: runtimeActionCandidateDir });
   const approvalRequired = input.approvalRequired
     ?? ((task: Task) => requiresFounderApproval(input.repositories, task));
   const result: RunSchedulerOnceResult = {
@@ -362,6 +369,10 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           }
           const adapter = launch.adapter;
           const launchWarnings = launch.support?.warnings ?? [];
+          const contractCapabilities = await resolveAdapterContractCapabilities(adapter);
+          const deliverySurface = canUseArtifactEnvelope(adapter, contractCapabilities, launch.support ?? undefined)
+            ? "artifact_envelope"
+            : "file_shim";
 
           const initialTimeoutResolution = resolveEffectiveTimeout(task, process.env, grant);
           const budgetSnapshot = input.executionBudget === undefined ? null
@@ -629,12 +640,26 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               agentResult = await controlledAdapter.run({
                 ...request,
                 signal: stopper.signal,
+                runtimeActions: {
+                  submitArtifactEnvelope: (envelope: unknown) => runtimeActionChannel.submitArtifactEnvelope({
+                    companyId: task.companyId,
+                    taskId: task.id,
+                    runId: agentRunId,
+                  }, envelope),
+                  mcp: {
+                    candidateDir: runtimeActionCandidateDir,
+                    companyId: task.companyId,
+                    taskId: task.id,
+                    runId: agentRunId,
+                  },
+                },
                 timeoutMs: remainingMs,
                 prompt: buildTaskExecutionPrompt({
                   task,
                   company,
                   handoffs,
                   grant,
+                  deliverySurface,
                   verification: verificationPromptContext,
                   rework: pendingReworkFeedback(input.repositories, task),
                 }) +
@@ -827,6 +852,19 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               return;
             }
           }
+          const actionEnvelope = agentResult.status === "complete"
+            ? runtimeActionChannel.consumeArtifactEnvelopeCandidate({
+                companyId: task.companyId,
+                taskId: task.id,
+                runId: agentRunId,
+              })
+            : null;
+          if (agentResult.status !== "complete") {
+            runtimeActionChannel.discardRun({ companyId: task.companyId, taskId: task.id, runId: agentRunId });
+          }
+          if (actionEnvelope?.proofRefs) {
+            proof = [...proof, ...proofRefsToProof(actionEnvelope.proofRefs, task, createId)];
+          }
 
           // Everything from here is the runtime's own work on the run's output. It is still the run's
           // time, and it is the phase a settlement is interrupted in, so it is observed like the rest.
@@ -841,7 +879,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           const hasBusinessArtifactFile = existsSync(
             join(runWorkspacePath, ".auto-crop", "business-artifact.json"),
           );
-          if (proof.length > 0 || hasBusinessArtifactFile) {
+          if (proof.length > 0 || hasBusinessArtifactFile || actionEnvelope) {
             // An Environment-Blocked Blocker with a runtime-checkable claim is verified independently
             // (never on the agent's word). A passing check degrades the blocker to a deliverable.
             const environmentBlockerClaim =
@@ -858,17 +896,30 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             if (environmentBlockerVerification?.reason === "refuted_by_grant") {
               refutedCapability = environmentBlockerVerification.capability;
             }
-            businessArtifact = captureBusinessArtifact({
-              requireExecutionDetails: true,
-              task: { ...task, workspacePath: runWorkspacePath },
-              proofs: proof,
-              workspacePath: runWorkspacePath,
-              locale: input.repositories.getCompany(task.companyId)?.locale ?? "en",
-              environmentBlockerVerification,
-              verificationContext: resolveCaptureVerificationContext(input.repositories, task, runWorkspacePath),
-              now,
-              createId,
-            });
+            businessArtifact = actionEnvelope
+              ? captureBusinessArtifactFromEnvelope({
+                  envelope: actionEnvelope,
+                  requireExecutionDetails: true,
+                  task: { ...task, workspacePath: runWorkspacePath },
+                  proofs: proof,
+                  workspacePath: runWorkspacePath,
+                  locale: input.repositories.getCompany(task.companyId)?.locale ?? "en",
+                  environmentBlockerVerification,
+                  verificationContext: resolveCaptureVerificationContext(input.repositories, task, runWorkspacePath),
+                  now,
+                  createId,
+                })
+              : captureBusinessArtifact({
+                  requireExecutionDetails: true,
+                  task: { ...task, workspacePath: runWorkspacePath },
+                  proofs: proof,
+                  workspacePath: runWorkspacePath,
+                  locale: input.repositories.getCompany(task.companyId)?.locale ?? "en",
+                  environmentBlockerVerification,
+                  verificationContext: resolveCaptureVerificationContext(input.repositories, task, runWorkspacePath),
+                  now,
+                  createId,
+                });
             environmentBlockerDegraded = Boolean(
               environmentBlockerVerification?.verified && businessArtifact.artifactKind !== "blocker",
             );
@@ -2340,6 +2391,26 @@ function adapterCandidates(adapters: AgentAdapter[], task: Task): AgentAdapter[]
   return candidates;
 }
 
+async function resolveAdapterContractCapabilities(adapter: AgentAdapter): Promise<string[]> {
+  return adapter.resolveContractCapabilities
+    ? adapter.resolveContractCapabilities()
+    : adapter.contractCapabilities ?? [];
+}
+
+function canUseArtifactEnvelope(
+  adapter: AgentAdapter,
+  contractCapabilities: string[],
+  support: AdapterLaunchSupport | undefined,
+): boolean {
+  if (!contractCapabilities.includes("artifact_envelope")) {
+    return false;
+  }
+  if (!adapter.launchPlan) {
+    return true;
+  }
+  return Boolean(support && support.isolationLevel !== "unavailable" && supportsFlag(support, "--mcp-config"));
+}
+
 /**
  * Records why a task is not being dispatched. The scheduler re-checks every tick, so the warning is
  * appended only when it differs from the task's latest event.
@@ -2443,6 +2514,21 @@ function failureMessage(
   }
 
   return `Task failed: ${task.title} / agent_failed.`;
+}
+
+function proofRefsToProof(
+  refs: ProofReference[],
+  task: Task,
+  createId: (prefix: string) => string,
+): Proof[] {
+  return refs.map((ref) => ({
+    id: createId("proof"),
+    taskId: task.id,
+    type: ref.type,
+    uri: ref.uri,
+    summary: ref.summary ?? `Proof reference: ${ref.uri}`,
+    verifiedAt: null,
+  }));
 }
 
 function defaultCreateId(prefix: string): string {

@@ -48,6 +48,19 @@ export type AgentRunRequest = {
    * finished while it is still writing to the workspace the next run is about to use.
    */
   signal?: AbortSignal;
+  /**
+   * Runtime-owned action surface for facts the run submits explicitly. Adapters that can expose tools
+   * such as `submit_artifact_envelope` call through this narrow interface; tests may call it directly.
+   */
+  runtimeActions?: {
+    submitArtifactEnvelope(envelope: unknown): unknown;
+    mcp?: {
+      candidateDir: string;
+      companyId: string;
+      taskId: string;
+      runId: string;
+    };
+  };
   /** How long the process gets to exit on its own after being asked, before the group is killed. */
   graceMs?: number;
   /** How long after the kill the runtime waits for proof the process is gone. */
@@ -124,6 +137,7 @@ export type AgentAdapter = {
    * as `research` or `code`: these are about the adapter protocol, not what task work it can do.
    */
   contractCapabilities?: AdapterContractCapability[];
+  resolveContractCapabilities?(): Promise<AdapterContractCapability[]>;
   /**
    * Whether this adapter can run a task under Auto-Crop's launch semantics — not merely whether its
    * executable exists. An adapter whose launch plan is `unavailable` is not detected.

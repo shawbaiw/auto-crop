@@ -66,6 +66,67 @@ describe("task locks", () => {
 });
 
 describe("runSchedulerOnce", () => {
+  it("settles an action-submitted artifact envelope without the file shim", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+    const adapter: AgentAdapter = {
+      id: "mock-worker",
+      name: "Worker",
+      capabilities: ["code"],
+      detect: async () => true,
+      contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
+      run: async request => {
+        if (request.metadata.phase === "execution_brief") {
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Use the action channel", expectedOutcome: "A settled delivery" }), stderr: "" };
+        }
+        expect(request.prompt).toContain("submit_artifact_envelope");
+        const result = request.runtimeActions?.submitArtifactEnvelope({
+          taskId: "not_trusted",
+          artifact_kind: "deliverable",
+          artifact_role: "implementation",
+          artifact_subtype: "prototype_implementation",
+          task_type: "engineering.prototype_implementation",
+          proof_refs: [{ type: "command_output", uri: "agent.log", summary: "Action proof" }],
+          payload: {
+            actions: [],
+            execution_report: {
+              work_summary: "Submitted the delivery through the runtime action channel.",
+              evidence: "The action call included a command-output proof reference.",
+              conclusion: "The prototype implementation is complete.",
+              vision_impact: "It advances the objective's build milestone.",
+              remaining_gap: "Validation with real users remains.",
+              recommendation: "Review the delivered implementation.",
+            },
+            outcome_summary: "The prototype implementation is complete; validation with real users remains.",
+          },
+          lineage: { task_id: "task_1" },
+        });
+        expect(result).toMatchObject({ ok: true, ignoredIdentityFields: ["taskId"] });
+        return { status: "complete", exitCode: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [adapter],
+      workerId: "worker",
+      maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: () => undefined,
+    });
+
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    expect(repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
+      artifactKind: "deliverable",
+      artifactRole: "implementation",
+      artifactSubtype: "prototype_implementation",
+      validationStatus: "valid",
+    });
+    expect(repositories.listProofsForTask("task_1")).toHaveLength(1);
+    client.close();
+  });
+
   it("persists the execution plan before dispatching substantive work", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
     const phases: string[] = [];
