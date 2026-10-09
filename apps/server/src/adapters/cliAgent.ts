@@ -15,7 +15,14 @@ import {
   type LaunchPlan,
   type ReadCliHelp,
 } from "./launchPolicy";
-import type { AgentAdapter, AgentRunRequest, AgentRunResult, AgentSessionProbeResult, RunObservationSink } from "./types";
+import type {
+  AdapterContractCapability,
+  AgentAdapter,
+  AgentRunRequest,
+  AgentRunResult,
+  AgentSessionProbeResult,
+  RunObservationSink,
+} from "./types";
 
 export type CommandValues = {
   prompt: string;
@@ -41,6 +48,7 @@ export type CliAgentOptions = {
   id: string;
   name: string;
   capabilities: string[];
+  contractCapabilities?: AdapterContractCapability[];
   /** Grant-blind template, for generic adapters. Exactly one of this or `buildCommand` is required. */
   commandTemplate?: string;
   /** Grant-driven launch construction. Takes precedence over `commandTemplate` when both are given. */
@@ -108,6 +116,7 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
     id: options.id,
     name: options.name,
     capabilities: options.capabilities,
+    ...(options.contractCapabilities ? { contractCapabilities: options.contractCapabilities } : {}),
     ...(options.probeSession ? { session: { probe: options.probeSession, getOrStart: async () => null } } : {}),
     ...(launchProbe ? { launchPlan: () => resolveLaunchPlan(launchProbe) } : {}),
 
@@ -289,6 +298,7 @@ export function createCodexAdapter(
     id: "codex",
     name: "Codex",
     capabilities: ["code", "frontend", "test", "refactor"],
+    contractCapabilities: ["structured_execution_brief"],
     launchProbe: CODEX_LAUNCH_PROBE,
     buildCommand: ({ prompt, workspace, grant, outputSchemaPath, launchSupport }) => {
       const support = requireLaunchSupport("codex", launchSupport);

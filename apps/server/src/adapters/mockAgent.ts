@@ -1,10 +1,11 @@
 import { DEFAULT_LAUNCH_POLICY, type AdapterLaunchSupport } from "./launchPolicy";
-import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "./types";
+import type { AdapterContractCapability, AgentAdapter, AgentRunRequest, AgentRunResult } from "./types";
 
 export type MockAgentOptions = {
   id: string;
   name: string;
   capabilities: string[];
+  contractCapabilities?: AdapterContractCapability[];
   detected?: boolean;
   output?: string;
   status?: AgentRunResult["status"];
@@ -19,6 +20,7 @@ export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter 
     id: options.id,
     name: options.name,
     capabilities: options.capabilities,
+    contractCapabilities: options.contractCapabilities ?? ["structured_execution_brief"],
     async detect(): Promise<boolean> {
       return (options.detected ?? true) && launchSupport?.isolationLevel !== "unavailable";
     },

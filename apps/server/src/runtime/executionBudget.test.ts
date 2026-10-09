@@ -44,7 +44,7 @@ function fixture() {
   return { ...state, root, input };
 }
 function adapter(run: AgentAdapter["run"]): AgentAdapter {
-  return { id: "codex", name: "fixture", capabilities: ["code"], detect: async () => true, run };
+  return { id: "codex", name: "fixture", capabilities: ["code"], contractCapabilities: ["structured_execution_brief"], detect: async () => true, run };
 }
 
 it.each(["silent", "repetitive"])("keeps one real %s invocation across the old budget, pins configuration and ignores legacy reapers", async mode => {

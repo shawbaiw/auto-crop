@@ -71,6 +71,7 @@ describe("runSchedulerOnce", () => {
     const phases: string[] = [];
     const adapter: AgentAdapter = {
       id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      contractCapabilities: ["structured_execution_brief"],
       run: async request => {
         phases.push(request.metadata.phase ?? "work");
         const items = projectCeoOfficeItems({ company: repositories.getCompany("company_1")!, tasks: repositories.listTasksForCompany("company_1"), taskEvents: repositories.listTaskEventsForCompany("company_1"), taskCompletionEvents: [] });
@@ -113,6 +114,7 @@ describe("runSchedulerOnce", () => {
       const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
       const adapter: AgentAdapter = {
         id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        contractCapabilities: ["structured_execution_brief"],
         run: async (request) => {
           if (request.metadata.phase === "execution_brief") {
             return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
@@ -410,6 +412,7 @@ describe("runSchedulerOnce", () => {
       const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
       const adapter: AgentAdapter = {
         id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        contractCapabilities: ["structured_execution_brief"],
         run: async (request) => {
           // A real CLI reports through the sink as bytes arrive; a mock reports what it would emit.
           if (request.metadata.phase === "execution_brief") {
@@ -719,6 +722,7 @@ describe("runSchedulerOnce", () => {
       const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
       const adapter: AgentAdapter = {
         id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        contractCapabilities: ["structured_execution_brief"],
         run: async (request) => {
           if (request.metadata.phase === "execution_brief") {
             return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
@@ -775,10 +779,47 @@ describe("runSchedulerOnce", () => {
     });
   });
 
-  it("does not dispatch work or fabricate a brief if preparation is malformed", async () => {
+  it("dispatches substantive work with a warning when the execution brief is degraded", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+    const phases: string[] = [];
+    const events: SchedulerEventRecord[] = [];
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [{
+        id: "mock-worker",
+        name: "Worker",
+        capabilities: ["code"],
+        detect: async () => true,
+        run: async (request) => {
+          phases.push(request.metadata.phase ?? "work");
+          expect(request.prompt).toContain("Runtime-generated degraded execution brief");
+          return { status: "complete", exitCode: 0, stdout: "Completed substantive work", stderr: "" };
+        },
+      }],
+      workerId: "worker",
+      maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+      emit: (event) => events.push(event),
+    });
+
+    expect(phases).toEqual(["work"]);
+    expect(events.find((event) => event.type === "task_warning")?.message).toContain("execution brief degraded");
+    expect(repositories.listTaskEventsForCompany("company_1").find((event) => event.type === "task_started")?.executionBrief?.purpose).toEqual({
+      en: 'Complete "Task task_1" for Pricing Page Studio.',
+    });
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    expect(repositories.getTask("task_1")?.latestFailureMessage ?? "").not.toContain("execution brief did not complete");
+    client.close();
+  });
+
+  it("does not dispatch work or fabricate a brief if structured preparation is malformed", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
     const phases: string[] = [];
     await runSchedulerOnce({ projectRoot, repositories, adapters: [{ id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      contractCapabilities: ["structured_execution_brief"],
       run: async request => { phases.push(request.metadata.phase ?? "work"); return { status: "complete", exitCode: 0, stdout: "No structured plan", stderr: "" }; },
     }], workerId: "worker", maxTasks: 1, approvalRequired: () => false, proofCollector: () => { throw new Error("Must not collect proof"); }, emit: () => undefined });
     expect(phases).toEqual(["execution_brief"]);
@@ -805,6 +846,7 @@ describe("runSchedulerOnce", () => {
       repositories,
       adapters: [{
         id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        contractCapabilities: ["structured_execution_brief"],
         run: async (request) => {
           phases.push(request.metadata.phase ?? "work");
           return { status: "failed", exitCode: null, stdout: "", stderr: "", failureReason: "timeout" };
@@ -1921,6 +1963,55 @@ describe("runSchedulerOnce", () => {
       taskId: "task_1",
       failureReason: "agent_failed",
       message: "Task failed: Task task_1 / agent_failed.",
+    }));
+
+    client.close();
+  });
+
+  it("records quota exhaustion as a wait on the agent account, not a generic agent failure", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+    const events: SchedulerEventRecord[] = [];
+
+    const result = await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [
+        createMockAgentAdapter({
+          id: "mock-worker",
+          name: "Mock Worker",
+          capabilities: ["code"],
+          output: "You've reached your 5-hour usage limit.",
+          status: "failed",
+          failureReason: "agent_quota_exhausted",
+        }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      emit: (event) => events.push(event),
+    });
+
+    const task = repositories.getTask("task_1");
+    expect(result.failed).toEqual(["task_1"]);
+    expect(task).toMatchObject({
+      status: "failed",
+      latestFailureReason: "agent_quota_exhausted",
+      latestFailureMessage: expect.stringContaining("agent account is out of quota"),
+    });
+    expect(task?.latestFailureMessage).not.toContain("agent_failed");
+    expect(repositories.listOpenTaskHolds("task_1")).toEqual([
+      expect.objectContaining({ kind: "agent_quota_exhausted" }),
+    ]);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "task_failed",
+      taskId: "task_1",
+      failureReason: "agent_quota_exhausted",
+      message: expect.stringContaining("agent account is out of quota"),
     }));
 
     client.close();

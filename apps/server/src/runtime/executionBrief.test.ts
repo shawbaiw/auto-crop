@@ -22,7 +22,7 @@ describe("prepareExecutionBrief", () => {
       '{"purpose":"明确切入哪个关键词。","approach":"调研候选词。","expectedOutcome":"支持\\"做哪个网站\\"的决策。"}',
     );
 
-    const { result, brief } = await prepareExecutionBrief({
+    const preparation = await prepareExecutionBrief({
       adapter: adapter.agent,
       request,
       company: createCompany("zh"),
@@ -31,8 +31,9 @@ describe("prepareExecutionBrief", () => {
     });
 
     expect(adapter.lastRequest?.outputSchema).toEqual(executionBriefOutputSchema);
-    expect(result.status).toBe("complete");
-    expect(brief?.expectedOutcome).toEqual({ zh: '支持"做哪个网站"的决策。' });
+    expect(preparation.kind).toBe("structured");
+    expect(preparation.result.status).toBe("complete");
+    expect(preparation.brief?.expectedOutcome).toEqual({ zh: '支持"做哪个网站"的决策。' });
   });
 
   it("launches the planning run holding no capabilities at all", async () => {
@@ -49,6 +50,64 @@ describe("prepareExecutionBrief", () => {
     expect(adapter.lastRequest?.grant?.granted).toEqual([]);
   });
 
+  it("degrades to a minimal runtime brief when the adapter does not support structured execution briefs", async () => {
+    const adapter = adapterReturning("must not be used", { structuredExecutionBrief: false });
+
+    const preparation = await prepareExecutionBrief({
+      adapter: adapter.agent,
+      request,
+      company: createCompany("en"),
+      task: createTask(),
+      handoffs: [],
+    });
+
+    expect(adapter.lastRequest).toBeUndefined();
+    expect(preparation.kind).toBe("degraded");
+    if (preparation.kind !== "degraded") throw new Error("Expected degraded preparation");
+    expect(preparation.cause).toBe("unsupported_adapter_capability");
+    expect(preparation.brief.purpose).toEqual({
+      en: 'Complete "Research overseas keyword and competitor opportunity" for MATT.',
+    });
+    expect(preparation.result.status).toBe("complete");
+  });
+
+  it.each(["Structured output submitted.", "Planning brief submitted -- no execution performed."])(
+    "degrades known adapter status stdout instead of failing the task: %s",
+    async (stdout) => {
+      const adapter = adapterReturning(stdout);
+
+      const preparation = await prepareExecutionBrief({
+        adapter: adapter.agent,
+        request,
+        company: createCompany("zh"),
+        task: createTask(),
+        handoffs: [],
+      });
+
+      expect(preparation.kind).toBe("degraded");
+      if (preparation.kind !== "degraded") throw new Error("Expected degraded preparation");
+      expect(preparation.cause).toBe("unreadable_structured_output");
+      expect(preparation.brief.expectedOutcome.zh).toContain("research-report");
+      expect(preparation.warning).toContain("did not return readable structured brief output");
+    },
+  );
+
+  it("does not synthesize a brief when the preparation process fails", async () => {
+    const adapter = adapterFailing();
+
+    const preparation = await prepareExecutionBrief({
+      adapter: adapter.agent,
+      request,
+      company: createCompany("en"),
+      task: createTask(),
+      handoffs: [],
+    });
+
+    expect(preparation.kind).toBe("failed");
+    expect(preparation.brief).toBeNull();
+    expect(preparation.result.failureReason).toBe("agent_failed");
+  });
+
   /**
    * The contract makes this rare, not impossible — a CLI that ignored the schema must not read as a
    * valid brief. What it must not do is blame the agent: the process exited 0 and answered.
@@ -59,7 +118,7 @@ describe("prepareExecutionBrief", () => {
       '{"purpose":"p","approach":"a","expectedOutcome":"支持"做哪个网站"的决策。"}',
     );
 
-    const { result, brief } = await prepareExecutionBrief({
+    const preparation = await prepareExecutionBrief({
       adapter: adapter.agent,
       request,
       company: createCompany("zh"),
@@ -67,17 +126,18 @@ describe("prepareExecutionBrief", () => {
       handoffs: [],
     });
 
-    expect(brief).toBeNull();
-    expect(result.status).toBe("failed");
-    expect(result.failureReason).toBe("invalid_agent_output");
-    expect(result.failureReason).not.toBe("agent_failed");
-    expect(result.stderr).toContain("substantive work was not dispatched");
+    expect(preparation.kind).toBe("failed");
+    expect(preparation.brief).toBeNull();
+    expect(preparation.result.status).toBe("failed");
+    expect(preparation.result.failureReason).toBe("invalid_agent_output");
+    expect(preparation.result.failureReason).not.toBe("agent_failed");
+    expect(preparation.result.stderr).toContain("substantive work was not dispatched");
   });
 
   it("rejects a structurally valid reply that leaves a required field empty", async () => {
     const adapter = adapterReturning('{"purpose":"p","approach":"   ","expectedOutcome":"e"}');
 
-    const { result } = await prepareExecutionBrief({
+    const preparation = await prepareExecutionBrief({
       adapter: adapter.agent,
       request,
       company: createCompany("en"),
@@ -85,16 +145,21 @@ describe("prepareExecutionBrief", () => {
       handoffs: [],
     });
 
-    expect(result.failureReason).toBe("invalid_agent_output");
+    expect(preparation.kind).toBe("failed");
+    expect(preparation.result.failureReason).toBe("invalid_agent_output");
   });
 });
 
-function adapterReturning(stdout: string): { agent: AgentAdapter; lastRequest?: AgentRunRequest } {
+function adapterReturning(
+  stdout: string,
+  options: { structuredExecutionBrief?: boolean } = {},
+): { agent: AgentAdapter; lastRequest?: AgentRunRequest } {
   const state: { agent: AgentAdapter; lastRequest?: AgentRunRequest } = {
     agent: {
       id: "fake",
       name: "Fake",
       capabilities: ["research"],
+      contractCapabilities: options.structuredExecutionBrief === false ? [] : ["structured_execution_brief"],
       detect: async () => true,
       run: async (received) => {
         state.lastRequest = received;
@@ -104,6 +169,19 @@ function adapterReturning(stdout: string): { agent: AgentAdapter; lastRequest?: 
   };
 
   return state;
+}
+
+function adapterFailing(): { agent: AgentAdapter } {
+  return {
+    agent: {
+      id: "fake",
+      name: "Fake",
+      capabilities: ["research"],
+      contractCapabilities: ["structured_execution_brief"],
+      detect: async () => true,
+      run: async () => ({ status: "failed", exitCode: 1, stdout: "", stderr: "launch failed", failureReason: "agent_failed" }),
+    },
+  };
 }
 
 function createCompany(locale: Company["locale"]): Company {

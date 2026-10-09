@@ -35,4 +35,17 @@ describe("formatTaskStatus", () => {
     expect(formatTaskStatus(task, translate("en"))).toBe("failed · timed out · 2m");
     expect(formatTaskStatus(task, translate("zh"))).toBe("失败 · 已超时 · 2m");
   });
+
+  it("localizes agent quota exhaustion as an account wait", () => {
+    const task = {
+      id: "task_1",
+      title: "Validate prototype",
+      status: "failed",
+      departmentId: "department_1",
+      failureReason: "agent_quota_exhausted",
+    } satisfies TaskSummary;
+
+    expect(formatTaskStatus(task, translate("en"))).toBe("failed · agent quota exhausted");
+    expect(formatTaskStatus(task, translate("zh"))).toBe("失败 · Agent 额度已耗尽");
+  });
 });
