@@ -311,7 +311,7 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
     `Write every \`label\`, \`tradeoffs\`, \`rationale\`, and \`briefing\` in ${languageName}.`,
     "A choice on one of these kinds is the founder's to make, not yours.",
   ];
-  const proofInstructions = buildProofContractInstructions(task);
+  const proofInstructions = buildProofContractInstructions(task, deliverySurface);
   const grantInstructions = buildCapabilityGrantInstructions(grant, deliverySurface);
   const verificationInstructions = buildVerificationInstructions(input.verification, languageName);
   const reworkInstructions = buildReworkInstructions(input.rework);

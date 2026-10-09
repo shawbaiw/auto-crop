@@ -5,7 +5,10 @@ import type { Task } from "@auto-crop/core";
  * that satisfies the task's proof schema. Shared by the scheduler and the recovery follow-up
  * prompts so both describe the same runtime-collected locations.
  */
-export function buildProofContractInstructions(task: Pick<Task, "id" | "proofSchemaId">): string[] {
+export function buildProofContractInstructions(
+  task: Pick<Task, "id" | "proofSchemaId">,
+  deliverySurface: "artifact_envelope" | "file_shim" = "file_shim",
+): string[] {
   const instructions = ["## Proof Contract", "", `Original Proof Schema: ${task.proofSchemaId}`];
 
   if (task.proofSchemaId === "repo-diff") {
@@ -15,7 +18,9 @@ export function buildProofContractInstructions(task: Pick<Task, "id" | "proofSch
       `- .auto-crop-proof/${task.id}.diff`,
       "- a top-level workspace `.diff` or `.patch` file",
       "Files under `.auto-crop/` are not proof for repo-diff tasks.",
-      "Do not rely on `.auto-crop/business-artifact.json` alone; it is a business artifact, not diff proof.",
+      deliverySurface === "artifact_envelope"
+        ? "Do not rely on the Artifact Envelope alone; it is the business artifact, not diff proof."
+        : "Do not rely on `.auto-crop/business-artifact.json` alone; it is a business artifact, not diff proof.",
     ];
   }
 
@@ -40,10 +45,13 @@ export function buildProofContractInstructions(task: Pick<Task, "id" | "proofSch
   }
 
   if (task.proofSchemaId === "screenshot") {
+    const blockerInstruction = deliverySurface === "artifact_envelope"
+      ? "If every browser and screenshot path is unavailable, do not fabricate a screenshot. Instead submit an Artifact Envelope as a `blocker` with `payload.blocker_class: \"environment_blocked\"`, `payload.capability: \"browser_screenshot\"`, and `payload.target_url` set to the running prototype URL the runtime can fetch."
+      : "If every browser and screenshot path is unavailable, do not fabricate a screenshot. Instead write `.auto-crop/business-artifact.json` as a `blocker` with `payload.blocker_class: \"environment_blocked\"`, `payload.capability: \"browser_screenshot\"`, and `payload.target_url` set to the running prototype URL the runtime can fetch.";
     return [
       ...instructions,
       "A real screenshot PNG saved in the task workspace is the proof. Capture the running result and save it.",
-      "If every browser and screenshot path is unavailable, do not fabricate a screenshot. Instead write `.auto-crop/business-artifact.json` as a `blocker` with `payload.blocker_class: \"environment_blocked\"`, `payload.capability: \"browser_screenshot\"`, and `payload.target_url` set to the running prototype URL the runtime can fetch.",
+      blockerInstruction,
       "Also record `payload.server_validation.http_status` with the status code you got when you fetched that URL yourself. The runtime falls back to it if the prototype server has stopped by the time it checks.",
       "On a 2xx response from that URL, or a 2xx `server_validation.http_status` you recorded, the runtime accepts the task with a validation-limits caveat instead of failing it.",
     ];

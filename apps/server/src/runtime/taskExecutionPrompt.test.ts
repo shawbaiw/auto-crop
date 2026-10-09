@@ -93,6 +93,21 @@ describe("buildTaskExecutionPrompt", () => {
     expect(filePrompt).not.toContain("submit_artifact_envelope");
   });
 
+  it("removes normal file-shim prompting from action-capable proof contracts", () => {
+    for (const proofSchemaId of ["repo-diff", "screenshot"]) {
+      const prompt = buildTaskExecutionPrompt({
+        company: createCompanyRecord({}),
+        task: createTaskRecord({ proofSchemaId }),
+        handoffs: [],
+        deliverySurface: "artifact_envelope",
+      });
+
+      expect(prompt).toContain("submit_artifact_envelope");
+      expect(prompt).not.toContain(".auto-crop/business-artifact.json");
+      expect(prompt).not.toContain("Instead write");
+    }
+  });
+
   it("tells the agent to author founder-facing prose in the company language, exempting machine text", () => {
     const zhPrompt = buildTaskExecutionPrompt({
       company: createCompanyRecord({ locale: "zh" }),

@@ -128,6 +128,104 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
+  it("keeps file-shim instructions out of real action-capable adapter prompts", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "repo-diff"),
+    ]);
+    const adapter: AgentAdapter = {
+      id: "mock-worker",
+      name: "Worker",
+      capabilities: ["code"],
+      detect: async () => true,
+      contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
+      run: async request => {
+        if (request.metadata.phase === "execution_brief") {
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Use the action channel", expectedOutcome: "A settled delivery" }), stderr: "" };
+        }
+        expect(request.prompt).toContain("submit_artifact_envelope");
+        expect(request.prompt).not.toContain(".auto-crop/business-artifact.json");
+        mkdirSync(join(request.workspacePath, ".auto-crop-proof"), { recursive: true });
+        writeFileSync(join(request.workspacePath, ".auto-crop-proof", "task_1.diff"), "diff --git a/index.html b/index.html\n", "utf8");
+        request.runtimeActions?.submitArtifactEnvelope({
+          artifact_kind: "deliverable",
+          artifact_role: "implementation",
+          artifact_subtype: "prototype_implementation",
+          task_type: "engineering.prototype_implementation",
+          proof_refs: [{ type: "diff", uri: ".auto-crop-proof/task_1.diff", summary: "Action diff proof" }],
+          payload: {
+            actions: [],
+            execution_report: {
+              work_summary: "Submitted the delivery through the runtime action channel.",
+              evidence: "The action call included a diff proof reference.",
+              conclusion: "The prototype implementation is complete.",
+              vision_impact: "It advances the objective's build milestone.",
+              remaining_gap: "Validation with real users remains.",
+              recommendation: "Review the delivered implementation.",
+            },
+            outcome_summary: "The prototype implementation is complete; validation with real users remains.",
+          },
+          lineage: { task_id: "task_1" },
+        });
+        return { status: "complete", exitCode: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [adapter],
+      workerId: "worker",
+      maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
+      emit: () => undefined,
+    });
+
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    client.close();
+  });
+
+  it("keeps the file shim in fallback adapter prompts", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "repo-diff"),
+    ]);
+    const adapter: AgentAdapter = {
+      id: "mock-worker",
+      name: "Worker",
+      capabilities: ["code"],
+      detect: async () => true,
+      contractCapabilities: ["structured_execution_brief"],
+      run: async request => {
+        if (request.metadata.phase === "execution_brief") {
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Use the fallback file shim", expectedOutcome: "A settled delivery" }), stderr: "" };
+        }
+        expect(request.prompt).not.toContain("submit_artifact_envelope");
+        expect(request.prompt).toContain(".auto-crop/business-artifact.json");
+        mkdirSync(join(request.workspacePath, ".auto-crop-proof"), { recursive: true });
+        writeFileSync(join(request.workspacePath, ".auto-crop-proof", "task_1.diff"), "diff --git a/index.html b/index.html\n", "utf8");
+        writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "repo-diff"), workspacePath: request.workspacePath });
+        return { status: "complete", exitCode: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [adapter],
+      workerId: "worker",
+      maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: createProofCollector({
+        proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
+      }),
+      emit: () => undefined,
+    });
+
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    client.close();
+  });
+
   it("rejects action proof_refs not accepted by the task proof schema", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low", "repo-diff"),
