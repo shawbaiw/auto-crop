@@ -20,7 +20,7 @@
 
 决策、队列、重新排队和相应事件各自在同库事务中提交。去重只忽略 sourceEventId 冲突，存储故障会传播并回滚。第二连接竞争先取得 SQLite 写锁再读取条件。wake 不是必要条件；周期扫描读取持久队列。
 
-新 run 保持原 Task 身份、累计授权与消耗，调度器仍检查权限、审批、依赖及工作区独占。恢复清单保留 `resumeFromRunId`、sourceEventId、原任务/契约/输入、日志引用和下一步，条目在新 run 认领事务中绑定 `nextRunId`。本子集不采纳或发布任何候选文件，`verifiedSteps`、`candidateFiles`、`externalActions` 为空；已有文件明确未验证。因此没有把缺失的文件哈希伪装成已完成的通用产物续做机制。
+新 run 保持原 Task 身份、累计授权与消耗，调度器仍检查权限、审批、依赖及工作区独占。恢复清单保留 `resumeFromRunId`、sourceEventId、原任务/契约/输入、日志引用和下一步，条目在新 run 认领事务中绑定 `nextRunId`。2026-10-09 补齐未验证候选文件清单：`candidateFiles` 记录源工作区文件的相对路径、大小和 SHA-256，全部标记为 `unverified`；过大文件、符号链接和高风险目录不纳入清单。本子集不采纳或发布任何候选文件，`verifiedSteps` 与 `externalActions` 仍为空；已有文件明确未验证。
 
 正式执行、修复、未知外部写入结果、quota、预算停止、时钟不可信和 Worker 丢失均不自动重跑。部分产物验证仍走原有人工恢复/验证协议。
 
@@ -78,8 +78,8 @@ AUTO_CROP_ALLOW_REAL_SAMPLES=codex pnpm sample:execution-health
 
 ## 验证与剩余门槛
 
-本轮最终验证：`pnpm test` **64 文件 / 921 项通过**；`pnpm typecheck`、`pnpm smoke:mock`、`git diff --check` 通过。`pnpm lint` 退出 0，但当前子包没有独立 lint 脚本，不能据此声称额外静态规则已检查。
+本轮最终验证：`pnpm test` **64 文件 / 921 项通过**；`pnpm typecheck`、`pnpm smoke:mock`、`git diff --check` 通过。`pnpm lint` 退出 0，但当前子包没有独立 lint 脚本，不能据此声称额外静态规则已检查。2026-10-09 候选文件清单补充验证：`pnpm exec vitest run apps/server/src/runtime/automaticRecovery.test.ts` 20 项通过，`pnpm exec vitest run apps/server/src/runtime/executionRetention.test.ts` 23 项通过，`pnpm typecheck` 通过。
 
 自动化覆盖真实本地进程失败、Supervisor 延迟恢复、独立连接接管、重复投递、来源绑定、累计预算不重置、取消/暂停/权限/契约变化、旧 epoch、锁/隔离阻止、停止预算、quota、只报告默认及事务注入故障。原有预算、进程树取消、Worker 退出、真实 start 冒烟继续作为跨模块回归。
 
-持续运行容量/保留期策略、Claude 等其他 adapter 样本、真实生产级长静默/长任务、通用部分文件哈希清单及外部系统幂等确认仍未达标。默认启用与扩展自动恢复范围必须在这些对应门槛取得证据后进行。
+持续运行容量/保留期策略已补齐；恢复清单已记录未验证的通用文件哈希。Claude 等其他 adapter 样本、真实生产级长静默/长任务及外部系统幂等确认仍未达标。默认启用与扩展自动恢复范围必须在这些对应门槛取得证据后进行。

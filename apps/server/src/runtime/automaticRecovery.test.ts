@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -73,6 +73,34 @@ it("persists a delayed recovery, survives another connection, and preserves sour
   const next = f.r.listOutboxEvents().find(e => e.type === "execution_failed" && e.runId === recovery.nextRunId)!;
   expect(f.coordinator.consume(next).decision.kind).toBe("report_only");
   expect(f.r.listTasksForCompany("company_1")).toHaveLength(1);
+});
+
+it("records existing workspace files as unverified hash candidates without accepting them as proof", async () => {
+  const f = await fixture();
+  const workspace = f.r.getTask("task_1")!.workspacePath!;
+  mkdirSync(join(workspace, "notes"), { recursive: true });
+  writeFileSync(join(workspace, "notes", "partial.txt"), "partial output\n", "utf8");
+  writeFileSync(join(workspace, "too-large.bin"), Buffer.alloc(1024 * 1024 + 1));
+  symlinkSync(join(workspace, "notes", "partial.txt"), join(workspace, "linked.txt"));
+  expect(f.coordinator.consume(f.event).decision.kind).toBe("scheduled");
+  const manifest = JSON.parse(f.r.executionRecovery.get("task_1")!.manifest) as {
+    candidateFiles: Array<{ workspaceRole: string; relativePath: string; sizeBytes: number; sha256: string; status: string }>;
+    verifiedSteps: unknown[];
+    externalActions: unknown[];
+    unverified: string;
+  };
+  expect(manifest.candidateFiles).toEqual([
+    {
+      workspaceRole: "task_workspace",
+      relativePath: "notes/partial.txt",
+      sizeBytes: "partial output\n".length,
+      sha256: "23c6f689d66edc099ec38a86d5fe930db522f7ec0ceb8efeefb95a1e5f02947b",
+      status: "unverified",
+    },
+  ]);
+  expect(manifest.verifiedSteps).toEqual([]);
+  expect(manifest.externalActions).toEqual([]);
+  expect(manifest.unverified).toContain("not accepted as proof");
 });
 
 it.skipIf(process.platform === "win32")("recovers a real CLI process failure through scheduler and supervisor", async () => {

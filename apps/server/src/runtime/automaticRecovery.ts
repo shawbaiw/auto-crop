@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join, relative, resolve, sep } from "node:path";
 import type { createRepositories } from "../db/repositories";
 import type { OutboxEvent } from "./executionEvents";
 import { recordExecutionEvent } from "./executionEvents";
@@ -8,6 +11,17 @@ import { recoverTask } from "./taskRecovery";
 type Repositories = ReturnType<typeof createRepositories>;
 export type RecoveryMode = "report_only" | "brief-only-v1";
 export const RECOVERY_DELAY_MS = 30_000;
+const MAX_CANDIDATE_FILES = 50;
+const MAX_CANDIDATE_FILE_BYTES = 1024 * 1024;
+const SKIPPED_RECOVERY_DIRS = new Set([".git", "node_modules", ".auto-crop-handoff"]);
+
+export type RecoveryCandidateFile = {
+  workspaceRole: "task_workspace" | "artifact_workspace";
+  relativePath: string;
+  sizeBytes: number;
+  sha256: string;
+  status: "unverified";
+};
 
 export function recoveryModeFromEnvironment(env = process.env): RecoveryMode {
   const mode = env.AUTO_CROP_RECOVERY_MODE ?? "report_only";
@@ -17,7 +31,11 @@ export function recoveryModeFromEnvironment(env = process.env): RecoveryMode {
 }
 
 /** Re-evaluated in the writer transaction both when scheduling and when the delay expires. */
-export function briefRecoveryEligibility(r: Repositories, event: OutboxEvent): { reason: string; manifest?: string } {
+export function briefRecoveryEligibility(
+  r: Repositories,
+  event: OutboxEvent,
+  candidateFiles = collectRecoveryCandidateFilesForEvent(r, event),
+): { reason: string; manifest?: string } {
   const task = event.taskId ? r.getTask(event.taskId) : null;
   const company = task ? r.getCompany(task.companyId) : null;
   if (!task || task.companyId !== event.companyId || company?.status !== "active" || task.status !== "failed") return { reason: "Task or company no longer permits recovery." };
@@ -55,11 +73,57 @@ export function briefRecoveryEligibility(r: Repositories, event: OutboxEvent): {
       workspacePath: task.workspacePath, artifactWorkspacePath: task.artifactWorkspacePath, riskLevel: task.riskLevel },
     permissionMode: company.permissionMode ?? null, founderVision: company.founderVision,
     inputs: dependencies.map(d => ({ ...d, artifactId: r.getCurrentBusinessArtifactForTask(d.dependsOnTaskId)?.id ?? null })),
-    verifiedSteps: [], candidateFiles: [], externalActions: [],
-    unverified: "No substantive invocation occurred. Existing files are not accepted as proof or automatically published.",
+    verifiedSteps: [], candidateFiles, externalActions: [],
+    unverified: "No substantive invocation occurred. Candidate files are hashed only as resume context; they are not accepted as proof or automatically published.",
     nextStep: "Prepare a fresh brief, then execute under current scheduler approval and capability checks.",
   });
   return { reason: "Confirmed brief-only failure; retry once after 30 seconds using the same Task budget.", manifest };
+}
+
+export function collectRecoveryCandidateFilesForEvent(r: Repositories, event: OutboxEvent): RecoveryCandidateFile[] {
+  if (!event.taskId) return [];
+  const task = r.getTask(event.taskId);
+  return task ? collectRecoveryCandidateFiles(task) : [];
+}
+
+function collectRecoveryCandidateFiles(task: { workspacePath: string | null; artifactWorkspacePath?: string | null }): RecoveryCandidateFile[] {
+  const roots: Array<{ role: RecoveryCandidateFile["workspaceRole"]; path: string | null | undefined }> = [
+    { role: "task_workspace", path: task.workspacePath },
+    { role: "artifact_workspace", path: task.artifactWorkspacePath },
+  ];
+  const seenRoots = new Set<string>();
+  const files: RecoveryCandidateFile[] = [];
+  for (const root of roots) {
+    if (!root.path || files.length >= MAX_CANDIDATE_FILES) continue;
+    const rootPath = resolve(root.path);
+    if (seenRoots.has(rootPath) || !existsSync(rootPath)) continue;
+    seenRoots.add(rootPath);
+    collectFilesFromRoot({ rootPath, role: root.role, files });
+  }
+  return files;
+}
+
+function collectFilesFromRoot(input: { rootPath: string; role: RecoveryCandidateFile["workspaceRole"]; files: RecoveryCandidateFile[] }) {
+  const pending = [input.rootPath];
+  while (pending.length > 0 && input.files.length < MAX_CANDIDATE_FILES) {
+    const current = pending.shift()!;
+    let stat;
+    try { stat = lstatSync(current); } catch { continue; }
+    if (stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) {
+      if (current !== input.rootPath && SKIPPED_RECOVERY_DIRS.has(basename(current))) continue;
+      let entries: string[];
+      try { entries = readdirSync(current).sort(); } catch { continue; }
+      for (const entry of entries) pending.push(join(current, entry));
+      continue;
+    }
+    if (!stat.isFile() || stat.size > MAX_CANDIDATE_FILE_BYTES) continue;
+    const relativePath = relative(input.rootPath, current).split(sep).join("/");
+    if (!relativePath || relativePath.startsWith("..")) continue;
+    const content = readFileSync(current);
+    input.files.push({ workspaceRole: input.role, relativePath, sizeBytes: stat.size,
+      sha256: createHash("sha256").update(content).digest("hex"), status: "unverified" });
+  }
 }
 
 export function drainAutomaticRecoveries(input: {
@@ -69,11 +133,13 @@ export function drainAutomaticRecoveries(input: {
   const r = input.repositories;
   const at = (input.now?.() ?? new Date()).toISOString();
   for (const entry of r.executionRecovery.pending(at)) {
+    const sourceEvent = r.getOutboxEvent(entry.sourceEventId);
+    const candidateFiles = sourceEvent ? collectRecoveryCandidateFilesForEvent(r, sourceEvent) : [];
     r.transaction(() => {
       r.executionRecovery.lock();
       if (r.executionRecovery.get(entry.taskId)?.state !== "pending") return;
       const event = r.getOutboxEvent(entry.sourceEventId);
-      const result = event ? briefRecoveryEligibility(r, event) : { reason: "Source event unavailable." };
+      const result = event ? briefRecoveryEligibility(r, event, candidateFiles) : { reason: "Source event unavailable." };
       const eligible = Boolean(result.manifest && result.manifest === entry.manifest);
       const reason = result.manifest && !eligible ? "Recovery inputs or permissions changed during backoff." : result.reason;
       if (eligible) recoverTask({ repositories: r, taskId: entry.taskId, now: () => new Date(at) });

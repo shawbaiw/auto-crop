@@ -1,7 +1,7 @@
 import { isAffordanceApplicable } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import type { OutboxEvent } from "./executionEvents";
-import { briefRecoveryEligibility, RECOVERY_DELAY_MS, type RecoveryMode } from "./automaticRecovery";
+import { briefRecoveryEligibility, collectRecoveryCandidateFilesForEvent, RECOVERY_DELAY_MS, type RecoveryMode } from "./automaticRecovery";
 
 type Repositories = ReturnType<typeof createRepositories>;
 
@@ -56,6 +56,7 @@ export class RecoveryCoordinator {
   consume(event: OutboxEvent): { decision: RecoveryDecision; alreadyDecided: boolean } {
     const now = this.input.now?.() ?? new Date();
     const createId = this.input.createId ?? ((prefix: string) => `${prefix}_${crypto.randomUUID()}`);
+    const candidateFiles = this.input.mode === "brief-only-v1" ? collectRecoveryCandidateFilesForEvent(this.input.repositories, event) : [];
 
     return this.input.repositories.transaction(() => {
       this.input.repositories.executionRecovery.lock();
@@ -63,7 +64,7 @@ export class RecoveryCoordinator {
       if (existing) return { decision: { kind: existing.decision as RecoveryDecisionKind, reason: existing.reason }, alreadyDecided: true };
       const decision = this.decide(event);
       if (decision.kind === "report_only" && this.input.mode === "brief-only-v1" && event.taskId) {
-        const eligibility = briefRecoveryEligibility(this.input.repositories, event);
+        const eligibility = briefRecoveryEligibility(this.input.repositories, event, candidateFiles);
         if (eligibility.manifest && !this.input.repositories.executionRecovery.get(event.taskId)) {
           this.input.repositories.executionRecovery.schedule({ sourceEventId: event.id, taskId: event.taskId,
             sourceRunId: event.runId!, dueAt: new Date(now.getTime() + RECOVERY_DELAY_MS).toISOString(), manifest: eligibility.manifest });
