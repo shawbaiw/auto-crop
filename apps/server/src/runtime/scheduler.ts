@@ -3,7 +3,7 @@ import { isBudgetExhaustion, resolveBudgetSnapshot, systemExecutionClock, type B
 import { BudgetInterrupted, RunBudget } from "./runBudget";
 import { EXECUTION_BRIEF_TIMEOUT_MS, prepareExecutionBrief } from "./executionBrief";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveLaunchableAdapter } from "../adapters/registry";
 import type { AdapterLaunchSupport } from "../adapters/launchPolicy";
 import { supportsFlag } from "../adapters/launchPolicy";
@@ -22,6 +22,7 @@ import {
   type Company,
   type DependencyInputRole,
   type Proof,
+  type ProofSchema,
   type Task,
   type TaskEvent,
   type TaskProgressEvent,
@@ -107,6 +108,7 @@ export type RunSchedulerOnceInput = {
    */
   approvalRequired?: (task: Task) => boolean;
   proofCollector: (input: { task: Task; stdout: string; stderr: string; logPath: string }) => Proof[];
+  proofSchemas?: ProofSchema[];
   /** Injectable fetch used to independently verify Environment-Blocked Blocker claims. Defaults to global fetch. */
   environmentBlockerFetch?: typeof fetch;
   /** Injectable session manager for the CEO Agent run that authors a Final Founder Report. */
@@ -862,8 +864,17 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           if (agentResult.status !== "complete") {
             runtimeActionChannel.discardRun({ companyId: task.companyId, taskId: task.id, runId: agentRunId });
           }
-          if (actionEnvelope?.proofRefs) {
-            proof = [...proof, ...proofRefsToProof(actionEnvelope.proofRefs, task, createId)];
+          const proofRefValidation = actionEnvelope?.proofRefs
+            ? proofRefsToProof({
+                refs: actionEnvelope.proofRefs,
+                task: { ...task, workspacePath: runWorkspacePath },
+                proofSchema: input.proofSchemas?.find((schema) => schema.id === task.proofSchemaId),
+                logPath,
+                createId,
+              })
+            : { proofs: [], errors: [] };
+          if (proofRefValidation.proofs.length > 0) {
+            proof = [...proof, ...proofRefValidation.proofs];
           }
 
           // Everything from here is the runtime's own work on the run's output. It is still the run's
@@ -950,10 +961,60 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             createHandoffPackage({
               task: { ...task, workspacePath: runWorkspacePath },
               proofs: proof,
+              fileRefs: actionEnvelope?.fileRefs,
               workspacePath: runWorkspacePath,
               logPath,
             });
           };
+
+          if (proofRefValidation.errors.length > 0) {
+            const failureReason = "invalid_business_artifact";
+            const failure = `Task blocked: ${task.title} / invalid proof_refs / ${proofRefValidation.errors.join("; ")}.`;
+            const ceiling = atRetryCeiling(input, task);
+            settleRun(
+              input,
+              agentRunId,
+              { ...(ceiling ? retryCeilingOutcome(task) : { status: "failed" as const, failureReason, failureMessage: failure }), terminationConfirmed: agentResult.terminationConfirmed },
+              now,
+              (settled) => {
+                if (ceiling) {
+                  terminateAtRetryCeiling(settled, result, task, timeoutResolution, now, createId);
+                  return;
+                }
+                applyTaskTransition({
+                  repositories: settled.repositories,
+                  task,
+                  status: "blocked",
+                  executionSummary: {
+                    latestFailureReason: failureReason,
+                    latestFailureMessage: failure,
+                  },
+                  hold: {
+                    kind: "invalid_business_artifact",
+                    subjectKind: "agent_run",
+                    subjectId: agentRunId,
+                    reason: failure,
+                  },
+                  now,
+                  createId,
+                });
+                appendAndEmitTaskEvent(settled, {
+                  task,
+                  type: "task_blocked",
+                  failureReason,
+                  failureMessage: failure,
+                  message: failure,
+                  status: "blocked",
+                  executionProfileName: timeoutResolution.executionProfile.name,
+                  requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                  effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+                });
+                result.blocked.push(...blockDirectDependencyConsumers(settled, task));
+                emitParentTaskAggregationEvents(settled, task);
+              },
+            );
+            return;
+          }
 
           if ((agentResult.status !== "complete" || proof.length === 0) && !environmentBlockerDegraded) {
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
@@ -2516,19 +2577,89 @@ function failureMessage(
   return `Task failed: ${task.title} / agent_failed.`;
 }
 
-function proofRefsToProof(
-  refs: ProofReference[],
-  task: Task,
-  createId: (prefix: string) => string,
-): Proof[] {
-  return refs.map((ref) => ({
-    id: createId("proof"),
-    taskId: task.id,
-    type: ref.type,
-    uri: ref.uri,
-    summary: ref.summary ?? `Proof reference: ${ref.uri}`,
-    verifiedAt: null,
-  }));
+function proofRefsToProof(input: {
+  refs: ProofReference[];
+  task: Task;
+  proofSchema?: ProofSchema;
+  logPath: string;
+  createId: (prefix: string) => string;
+}): { proofs: Proof[]; errors: string[] } {
+  if (!input.proofSchema) {
+    return { proofs: [], errors: [`no proof schema configured for ${input.task.proofSchemaId}`] };
+  }
+
+  const proofs: Proof[] = [];
+  const errors: string[] = [];
+  input.refs.forEach((ref, index) => {
+    if (!input.proofSchema!.acceptedTypes.includes(ref.type)) {
+      errors.push(`proof_refs[${index}].type ${ref.type} is not accepted by ${input.proofSchema!.id}`);
+      return;
+    }
+
+    const uri = resolveProofRefUri({
+      ref,
+      index,
+      workspacePath: input.task.workspacePath,
+      logPath: input.logPath,
+      errors,
+    });
+    if (!uri) {
+      return;
+    }
+
+    proofs.push({
+      id: input.createId("proof"),
+      taskId: input.task.id,
+      type: ref.type,
+      uri,
+      summary: ref.summary ?? `Proof reference: ${uri}`,
+      verifiedAt: null,
+    });
+  });
+
+  return { proofs, errors };
+}
+
+function resolveProofRefUri(input: {
+  ref: ProofReference;
+  index: number;
+  workspacePath: string | null;
+  logPath: string;
+  errors: string[];
+}): string | null {
+  if (input.ref.type === "command_output") {
+    return input.logPath;
+  }
+
+  if (input.ref.type === "url" || input.ref.type === "deployment") {
+    try {
+      const url = new URL(input.ref.uri);
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        return input.ref.uri;
+      }
+    } catch {
+      // fall through to the structured error below
+    }
+    input.errors.push(`proof_refs[${input.index}].uri must be an http(s) URL for ${input.ref.type}`);
+    return null;
+  }
+
+  if (!input.workspacePath) {
+    input.errors.push(`proof_refs[${input.index}].uri cannot be resolved because the task has no workspace`);
+    return null;
+  }
+
+  const absolute = resolve(input.workspacePath, input.ref.uri);
+  const relativePath = relative(input.workspacePath, absolute);
+  if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    input.errors.push(`proof_refs[${input.index}].uri resolves outside the task workspace`);
+    return null;
+  }
+  if (!existsSync(absolute)) {
+    input.errors.push(`proof_refs[${input.index}].uri does not exist in the task workspace`);
+    return null;
+  }
+  return absolute;
 }
 
 function defaultCreateId(prefix: string): string {

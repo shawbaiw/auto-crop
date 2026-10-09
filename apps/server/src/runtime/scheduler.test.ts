@@ -113,6 +113,7 @@ describe("runSchedulerOnce", () => {
       maxTasks: 1,
       approvalRequired: () => false,
       proofCollector: () => [],
+      proofSchemas: [{ id: "test-output", description: "command output proof", acceptedTypes: ["command_output"] }],
       emit: () => undefined,
     });
 
@@ -124,6 +125,63 @@ describe("runSchedulerOnce", () => {
       validationStatus: "valid",
     });
     expect(repositories.listProofsForTask("task_1")).toHaveLength(1);
+    client.close();
+  });
+
+  it("rejects action proof_refs not accepted by the task proof schema", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "repo-diff"),
+    ]);
+    const adapter: AgentAdapter = {
+      id: "mock-worker",
+      name: "Worker",
+      capabilities: ["code"],
+      detect: async () => true,
+      contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
+      run: async request => {
+        if (request.metadata.phase === "execution_brief") {
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Use the action channel", expectedOutcome: "A settled delivery" }), stderr: "" };
+        }
+        request.runtimeActions?.submitArtifactEnvelope({
+          artifact_kind: "deliverable",
+          artifact_role: "implementation",
+          artifact_subtype: "prototype_implementation",
+          task_type: "engineering.prototype_implementation",
+          proof_refs: [{ type: "command_output", uri: "agent.log", summary: "Action proof" }],
+          payload: {
+            actions: [],
+            execution_report: {
+              work_summary: "Submitted the delivery through the runtime action channel.",
+              evidence: "The action call included a proof reference.",
+              conclusion: "The prototype implementation is complete.",
+            },
+            outcome_summary: "The prototype implementation is complete.",
+          },
+          lineage: { task_id: "task_1" },
+        });
+        return { status: "complete", exitCode: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    await runSchedulerOnce({
+      projectRoot,
+      repositories,
+      adapters: [adapter],
+      workerId: "worker",
+      maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: () => [],
+      proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
+      emit: () => undefined,
+    });
+
+    expect(repositories.getTask("task_1")).toMatchObject({
+      status: "blocked",
+      latestFailureReason: "invalid_business_artifact",
+      latestFailureMessage: expect.stringContaining("command_output is not accepted by repo-diff"),
+    });
+    expect(repositories.listProofsForTask("task_1")).toEqual([]);
+    expect(repositories.getCurrentBusinessArtifactForTask("task_1")).toBeNull();
     client.close();
   });
 

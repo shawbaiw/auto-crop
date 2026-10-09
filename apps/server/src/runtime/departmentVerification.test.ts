@@ -11,6 +11,7 @@ import { migrate } from "../db/schema";
 import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { isReviewableBusinessArtifact } from "./businessArtifact";
 import { resolveDependencyReadiness } from "./dependencyReadiness";
+import { createHandoffPackage } from "./proof";
 import { runSchedulerOnce } from "./scheduler";
 import { resolveTaskAffordanceState } from "./taskAffordances";
 import { reconcileTaskHolds } from "./taskHoldReconciliation";
@@ -843,6 +844,41 @@ describe("verification contract", () => {
     expect(readFileSync(join(verifierWorkspace, ".auto-crop-inputs", producer.id, "files", "report.md"), "utf8")).toBe("reworked");
   });
 
+  it("snapshots runtime-packaged fileRefs instead of later live workspace mutations", () => {
+    const harness = createHarness({ validate: () => [] });
+    const producerWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-producer-"));
+    const verifierWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-verifier-"));
+    createdDirs.push(producerWorkspace, verifierWorkspace);
+
+    const { repositories } = harness;
+    const define = baseTask("define_file_refs", "complete", "product-brief");
+    const producer = baseTask("producer_file_refs", "complete", "landing-page-file");
+    const verifier = { ...baseTask("verify_file_refs", "queued", "test-output"), workspacePath: verifierWorkspace };
+    for (const task of [define, producer, verifier]) {
+      repositories.createTask(task);
+    }
+    repositories.createBusinessArtifact(artifactRecord("artifact_define_file_refs", define.id, {
+      verification_requirements: [{ id: "report", description: "The report is snapshotted." }],
+    }));
+    writeFileSync(join(producerWorkspace, "report.md"), "settled\n", "utf8");
+    createHandoffPackage({
+      task: { ...producer, workspacePath: producerWorkspace },
+      proofs: [{ id: "proof_1", taskId: producer.id, type: "command_output", uri: "agent.log", summary: "ran", verifiedAt: null }],
+      fileRefs: [{ path: "report.md", description: "Submitted report" }],
+      workspacePath: producerWorkspace,
+      logPath: join(producerWorkspace, "agent.log"),
+    });
+    writeFileSync(join(producerWorkspace, "report.md"), "mutated\n", "utf8");
+    repositories.createBusinessArtifact(artifactRecord("artifact_producer_file_refs", producer.id, {}, producerWorkspace));
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: define.id, inputRole: "verification_requirements" });
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: producer.id, inputRole: "verification_target" });
+
+    const result = prepareVerificationInputs({ repositories, task: verifier, workspacePath: verifierWorkspace });
+
+    expect(result.kind).toBe("ready");
+    expect(readFileSync(join(verifierWorkspace, ".auto-crop-inputs", producer.id, "files", "report.md"), "utf8")).toBe("settled\n");
+  });
+
   it("refuses to dispatch a verifier when the delivery records no workspace to hand over", () => {
     const harness = createHarness({ validate: () => [] });
     const verifierWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-verifier-"));
@@ -1144,4 +1180,3 @@ function keyResultRecord(): KeyResult {
     status: "active",
   };
 }
-

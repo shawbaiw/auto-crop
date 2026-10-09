@@ -17,9 +17,10 @@ export function handleRuntimeActionMcpMessage(message: JsonRpcRequest, env: Runt
   if (!("id" in message)) {
     return null;
   }
+  const id = message.id ?? null;
 
   if (message.method === "initialize") {
-    return response(message.id, {
+    return response(id, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
       serverInfo: { name: "auto-crop-runtime-actions", version: "0.0.0" },
@@ -27,7 +28,7 @@ export function handleRuntimeActionMcpMessage(message: JsonRpcRequest, env: Runt
   }
 
   if (message.method === "tools/list") {
-    return response(message.id, {
+    return response(id, {
       tools: [
         {
           name: TOOL_NAME,
@@ -45,11 +46,11 @@ export function handleRuntimeActionMcpMessage(message: JsonRpcRequest, env: Runt
   if (message.method === "tools/call") {
     const params = isRecord(message.params) ? message.params : {};
     if (params.name !== TOOL_NAME) {
-      return error(message.id, -32602, `Unknown tool: ${String(params.name)}`);
+      return error(id, -32602, `Unknown tool: ${String(params.name)}`);
     }
     const context = runtimeContext(env);
     if (!context) {
-      return error(message.id, -32000, "Runtime action context is not configured.");
+      return error(id, -32000, "Runtime action context is not configured.");
     }
     const result = createRuntimeActionChannel({ candidateDir: context.candidateDir }).submitArtifactEnvelope(
       {
@@ -59,14 +60,14 @@ export function handleRuntimeActionMcpMessage(message: JsonRpcRequest, env: Runt
       },
       params.arguments,
     );
-    return response(message.id, {
+    return response(id, {
       content: [{ type: "text", text: JSON.stringify(result) }],
       structuredContent: result,
       isError: !result.ok,
     });
   }
 
-  return error(message.id, -32601, `Method not found: ${String(message.method)}`);
+  return error(id, -32601, `Method not found: ${String(message.method)}`);
 }
 
 function runtimeContext(env: RuntimeActionMcpEnv): null | {

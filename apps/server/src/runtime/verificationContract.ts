@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import {
   deriveVerificationOutcome,
   type ArtifactVerification,
@@ -303,6 +303,15 @@ function snapshotProducerOutput(input: {
 
   const filesDirectory = join(directory, "files");
   const files: string[] = [];
+  const packagedFileRefs = copyPackagedFileRefs({
+    sourceRoot,
+    filesDirectory,
+    byteLimit: MAX_SNAPSHOT_BYTES,
+  });
+  if (packagedFileRefs.kind === "failed") {
+    return packagedFileRefs;
+  }
+  const alreadySnapshotted = packagedFileRefs.relativePaths;
   const walk = (current: string): string | null => {
     for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const absolute = join(current, entry.name);
@@ -322,6 +331,9 @@ function snapshotProducerOutput(input: {
       if (!entry.isFile() || entry.name === ".env" || entry.name.startsWith(".env.")) {
         continue;
       }
+      if (alreadySnapshotted.has(relative(sourceRoot, absolute).split(sep).join("/"))) {
+        continue;
+      }
       files.push(absolute);
     }
     return null;
@@ -334,7 +346,7 @@ function snapshotProducerOutput(input: {
     return { kind: "failed", message: `artifact workspace has ${files.length} files, above the ${MAX_SNAPSHOT_FILES} handoff limit.` };
   }
 
-  let totalBytes = 0;
+  let totalBytes = packagedFileRefs.bytes;
   for (const absolute of files) {
     const relativePath = relative(sourceRoot, absolute).split(sep).join("/");
     let content: Buffer;
@@ -353,6 +365,59 @@ function snapshotProducerOutput(input: {
   }
 
   return { kind: "ready", directory };
+}
+
+function copyPackagedFileRefs(input: {
+  sourceRoot: string;
+  filesDirectory: string;
+  byteLimit: number;
+}): { kind: "ready"; relativePaths: Set<string>; bytes: number } | { kind: "failed"; message: string } {
+  const manifestPath = join(input.sourceRoot, ".auto-crop-handoff", "package.json");
+  const relativePaths = new Set<string>();
+  if (!existsSync(manifestPath)) {
+    return { kind: "ready", relativePaths, bytes: 0 };
+  }
+
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
+  } catch (error) {
+    return { kind: "failed", message: `handoff package manifest is not readable: ${(error as Error).message}` };
+  }
+
+  const fileRefs = isRecord(manifest) && Array.isArray(manifest.fileRefs) ? manifest.fileRefs : [];
+  let bytes = 0;
+  for (const [index, entry] of fileRefs.entries()) {
+    const sourcePath = isRecord(entry) && typeof entry.sourcePath === "string"
+      ? normalizeManifestRelativePath(entry.sourcePath)
+      : null;
+    const packagePath = isRecord(entry) && typeof entry.packagePath === "string" ? entry.packagePath : "";
+    if (!sourcePath) {
+      return { kind: "failed", message: `handoff package fileRefs[${index}].sourcePath is invalid.` };
+    }
+    if (!packagePath || !existsSync(packagePath) || !statSync(packagePath).isFile()) {
+      return { kind: "failed", message: `handoff package fileRefs[${index}] is missing its packaged file.` };
+    }
+    const content = readFileSync(packagePath);
+    bytes += content.byteLength;
+    if (bytes > input.byteLimit) {
+      return { kind: "failed", message: `artifact workspace exceeds the ${input.byteLimit} byte handoff limit.` };
+    }
+    const destination = join(input.filesDirectory, sourcePath);
+    mkdirSync(join(destination, ".."), { recursive: true });
+    copyFileSync(packagePath, destination);
+    relativePaths.add(sourcePath);
+  }
+
+  return { kind: "ready", relativePaths, bytes };
+}
+
+function normalizeManifestRelativePath(value: string): string | null {
+  const normalized = normalize(value).split(sep).join("/");
+  if (!normalized || normalized === "." || isAbsolute(normalized) || normalized.startsWith("../") || normalized === "..") {
+    return null;
+  }
+  return normalized;
 }
 
 /** Read `payload.verification_requirements`. Ids must be unique, non-empty and carry a description. */
