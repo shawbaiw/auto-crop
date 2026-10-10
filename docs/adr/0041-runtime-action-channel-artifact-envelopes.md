@@ -39,6 +39,7 @@ The `.auto-crop/business-artifact.json` file protocol is removed, and ADR 0028's
 - A run that does not complete keeps its last valid candidate, and Proof recovery recaptures it, as it used to recapture a file left in the workspace. Dispatching a new run discards earlier runs' candidates, so a task holds at most one candidate: its latest run's.
 - Each CLI is told about the action server in its own shape. Claude Code takes an `--mcp-config` file and needs the tool pre-approved in `--allowedTools`, or `--permission-prompts none` denies the delivery itself. Codex takes `-c mcp_servers.*` overrides, since `--ignore-user-config` leaves it no config file, plus `default_tools_approval_mode="approve"`, since `codex exec` cancels any MCP call that would ask. The server is launched with an absolute tsx loader URL, because the CLI starts it in the task workspace.
 - The tool's `inputSchema` types every field. With an empty schema, Claude Code sent `payload` as a JSON string, and the delivery never landed.
+- Which Proof Reference types a run may submit is the task's Proof Schema, stated once per run and used by the tool schema, the prompt, the submit check and settlement. The first real e2e run cited the web pages it read as `url` refs on a `product-brief` task; the tool advertised every type, the prompt said nothing, the submit said `ok`, and settlement blocked the delivery with eight tasks behind it. Sources an agent read belong in the payload.
 
 ## Relationship To Existing Decisions
 

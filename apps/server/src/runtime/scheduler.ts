@@ -35,6 +35,8 @@ import {
 } from "./boundedRecovery";
 import {
   captureBusinessArtifact,
+  proofRefTypeErrors,
+  type ProofRefPolicy,
   isReviewableBusinessArtifact,
   readEnvironmentBlockerClaim,
   verifyEnvironmentBlockerClaim,
@@ -369,6 +371,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           const adapter = launch.adapter;
           const launchWarnings = launch.support?.warnings ?? [];
 
+          // One answer to "which proof_refs may this run submit", for the tool, the prompt, the submit
+          // check and settlement alike.
+          const proofRefPolicy: ProofRefPolicy = {
+            proofSchemaId: task.proofSchemaId,
+            acceptedTypes: input.proofSchemas?.find((schema) => schema.id === task.proofSchemaId)?.acceptedTypes ?? [],
+          };
           const initialTimeoutResolution = resolveEffectiveTimeout(task, process.env, grant);
           const budgetSnapshot = input.executionBudget === undefined ? null
             : resolveBudgetSnapshot(input.executionBudget, initialTimeoutResolution);
@@ -643,7 +651,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                     companyId: task.companyId,
                     taskId: task.id,
                     runId: agentRunId,
-                  }, envelope, { locale: company.locale, requireDetails: true }),
+                  }, envelope, { locale: company.locale, requireDetails: true, proofRefs: proofRefPolicy }),
                   mcp: {
                     candidateDir,
                     companyId: task.companyId,
@@ -651,6 +659,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                     runId: agentRunId,
                     locale: company.locale,
                     requireExecutionDetails: true,
+                    proofSchemaId: proofRefPolicy.proofSchemaId,
+                    acceptedProofTypes: proofRefPolicy.acceptedTypes,
                   },
                 },
                 timeoutMs: remainingMs,
@@ -659,6 +669,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                   company,
                   handoffs,
                   grant,
+                  acceptedProofTypes: proofRefPolicy.acceptedTypes,
                   verification: verificationPromptContext,
                   rework: pendingReworkFeedback(input.repositories, task),
                 }) +
@@ -2499,10 +2510,10 @@ function proofRefsToProof(input: {
   }
 
   const proofs: Proof[] = [];
-  const errors: string[] = [];
+  const policy = { proofSchemaId: input.proofSchema.id, acceptedTypes: input.proofSchema.acceptedTypes };
+  const errors = proofRefTypeErrors(input.refs, policy);
   input.refs.forEach((ref, index) => {
-    if (!input.proofSchema!.acceptedTypes.includes(ref.type)) {
-      errors.push(`proof_refs[${index}].type ${ref.type} is not accepted by ${input.proofSchema!.id}`);
+    if (!policy.acceptedTypes.includes(ref.type)) {
       return;
     }
 

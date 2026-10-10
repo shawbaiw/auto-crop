@@ -62,6 +62,9 @@ export type AgentRunRequest = {
       /** The delivery contract settlement applies, so the server can reject a breach at submit time. */
       locale: string;
       requireExecutionDetails: boolean;
+      /** The task's Proof Schema and the Proof Reference types it accepts, for the same reason. */
+      proofSchemaId: string;
+      acceptedProofTypes: string[];
     };
   };
   /** How long the process gets to exit on its own after being asked, before the group is killed. */

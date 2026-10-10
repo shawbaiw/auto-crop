@@ -1,8 +1,8 @@
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import type { Locale } from "@auto-crop/core";
-import { ARTIFACT_ENVELOPE_INPUT_SCHEMA } from "./artifactEnvelope";
-import { createRuntimeActionChannel } from "./runtimeActionChannel";
+import type { Locale, ProofType } from "@auto-crop/core";
+import { artifactEnvelopeInputSchema } from "./artifactEnvelope";
+import { createRuntimeActionChannel, type DeliveryContractOptions } from "./runtimeActionChannel";
 
 type JsonRpcRequest = {
   jsonrpc?: "2.0";
@@ -35,7 +35,7 @@ export function handleRuntimeActionMcpMessage(message: JsonRpcRequest, env: Runt
         {
           name: TOOL_NAME,
           description: "Submit the task's Artifact Envelope candidate to the Auto-Crop runtime.",
-          inputSchema: ARTIFACT_ENVELOPE_INPUT_SCHEMA,
+          inputSchema: artifactEnvelopeInputSchema(runtimeContext(env)?.contract?.proofRefs?.acceptedTypes),
         },
       ],
     });
@@ -74,13 +74,14 @@ function runtimeContext(env: RuntimeActionMcpEnv): null | {
   companyId: string;
   taskId: string;
   runId: string;
-  contract?: { locale: Locale; requireDetails: boolean };
+  contract?: DeliveryContractOptions;
 } {
   const candidateDir = env.AUTO_CROP_RUNTIME_ACTION_DIR;
   const companyId = env.AUTO_CROP_RUNTIME_ACTION_COMPANY_ID;
   const taskId = env.AUTO_CROP_RUNTIME_ACTION_TASK_ID;
   const runId = env.AUTO_CROP_RUNTIME_ACTION_RUN_ID;
   const locale = env.AUTO_CROP_RUNTIME_ACTION_LOCALE;
+  const proofSchemaId = env.AUTO_CROP_RUNTIME_ACTION_PROOF_SCHEMA_ID;
   if (!candidateDir || !companyId || !taskId || !runId) {
     return null;
   }
@@ -90,7 +91,20 @@ function runtimeContext(env: RuntimeActionMcpEnv): null | {
     taskId,
     runId,
     ...(locale
-      ? { contract: { locale: locale as Locale, requireDetails: env.AUTO_CROP_RUNTIME_ACTION_REQUIRE_EXECUTION_DETAILS === "true" } }
+      ? {
+        contract: {
+          locale: locale as Locale,
+          requireDetails: env.AUTO_CROP_RUNTIME_ACTION_REQUIRE_EXECUTION_DETAILS === "true",
+          ...(proofSchemaId
+            ? {
+              proofRefs: {
+                proofSchemaId,
+                acceptedTypes: (env.AUTO_CROP_RUNTIME_ACTION_ACCEPTED_PROOF_TYPES ?? "").split(",").filter(Boolean) as ProofType[],
+              },
+            }
+            : {}),
+        },
+      }
       : {}),
   };
 }

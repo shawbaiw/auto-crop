@@ -422,6 +422,8 @@ export function runtimeActionMcpServer(context: RuntimeActionMcpContext): Runtim
       AUTO_CROP_RUNTIME_ACTION_RUN_ID: context.runId,
       AUTO_CROP_RUNTIME_ACTION_LOCALE: context.locale,
       AUTO_CROP_RUNTIME_ACTION_REQUIRE_EXECUTION_DETAILS: String(context.requireExecutionDetails),
+      AUTO_CROP_RUNTIME_ACTION_PROOF_SCHEMA_ID: context.proofSchemaId,
+      AUTO_CROP_RUNTIME_ACTION_ACCEPTED_PROOF_TYPES: context.acceptedProofTypes.join(","),
     },
     toolNames: ["submit_artifact_envelope"],
   };

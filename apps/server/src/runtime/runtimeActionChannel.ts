@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Locale } from "@auto-crop/core";
 import { parseArtifactEnvelope, type ArtifactEnvelope } from "./artifactEnvelope";
-import { artifactEnvelopeContractErrors } from "./businessArtifact";
+import { artifactEnvelopeContractErrors, type ArtifactEnvelopeContractOptions } from "./businessArtifact";
 
 export type RuntimeActionRunContext = {
   companyId: string;
@@ -13,10 +12,7 @@ export type RuntimeActionRunContext = {
 export type RuntimeActionTaskContext = Omit<RuntimeActionRunContext, "runId">;
 
 /** The delivery contract settlement will hold this run's envelope to, so a submit can be told now. */
-export type DeliveryContractOptions = {
-  locale: Locale;
-  requireDetails: boolean;
-};
+export type DeliveryContractOptions = ArtifactEnvelopeContractOptions;
 
 /**
  * What one run submitted: its last valid envelope, or — when no call was ever valid — the errors of

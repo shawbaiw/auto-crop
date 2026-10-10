@@ -84,6 +84,19 @@ describe("buildTaskExecutionPrompt", () => {
     expect(prompt).not.toContain(".auto-crop/business-artifact.json");
   });
 
+  it("states which proof_refs the task accepts and that read sources belong in the payload", () => {
+    const prompt = (acceptedProofTypes: Array<"file" | "url">) => buildTaskExecutionPrompt({
+      company: createCompanyRecord({}),
+      task: createTaskRecord({ proofSchemaId: "product-brief" }),
+      handoffs: [],
+      acceptedProofTypes,
+    });
+
+    expect(prompt(["file"])).toContain("Proof Schema (`product-brief`) accepts only these types: file. Any other type is rejected.");
+    expect(prompt(["file"])).toContain("Sources you read, such as web pages, are not proof_refs");
+    expect(prompt([])).toContain("Do not submit `proof_refs`");
+  });
+
   it("names the Artifact Envelope, not a file, in proof contracts that mention the delivery", () => {
     for (const proofSchemaId of ["repo-diff", "screenshot"]) {
       const prompt = buildTaskExecutionPrompt({

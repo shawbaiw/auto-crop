@@ -27,6 +27,7 @@ describe("runtime action MCP server", () => {
     createdDirs.push(workspace, candidateDir);
     const server = runtimeActionMcpServer({
       candidateDir, companyId: "company_1", taskId: "task_1", runId: "run_1", locale: "en", requireExecutionDetails: false,
+      proofSchemaId: "product-brief", acceptedProofTypes: ["file"],
     });
     const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "submit_artifact_envelope", arguments: completeDeliverable("launched") } };
 
@@ -41,6 +42,22 @@ describe("runtime action MCP server", () => {
     expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout)).toMatchObject({ id: 1, result: { isError: false, structuredContent: { ok: true } } });
     expect(readdirSync(candidateDir)).toHaveLength(1);
+  });
+
+  /**
+   * The tool schema is the agent's first description of the envelope. Advertising every proof type
+   * invited `url` refs a `product-brief` task refuses, so it carries the run's own accepted types.
+   */
+  it("advertises only the proof_refs types the run's Proof Schema accepts", () => {
+    const toolSchema = (overrides: Record<string, string | undefined>) => (handleRuntimeActionMcpMessage(
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      env({ AUTO_CROP_RUNTIME_ACTION_LOCALE: "en", AUTO_CROP_RUNTIME_ACTION_PROOF_SCHEMA_ID: "product-brief", ...overrides }),
+    ) as { result: { tools: Array<{ inputSchema: { properties: Record<string, unknown> } }> } }).result.tools[0]!.inputSchema.properties.proof_refs;
+
+    expect(toolSchema({ AUTO_CROP_RUNTIME_ACTION_ACCEPTED_PROOF_TYPES: "file" })).toMatchObject({
+      items: { properties: { type: { enum: ["file"] } } },
+    });
+    expect(toolSchema({ AUTO_CROP_RUNTIME_ACTION_ACCEPTED_PROOF_TYPES: "" })).toMatchObject({ maxItems: 0 });
   });
 
   it("lists only the submit_artifact_envelope tool", () => {

@@ -93,6 +93,18 @@ describe("RuntimeActionChannel", () => {
    * An agent whose every call is rejected has still tried to deliver. Settlement must report that as
    * an invalid delivery with the errors it was given, not as nothing submitted.
    */
+  it("rejects proof_refs the task's Proof Schema does not accept, at submit time", () => {
+    const channel = createRuntimeActionChannel();
+    const contract = { locale: "en" as const, requireDetails: true, proofRefs: { proofSchemaId: "product-brief", acceptedTypes: ["file" as const] } };
+    const citingSources = { ...deliverableWithReport("cited"), proof_refs: [{ type: "url", uri: "https://example.com/source" }] };
+
+    expect(channel.submitArtifactEnvelope(context, citingSources, contract)).toMatchObject({
+      ok: false,
+      errors: ["proof_refs[0].type url is not accepted by product-brief; it accepts file"],
+    });
+    expect(channel.submitArtifactEnvelope(context, deliverableWithReport("cited"), contract)).toMatchObject({ ok: true });
+  });
+
   it("keeps the last rejection only while the run has no valid candidate", () => {
     const channel = createRuntimeActionChannel();
     const contract = { locale: "en" as const, requireDetails: true };

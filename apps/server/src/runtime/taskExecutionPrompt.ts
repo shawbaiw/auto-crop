@@ -1,4 +1,4 @@
-import { actionIntentCategories, type Company, type Locale, type Task, type VerificationInputs } from "@auto-crop/core";
+import { actionIntentCategories, type Company, type Locale, type ProofType, type Task, type VerificationInputs } from "@auto-crop/core";
 import { describeRuntimeCapability, type AgentCapabilityGrant } from "../policies/capabilityGrant";
 import type { TaskHandoff } from "./dependencyReadiness";
 import { LOCALE_LANGUAGE_NAME } from "./localePromptText";
@@ -10,6 +10,11 @@ export type BuildTaskExecutionPromptInput = {
   handoffs: TaskHandoff[];
   /** What this run may actually do. Omitted only by callers that do not launch an agent. */
   grant?: AgentCapabilityGrant;
+  /**
+   * The Proof Reference types this task's Proof Schema accepts, the same list the runtime checks a
+   * submitted envelope against. Omitted only by callers that do not launch an agent.
+   */
+  acceptedProofTypes?: ProofType[];
   /** Failed checks a verifier sent back to this task, to fix in this run. */
   rework?: Array<{
     round: number;
@@ -110,6 +115,24 @@ function buildVerificationInstructions(
  * front is what makes "file a blocker instead" an instruction the agent can actually follow, and what
  * makes runtime refutation of a false capability claim fair (ADR 0021).
  */
+/**
+ * `proof_refs` and `file_refs`, explained with the run's own limits. Left unexplained, an agent read
+ * `proof_refs` off the tool schema and cited every page it researched as a `url` ref its task could
+ * not accept.
+ */
+function proofRefInstructions(acceptedProofTypes: ProofType[] | undefined, proofSchemaId: string): string[] {
+  if (!acceptedProofTypes) {
+    return [];
+  }
+  return [
+    "Optional `file_refs`: `[{ \"path\": \"workspace/relative/path\", \"description\": \"...\" }]` for files the next task should receive.",
+    acceptedProofTypes.length > 0
+      ? `Optional \`proof_refs\`: \`[{ "type": "...", "uri": "...", "summary": "..." }]\` for evidence this run produced that the runtime should record as Proof. This task's Proof Schema (\`${proofSchemaId}\`) accepts only these types: ${acceptedProofTypes.join(", ")}. Any other type is rejected.`
+      : `Do not submit \`proof_refs\`: this task's Proof Schema (\`${proofSchemaId}\`) accepts none.`,
+    "Sources you read, such as web pages, are not proof_refs: cite them inside `payload` and `execution_report.evidence`.",
+  ];
+}
+
 function buildCapabilityGrantInstructions(
   grant: AgentCapabilityGrant | undefined,
 ): string[] {
@@ -247,6 +270,7 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
     "Choose artifact_role from: findings, plan, spec, implementation, validation, launch, report, none.",
     "Put use-case-specific names such as keyword_research, mvp_brief, or seo_launch_plan in artifact_subtype, not in artifact_kind or artifact_role.",
     "Use payload for the task-specific structured result and lineage for the upstream objective chain you used.",
+    ...proofRefInstructions(input.acceptedProofTypes, task.proofSchemaId),
     "",
     "## Structured Execution Report",
     "",

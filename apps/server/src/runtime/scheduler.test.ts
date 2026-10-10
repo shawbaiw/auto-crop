@@ -295,7 +295,51 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
-  it("rejects action proof_refs not accepted by the task proof schema", async () => {
+  /**
+   * The first real e2e run, pinned: a Claude Code research task cited the pages it read as `url`
+   * proof_refs on a `product-brief` task, was told `ok`, and had the whole delivery blocked at
+   * settlement, with eight downstream tasks behind it. The refusal now reaches the agent while it can
+   * still drop the refs.
+   */
+  it("tells the agent at submit time that its proof_refs are not accepted, so a corrected delivery completes", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low", "product-brief"),
+    ]);
+    const replies: unknown[] = [];
+    const prompts: string[] = [];
+    const adapter: AgentAdapter = {
+      id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
+      run: async (request) => {
+        if (request.metadata.phase === "execution_brief") {
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
+        }
+        prompts.push(request.prompt);
+        const delivery = validDelivery({ id: "task_1" }) as Record<string, unknown>;
+        replies.push(request.runtimeActions!.submitArtifactEnvelope({ ...delivery, proof_refs: [{ type: "url", uri: "https://example.com/read-this" }] }));
+        replies.push(request.runtimeActions!.submitArtifactEnvelope(delivery));
+        return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+      },
+    };
+
+    await runSchedulerOnce({
+      projectRoot, repositories, adapters: [adapter], workerId: "worker", maxTasks: 1,
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [createProofForTask(task)],
+      proofSchemas: [{ id: "product-brief", description: "brief", acceptedTypes: ["file"] }],
+      emit: () => undefined,
+    });
+
+    expect(prompts[0]).toContain("accepts only these types: file");
+    expect(replies).toEqual([
+      expect.objectContaining({ ok: false, errors: ["proof_refs[0].type url is not accepted by product-brief; it accepts file"] }),
+      expect.objectContaining({ ok: true }),
+    ]);
+    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    client.close();
+  });
+
+  it("blocks a run that never drops proof_refs its Proof Schema refuses, naming them", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low", "repo-diff"),
     ]);
@@ -340,7 +384,8 @@ describe("runSchedulerOnce", () => {
       workerId: "worker",
       maxTasks: 1,
       approvalRequired: () => false,
-      proofCollector: () => [],
+      // The run has its diff, so what decides the outcome is the refused ref alone.
+      proofCollector: ({ task }) => [{ ...createProofForTask(task), type: "diff" as const, uri: "change.diff" }],
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
       emit: () => undefined,
     });
@@ -350,8 +395,10 @@ describe("runSchedulerOnce", () => {
       latestFailureReason: "invalid_business_artifact",
       latestFailureMessage: expect.stringContaining("command_output is not accepted by repo-diff"),
     });
-    expect(repositories.listProofsForTask("task_1")).toEqual([]);
-    expect(repositories.getCurrentBusinessArtifactForTask("task_1")).toBeNull();
+    expect(repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
+      artifactSubtype: "invalid_business_artifact_schema",
+      reviewStatus: "not_reviewable",
+    });
     client.close();
   });
 

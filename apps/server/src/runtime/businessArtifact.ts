@@ -9,11 +9,12 @@ import {
   type BusinessArtifactType,
   type Locale,
   type Proof,
+  type ProofType,
   type Task,
 } from "@auto-crop/core";
 import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
 import { parseActionIntents } from "./actionIntent";
-import type { ArtifactEnvelope } from "./artifactEnvelope";
+import type { ArtifactEnvelope, ProofReference } from "./artifactEnvelope";
 import { parseOpenDecisions } from "./founderDecision";
 import {
   evaluateVerificationReport,
@@ -170,22 +171,49 @@ export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): Bu
   };
 }
 
+/** Which Proof Reference types a run's task accepts: its Proof Schema's, and nothing else. */
+export type ProofRefPolicy = {
+  proofSchemaId: string;
+  acceptedTypes: ProofType[];
+};
+
+export type ArtifactEnvelopeContractOptions = {
+  locale: Locale;
+  requireDetails: boolean;
+  /** Omitted only by callers that check the payload alone; settlement still checks refs itself. */
+  proofRefs?: ProofRefPolicy;
+};
+
 /**
- * The delivery contract an envelope's payload must meet beyond its shape: a `deliverable` or
- * `final_report` carries an Outcome Summary, an Execution Report and well-formed Founder Decisions.
+ * Proof References whose type the task's Proof Schema does not accept. Checked when the agent submits
+ * and again at settlement, with this one function: a ref the runtime will refuse must be refused while
+ * the agent can still drop it, not after its run has ended (an agent once cited the web pages it read
+ * as `url` refs on a `product-brief` task, was told `ok`, and had the whole delivery blocked).
+ */
+export function proofRefTypeErrors(refs: ProofReference[] | undefined, policy: ProofRefPolicy): string[] {
+  return (refs ?? []).flatMap((ref, index) => policy.acceptedTypes.includes(ref.type)
+    ? []
+    : [`proof_refs[${index}].type ${ref.type} is not accepted by ${policy.proofSchemaId}; it accepts ${policy.acceptedTypes.join(", ") || "no proof_refs"}`]);
+}
+
+/**
+ * The delivery contract an envelope must meet beyond its shape: a `deliverable` or `final_report`
+ * carries an Outcome Summary, an Execution Report and well-formed Founder Decisions, and any envelope's
+ * Proof References are of types its task accepts.
  *
  * One function for both moments it is checked — when the agent submits, so it can correct the
  * envelope in the same run, and at settlement, which is the authority. Two copies of these rules is
  * how the action path once settled deliveries the file path would have rejected.
  */
 export function artifactEnvelopeContractErrors(
-  envelope: Pick<ArtifactEnvelope, "artifactKind" | "payload">,
-  options: { locale: Locale; requireDetails: boolean },
+  envelope: Pick<ArtifactEnvelope, "artifactKind" | "payload" | "proofRefs">,
+  options: ArtifactEnvelopeContractOptions,
 ): string[] {
+  const refErrors = options.proofRefs ? proofRefTypeErrors(envelope.proofRefs, options.proofRefs) : [];
   if (envelope.artifactKind !== "deliverable" && envelope.artifactKind !== "final_report") {
-    return [];
+    return refErrors;
   }
-  const errors: string[] = [];
+  const errors: string[] = [...refErrors];
   const outcomeSummaryError = outcomeSummaryFieldError(envelope.payload);
   if (outcomeSummaryError) {
     errors.push(outcomeSummaryError);

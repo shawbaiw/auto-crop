@@ -57,35 +57,44 @@ const PROOF_TYPES = new Set<ProofType>(PROOF_TYPE_VALUES);
  * Declared beside the parser so the two cannot drift. It is not a convenience: given a schema with no
  * properties, Claude Code sent `payload` as a JSON string, which the parser rightly rejected, so the
  * delivery never landed. Naming each field's type is what makes the client send structure.
+ *
+ * `acceptedProofTypes` narrows `proof_refs` to the run's Proof Schema: a schema advertising every type
+ * invited an agent to cite web pages as `url` refs its task could never accept.
  */
-export const ARTIFACT_ENVELOPE_INPUT_SCHEMA = {
-  type: "object",
-  properties: {
-    artifact_kind: { type: "string", enum: ARTIFACT_KIND_VALUES },
-    artifact_role: { type: "string", enum: ARTIFACT_ROLE_VALUES },
-    artifact_subtype: { type: "string", minLength: 1 },
-    task_type: { type: "string", minLength: 1 },
-    payload: { type: "object", description: "The delivery itself, including execution_report and outcome_summary for a deliverable or final_report." },
-    lineage: { type: "object" },
-    proof_refs: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: { type: { type: "string", enum: PROOF_TYPE_VALUES }, uri: { type: "string" }, summary: { type: "string" } },
-        required: ["type", "uri"],
+export function artifactEnvelopeInputSchema(acceptedProofTypes: readonly ProofType[] = PROOF_TYPE_VALUES) {
+  return {
+    type: "object",
+    properties: {
+      artifact_kind: { type: "string", enum: ARTIFACT_KIND_VALUES },
+      artifact_role: { type: "string", enum: ARTIFACT_ROLE_VALUES },
+      artifact_subtype: { type: "string", minLength: 1 },
+      task_type: { type: "string", minLength: 1 },
+      payload: { type: "object", description: "The delivery itself, including execution_report and outcome_summary for a deliverable or final_report. Cite sources you read here." },
+      lineage: { type: "object" },
+      proof_refs: acceptedProofTypes.length > 0
+        ? {
+          type: "array",
+          description: `Evidence from this run for the runtime to record as Proof. Only these types are accepted: ${acceptedProofTypes.join(", ")}.`,
+          items: {
+            type: "object",
+            properties: { type: { type: "string", enum: [...acceptedProofTypes] }, uri: { type: "string" }, summary: { type: "string" } },
+            required: ["type", "uri"],
+          },
+        }
+        : { type: "array", maxItems: 0, description: "This task accepts no proof_refs." },
+      file_refs: {
+        type: "array",
+        description: "Workspace-relative files the next task should receive.",
+        items: {
+          type: "object",
+          properties: { path: { type: "string" }, description: { type: "string" } },
+          required: ["path"],
+        },
       },
     },
-    file_refs: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: { path: { type: "string" }, description: { type: "string" } },
-        required: ["path"],
-      },
-    },
-  },
-  required: ["artifact_kind", "artifact_role", "artifact_subtype", "task_type", "payload", "lineage"],
-} as const;
+    required: ["artifact_kind", "artifact_role", "artifact_subtype", "task_type", "payload", "lineage"],
+  };
+}
 
 export function parseArtifactEnvelope(input: unknown): ArtifactEnvelopeParseResult {
   if (!isRecord(input)) {
