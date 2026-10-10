@@ -148,7 +148,12 @@ export function resolveDependencyReadiness(
  * The verdict a consumer still waits on, or null when the output is free to consume.
  *
  * Checked against the artifact being consumed, so a verdict on a superseded version does not release
- * a new one. A verifier consuming its own target is exempt: it is the one being waited for.
+ * a new one. Two consumers are exempt from a verifier's gate:
+ * - the verifier itself, consuming its own target: it is the one being waited for;
+ * - another task the same verifier judges: it is part of the chain under verification. Making it wait
+ *   for a verdict that needs its own output was a deadlock — a real plan had one verifier judge a
+ *   methodology and the keyword selection built on it, and neither ever ran. Consumers outside the
+ *   chain still wait, so nothing unverified leaves it.
  */
 function pendingVerificationOf(
   repositories: ReturnType<typeof createRepositories>,
@@ -157,7 +162,7 @@ function pendingVerificationOf(
   artifact: BusinessArtifact,
 ): Exclude<DependencyReadiness, { kind: "ready" }> | null {
   for (const verifier of verifiersOf(repositories, upstream.id)) {
-    if (verifier.id === consumer.id) {
+    if (verifier.id === consumer.id || verifiersOf(repositories, consumer.id).some((own) => own.id === verifier.id)) {
       continue;
     }
     const verdict = repositories.getCurrentBusinessArtifactForTask(verifier.id);

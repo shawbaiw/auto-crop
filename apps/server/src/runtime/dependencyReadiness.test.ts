@@ -242,6 +242,37 @@ describe("resolveDependencyReadiness", () => {
       client.close();
     });
 
+    /**
+     * The first real e2e run, pinned: the plan had one verifier judge a methodology and the keyword
+     * selection built on it. The selection waited for a verdict on the methodology, and the verifier
+     * waited for the selection, so neither ever ran. A task the same verifier also judges is part of
+     * the chain under verification; only consumers outside it wait.
+     */
+    it("lets a consumer the same verifier also judges build on the unverified output", () => {
+      const { repositories, client } = verifiedFixture();
+      repositories.createTaskDependency({ taskId: "task_verifier", dependsOnTaskId: "task_consumer", inputRole: "verification_target" });
+
+      expect(resolveDependencyReadiness(repositories, repositories.getTask("task_consumer")!).kind).toBe("ready");
+      client.close();
+    });
+
+    it("keeps a consumer outside the verified chain waiting even when a sibling target is exempt", () => {
+      const { repositories, client } = verifiedFixture(undefined, [
+        createTaskRecord("task_1", "complete"),
+        createTaskRecord("task_verifier", "queued"),
+        createTaskRecord("task_consumer", "queued"),
+        createTaskRecord("task_outsider", "queued"),
+      ]);
+      repositories.createTaskDependency({ taskId: "task_verifier", dependsOnTaskId: "task_consumer", inputRole: "verification_target" });
+      repositories.createTaskDependency({ taskId: "task_outsider", dependsOnTaskId: "task_1" });
+
+      expect(resolveDependencyReadiness(repositories, repositories.getTask("task_outsider")!)).toMatchObject({
+        kind: "waiting",
+        dependency: { id: "task_verifier" },
+      });
+      client.close();
+    });
+
     it("blocks the consumer by name when the verification itself is blocked", () => {
       const { repositories, client } = verifiedFixture(undefined, [
         createTaskRecord("task_1", "complete"),
