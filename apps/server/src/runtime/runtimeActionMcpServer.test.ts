@@ -1,7 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { runtimeActionMcpServer } from "../adapters/cliAgent";
 import { handleRuntimeActionMcpMessage } from "./runtimeActionMcpServer";
 import { createRuntimeActionChannel } from "./runtimeActionChannel";
 
@@ -14,6 +16,31 @@ afterEach(() => {
 });
 
 describe("runtime action MCP server", () => {
+  /**
+   * The server as a CLI actually starts it: the adapter's command, args and env, in a task workspace
+   * outside this repository. Handling messages in-process proved nothing about that launch, which is
+   * how a delivery tool that could not start shipped.
+   */
+  it("starts from a foreign workspace with the launch the adapter hands the CLI and records a candidate", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "auto-crop-foreign-workspace-"));
+    const candidateDir = mkdtempSync(join(tmpdir(), "auto-crop-runtime-action-launch-"));
+    createdDirs.push(workspace, candidateDir);
+    const server = runtimeActionMcpServer({ candidateDir, companyId: "company_1", taskId: "task_1", runId: "run_1" });
+    const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "submit_artifact_envelope", arguments: completeDeliverable("launched") } };
+
+    const result = spawnSync(server.command, server.args, {
+      cwd: workspace,
+      env: { PATH: process.env.PATH, ...server.env },
+      input: `${JSON.stringify(call)}\n`,
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({ id: 1, result: { isError: false, structuredContent: { ok: true } } });
+    expect(readdirSync(candidateDir)).toHaveLength(1);
+  });
+
   it("lists only the submit_artifact_envelope tool", () => {
     const response = handleRuntimeActionMcpMessage({
       jsonrpc: "2.0",
@@ -27,6 +54,10 @@ describe("runtime action MCP server", () => {
       result: {
         tools: [{ name: "submit_artifact_envelope" }],
       },
+    });
+    // Nested fields are typed, so a client sends `payload` as an object rather than a JSON string.
+    expect(response).toMatchObject({
+      result: { tools: [{ inputSchema: { properties: { payload: { type: "object" }, lineage: { type: "object" } } } }] },
     });
   });
 
@@ -73,6 +104,22 @@ function env(overrides: Record<string, string> = {}) {
     AUTO_CROP_RUNTIME_ACTION_TASK_ID: "task_1",
     AUTO_CROP_RUNTIME_ACTION_RUN_ID: "run_1",
     ...overrides,
+  };
+}
+
+/** A deliverable that also meets the delivery contract settlement enforces. */
+function completeDeliverable(subtype: string) {
+  return {
+    ...validEnvelope(subtype),
+    payload: {
+      outcome_summary: "The implementation is complete.",
+      execution_report: {
+        conclusion: "The change is complete.",
+        vision_impact: "It unblocks the next milestone.",
+        remaining_gap: "Nothing for this task.",
+        recommendation: "Review it.",
+      },
+    },
   };
 }
 

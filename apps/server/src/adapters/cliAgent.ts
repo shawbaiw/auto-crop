@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
 import {
   CLAUDE_CODE_LAUNCH_PROBE,
@@ -38,7 +39,12 @@ export type CommandValues = {
    * the flag. See `createCodexAdapter`.
    */
   outputSchemaPath?: string;
-  runtimeActionMcpConfigPath?: string;
+  /**
+   * The run's Runtime Action Channel server (ADR 0041), present only during `run()` and only for an
+   * adapter that declares `artifact_envelope`. Each builder expresses it in its own CLI's shape: Claude
+   * Code takes `configPath`, Codex takes the server as `-c mcp_servers.*` overrides.
+   */
+  runtimeActionMcp?: { server: RuntimeActionMcpServer; configPath: string };
   /**
    * What the installed CLI can enforce, for an adapter with a `launchProbe`. A builder passes only
    * flags this declares; it is never called with an `unavailable` support.
@@ -164,16 +170,24 @@ export function createCliAgentAdapter(options: CliAgentOptions): CliAgentAdapter
       if (outputSchemaPath && request.outputSchema) {
         writeFileSync(outputSchemaPath, JSON.stringify(request.outputSchema), "utf8");
       }
-      const mcpConfigDir = request.runtimeActions?.mcp && launchSupport && supportsFlag(launchSupport, "--mcp-config")
+      // Whether the run gets the action surface is the adapter's own claim, so a CLI that cannot express
+      // it is never handed a server it would ignore.
+      const contractCapabilities = options.resolveContractCapabilities
+        ? options.resolveContractCapabilities(launchSupport)
+        : options.contractCapabilities ?? [];
+      const mcpConfigDir = request.runtimeActions?.mcp && contractCapabilities.includes("artifact_envelope")
         ? mkdtempSync(join(tmpdir(), "auto-crop-runtime-action-mcp-"))
         : null;
-      const runtimeActionMcpConfigPath = mcpConfigDir ? join(mcpConfigDir, "mcp.json") : undefined;
-      if (runtimeActionMcpConfigPath && request.runtimeActions?.mcp) {
-        writeFileSync(runtimeActionMcpConfigPath, JSON.stringify(runtimeActionMcpConfig(request.runtimeActions.mcp)), "utf8");
+      let runtimeActionMcp: CommandValues["runtimeActionMcp"];
+      if (mcpConfigDir && request.runtimeActions?.mcp) {
+        const server = runtimeActionMcpServer(request.runtimeActions.mcp);
+        const configPath = join(mcpConfigDir, "mcp.json");
+        writeFileSync(configPath, JSON.stringify(mcpConfigFile(server)), "utf8");
+        runtimeActionMcp = { server, configPath };
       }
 
       try {
-        const { command, args } = build({ ...commandValues(request), outputSchemaPath, runtimeActionMcpConfigPath, launchSupport });
+        const { command, args } = build({ ...commandValues(request), outputSchemaPath, runtimeActionMcp, launchSupport });
 
         options.log?.(`Agent ${options.name} starting task ${request.taskId}`);
         const result = await runCommand(command, args, request.workspacePath, {
@@ -275,35 +289,7 @@ export function createClaudeCodeAdapter(
     capabilities: ["code", "frontend", "research", "writing"],
     launchProbe: CLAUDE_CODE_LAUNCH_PROBE,
     resolveContractCapabilities: (support) => supportsFlagIfPresent(support, "--mcp-config") ? ["artifact_envelope"] : [],
-    buildCommand: ({ prompt, grant, outputSchema, runtimeActionMcpConfigPath, launchSupport }) => {
-      const support = requireLaunchSupport("claude-code", launchSupport);
-      const tools = claudeToolsForGrant(grant);
-      const when = (flag: string, ...args: string[]) => (supportsFlag(support, flag) ? [flag, ...args] : []);
-      return {
-        command: "claude",
-        args: [
-          flagSpelling(support, "-p", "--print"),
-          ...when("--restricted"),
-          "--strict-mcp-config",
-          ...(runtimeActionMcpConfigPath && supportsFlag(support, "--mcp-config")
-            ? [flagSpelling(support, "--mcp-config"), runtimeActionMcpConfigPath]
-            : []),
-          ...when("--permission-prompts", "none"),
-          // `--tools ""` is the CLI's "no built-in tools at all", which is what an empty grant means.
-          "--tools",
-          tools.join(","),
-          // Nothing to pre-approve when nothing exists; the flag would be meaningless.
-          ...(tools.length > 0 ? [flagSpelling(support, "--allowedTools", "--allowed-tools"), tools.join(",")] : []),
-          // Inline JSON only — this flag rejects a file path.
-          ...(outputSchema ? ["--json-schema", JSON.stringify(outputSchema)] : []),
-          "--permission-mode",
-          "acceptEdits",
-          ...when("--no-session-persistence"),
-          "--",
-          prompt,
-        ],
-      };
-    },
+    buildCommand: buildClaudeCodeCommand,
     probeSession: () => probeCliSession("claude", ["--help"], "--input-format"),
     ...options,
   });
@@ -318,40 +304,85 @@ export function createCodexAdapter(
     id: "codex",
     name: "Codex",
     capabilities: ["code", "frontend", "test", "refactor"],
-    contractCapabilities: ["structured_execution_brief"],
+    // `-c` is a required launch flag, so every launchable Codex can take the action server.
+    contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
     launchProbe: CODEX_LAUNCH_PROBE,
-    buildCommand: ({ prompt, workspace, grant, outputSchemaPath, launchSupport }) => {
-      const support = requireLaunchSupport("codex", launchSupport);
-      return {
-        command: "codex",
-        args: [
-          "exec",
-          flagSpelling(support, "-m", "--model"),
-          model,
-          flagSpelling(support, "-C", "--cd"),
-          workspace,
-          // File path only — this flag rejects inline JSON, the mirror of Claude Code's constraint. The
-          // file exists only during a run, so a preview shows the launch without it.
-          ...(outputSchemaPath ? ["--output-schema", outputSchemaPath] : []),
-          // The config-isolation half: do not read `$CODEX_HOME/config.toml` or user/project `.rules`.
-          "--ignore-user-config",
-          "--ignore-rules",
-          "--skip-git-repo-check",
-          flagSpelling(support, "--sandbox", "-s"),
-          codexSandboxForGrant(grant),
-          "--ephemeral",
-          flagSpelling(support, "-c", "--config"),
-          `tools.web_search=${grant.granted.includes("web_research")}`,
-          // Codex's workspace-write sandbox denies every socket unless this is on, so a run that must
-          // serve or reach 127.0.0.1 cannot without it — and a run that must not, cannot with it.
-          flagSpelling(support, "-c", "--config"),
-          `sandbox_workspace_write.network_access=${grant.granted.includes("local_network")}`,
-          prompt,
-        ],
-      };
-    },
+    buildCommand: (values) => buildCodexCommand(model, values),
     ...options,
   });
+}
+
+/** Claude Code's launch for one run; exported so tests can see the run-time flags a preview omits. */
+export function buildClaudeCodeCommand({ prompt, grant, outputSchema, runtimeActionMcp, launchSupport }: CommandValues): InterpolatedCommand {
+  const support = requireLaunchSupport("claude-code", launchSupport);
+  const tools = claudeToolsForGrant(grant);
+  // An MCP tool is not a built-in, so `--tools` does not list it, but it still asks for permission:
+  // without pre-approval `--permission-prompts none` denies the delivery call itself.
+  const allowedTools = [
+    ...tools,
+    ...(runtimeActionMcp ? runtimeActionMcp.server.toolNames.map((tool) => `mcp__${runtimeActionMcp.server.name}__${tool}`) : []),
+  ];
+  const when = (flag: string, ...args: string[]) => (supportsFlag(support, flag) ? [flag, ...args] : []);
+  return {
+    command: "claude",
+    args: [
+      flagSpelling(support, "-p", "--print"),
+      ...when("--restricted"),
+      "--strict-mcp-config",
+      ...(runtimeActionMcp && supportsFlag(support, "--mcp-config")
+        ? [flagSpelling(support, "--mcp-config"), runtimeActionMcp.configPath]
+        : []),
+      ...when("--permission-prompts", "none"),
+      // `--tools ""` is the CLI's "no built-in tools at all", which is what an empty grant means.
+      "--tools",
+      tools.join(","),
+      // Nothing to pre-approve when nothing exists; the flag would be meaningless.
+      ...(allowedTools.length > 0 ? [flagSpelling(support, "--allowedTools", "--allowed-tools"), allowedTools.join(",")] : []),
+      // Inline JSON only — this flag rejects a file path.
+      ...(outputSchema ? ["--json-schema", JSON.stringify(outputSchema)] : []),
+      "--permission-mode",
+      "acceptEdits",
+      ...when("--no-session-persistence"),
+      "--",
+      prompt,
+    ],
+  };
+}
+
+/** Codex's launch for one run with `model`; exported for the same reason as {@link buildClaudeCodeCommand}. */
+export function buildCodexCommand(
+  model: string,
+  { prompt, workspace, grant, outputSchemaPath, runtimeActionMcp, launchSupport }: CommandValues,
+): InterpolatedCommand {
+  const support = requireLaunchSupport("codex", launchSupport);
+  return {
+    command: "codex",
+    args: [
+      "exec",
+      flagSpelling(support, "-m", "--model"),
+      model,
+      flagSpelling(support, "-C", "--cd"),
+      workspace,
+      // File path only — this flag rejects inline JSON, the mirror of Claude Code's constraint. The
+      // file exists only during a run, so a preview shows the launch without it.
+      ...(outputSchemaPath ? ["--output-schema", outputSchemaPath] : []),
+      // The config-isolation half: do not read `$CODEX_HOME/config.toml` or user/project `.rules`.
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--skip-git-repo-check",
+      flagSpelling(support, "--sandbox", "-s"),
+      codexSandboxForGrant(grant),
+      "--ephemeral",
+      flagSpelling(support, "-c", "--config"),
+      `tools.web_search=${grant.granted.includes("web_research")}`,
+      // Codex's workspace-write sandbox denies every socket unless this is on, so a run that must
+      // serve or reach 127.0.0.1 cannot without it — and a run that must not, cannot with it.
+      flagSpelling(support, "-c", "--config"),
+      `sandbox_workspace_write.network_access=${grant.granted.includes("local_network")}`,
+      ...(runtimeActionMcp ? codexMcpServerOverrides(support, runtimeActionMcp.server) : []),
+      prompt,
+    ],
+  };
 }
 
 function supportsFlagIfPresent(support: AdapterLaunchSupport | undefined, flag: string): boolean {
@@ -360,22 +391,58 @@ function supportsFlagIfPresent(support: AdapterLaunchSupport | undefined, flag: 
 
 type RuntimeActionMcpContext = NonNullable<NonNullable<AgentRunRequest["runtimeActions"]>["mcp"]>;
 
-function runtimeActionMcpConfig(context: RuntimeActionMcpContext): object {
+/** A stdio MCP server, independent of how any one CLI is told about it. */
+export type RuntimeActionMcpServer = {
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  /** Tools the run must be allowed to call without a prompt; the delivery itself is one of them. */
+  toolNames: string[];
+};
+
+export const RUNTIME_ACTION_MCP_SERVER_NAME = "auto-crop-runtime-actions";
+
+/**
+ * The server runs from TypeScript source, so it is launched with the tsx loader — resolved to an
+ * absolute URL here, because the CLI starts it in the task workspace, where a bare `tsx` specifier
+ * resolves against a directory that has no `node_modules`.
+ */
+export function runtimeActionMcpServer(context: RuntimeActionMcpContext): RuntimeActionMcpServer {
   const serverPath = fileURLToPath(new URL("../runtime/runtimeActionMcpServer.ts", import.meta.url));
+  const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
   return {
-    mcpServers: {
-      "auto-crop-runtime-actions": {
-        command: process.execPath,
-        args: ["--import", "tsx", serverPath],
-        env: {
-          AUTO_CROP_RUNTIME_ACTION_DIR: context.candidateDir,
-          AUTO_CROP_RUNTIME_ACTION_COMPANY_ID: context.companyId,
-          AUTO_CROP_RUNTIME_ACTION_TASK_ID: context.taskId,
-          AUTO_CROP_RUNTIME_ACTION_RUN_ID: context.runId,
-        },
-      },
+    name: RUNTIME_ACTION_MCP_SERVER_NAME,
+    command: process.execPath,
+    args: ["--import", tsxLoader, serverPath],
+    env: {
+      AUTO_CROP_RUNTIME_ACTION_DIR: context.candidateDir,
+      AUTO_CROP_RUNTIME_ACTION_COMPANY_ID: context.companyId,
+      AUTO_CROP_RUNTIME_ACTION_TASK_ID: context.taskId,
+      AUTO_CROP_RUNTIME_ACTION_RUN_ID: context.runId,
     },
+    toolNames: ["submit_artifact_envelope"],
   };
+}
+
+function mcpConfigFile(server: RuntimeActionMcpServer): object {
+  return { mcpServers: { [server.name]: { command: server.command, args: server.args, env: server.env } } };
+}
+
+/**
+ * The server as `-c` overrides, since `--ignore-user-config` leaves Codex no config file to name it in.
+ * Values are TOML; a JSON string is a valid TOML basic string. `codex exec` runs with approvals off,
+ * which cancels any MCP call that would ask, so this server's tools are pre-approved.
+ */
+function codexMcpServerOverrides(support: AdapterLaunchSupport, server: RuntimeActionMcpServer): string[] {
+  const key = `mcp_servers.${server.name}`;
+  const env = Object.entries(server.env).map(([name, value]) => `${name}=${JSON.stringify(value)}`).join(",");
+  return [
+    `${key}.command=${JSON.stringify(server.command)}`,
+    `${key}.args=[${server.args.map((arg) => JSON.stringify(arg)).join(",")}]`,
+    `${key}.env={${env}}`,
+    `${key}.default_tools_approval_mode="approve"`,
+  ].flatMap((override) => [flagSpelling(support, "-c", "--config"), override]);
 }
 
 function requireLaunchSupport(adapterId: string, support: AdapterLaunchSupport | undefined): AdapterLaunchSupport {
@@ -419,14 +486,14 @@ export function interpolateCommandTemplate(
   values: { prompt: string; workspace: string; promptPath: string },
 ): InterpolatedCommand {
   const [command, ...args] = splitCommand(template).map((part) =>
-    part
-      .replaceAll("{prompt}", values.prompt)
-      .replaceAll("{workspace}", values.workspace)
-      .replaceAll("{promptPath}", values.promptPath),
+  part
+    .replaceAll("{prompt}", values.prompt)
+    .replaceAll("{workspace}", values.workspace)
+    .replaceAll("{promptPath}", values.promptPath),
   );
 
   if (!command) {
-    throw new Error("Command template must include a command.");
+  throw new Error("Command template must include a command.");
   }
 
   return { command, args };

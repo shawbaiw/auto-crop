@@ -3,10 +3,20 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { noToolGrant, type AgentCapabilityGrant } from "../policies/capabilityGrant";
-import { createClaudeCodeAdapter, createCliAgentAdapter, createCodexAdapter, interpolateCommandTemplate, isQuotaExhaustedOutput } from "./cliAgent";
+import {
+  buildClaudeCodeCommand,
+  buildCodexCommand,
+  createClaudeCodeAdapter,
+  createCliAgentAdapter,
+  createCodexAdapter,
+  interpolateCommandTemplate,
+  isQuotaExhaustedOutput,
+  runtimeActionMcpServer,
+  type CommandValues,
+} from "./cliAgent";
 import { createMockAgentAdapter } from "./mockAgent";
 import { createAgentRegistry, resolveLaunchableAdapter } from "./registry";
-import type { AgentRunRequest } from "./types";
+import type { AdapterContractCapability, AgentRunRequest } from "./types";
 
 const request: AgentRunRequest = {
   taskId: "task_1",
@@ -451,8 +461,8 @@ describe("CLI command template adapter", () => {
     expect(args[args.indexOf("--json-schema") + 1]).toBe(JSON.stringify(schema));
   });
 
-  it("declares structured execution brief support only for Codex", async () => {
-    expect(codexWith(CODEX_EXEC_HELP).contractCapabilities).toContain("structured_execution_brief");
+  it("declares structured execution briefs only for Codex and artifact envelopes for both CLIs", async () => {
+    expect(codexWith(CODEX_EXEC_HELP).contractCapabilities).toEqual(["structured_execution_brief", "artifact_envelope"]);
     expect(claudeWith(CLAUDE_HELP).contractCapabilities ?? []).not.toContain("structured_execution_brief");
     await expect(claudeWith(CLAUDE_HELP).resolveContractCapabilities?.()).resolves.toContain("artifact_envelope");
     await expect(claudeWith(withoutFlag(CLAUDE_HELP, "--mcp-config")).resolveContractCapabilities?.()).resolves.not.toContain("artifact_envelope");
@@ -480,45 +490,41 @@ describe("CLI command template adapter", () => {
     expect(seenPath && existsSync(seenPath)).toBe(false);
   });
 
-  it("writes an isolated runtime action MCP config for action-capable CLI runs", async () => {
-    let seenPath: string | undefined;
+  const actionRequest: AgentRunRequest = {
+    ...request,
+    workspacePath: process.cwd(),
+    runtimeActions: {
+      submitArtifactEnvelope: () => ({ ok: true }),
+      mcp: {
+        candidateDir: "/tmp/auto-crop-runtime-actions",
+        companyId: "company_1",
+        taskId: "task_1",
+        runId: "run_1",
+      },
+    },
+  };
+
+  /** Captures what a builder is handed during `run()`, without spawning the real CLI. */
+  async function runtimeActionMcpSeenBy(contractCapabilities: AdapterContractCapability[]) {
+    let seen: CommandValues["runtimeActionMcp"];
     let configDuringRun: unknown;
     const adapter = createCliAgentAdapter({
-      id: "fake-claude",
-      name: "Fake Claude",
+      id: "fake-agent",
+      name: "Fake Agent",
       capabilities: ["code"],
-      launchProbe: {
-        command: "fake",
-        args: ["--help"],
-        parse: () => ({
-          adapterId: "fake-claude",
-          isolationLevel: "strong",
-          supportedFlags: ["--mcp-config"],
-          missingFlags: [],
-          warnings: [],
-        }),
-      },
-      readHelp: async () => "ok",
-      buildCommand: ({ runtimeActionMcpConfigPath }) => {
-        seenPath = runtimeActionMcpConfigPath;
-        configDuringRun = runtimeActionMcpConfigPath ? JSON.parse(readFileSync(runtimeActionMcpConfigPath, "utf8")) : undefined;
+      contractCapabilities,
+      buildCommand: ({ runtimeActionMcp }) => {
+        seen = runtimeActionMcp;
+        configDuringRun = runtimeActionMcp ? JSON.parse(readFileSync(runtimeActionMcp.configPath, "utf8")) : undefined;
         return { command: "node", args: ["--version"] };
       },
     });
+    await adapter.run(actionRequest);
+    return { seen, configDuringRun };
+  }
 
-    await adapter.run({
-      ...request,
-      workspacePath: process.cwd(),
-      runtimeActions: {
-        submitArtifactEnvelope: () => ({ ok: true }),
-        mcp: {
-          candidateDir: "/tmp/auto-crop-runtime-actions",
-          companyId: "company_1",
-          taskId: "task_1",
-          runId: "run_1",
-        },
-      },
-    });
+  it("writes an isolated runtime action MCP config for action-capable CLI runs", async () => {
+    const { seen, configDuringRun } = await runtimeActionMcpSeenBy(["artifact_envelope"]);
 
     expect(configDuringRun).toMatchObject({
       mcpServers: {
@@ -533,7 +539,60 @@ describe("CLI command template adapter", () => {
         },
       },
     });
-    expect(seenPath && existsSync(seenPath)).toBe(false);
+    expect(seen && existsSync(seen.configPath)).toBe(false);
+  });
+
+  it("hands no action server to an adapter that does not declare artifact_envelope", async () => {
+    expect((await runtimeActionMcpSeenBy([])).seen).toBeUndefined();
+  });
+
+  /**
+   * The CLI starts the server in the task workspace. A bare `--import tsx` resolved there, found no
+   * `node_modules`, and the delivery tool never existed — so the loader is an absolute URL.
+   */
+  it("launches the action server with a loader that resolves outside the repository", () => {
+    const server = runtimeActionMcpServer(actionRequest.runtimeActions!.mcp!);
+
+    expect(server.args[0]).toBe("--import");
+    expect(server.args[1]).toMatch(/^file:\/\//);
+    expect(existsSync(new URL(server.args[1]!))).toBe(true);
+  });
+
+  it("pre-approves the delivery tool for Claude Code so a no-prompt run can call it", async () => {
+    const runtimeActionMcp = { server: runtimeActionMcpServer(actionRequest.runtimeActions!.mcp!), configPath: "/tmp/mcp.json" };
+    const launchSupport = (await claudeWith(CLAUDE_HELP).launchPlan!()).support;
+    const { args } = buildClaudeCodeCommand({
+      prompt: "p", workspace: "/tmp/workspace", promptPath: "", grant: workspaceGrant!, runtimeActionMcp, launchSupport,
+    });
+
+    expect(args[args.indexOf("--mcp-config") + 1]).toBe("/tmp/mcp.json");
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe(
+      "Read,Glob,Grep,Write,Edit,mcp__auto-crop-runtime-actions__submit_artifact_envelope",
+    );
+    // Built-ins and MCP tools are separate lists: the delivery tool is allowed, not made a built-in.
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Glob,Grep,Write,Edit");
+  });
+
+  /**
+   * `--ignore-user-config` leaves Codex no config file to name the server in, and `codex exec` runs
+   * with approvals off — which cancels any MCP call that would ask. Both were observed on codex 0.147.
+   */
+  it("gives Codex the action server as -c overrides with its tools pre-approved", async () => {
+    const server = runtimeActionMcpServer(actionRequest.runtimeActions!.mcp!);
+    const launchSupport = (await codexWith(CODEX_EXEC_HELP).launchPlan!()).support;
+    const { args } = buildCodexCommand("gpt-5.5", {
+      prompt: "p", workspace: "/tmp/workspace", promptPath: "", grant: workspaceGrant!,
+      runtimeActionMcp: { server, configPath: "/tmp/mcp.json" }, launchSupport,
+    });
+    const overrides = args.filter((_, index) => args[index - 1] === "-c");
+
+    expect(overrides).toEqual(expect.arrayContaining([
+      `mcp_servers.auto-crop-runtime-actions.command=${JSON.stringify(process.execPath)}`,
+      `mcp_servers.auto-crop-runtime-actions.args=[${server.args.map((arg) => JSON.stringify(arg)).join(",")}]`,
+      'mcp_servers.auto-crop-runtime-actions.env={AUTO_CROP_RUNTIME_ACTION_DIR="/tmp/auto-crop-runtime-actions",AUTO_CROP_RUNTIME_ACTION_COMPANY_ID="company_1",AUTO_CROP_RUNTIME_ACTION_TASK_ID="task_1",AUTO_CROP_RUNTIME_ACTION_RUN_ID="run_1"}',
+      'mcp_servers.auto-crop-runtime-actions.default_tools_approval_mode="approve"',
+    ]));
+    expect(args.at(-1)).toBe("p");
   });
 
   it("omits the contract flag entirely when the run declares none", async () => {

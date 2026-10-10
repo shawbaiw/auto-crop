@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { ARTIFACT_ENVELOPE_INPUT_SCHEMA } from "./artifactEnvelope";
 import { createRuntimeActionChannel } from "./runtimeActionChannel";
 
 type JsonRpcRequest = {
@@ -33,11 +34,7 @@ export function handleRuntimeActionMcpMessage(message: JsonRpcRequest, env: Runt
         {
           name: TOOL_NAME,
           description: "Submit the task's Artifact Envelope candidate to the Auto-Crop runtime.",
-          inputSchema: {
-            type: "object",
-            additionalProperties: true,
-            properties: {},
-          },
+          inputSchema: ARTIFACT_ENVELOPE_INPUT_SCHEMA,
         },
       ],
     });

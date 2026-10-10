@@ -26,15 +26,16 @@ export type ArtifactEnvelopeParseResult =
   | { success: true; value: ArtifactEnvelope; ignoredIdentityFields: string[] }
   | { success: false; errors: string[]; ignoredIdentityFields: string[] };
 
-const ARTIFACT_KINDS = new Set<BusinessArtifactKind>([
+const ARTIFACT_KIND_VALUES: BusinessArtifactKind[] = [
   "deliverable",
   "blocker",
   "decision_request",
   "direction_change_request",
   "final_report",
-]);
+];
+const ARTIFACT_KINDS = new Set<BusinessArtifactKind>(ARTIFACT_KIND_VALUES);
 
-const ARTIFACT_ROLES = new Set<BusinessArtifactRole>([
+const ARTIFACT_ROLE_VALUES: BusinessArtifactRole[] = [
   "findings",
   "plan",
   "spec",
@@ -43,10 +44,48 @@ const ARTIFACT_ROLES = new Set<BusinessArtifactRole>([
   "launch",
   "report",
   "none",
-]);
+];
+const ARTIFACT_ROLES = new Set<BusinessArtifactRole>(ARTIFACT_ROLE_VALUES);
 
 const IDENTITY_FIELDS = ["taskId", "task_id", "companyId", "company_id", "runId", "run_id"] as const;
-const PROOF_TYPES = new Set<ProofType>(["file", "diff", "url", "screenshot", "command_output", "test_result", "deployment"]);
+const PROOF_TYPE_VALUES: ProofType[] = ["file", "diff", "url", "screenshot", "command_output", "test_result", "deployment"];
+const PROOF_TYPES = new Set<ProofType>(PROOF_TYPE_VALUES);
+
+/**
+ * The envelope's shape as a JSON Schema, for the `submit_artifact_envelope` tool's `inputSchema`.
+ *
+ * Declared beside the parser so the two cannot drift. It is not a convenience: given a schema with no
+ * properties, Claude Code sent `payload` as a JSON string, which the parser rightly rejected, so the
+ * delivery never landed. Naming each field's type is what makes the client send structure.
+ */
+export const ARTIFACT_ENVELOPE_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    artifact_kind: { type: "string", enum: ARTIFACT_KIND_VALUES },
+    artifact_role: { type: "string", enum: ARTIFACT_ROLE_VALUES },
+    artifact_subtype: { type: "string", minLength: 1 },
+    task_type: { type: "string", minLength: 1 },
+    payload: { type: "object", description: "The delivery itself, including execution_report and outcome_summary for a deliverable or final_report." },
+    lineage: { type: "object" },
+    proof_refs: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { type: { type: "string", enum: PROOF_TYPE_VALUES }, uri: { type: "string" }, summary: { type: "string" } },
+        required: ["type", "uri"],
+      },
+    },
+    file_refs: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { path: { type: "string" }, description: { type: "string" } },
+        required: ["path"],
+      },
+    },
+  },
+  required: ["artifact_kind", "artifact_role", "artifact_subtype", "task_type", "payload", "lineage"],
+} as const;
 
 export function parseArtifactEnvelope(input: unknown): ArtifactEnvelopeParseResult {
   if (!isRecord(input)) {

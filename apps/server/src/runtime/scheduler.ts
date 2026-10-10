@@ -6,7 +6,6 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveLaunchableAdapter } from "../adapters/registry";
 import type { AdapterLaunchSupport } from "../adapters/launchPolicy";
-import { supportsFlag } from "../adapters/launchPolicy";
 import type { AgentAdapter, AgentRunResult, RunObservationSink } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import { resolvePolicyForPermissionMode } from "../policies/defaults";
@@ -372,7 +371,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           const adapter = launch.adapter;
           const launchWarnings = launch.support?.warnings ?? [];
           const contractCapabilities = await resolveAdapterContractCapabilities(adapter);
-          const deliverySurface = canUseArtifactEnvelope(adapter, contractCapabilities, launch.support ?? undefined)
+          const deliverySurface = canUseArtifactEnvelope(contractCapabilities)
             ? "artifact_envelope"
             : "file_shim";
 
@@ -2458,18 +2457,12 @@ async function resolveAdapterContractCapabilities(adapter: AgentAdapter): Promis
     : adapter.contractCapabilities ?? [];
 }
 
-function canUseArtifactEnvelope(
-  adapter: AgentAdapter,
-  contractCapabilities: string[],
-  support: AdapterLaunchSupport | undefined,
-): boolean {
-  if (!contractCapabilities.includes("artifact_envelope")) {
-    return false;
-  }
-  if (!adapter.launchPlan) {
-    return true;
-  }
-  return Boolean(support && support.isolationLevel !== "unavailable" && supportsFlag(support, "--mcp-config"));
+/**
+ * Whether the adapter can express the action server is its own claim — each CLI names the server in
+ * its own flags — so the scheduler does not second-guess it with one CLI's flag.
+ */
+function canUseArtifactEnvelope(contractCapabilities: string[]): boolean {
+  return contractCapabilities.includes("artifact_envelope");
 }
 
 /**
