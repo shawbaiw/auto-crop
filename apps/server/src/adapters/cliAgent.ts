@@ -420,6 +420,8 @@ export function runtimeActionMcpServer(context: RuntimeActionMcpContext): Runtim
       AUTO_CROP_RUNTIME_ACTION_COMPANY_ID: context.companyId,
       AUTO_CROP_RUNTIME_ACTION_TASK_ID: context.taskId,
       AUTO_CROP_RUNTIME_ACTION_RUN_ID: context.runId,
+      AUTO_CROP_RUNTIME_ACTION_LOCALE: context.locale,
+      AUTO_CROP_RUNTIME_ACTION_REQUIRE_EXECUTION_DETAILS: String(context.requireExecutionDetails),
     },
     toolNames: ["submit_artifact_envelope"],
   };

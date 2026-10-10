@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { finalizeDelivery } from "./deliveryFinalization";
 import { runSchedulerOnce } from "./scheduler";
 import { refreshTaskDependencyState } from "./taskRefresh";
+import { channelWithUnfinishedDelivery } from "./fixtures/stagedDelivery";
 
 /**
  * One delivery policy, two entry points. Every case is delivered once by a finished Agent Run and once by
@@ -134,9 +135,9 @@ describe("delivery finalization outcome matrix", () => {
     fixture.repositories.updateTaskExecutionSummary(task.id, { latestFailureReason: "no_proof", latestFailureMessage: "no proof" });
     openHold(fixture, task, "invalid_business_artifact", "runtime");
     openHold(fixture, task, "awaiting_founder_approval", "founder");
-    writeWorkspaceDelivery(task.workspacePath!, {});
+    const runtimeActionChannel = channelWithUnfinishedDelivery(task, writeWorkspaceDelivery(task.workspacePath!, {}));
 
-    const result = refreshTaskDependencyState({ repositories: fixture.repositories, taskId: task.id, proofSchemas: PROOF_SCHEMAS });
+    const result = refreshTaskDependencyState({ repositories: fixture.repositories, runtimeActionChannel, taskId: task.id, proofSchemas: PROOF_SCHEMAS });
 
     expect(result.task.status).toBe("failed");
     expect(fixture.repositories.listOpenTaskHolds(task.id).map((hold) => hold.kind)).toEqual(["awaiting_founder_approval"]);
@@ -257,12 +258,13 @@ async function deliver(entry: Entry, testCase: Case): Promise<Outcome> {
       id: "mock-worker",
       name: "Mock Worker",
       capabilities: ["code"],
+      contractCapabilities: ["artifact_envelope"],
       detect: async () => true,
       run: async (request: AgentRunRequest) => {
         if (request.metadata.phase === "execution_brief") {
           return { status: "complete", exitCode: 0, stderr: "", stdout: JSON.stringify({ purpose: "p", approach: "a", expectedOutcome: "e" }) };
         }
-        writeWorkspaceDelivery(request.workspacePath, extra);
+        request.runtimeActions!.submitArtifactEnvelope(writeWorkspaceDelivery(request.workspacePath, extra));
         return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
       },
     };
@@ -283,8 +285,8 @@ async function deliver(entry: Entry, testCase: Case): Promise<Outcome> {
 
   const task = createDeliveringTask(fixture, { subtask: testCase.subtask, status: "failed" });
   fixture.repositories.updateTaskExecutionSummary(task.id, { latestFailureReason: "no_proof", latestFailureMessage: "no proof" });
-  writeWorkspaceDelivery(task.workspacePath!, extra);
-  refreshTaskDependencyState({ repositories: fixture.repositories, taskId: task.id, proofSchemas: PROOF_SCHEMAS });
+  const runtimeActionChannel = channelWithUnfinishedDelivery(task, writeWorkspaceDelivery(task.workspacePath!, extra));
+  refreshTaskDependencyState({ repositories: fixture.repositories, runtimeActionChannel, taskId: task.id, proofSchemas: PROOF_SCHEMAS });
   return summarize(fixture, task.id);
 }
 
@@ -363,21 +365,17 @@ function payloadFor(extra: Record<string, unknown>) {
   };
 }
 
-function writeWorkspaceDelivery(workspacePath: string, extra: Record<string, unknown>) {
+/** Leaves the diff proof in the workspace and returns the envelope the agent submits with it. */
+function writeWorkspaceDelivery(workspacePath: string, extra: Record<string, unknown>): unknown {
   writeFileSync(join(workspacePath, "delivery.diff"), "diff --git a/index.html b/index.html\n", "utf8");
-  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
-      artifact_kind: "deliverable",
-      artifact_role: "implementation",
-      artifact_subtype: "slice",
-      task_type: "engineering.slice",
-      payload: payloadFor(extra),
-      lineage: {},
-    }),
-    "utf8",
-  );
+  return {
+    artifact_kind: "deliverable",
+    artifact_role: "implementation",
+    artifact_subtype: "slice",
+    task_type: "engineering.slice",
+    payload: payloadFor(extra),
+    lineage: {},
+  };
 }
 
 function baseTask(id: string, status: Task["status"]): Task {

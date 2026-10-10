@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Proof, Task } from "@auto-crop/core";
+import { parseArtifactEnvelope, type ArtifactEnvelope } from "./artifactEnvelope";
 import {
   captureBusinessArtifact,
   isVerifiableEnvironmentBlocker,
@@ -22,32 +23,28 @@ describe("captureBusinessArtifact", () => {
   it("captures a valid artifact file with snake_case aliases", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "deliverable",
-        artifact_role: "spec",
-        artifact_subtype: "mvp_brief",
-        task_type: "product_planning",
-        source_proof_id: "proof_1",
-        payload: {
-          selected_keyword: "pricing page generator",
-          execution_report: {
-            conclusion: "The MVP brief settles on a pricing page generator.",
-            vision_impact: "Product has a concrete wedge to build.",
-            remaining_gap: "Demand still needs validation with real founders.",
-            recommendation: "Use the brief as the downstream product direction.",
-          },
-          outcome_summary:
-            "The MVP brief settles on a pricing page generator. This gives Product a concrete wedge to build; the remaining gap is validating demand with real founders.",
+    const envelope = submitted({
+      artifact_kind: "deliverable",
+      artifact_role: "spec",
+      artifact_subtype: "mvp_brief",
+      task_type: "product_planning",
+      source_proof_id: "proof_1",
+      payload: {
+        selected_keyword: "pricing page generator",
+        execution_report: {
+          conclusion: "The MVP brief settles on a pricing page generator.",
+          vision_impact: "Product has a concrete wedge to build.",
+          remaining_gap: "Demand still needs validation with real founders.",
+          recommendation: "Use the brief as the downstream product direction.",
         },
-        lineage: { founder_vision: "Build an AI SaaS that creates pricing pages." },
-      }),
-      "utf8",
-    );
+        outcome_summary:
+          "The MVP brief settles on a pricing page generator. This gives Product a concrete wedge to build; the remaining gap is validating demand with real founders.",
+      },
+      lineage: { founder_vision: "Build an AI SaaS that creates pricing pages." },
+    });
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: {
         ...createTaskRecord(),
         title: "Do the work",
@@ -77,30 +74,26 @@ describe("captureBusinessArtifact", () => {
   it("accepts structured Execution Report fields on deliverables", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "deliverable",
-        artifact_role: "findings",
-        artifact_subtype: "pricing_scan",
-        task_type: "research.pricing_scan",
-        payload: {
-          execution_report: {
-            conclusion: "Founders prefer a fixed pilot price.",
-            vision_impact: "The offer can be validated without usage metering.",
-            remaining_gap: "No buyer has yet paid for the package.",
-            recommendation: "Test a flat pilot price with three prospects.",
-          },
-          outcome_summary:
-            "Founders prefer a fixed pilot price. This supports simple validation; the remaining gap is paid demand. Recommend testing it with three prospects.",
+    const envelope = submitted({
+      artifact_kind: "deliverable",
+      artifact_role: "findings",
+      artifact_subtype: "pricing_scan",
+      task_type: "research.pricing_scan",
+      payload: {
+        execution_report: {
+          conclusion: "Founders prefer a fixed pilot price.",
+          vision_impact: "The offer can be validated without usage metering.",
+          remaining_gap: "No buyer has yet paid for the package.",
+          recommendation: "Test a flat pilot price with three prospects.",
         },
-        lineage: {},
-      }),
-      "utf8",
-    );
+        outcome_summary:
+          "Founders prefer a fixed pilot price. This supports simple validation; the remaining gap is paid demand. Recommend testing it with three prospects.",
+      },
+      lineage: {},
+    });
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: createTaskRecord(),
       proofs: [createProofRecord()],
       workspacePath,
@@ -122,15 +115,14 @@ describe("captureBusinessArtifact", () => {
   it.each([false, true])("requires actual work and evidence for a new execution (details present: %s)", (includeDetails) => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(join(workspacePath, ".auto-crop", "business-artifact.json"), JSON.stringify({
+    const envelope = submitted({
       artifact_kind: "deliverable", artifact_role: "findings", artifact_subtype: "comparison", task_type: "research.comparison", lineage: {},
       payload: { outcome_summary: "A supports the requested use case.", execution_report: {
         conclusion: "Select A", vision_impact: "Supports the requested use case", remaining_gap: "Verify ongoing costs", recommendation: "Run a pilot",
         ...(includeDetails ? { work_summary: "Compared A and B against the requirements", evidence: "A passed all three checks; B failed the reliability check" } : {}),
       } },
-    }));
-    const artifact = captureBusinessArtifact({ task: createTaskRecord(), proofs: [createProofRecord()], workspacePath, requireExecutionDetails: true });
+    });
+    const artifact = captureBusinessArtifact({ envelope, task: createTaskRecord(), proofs: [createProofRecord()], workspacePath, requireExecutionDetails: true });
     expect(artifact.validationStatus).toBe(includeDetails ? "valid" : "invalid_schema");
     if (!includeDetails) expect(artifact.validationErrors).toContain("payload.execution_report: New execution reports require work_summary and evidence.");
   });
@@ -143,8 +135,7 @@ describe("captureBusinessArtifact", () => {
   ])("validates the Action Intent declaration: %s", (_label, actions, expected) => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(join(workspacePath, ".auto-crop", "business-artifact.json"), JSON.stringify({
+    const envelope = submitted({
       artifact_kind: "deliverable", artifact_role: "findings", artifact_subtype: "comparison", task_type: "research.comparison", lineage: {},
       payload: {
         outcome_summary: "A supports the requested use case.",
@@ -154,9 +145,9 @@ describe("captureBusinessArtifact", () => {
           vision_impact: "Supports the use case", remaining_gap: "Verify ongoing costs", recommendation: "Run a pilot",
         },
       },
-    }));
+    });
 
-    const artifact = captureBusinessArtifact({ task: createTaskRecord(), proofs: [createProofRecord()], workspacePath, requireExecutionDetails: true });
+    const artifact = captureBusinessArtifact({ envelope, task: createTaskRecord(), proofs: [createProofRecord()], workspacePath, requireExecutionDetails: true });
 
     expect(artifact.validationStatus).toBe(expected);
   });
@@ -164,27 +155,23 @@ describe("captureBusinessArtifact", () => {
   it("rejects malformed or missing structured Execution Report fields on new deliverables", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "deliverable",
-        artifact_role: "findings",
-        artifact_subtype: "pricing_scan",
-        task_type: "research.pricing_scan",
-        payload: {
-          execution_report: {
-            conclusion: "Founders prefer a fixed pilot price.",
-            vision_impact: "The offer can be validated without usage metering.",
-          },
-          outcome_summary: "Legacy prose remains present.",
+    const envelope = submitted({
+      artifact_kind: "deliverable",
+      artifact_role: "findings",
+      artifact_subtype: "pricing_scan",
+      task_type: "research.pricing_scan",
+      payload: {
+        execution_report: {
+          conclusion: "Founders prefer a fixed pilot price.",
+          vision_impact: "The offer can be validated without usage metering.",
         },
-        lineage: {},
-      }),
-      "utf8",
-    );
+        outcome_summary: "Legacy prose remains present.",
+      },
+      lineage: {},
+    });
 
     const invalid = captureBusinessArtifact({
+      envelope,
       task: createTaskRecord(),
       proofs: [createProofRecord()],
       workspacePath,
@@ -196,20 +183,17 @@ describe("captureBusinessArtifact", () => {
       "payload.execution_report: Expected conclusion, vision_impact, remaining_gap, and recommendation as non-empty strings or localized text objects.",
     );
 
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "deliverable",
-        artifact_role: "findings",
-        artifact_subtype: "pricing_scan",
-        task_type: "research.pricing_scan",
-        payload: { outcome_summary: "Legacy prose remains present." },
-        lineage: {},
-      }),
-      "utf8",
-    );
+    const withoutReport = submitted({
+      artifact_kind: "deliverable",
+      artifact_role: "findings",
+      artifact_subtype: "pricing_scan",
+      task_type: "research.pricing_scan",
+      payload: { outcome_summary: "Legacy prose remains present." },
+      lineage: {},
+    });
 
     const missingStructuredReport = captureBusinessArtifact({
+      envelope: withoutReport,
       task: createTaskRecord(),
       proofs: [createProofRecord()],
       workspacePath,
@@ -225,31 +209,27 @@ describe("captureBusinessArtifact", () => {
   it("accepts a deliverable whose Execution Report omits the company locale on a field (marker, not a failure)", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "deliverable",
-        artifact_role: "findings",
-        artifact_subtype: "pricing_scan",
-        task_type: "research.pricing_scan",
-        payload: {
-          execution_report: {
-            conclusion: { zh: "创始人倾向于固定的试点价格。" },
-            // The agent left this field in English on a zh company — a visible marker in the UI, not
-            // a structural validation failure (spec Decision 2).
-            vision_impact: { en: "The offer can be validated without usage metering." },
-            remaining_gap: { zh: "尚无买家为该套餐付费。" },
-            recommendation: { zh: "与三位潜在客户测试固定试点价格。" },
-          },
-          outcome_summary: "创始人倾向于固定的试点价格。",
+    const envelope = submitted({
+      artifact_kind: "deliverable",
+      artifact_role: "findings",
+      artifact_subtype: "pricing_scan",
+      task_type: "research.pricing_scan",
+      payload: {
+        execution_report: {
+          conclusion: { zh: "创始人倾向于固定的试点价格。" },
+          // The agent left this field in English on a zh company — a visible marker in the UI, not
+          // a structural validation failure (spec Decision 2).
+          vision_impact: { en: "The offer can be validated without usage metering." },
+          remaining_gap: { zh: "尚无买家为该套餐付费。" },
+          recommendation: { zh: "与三位潜在客户测试固定试点价格。" },
         },
-        lineage: {},
-      }),
-      "utf8",
-    );
+        outcome_summary: "创始人倾向于固定的试点价格。",
+      },
+      lineage: {},
+    });
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: createTaskRecord(),
       proofs: [createProofRecord()],
       workspacePath,
@@ -264,21 +244,17 @@ describe("captureBusinessArtifact", () => {
   it("still fails a deliverable that omits the Execution Report entirely on a zh company", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "deliverable",
-        artifact_role: "findings",
-        artifact_subtype: "pricing_scan",
-        task_type: "research.pricing_scan",
-        payload: { outcome_summary: "仅有旧版摘要。" },
-        lineage: {},
-      }),
-      "utf8",
-    );
+    const envelope = submitted({
+      artifact_kind: "deliverable",
+      artifact_role: "findings",
+      artifact_subtype: "pricing_scan",
+      task_type: "research.pricing_scan",
+      payload: { outcome_summary: "仅有旧版摘要。" },
+      lineage: {},
+    });
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: createTaskRecord(),
       proofs: [createProofRecord()],
       workspacePath,
@@ -299,38 +275,27 @@ describe("captureBusinessArtifact", () => {
    * writes. Recorded whatever the delivery turned out to be, because a broken one is recaptured and
    * re-judged from the same workspace.
    */
-  it("records the workspace it captured from, on sound and on broken deliveries", () => {
-    const soundWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
-    const brokenWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
-    const missingWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
-    createdDirs.push(soundWorkspace, brokenWorkspace, missingWorkspace);
-    const writeArtifactFile = (workspacePath: string, content: string) => {
-      mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-      writeFileSync(join(workspacePath, ".auto-crop", "business-artifact.json"), content, "utf8");
-    };
-    writeArtifactFile(
-      soundWorkspace,
-      JSON.stringify({
-        artifact_kind: "deliverable",
-        artifact_role: "spec",
-        artifact_subtype: "mvp_brief",
-        task_type: "product_planning",
-        source_proof_id: "proof_1",
-        payload: {
-          execution_report: {
-            conclusion: "The brief settles on one wedge.",
-            vision_impact: "Product has something concrete to build.",
-            remaining_gap: "Demand still needs validating.",
-            recommendation: "Build the wedge next.",
-          },
-          outcome_summary: "The brief settles on one wedge, which Product can build next; demand still needs validating.",
+  it("records the workspace it captured from, on sound, broken and missing deliveries", () => {
+    const sound = submitted({
+      artifact_kind: "deliverable",
+      artifact_role: "spec",
+      artifact_subtype: "mvp_brief",
+      task_type: "product_planning",
+      payload: {
+        execution_report: {
+          conclusion: "The brief settles on one wedge.",
+          vision_impact: "Product has something concrete to build.",
+          remaining_gap: "Demand still needs validating.",
+          recommendation: "Build the wedge next.",
         },
-        lineage: {},
-      }),
-    );
-    writeArtifactFile(brokenWorkspace, "{ not json");
-    const capture = (workspacePath: string) =>
+        outcome_summary: "The brief settles on one wedge, which Product can build next; demand still needs validating.",
+      },
+      lineage: {},
+    });
+    const broken = { ...sound, payload: {} };
+    const capture = (envelope: ArtifactEnvelope | null, workspacePath: string) =>
       captureBusinessArtifact({
+        envelope,
         task: createTaskRecord(),
         proofs: [createProofRecord()],
         workspacePath,
@@ -338,19 +303,20 @@ describe("captureBusinessArtifact", () => {
         createId: () => "business_artifact_1",
       });
 
-    expect(capture(soundWorkspace)).toMatchObject({ validationStatus: "valid", deliveryWorkspacePath: soundWorkspace });
-    expect(capture(brokenWorkspace)).toMatchObject({ validationStatus: "invalid_schema", deliveryWorkspacePath: brokenWorkspace });
-    expect(capture(missingWorkspace)).toMatchObject({
-      artifactSubtype: "missing_business_artifact_file",
-      deliveryWorkspacePath: missingWorkspace,
+    expect(capture(sound, "/workspaces/sound")).toMatchObject({ validationStatus: "valid", deliveryWorkspacePath: "/workspaces/sound" });
+    expect(capture(broken, "/workspaces/broken")).toMatchObject({ validationStatus: "invalid_schema", deliveryWorkspacePath: "/workspaces/broken" });
+    expect(capture(null, "/workspaces/missing")).toMatchObject({
+      artifactSubtype: "missing_artifact_envelope",
+      deliveryWorkspacePath: "/workspaces/missing",
     });
   });
 
-  it("records an invalid blocker artifact when no artifact file exists", () => {
+  it("records an invalid blocker artifact when the run submitted no Artifact Envelope", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
 
     const artifact = captureBusinessArtifact({
+      envelope: null,
       task: {
         ...createTaskRecord(),
         title: "Do the work",
@@ -366,7 +332,7 @@ describe("captureBusinessArtifact", () => {
     expect(artifact).toMatchObject({
       artifactKind: "blocker",
       artifactRole: "none",
-      artifactSubtype: "missing_business_artifact_file",
+      artifactSubtype: "missing_artifact_envelope",
       artifactType: "blocker_report",
       validationStatus: "invalid_schema",
       reviewStatus: "not_reviewable",
@@ -374,34 +340,30 @@ describe("captureBusinessArtifact", () => {
     });
   });
 
-  function writeEnvironmentBlockerArtifact(workspacePath: string): void {
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
+  function submitEnvironmentBlocker(workspacePath: string): ArtifactEnvelope {
     writeFileSync(join(workspacePath, "index.html"), "<main>Auto Crop Workspace</main>", "utf8");
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "blocker",
-        artifact_role: "validation",
-        artifact_subtype: "prototype_screenshot_validation",
-        task_type: "local_prototype_exposure",
-        payload: {
-          blocker_class: "environment_blocked",
-          capability: "browser_screenshot",
-          target_url: "http://localhost:4173/",
-          proof: { status: "blocked_by_browser_sandbox", screenshot_path: null },
-        },
-        lineage: { proof_schema: "landing-page-file" },
-      }),
-      "utf8",
-    );
+    return submitted({
+      artifact_kind: "blocker",
+      artifact_role: "validation",
+      artifact_subtype: "prototype_screenshot_validation",
+      task_type: "local_prototype_exposure",
+      payload: {
+        blocker_class: "environment_blocked",
+        capability: "browser_screenshot",
+        target_url: "http://localhost:4173/",
+        proof: { status: "blocked_by_browser_sandbox", screenshot_path: null },
+      },
+      lineage: { proof_schema: "landing-page-file" },
+    });
   }
 
   it("keeps an environment-blocked blocker in place when its claim is not verified", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    writeEnvironmentBlockerArtifact(workspacePath);
+    const envelope = submitEnvironmentBlocker(workspacePath);
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: { ...createTaskRecord(), proofSchemaId: "landing-page-file" },
       proofs: [{ ...createProofRecord(), type: "file", uri: join(workspacePath, "index.html") }],
       workspacePath,
@@ -415,9 +377,10 @@ describe("captureBusinessArtifact", () => {
   it("degrades an environment-blocked blocker to a reviewable deliverable when the runtime verifies the claim", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    writeEnvironmentBlockerArtifact(workspacePath);
+    const envelope = submitEnvironmentBlocker(workspacePath);
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: { ...createTaskRecord(), proofSchemaId: "landing-page-file" },
       proofs: [{ ...createProofRecord(), type: "file", uri: join(workspacePath, "index.html") }],
       workspacePath,
@@ -447,37 +410,32 @@ describe("captureBusinessArtifact", () => {
 
   // The shape a real codex run left for task_cf0714bc "Capture Prototype Screenshot": an honest
   // blocker with a reachable local URL, but no `blocker_class`/`capability` gate keys.
-  function writeNaturalScreenshotBlockerArtifact(workspacePath: string): void {
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "blocker",
-        artifact_role: "validation",
-        artifact_subtype: "prototype_screenshot_capture",
-        task_type: "screenshot_capture",
-        payload: {
-          target_url: "http://127.0.0.1:4173/index.html?variant=A",
-          server_validation: {
-            status: "running",
-            http_status: 200,
-            url: "http://127.0.0.1:4173/index.html?variant=A",
-          },
-          proof: { schema: "screenshot", status: "blocked", created: false },
-          capture_attempts: [{ method: "Playwright Chromium", result: "failed" }],
+  function submitNaturalScreenshotBlocker(): ArtifactEnvelope {
+    return submitted({
+      artifact_kind: "blocker",
+      artifact_role: "validation",
+      artifact_subtype: "prototype_screenshot_capture",
+      task_type: "screenshot_capture",
+      payload: {
+        target_url: "http://127.0.0.1:4173/index.html?variant=A",
+        server_validation: {
+          status: "running",
+          http_status: 200,
+          url: "http://127.0.0.1:4173/index.html?variant=A",
         },
-        lineage: {},
-      }),
-      "utf8",
-    );
+        proof: { schema: "screenshot", status: "blocked", created: false },
+        capture_attempts: [{ method: "Playwright Chromium", result: "failed" }],
+      },
+      lineage: {},
+    });
   }
 
   it("reads a screenshot-capture blocker claim even without blocker_class/capability keys", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    writeNaturalScreenshotBlockerArtifact(workspacePath);
+    const envelope = submitNaturalScreenshotBlocker();
 
-    expect(readEnvironmentBlockerClaim(workspacePath, [])).toEqual({
+    expect(readEnvironmentBlockerClaim(envelope, [])).toEqual({
       capability: "browser_screenshot",
       url: "http://127.0.0.1:4173/index.html?variant=A",
       reachabilitySnapshot: { httpStatus: 200 },
@@ -487,9 +445,10 @@ describe("captureBusinessArtifact", () => {
   it("degrades a screenshot-capture blocker to a deliverable when the runtime verifies the claim", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    writeNaturalScreenshotBlockerArtifact(workspacePath);
+    const envelope = submitNaturalScreenshotBlocker();
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: { ...createTaskRecord(), title: "Capture Prototype Screenshot", proofSchemaId: "screenshot" },
       proofs: [],
       workspacePath,
@@ -516,9 +475,10 @@ describe("captureBusinessArtifact", () => {
   it("records verifiedVia: capture_time_snapshot when the claim was confirmed from the snapshot", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    writeNaturalScreenshotBlockerArtifact(workspacePath);
+    const envelope = submitNaturalScreenshotBlocker();
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: { ...createTaskRecord(), title: "Capture Prototype Screenshot", proofSchemaId: "screenshot" },
       proofs: [],
       workspacePath,
@@ -550,9 +510,9 @@ describe("captureBusinessArtifact", () => {
   it("readEnvironmentBlockerClaim resolves the check URL by precedence", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    writeEnvironmentBlockerArtifact(workspacePath);
+    const envelope = submitEnvironmentBlocker(workspacePath);
 
-    expect(readEnvironmentBlockerClaim(workspacePath, [])).toEqual({
+    expect(readEnvironmentBlockerClaim(envelope, [])).toEqual({
       capability: "browser_screenshot",
       url: "http://localhost:4173/",
       reachabilitySnapshot: null,
@@ -562,48 +522,38 @@ describe("captureBusinessArtifact", () => {
   it("readEnvironmentBlockerClaim falls back to a local-url proof", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "blocker",
-        artifact_role: "validation",
-        artifact_subtype: "screenshot",
-        task_type: "t",
-        payload: { blocker_class: "environment_blocked", capability: "browser_screenshot" },
-        lineage: {},
-      }),
-      "utf8",
-    );
+    const envelope = submitted({
+      artifact_kind: "blocker",
+      artifact_role: "validation",
+      artifact_subtype: "screenshot",
+      task_type: "t",
+      payload: { blocker_class: "environment_blocked", capability: "browser_screenshot" },
+      lineage: {},
+    });
 
     expect(
-      readEnvironmentBlockerClaim(workspacePath, [{ ...createProofRecord(), type: "url", uri: "http://localhost:5173" }]),
+      readEnvironmentBlockerClaim(envelope, [{ ...createProofRecord(), type: "url", uri: "http://localhost:5173" }]),
     ).toEqual({ capability: "browser_screenshot", url: "http://localhost:5173", reachabilitySnapshot: null });
   });
 
   it("readEnvironmentBlockerClaim reads a reachability snapshot from server_validation", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "blocker",
-        artifact_role: "validation",
-        artifact_subtype: "screenshot",
-        task_type: "t",
-        payload: {
-          blocker_class: "environment_blocked",
-          capability: "browser_screenshot",
-          target_url: "http://127.0.0.1:4173/",
-          server_validation: { status: "running", http_status: 200 },
-        },
-        lineage: {},
-      }),
-      "utf8",
-    );
+    const envelope = submitted({
+      artifact_kind: "blocker",
+      artifact_role: "validation",
+      artifact_subtype: "screenshot",
+      task_type: "t",
+      payload: {
+        blocker_class: "environment_blocked",
+        capability: "browser_screenshot",
+        target_url: "http://127.0.0.1:4173/",
+        server_validation: { status: "running", http_status: 200 },
+      },
+      lineage: {},
+    });
 
-    expect(readEnvironmentBlockerClaim(workspacePath, [])).toEqual({
+    expect(readEnvironmentBlockerClaim(envelope, [])).toEqual({
       capability: "browser_screenshot",
       url: "http://127.0.0.1:4173/",
       reachabilitySnapshot: { httpStatus: 200 },
@@ -613,26 +563,21 @@ describe("captureBusinessArtifact", () => {
   it("readEnvironmentBlockerClaim ignores a non-numeric server_validation status", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "blocker",
-        artifact_role: "validation",
-        artifact_subtype: "screenshot",
-        task_type: "t",
-        payload: {
-          blocker_class: "environment_blocked",
-          capability: "browser_screenshot",
-          target_url: "http://127.0.0.1:4173/",
-          server_validation: { status: "running" },
-        },
-        lineage: {},
-      }),
-      "utf8",
-    );
+    const envelope = submitted({
+      artifact_kind: "blocker",
+      artifact_role: "validation",
+      artifact_subtype: "screenshot",
+      task_type: "t",
+      payload: {
+        blocker_class: "environment_blocked",
+        capability: "browser_screenshot",
+        target_url: "http://127.0.0.1:4173/",
+        server_validation: { status: "running" },
+      },
+      lineage: {},
+    });
 
-    expect(readEnvironmentBlockerClaim(workspacePath, [])?.reachabilitySnapshot).toBeNull();
+    expect(readEnvironmentBlockerClaim(envelope, [])?.reachabilitySnapshot).toBeNull();
   });
 
   it("verifyEnvironmentBlockerClaim passes on a 2xx response and fails otherwise", async () => {
@@ -784,117 +729,20 @@ describe("captureBusinessArtifact", () => {
     expect(result.reason).toBe("non_2xx");
   });
 
-  it("infers kind and role for an unknown legacy artifactType", () => {
-    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
-    createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifactType: "keyword_research",
-        taskType: "keyword_opportunity_research",
-        payload: {
-          summary: "Resume bullet point generator is the best first opportunity.",
-          outcome_summary:
-            "Research points to a resume bullet point generator as the strongest first opportunity. It sets the direction for the objective; the remaining gap is confirming live search volume before building.",
-          recommendation: "Build a focused resume bullet point generator.",
-          evidence: ["High intent", "Weak direct competition"],
-          risks: ["Validate live volume before building"],
-          next_steps: ["Create MVP brief"],
-        },
-        lineage: { founder_vision: "Find an SEO opportunity and build a lightweight web product." },
-      }),
-      "utf8",
-    );
-
-    const artifact = captureBusinessArtifact({
-      task: {
-        ...createTaskRecord(),
-        title: "Find the first SEO keyword opportunity",
-        description: "Research English-language keyword opportunities.",
-        proofSchemaId: "research-report",
-      },
-      proofs: [createProofRecord()],
-      workspacePath,
-      now: () => new Date("2026-08-17T00:00:00.000Z"),
-      createId: () => "business_artifact_1",
-    });
-
-    expect(artifact).toMatchObject({
-      artifactKind: "deliverable",
-      artifactRole: "findings",
-      artifactSubtype: "keyword_research",
-      artifactType: "research_findings",
-      taskType: "keyword_opportunity_research",
-      validationStatus: "valid",
-      validationErrors: [],
-      reviewStatus: "unreviewed",
-    });
-  });
-
-  it("rejects unknown legacy artifactType when no role can be inferred", () => {
-    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
-    createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifactType: "keyword_research",
-        taskType: "unknown_work",
-        payload: {
-          summary: "Something useful happened.",
-          recommendation: "Continue.",
-          evidence: [],
-          risks: [],
-          next_steps: [],
-        },
-        lineage: {},
-      }),
-      "utf8",
-    );
-
-    const artifact = captureBusinessArtifact({
-      task: {
-        ...createTaskRecord(),
-        title: "Do the work",
-        description: "Complete the assigned task.",
-        proofSchemaId: "generic-proof",
-      },
-      proofs: [createProofRecord()],
-      workspacePath,
-      now: () => new Date("2026-08-17T00:00:00.000Z"),
-      createId: () => "business_artifact_1",
-    });
-
-    expect(artifact).toMatchObject({
-      artifactKind: "blocker",
-      artifactRole: "none",
-      artifactSubtype: "invalid_business_artifact_schema",
-      artifactType: "blocker_report",
-      validationStatus: "invalid_schema",
-      reviewStatus: "not_reviewable",
-    });
-    expect(artifact.validationErrors).toContain("artifactType: Unknown legacy artifact type and artifact role could not be inferred.");
-  });
-
   it("fails structural validation when a deliverable omits the Task Outcome Summary", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "deliverable",
-        artifact_role: "spec",
-        artifact_subtype: "mvp_brief",
-        task_type: "product_planning",
-        payload: { selected_keyword: "pricing page generator" },
-        lineage: {},
-      }),
-      "utf8",
-    );
+    const envelope = submitted({
+      artifact_kind: "deliverable",
+      artifact_role: "spec",
+      artifact_subtype: "mvp_brief",
+      task_type: "product_planning",
+      payload: { selected_keyword: "pricing page generator" },
+      lineage: {},
+    });
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: { ...createTaskRecord(), proofSchemaId: "generic-proof" },
       proofs: [createProofRecord()],
       workspacePath,
@@ -911,29 +759,25 @@ describe("captureBusinessArtifact", () => {
   it("accepts a localized-object Task Outcome Summary on a final_report", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "final_report",
-        artifact_role: "report",
-        artifact_subtype: "final_founder_report",
-        task_type: "founder_report",
-        payload: {
-          execution_report: {
-            conclusion: { en: "The launch path is proven.", zh: "发布路径已验证。" },
-            vision_impact: { en: "The company can move from build to launch.", zh: "公司可以从构建进入发布。" },
-            remaining_gap: { en: "Traffic growth is still unproven.", zh: "流量增长仍未验证。" },
-            recommendation: { en: "Begin the launch checklist.", zh: "开始发布清单。" },
-          },
-          outcome_summary: { en: "The launch path is proven.", zh: "发布路径已验证。" },
+    const envelope = submitted({
+      artifact_kind: "final_report",
+      artifact_role: "report",
+      artifact_subtype: "final_founder_report",
+      task_type: "founder_report",
+      payload: {
+        execution_report: {
+          conclusion: { en: "The launch path is proven.", zh: "发布路径已验证。" },
+          vision_impact: { en: "The company can move from build to launch.", zh: "公司可以从构建进入发布。" },
+          remaining_gap: { en: "Traffic growth is still unproven.", zh: "流量增长仍未验证。" },
+          recommendation: { en: "Begin the launch checklist.", zh: "开始发布清单。" },
         },
-        lineage: {},
-      }),
-      "utf8",
-    );
+        outcome_summary: { en: "The launch path is proven.", zh: "发布路径已验证。" },
+      },
+      lineage: {},
+    });
 
     const artifact = captureBusinessArtifact({
+      envelope,
       task: { ...createTaskRecord(), proofSchemaId: "generic-proof" },
       proofs: [createProofRecord()],
       workspacePath,
@@ -1034,29 +878,25 @@ describe("captureBusinessArtifact", () => {
   function captureDeliverableWithPayload(payload: Record<string, unknown>) {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-business-artifact-"));
     createdDirs.push(workspacePath);
-    mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-    writeFileSync(
-      join(workspacePath, ".auto-crop", "business-artifact.json"),
-      JSON.stringify({
-        artifact_kind: "deliverable",
-        artifact_role: "spec",
-        artifact_subtype: "mvp_brief",
-        task_type: "product_planning",
-        payload: {
-          execution_report: {
-            conclusion: "The brief settles the task.",
-            vision_impact: "It gives the objective usable direction.",
-            remaining_gap: "The business still needs downstream validation.",
-            recommendation: "Move to the next dependent step.",
-          },
-          ...payload,
+    const envelope = submitted({
+      artifact_kind: "deliverable",
+      artifact_role: "spec",
+      artifact_subtype: "mvp_brief",
+      task_type: "product_planning",
+      payload: {
+        execution_report: {
+          conclusion: "The brief settles the task.",
+          vision_impact: "It gives the objective usable direction.",
+          remaining_gap: "The business still needs downstream validation.",
+          recommendation: "Move to the next dependent step.",
         },
-        lineage: {},
-      }),
-      "utf8",
-    );
+        ...payload,
+      },
+      lineage: {},
+    });
 
     return captureBusinessArtifact({
+      envelope,
       task: { ...createTaskRecord(), proofSchemaId: "generic-proof" },
       proofs: [createProofRecord()],
       workspacePath,
@@ -1065,6 +905,15 @@ describe("captureBusinessArtifact", () => {
     });
   }
 });
+
+/** What settlement receives from a run whose agent called `submit_artifact_envelope` with `input`. */
+function submitted(input: unknown): ArtifactEnvelope {
+  const parsed = parseArtifactEnvelope(input);
+  if (!parsed.success) {
+    throw new Error(`Test envelope does not parse: ${parsed.errors.join("; ")}`);
+  }
+  return parsed.value;
+}
 
 function createTaskRecord(): Task {
   return {

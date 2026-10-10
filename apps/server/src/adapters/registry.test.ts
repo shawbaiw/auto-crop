@@ -500,6 +500,8 @@ describe("CLI command template adapter", () => {
         companyId: "company_1",
         taskId: "task_1",
         runId: "run_1",
+        locale: "en",
+        requireExecutionDetails: true,
       },
     },
   };
@@ -589,7 +591,7 @@ describe("CLI command template adapter", () => {
     expect(overrides).toEqual(expect.arrayContaining([
       `mcp_servers.auto-crop-runtime-actions.command=${JSON.stringify(process.execPath)}`,
       `mcp_servers.auto-crop-runtime-actions.args=[${server.args.map((arg) => JSON.stringify(arg)).join(",")}]`,
-      'mcp_servers.auto-crop-runtime-actions.env={AUTO_CROP_RUNTIME_ACTION_DIR="/tmp/auto-crop-runtime-actions",AUTO_CROP_RUNTIME_ACTION_COMPANY_ID="company_1",AUTO_CROP_RUNTIME_ACTION_TASK_ID="task_1",AUTO_CROP_RUNTIME_ACTION_RUN_ID="run_1"}',
+      'mcp_servers.auto-crop-runtime-actions.env={AUTO_CROP_RUNTIME_ACTION_DIR="/tmp/auto-crop-runtime-actions",AUTO_CROP_RUNTIME_ACTION_COMPANY_ID="company_1",AUTO_CROP_RUNTIME_ACTION_TASK_ID="task_1",AUTO_CROP_RUNTIME_ACTION_RUN_ID="run_1",AUTO_CROP_RUNTIME_ACTION_LOCALE="en",AUTO_CROP_RUNTIME_ACTION_REQUIRE_EXECUTION_DETAILS="true"}',
       'mcp_servers.auto-crop-runtime-actions.default_tools_approval_mode="approve"',
     ]));
     expect(args.at(-1)).toBe("p");

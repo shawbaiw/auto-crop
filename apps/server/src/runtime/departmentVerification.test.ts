@@ -18,6 +18,7 @@ import { reconcileTaskHolds } from "./taskHoldReconciliation";
 import { refreshTaskDependencyState } from "./taskRefresh";
 import { evaluateVerificationReport, prepareVerificationInputs } from "./verificationContract";
 import { applyVerificationRework, pendingReworkFeedback } from "./verificationRework";
+import { channelWithUnfinishedDelivery } from "./fixtures/stagedDelivery";
 
 /**
  * A department split runs as a declared chain: Define declares verification requirements, Execute
@@ -539,12 +540,13 @@ describe("verification contract", () => {
     expect(prepareVerificationInputs({ repositories, task: verifier, workspacePath: verifierWorkspace }).kind).toBe("ready");
     repositories.updateTaskExecutionSummary(verifier.id, { latestFailureReason: "no_proof", latestFailureMessage: "no proof" });
     writeFileSync(join(verifierWorkspace, "validation.patch"), "diff --git a/index.html b/index.html\n", "utf8");
-    writeArtifact(verifierWorkspace, "validation", {
+    const runtimeActionChannel = channelWithUnfinishedDelivery(verifier, deliveryEnvelope("validation", {
       verification: { checks: [{ requirement_id: "r1", outcome: "failed", evidence: "index.html does not render." }] },
-    });
+    }));
 
     const result = refreshTaskDependencyState({
       repositories,
+      runtimeActionChannel,
       taskId: verifier.id,
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
     });
@@ -970,6 +972,7 @@ function createHarness(behaviour: StageBehaviour) {
     id: "mock-worker",
     name: "Mock Worker",
     capabilities: ["code"],
+    contractCapabilities: ["artifact_envelope"],
     detect: async () => true,
     run: async (request: AgentRunRequest) => {
       if (request.metadata.phase === "execution_brief") {
@@ -985,29 +988,29 @@ function createHarness(behaviour: StageBehaviour) {
       prompts.set(stage, request.prompt);
       promptHistory.push({ stage, prompt: request.prompt });
       const workspace = request.workspacePath;
+      const submit = (envelope: unknown) => request.runtimeActions!.submitArtifactEnvelope(envelope);
       if (stage === "define") {
-        writeArtifact(workspace, "plan", behaviour.requirements === null ? {} : {
+        submit(deliveryEnvelope("plan", behaviour.requirements === null ? {} : {
           ...behaviour.defineExtra,
           verification_requirements: behaviour.requirements ?? [
             { id: "home-page", description: "The prototype has an index.html entry page." },
             { id: "app-script", description: "The prototype ships its app.js behaviour." },
           ],
-        });
+        }));
       } else if (stage === "execute") {
         writeFileSync(join(workspace, "index.html"), "<h1>Prototype</h1>");
         writeFileSync(join(workspace, "app.js"), "console.log('prototype');");
         writeFileSync(join(workspace, ".env"), "SECRET=1");
         mkdirSync(join(workspace, "node_modules"), { recursive: true });
         writeFileSync(join(workspace, "node_modules", "dep.js"), "");
-        writeArtifact(workspace, "implementation", {});
+        submit(deliveryEnvelope("implementation", {}));
       } else {
         const checks = behaviour.validate?.(workspace, request.prompt) ?? [];
-        writeArtifact(
-          workspace,
+        submit(deliveryEnvelope(
           "validation",
           behaviour.validateWithoutVerification ? {} : { verification: { checks } },
           behaviour.validateKind,
-        );
+        ));
       }
       return { status: "complete", exitCode: 0, stdout: `ran ${stage}`, stderr: "" };
     },
@@ -1070,32 +1073,28 @@ function snapshotFilesFor(workspacePath: string, prompt: string): string {
   return join(workspacePath, snapshotPath ?? ".auto-crop-inputs/missing", "files");
 }
 
-function writeArtifact(workspacePath: string, role: string, payload: Record<string, unknown>, kind = "deliverable"): void {
-  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
-      artifact_kind: kind,
-      artifact_role: role,
-      artifact_subtype: `prototype_${role}`,
-      task_type: `engineering.prototype_${role}`,
-      payload: {
-        ...payload,
-        report_version: 2,
-        execution_report: {
-          work_summary: "Performed the stage.",
-          evidence: "Recorded the stage output.",
-          conclusion: "The stage finished.",
-          vision_impact: "It moves the prototype forward.",
-          remaining_gap: "Later stages remain.",
-          recommendation: "Continue.",
-        },
-        outcome_summary: "The stage finished and later stages remain.",
+/** The Artifact Envelope a stage's agent submits. */
+function deliveryEnvelope(role: string, payload: Record<string, unknown>, kind = "deliverable"): unknown {
+  return {
+    artifact_kind: kind,
+    artifact_role: role,
+    artifact_subtype: `prototype_${role}`,
+    task_type: `engineering.prototype_${role}`,
+    payload: {
+      ...payload,
+      report_version: 2,
+      execution_report: {
+        work_summary: "Performed the stage.",
+        evidence: "Recorded the stage output.",
+        conclusion: "The stage finished.",
+        vision_impact: "It moves the prototype forward.",
+        remaining_gap: "Later stages remain.",
+        recommendation: "Continue.",
       },
-      lineage: {},
-    }),
-    "utf8",
-  );
+      outcome_summary: "The stage finished and later stages remain.",
+    },
+    lineage: {},
+  };
 }
 
 function artifactRecord(id: string, taskId: string, payload: Record<string, unknown>, deliveryWorkspacePath: string | null = null) {

@@ -21,7 +21,6 @@ export type BuildTaskExecutionPromptInput = {
     producesRequirements: boolean;
     inputs: VerificationInputs | null;
   };
-  deliverySurface?: "artifact_envelope" | "file_shim";
 };
 
 /**
@@ -113,7 +112,6 @@ function buildVerificationInstructions(
  */
 function buildCapabilityGrantInstructions(
   grant: AgentCapabilityGrant | undefined,
-  deliverySurface: "artifact_envelope" | "file_shim",
 ): string[] {
   if (!grant) {
     return [];
@@ -133,9 +131,7 @@ function buildCapabilityGrantInstructions(
       : []),
     "",
     "This list is authoritative. It is not a sandbox limitation to work around, and the runtime knows what it granted.",
-    deliverySurface === "artifact_envelope"
-      ? "If the task cannot be done with what is listed, submit an Artifact Envelope as a `blocker` with"
-      : "If the task cannot be done with what is listed, write `.auto-crop/business-artifact.json` as a `blocker` with",
+    "If the task cannot be done with what is listed, submit an Artifact Envelope as a `blocker` with",
     "`payload.blocker_class: \"environment_blocked\"` and `payload.capability` naming the missing capability.",
     "Do not substitute estimates, priors, or recalled figures for data a capability would have retrieved and then",
     "submit the result as a `deliverable`. Claiming a capability you were granted was unavailable fails the task.",
@@ -205,7 +201,6 @@ const LOCALE_PROMPT_EXAMPLES: Record<Locale, PromptExamples> = {
 
 export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): string {
   const { company, task, handoffs, grant } = input;
-  const deliverySurface = input.deliverySurface ?? "file_shim";
   const languageName = LOCALE_LANGUAGE_NAME[company.locale];
   const examples = LOCALE_PROMPT_EXAMPLES[company.locale];
   const companyContext = [
@@ -228,17 +223,10 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
   const artifactInstructions = [
     "## Business Artifact",
     "",
-    ...(deliverySurface === "artifact_envelope"
-      ? [
-        "Submit exactly one task delivery by calling `submit_artifact_envelope` before finishing.",
-        "The tool accepts only the Artifact Envelope payload; do not include task id, company id, run id, runtime URLs, database access, or filesystem authority.",
-        "Use this envelope shape:",
-      ]
-      : [
-        "Write a structured business artifact to `.auto-crop/business-artifact.json` before finishing.",
-        "This file path is a deprecated migration shim for agents without the runtime action surface.",
-        "Use this JSON shape:",
-      ]),
+    "Submit exactly one task delivery by calling `submit_artifact_envelope` before finishing.",
+    "The tool accepts only the Artifact Envelope payload; do not include task id, company id, run id, runtime URLs, database access, or filesystem authority.",
+    "If the tool returns errors, correct the envelope and call it again; the last accepted call is your delivery.",
+    "Use this envelope shape:",
     JSON.stringify(
       {
         artifact_kind: "deliverable",
@@ -311,8 +299,8 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
     `Write every \`label\`, \`tradeoffs\`, \`rationale\`, and \`briefing\` in ${languageName}.`,
     "A choice on one of these kinds is the founder's to make, not yours.",
   ];
-  const proofInstructions = buildProofContractInstructions(task, deliverySurface);
-  const grantInstructions = buildCapabilityGrantInstructions(grant, deliverySurface);
+  const proofInstructions = buildProofContractInstructions(task);
+  const grantInstructions = buildCapabilityGrantInstructions(grant);
   const verificationInstructions = buildVerificationInstructions(input.verification, languageName);
   const reworkInstructions = buildReworkInstructions(input.rework);
   const basePrompt = [

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,8 +40,7 @@ try {
   agents[0]!.run = async (request) => {
     if (request.metadata?.proofSchemaId && request.metadata.phase !== "execution_brief") {
       assert(request.metadata.proofSchemaId === "product-brief", "Smoke should execute the first product brief task.");
-      mkdirSync(join(request.workspacePath, ".auto-crop"), { recursive: true });
-      writeFileSync(join(request.workspacePath, ".auto-crop", "business-artifact.json"), JSON.stringify({
+      request.runtimeActions!.submitArtifactEnvelope({
         artifact_kind: "deliverable",
         artifact_role: "spec",
         artifact_subtype: "mvp_brief",
@@ -63,7 +62,7 @@ try {
           outcome_summary: "The product brief defines the pricing page MVP; real customer validation remains.",
         },
         lineage: { task_id: request.taskId },
-      }), "utf8");
+      });
       return { status: "complete", exitCode: 0, stdout: "Mock product brief written.", stderr: "" };
     }
     return mockRun(request);

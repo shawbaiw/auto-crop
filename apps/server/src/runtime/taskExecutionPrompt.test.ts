@@ -71,35 +71,25 @@ describe("buildTaskExecutionPrompt", () => {
     expect(prompt).not.toContain("## Granted Capabilities");
   });
 
-  it("selects the action channel or deprecated file shim as the delivery surface", () => {
-    const actionPrompt = buildTaskExecutionPrompt({
+  it("asks for the delivery through submit_artifact_envelope and never through a workspace file", () => {
+    const prompt = buildTaskExecutionPrompt({
       company: createCompanyRecord({}),
       task: createTaskRecord({}),
       handoffs: [],
-      deliverySurface: "artifact_envelope",
-    });
-    const filePrompt = buildTaskExecutionPrompt({
-      company: createCompanyRecord({}),
-      task: createTaskRecord({}),
-      handoffs: [],
-      deliverySurface: "file_shim",
     });
 
-    expect(actionPrompt).toContain("Submit exactly one task delivery by calling `submit_artifact_envelope`");
-    expect(actionPrompt).toContain("The tool accepts only the Artifact Envelope payload");
-    expect(actionPrompt).not.toContain("Write a structured business artifact to `.auto-crop/business-artifact.json`");
-    expect(filePrompt).toContain("Write a structured business artifact to `.auto-crop/business-artifact.json`");
-    expect(filePrompt).toContain("deprecated migration shim");
-    expect(filePrompt).not.toContain("submit_artifact_envelope");
+    expect(prompt).toContain("Submit exactly one task delivery by calling `submit_artifact_envelope`");
+    expect(prompt).toContain("The tool accepts only the Artifact Envelope payload");
+    expect(prompt).toContain("correct the envelope and call it again");
+    expect(prompt).not.toContain(".auto-crop/business-artifact.json");
   });
 
-  it("removes normal file-shim prompting from action-capable proof contracts", () => {
+  it("names the Artifact Envelope, not a file, in proof contracts that mention the delivery", () => {
     for (const proofSchemaId of ["repo-diff", "screenshot"]) {
       const prompt = buildTaskExecutionPrompt({
         company: createCompanyRecord({}),
         task: createTaskRecord({ proofSchemaId }),
         handoffs: [],
-        deliverySurface: "artifact_envelope",
       });
 
       expect(prompt).toContain("submit_artifact_envelope");

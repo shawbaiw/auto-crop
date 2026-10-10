@@ -1,13 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Company, Department, KeyResult, Objective, Task } from "@auto-crop/core";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { refreshTaskDependencyState } from "./taskRefresh";
 import { recoverTask } from "./taskRecovery";
+import { createRuntimeActionChannel, type RuntimeActionChannel } from "./runtimeActionChannel";
 
 const createdDirs: string[] = [];
 
@@ -15,6 +16,12 @@ afterEach(() => {
   for (const dir of createdDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+let runtimeActionChannel: RuntimeActionChannel;
+
+beforeEach(() => {
+  runtimeActionChannel = createRuntimeActionChannel();
 });
 
 describe("refreshTaskDependencyState proof recovery", () => {
@@ -85,6 +92,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
 
     const result = refreshTaskDependencyState({
+      runtimeActionChannel,
       repositories: fixture.repositories,
       taskId: parent.id,
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
@@ -108,7 +116,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);
     writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
-    writeValidBusinessArtifact(workspacePath);
+    leaveValidDelivery();
     const fixture = createFixture([
       {
         ...createTaskRecord(),
@@ -123,6 +131,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
 
     const result = refreshTaskDependencyState({
+      runtimeActionChannel,
       repositories: fixture.repositories,
       taskId: "task_1",
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
@@ -163,7 +172,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);
     writeFileSync(join(workspacePath, "implementation-changes.diff"), "diff --git a/index.html b/index.html\n", "utf8");
-    writeValidBusinessArtifact(workspacePath);
+    leaveValidDelivery();
     const fixture = createFixture([
       {
         ...createTaskRecord(),
@@ -172,11 +181,12 @@ describe("refreshTaskDependencyState proof recovery", () => {
         proofSchemaId: "repo-diff",
         latestFailureReason: "missing_business_artifact",
         latestFailureMessage:
-          "Task blocked: Record implementation changes / missing_business_artifact / blocker/none/missing_business_artifact_file.",
+          "Task blocked: Record implementation changes / missing_business_artifact / blocker/none/missing_artifact_envelope.",
       },
     ]);
 
     const result = refreshTaskDependencyState({
+      runtimeActionChannel,
       repositories: fixture.repositories,
       taskId: "task_1",
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
@@ -210,7 +220,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
       "diff --git a/index.html b/index.html\n",
       "utf8",
     );
-    writeValidBusinessArtifact(upstreamWorkspacePath);
+    leaveValidDelivery();
     const fixture = createFixture([
       {
         ...createTaskRecord(),
@@ -219,7 +229,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
         proofSchemaId: "repo-diff",
         latestFailureReason: "missing_business_artifact",
         latestFailureMessage:
-          "Task blocked: Record implementation changes / missing_business_artifact / blocker/none/missing_business_artifact_file.",
+          "Task blocked: Record implementation changes / missing_business_artifact / blocker/none/missing_artifact_envelope.",
       },
       {
         ...createTaskRecord(),
@@ -238,6 +248,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
 
     const result = refreshTaskDependencyState({
+      runtimeActionChannel,
       repositories: fixture.repositories,
       taskId: "task_1",
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
@@ -287,19 +298,19 @@ describe("refreshTaskDependencyState proof recovery", () => {
       fixture.repositories.listOpenTaskHolds("task_1").filter((hold) => hold.kind === "invalid_business_artifact");
 
     // The first capture is news: the task had no proof, now it has proof and no artifact.
-    refreshTaskDependencyState({ repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
+    refreshTaskDependencyState({ runtimeActionChannel, repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
     expect(invalidHolds()).toHaveLength(1);
     const artifactsAfterFirstCapture = fixture.repositories.listBusinessArtifactsForTask("task_1").length;
 
     // Refreshing again learns nothing new and says so, without another artifact or Hold.
-    const refreshed = refreshTaskDependencyState({ repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
+    const refreshed = refreshTaskDependencyState({ runtimeActionChannel, repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
     expect(refreshed.recovery?.status).toBe("still_unreviewable");
     expect(refreshed.task.status).toBe("blocked");
     expect(invalidHolds()).toHaveLength(1);
     expect(fixture.repositories.listBusinessArtifactsForTask("task_1")).toHaveLength(artifactsAfterFirstCapture);
 
     // Recover is the exit that re-runs the work, and re-running answers the Hold.
-    const recovered = recoverTask({ repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
+    const recovered = recoverTask({ runtimeActionChannel, repositories: fixture.repositories, taskId: "task_1", proofSchemas, now, createId });
     expect(recovered.recovery?.status).toBe("queued");
     expect(recovered.task.status).toBe("queued");
     expect(invalidHolds()).toHaveLength(0);
@@ -324,6 +335,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
 
     const result = refreshTaskDependencyState({
+      runtimeActionChannel,
       repositories: fixture.repositories,
       taskId: "task_1",
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
@@ -342,7 +354,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     expect(result.businessArtifacts?.[0]).toMatchObject({
       artifactKind: "blocker",
       artifactRole: "none",
-      artifactSubtype: "missing_business_artifact_file",
+      artifactSubtype: "missing_artifact_envelope",
       validationStatus: "invalid_schema",
       reviewStatus: "not_reviewable",
     });
@@ -361,7 +373,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);
     writeFileSync(join(workspacePath, "index.html"), "<main>Auto Crop Workspace</main>", "utf8");
-    writeScreenshotSandboxBlockerArtifact(workspacePath);
+    leaveScreenshotSandboxBlocker();
     const fixture = createFixture([
       {
         ...createTaskRecord(),
@@ -375,6 +387,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     ]);
 
     const result = refreshTaskDependencyState({
+      runtimeActionChannel,
       repositories: fixture.repositories,
       taskId: "task_1",
       proofSchemas: [{ id: "landing-page-file", description: "landing page file proof", acceptedTypes: ["file"] }],
@@ -406,6 +419,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
 
     const result = refreshTaskDependencyState({
+      runtimeActionChannel,
       repositories: fixture.repositories,
       taskId: "task_1",
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
@@ -424,7 +438,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
   it("explains expected repo-diff proof locations when refresh cannot recover proof", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
     createdDirs.push(workspacePath);
-    writeValidBusinessArtifact(workspacePath);
+    leaveValidDelivery();
     const fixture = createFixture([
       {
         ...createTaskRecord(),
@@ -439,6 +453,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     });
 
     const result = refreshTaskDependencyState({
+      runtimeActionChannel,
       repositories: fixture.repositories,
       taskId: "task_1",
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
@@ -450,7 +465,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
     expect(result.recovery?.message).toContain("repo-diff proof missing");
     expect(result.recovery?.message).toContain(".auto-crop-proof/*.diff");
     expect(result.recovery?.message).toContain("top-level workspace *.diff/*.patch");
-    expect(result.recovery?.message).toContain(".auto-crop/business-artifact.json is not diff proof");
+    expect(result.recovery?.message).toContain("an Artifact Envelope is not diff proof");
     expect(fixture.repositories.listProofsForTask("task_1")).toEqual([]);
   });
 
@@ -482,6 +497,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
 
     expect(() =>
       refreshTaskDependencyState({
+      runtimeActionChannel,
         repositories: fixture.repositories,
         taskId: "task_1",
         now: () => new Date("2026-08-25T00:00:00.000Z"),
@@ -518,6 +534,7 @@ describe("refreshTaskDependencyState proof recovery", () => {
 
     expect(() =>
       refreshTaskDependencyState({
+      runtimeActionChannel,
         repositories: fixture.repositories,
         taskId: "task_1",
         now: () => new Date("2026-08-25T00:00:00.000Z"),
@@ -625,11 +642,16 @@ function createSequentialIdFactory(): (prefix: string) => string {
   };
 }
 
-function writeValidBusinessArtifact(workspacePath: string): void {
-  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
+/**
+ * What a run of task_1 that did not complete leaves behind: its last accepted Artifact Envelope,
+ * which is the delivery Proof recovery recaptures (ADR 0041).
+ */
+function leaveDelivery(envelope: unknown): void {
+  runtimeActionChannel.submitArtifactEnvelope({ companyId: "company_1", taskId: "task_1", runId: "run_unfinished" }, envelope);
+}
+
+function leaveValidDelivery(): void {
+  leaveDelivery({
       artifactKind: "deliverable",
       artifactRole: "implementation",
       artifactSubtype: "prototype_implementation",
@@ -647,16 +669,11 @@ function writeValidBusinessArtifact(workspacePath: string): void {
         nextSteps: ["CEO review"],
       },
       lineage: { taskId: "task_1" },
-    }),
-    "utf8",
-  );
+    });
 }
 
-function writeScreenshotSandboxBlockerArtifact(workspacePath: string): void {
-  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
+function leaveScreenshotSandboxBlocker(): void {
+  leaveDelivery({
       artifact_kind: "blocker",
       artifact_role: "validation",
       artifact_subtype: "prototype_screenshot_validation",
@@ -670,7 +687,5 @@ function writeScreenshotSandboxBlockerArtifact(workspacePath: string): void {
       lineage: {
         proof_schema: "landing-page-file",
       },
-    }),
-    "utf8",
-  );
+    });
 }

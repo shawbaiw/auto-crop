@@ -25,7 +25,7 @@ async function fixture(realProcess = false) {
   mkdirSync(r.getTask("task_1")!.workspacePath!, { recursive: true });
   cleanup.push(() => client.close());
   vi.stubEnv("AUTO_CROP_FORCE_AGENT_TIMEOUT_MS", "60");
-  const adapter: AgentAdapter = { id: "codex", name: "fixture", capabilities: ["code"], contractCapabilities: ["structured_execution_brief"], detect: async () => true,
+  const adapter: AgentAdapter = { id: "codex", name: "fixture", capabilities: ["code"], contractCapabilities: ["structured_execution_brief", "artifact_envelope"], detect: async () => true,
     run: async () => ({ status: "failed", stdout: "", stderr: "connection closed", exitCode: 1,
       failureReason: "agent_failed", terminationConfirmed: true }) };
   const launchPlan = async (): Promise<LaunchPlan> => ({ policy: DEFAULT_LAUNCH_POLICY,
@@ -34,7 +34,7 @@ async function fixture(realProcess = false) {
   const script = join(root, "failure.cjs");
   if (realProcess) writeFileSync(script, "process.exit(1);", "utf8");
   const input = { projectRoot: root, repositories: r, adapters: [realProcess
-    ? { ...createCliAgentAdapter({ id: "codex", name: "local", capabilities: ["code"], contractCapabilities: ["structured_execution_brief"], commandTemplate: `"${process.execPath}" "${script}"` }), launchPlan } : adapter], workerId: "owner", maxTasks: 1,
+    ? { ...createCliAgentAdapter({ id: "codex", name: "local", capabilities: ["code"], contractCapabilities: ["structured_execution_brief", "artifact_envelope"], commandTemplate: `"${process.execPath}" "${script}"` }), launchPlan } : adapter], workerId: "owner", maxTasks: 1,
     approvalRequired: () => false, emit: () => undefined, proofCollector: () => [],
     executionBudget: { runHardMs: 5000, taskTotalMs: 7000, briefMs: 1000, repairMs: 1000, finalizeMs: 1000, checkpointMs: 60, persistMs: 20 } };
   await runSchedulerOnce(input);

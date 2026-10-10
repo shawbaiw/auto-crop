@@ -7,6 +7,7 @@ import { recordExecutionEvent } from "./executionEvents";
 import { isRetryExhausted } from "./boundedRecovery";
 import { resolveDependencyReadiness } from "./dependencyReadiness";
 import { recoverTask } from "./taskRecovery";
+import { createRuntimeActionChannel } from "./runtimeActionChannel";
 
 type Repositories = ReturnType<typeof createRepositories>;
 export type RecoveryMode = "report_only" | "brief-only-v1";
@@ -142,7 +143,9 @@ export function drainAutomaticRecoveries(input: {
       const result = event ? briefRecoveryEligibility(r, event, candidateFiles) : { reason: "Source event unavailable." };
       const eligible = Boolean(result.manifest && result.manifest === entry.manifest);
       const reason = result.manifest && !eligible ? "Recovery inputs or permissions changed during backoff." : result.reason;
-      if (eligible) recoverTask({ repositories: r, taskId: entry.taskId, now: () => new Date(at) });
+      // Brief-only recovery re-runs work that was never dispatched, so there is no delivery to
+      // recapture: no proof schemas, and an empty channel rather than the project's candidates.
+      if (eligible) recoverTask({ repositories: r, taskId: entry.taskId, runtimeActionChannel: createRuntimeActionChannel(), now: () => new Date(at) });
       r.executionRecovery.finish(entry.taskId, eligible ? "queued" : "blocked", reason);
       const task = r.getTask(entry.taskId);
       if (task) recordExecutionEvent(r, { id: `recovery-result:${entry.sourceEventId}`,

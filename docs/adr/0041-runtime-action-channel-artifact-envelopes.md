@@ -25,7 +25,7 @@ The envelope must not be the authority for identity. It does not carry trusted `
 
 Calling the action records a run-local candidate. The official Business Artifact, Proof, task transition, Holds, completion event, dependency effects, and handoff snapshot are written only during settlement, under the existing one-writer settlement transaction. If a run submits multiple valid envelopes, the last valid candidate is the one settlement uses. Invalid action calls return structured errors so the agent can correct them in the same run; if the run ends without a valid envelope, settlement fails as an invalid or missing delivery rather than turning the syntax problem into a blocker.
 
-The existing `.auto-crop/business-artifact.json` file protocol is no longer the formal delivery interface. It may remain as a short-lived compatibility shim while production adapters move to the `artifact_envelope` adapter contract capability, but it must feed the same Artifact Envelope settlement path and should be removed once production adapters and tests no longer depend on it.
+The `.auto-crop/business-artifact.json` file protocol is removed, and ADR 0028's Artifact Syntax Repair with it: the envelope is the only delivery. An adapter without the `artifact_envelope` adapter contract capability is not dispatched task runs, because it could do the work but never deliver it. Both production adapters declare it: Claude Code when its CLI has `--mcp-config`, Codex always.
 
 ## Consequences
 
@@ -35,12 +35,16 @@ The existing `.auto-crop/business-artifact.json` file protocol is no longer the 
 - Handoff versioning has a natural boundary: the runtime snapshots File References and Proof References during settlement and downstream tasks consume the accepted artifact revision.
 - Prompt wording must be derived from the adapter's action surface. An adapter with `artifact_envelope` is told to call the action; a temporary non-action adapter may use the deprecated file shim only while migration is in progress.
 - Action-call history is run-local diagnostic state, not product state. User-facing state comes from the final settlement outcome.
+- The delivery contract — Outcome Summary, Execution Report, Founder Decisions — is checked when the agent submits, by the same function settlement uses, so a breach is something the agent hears about and corrects inside its run. A run whose every call was rejected settles as an invalid delivery carrying the last rejection's errors, not as a missing one.
+- A run that does not complete keeps its last valid candidate, and Proof recovery recaptures it, as it used to recapture a file left in the workspace. Dispatching a new run discards earlier runs' candidates, so a task holds at most one candidate: its latest run's.
+- Each CLI is told about the action server in its own shape. Claude Code takes an `--mcp-config` file and needs the tool pre-approved in `--allowedTools`, or `--permission-prompts none` denies the delivery itself. Codex takes `-c mcp_servers.*` overrides, since `--ignore-user-config` leaves it no config file, plus `default_tools_approval_mode="approve"`, since `codex exec` cancels any MCP call that would ask. The server is launched with an absolute tsx loader URL, because the CLI starts it in the task workspace.
+- The tool's `inputSchema` types every field. With an empty schema, Claude Code sent `payload` as a JSON string, and the delivery never landed.
 
 ## Relationship To Existing Decisions
 
 ADR 0022 remains the rule for runtime-parsed replies: if the runtime parses an adapter reply, that reply needs a Structured Output Contract. Artifact Envelopes are different. They are submitted through a runtime action, not parsed from final prose or stdout.
 
-ADR 0028 remains valid for the deprecated `.auto-crop/business-artifact.json` shim while it exists. Its Artifact Syntax Repair is no longer the long-term delivery path; it is the migration fallback for a file shim that must be converted into the same Artifact Envelope settlement path.
+ADR 0028 is superseded. Its Artifact Syntax Repair existed for a file that might not parse; an envelope is parsed when it is submitted and the agent is told the errors in the same run, so there is nothing left to repair after the fact.
 
 ADR 0035 remains unchanged and becomes more important here: the action may record a run-local candidate, but the official Business Artifact, Proof, Holds, transitions, completion event and handoff snapshot are written only by the settlement transaction.
 

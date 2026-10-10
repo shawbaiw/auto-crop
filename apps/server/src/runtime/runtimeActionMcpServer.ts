@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import type { Locale } from "@auto-crop/core";
 import { ARTIFACT_ENVELOPE_INPUT_SCHEMA } from "./artifactEnvelope";
 import { createRuntimeActionChannel } from "./runtimeActionChannel";
 
@@ -56,6 +57,7 @@ export function handleRuntimeActionMcpMessage(message: JsonRpcRequest, env: Runt
         runId: context.runId,
       },
       params.arguments,
+      context.contract,
     );
     return response(id, {
       content: [{ type: "text", text: JSON.stringify(result) }],
@@ -72,12 +74,25 @@ function runtimeContext(env: RuntimeActionMcpEnv): null | {
   companyId: string;
   taskId: string;
   runId: string;
+  contract?: { locale: Locale; requireDetails: boolean };
 } {
   const candidateDir = env.AUTO_CROP_RUNTIME_ACTION_DIR;
   const companyId = env.AUTO_CROP_RUNTIME_ACTION_COMPANY_ID;
   const taskId = env.AUTO_CROP_RUNTIME_ACTION_TASK_ID;
   const runId = env.AUTO_CROP_RUNTIME_ACTION_RUN_ID;
-  return candidateDir && companyId && taskId && runId ? { candidateDir, companyId, taskId, runId } : null;
+  const locale = env.AUTO_CROP_RUNTIME_ACTION_LOCALE;
+  if (!candidateDir || !companyId || !taskId || !runId) {
+    return null;
+  }
+  return {
+    candidateDir,
+    companyId,
+    taskId,
+    runId,
+    ...(locale
+      ? { contract: { locale: locale as Locale, requireDetails: env.AUTO_CROP_RUNTIME_ACTION_REQUIRE_EXECUTION_DETAILS === "true" } }
+      : {}),
+  };
 }
 
 function response(id: string | number | null, result: unknown): object {

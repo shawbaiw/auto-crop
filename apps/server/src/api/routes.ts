@@ -68,6 +68,7 @@ import {
   groupTaskDependenciesByTaskId,
   summarizeFounderReport,
 } from "../runtime/founderReportProjection";
+import { createProjectRuntimeActionChannel } from "../runtime/runtimeActionChannel";
 
 export type ApiServerOptions = {
   projectRoot: string;
@@ -775,6 +776,7 @@ async function routeRequest(
 
     const result = refreshTaskDependencyState({
       repositories: options.repositories,
+      runtimeActionChannel: createProjectRuntimeActionChannel(options.projectRoot),
       taskId: refreshTaskMatch[1],
       proofSchemas: aiSaasPlaybook.proofSchemas,
       now: options.now,
@@ -852,6 +854,7 @@ async function routeRequest(
 
     const result = recoverTask({
       repositories: options.repositories,
+      runtimeActionChannel: createProjectRuntimeActionChannel(options.projectRoot),
       taskId: recoverTaskMatch[1],
       proofSchemas: aiSaasPlaybook.proofSchemas,
       now: options.now,

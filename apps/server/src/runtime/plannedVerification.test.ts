@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -403,6 +403,7 @@ async function runBusiness(business: Business, defective: boolean | "until_rewor
     id: "worker",
     name: "Worker",
     capabilities: ["code", "frontend", "test", "research", "writing"],
+    contractCapabilities: ["artifact_envelope"],
     detect: async () => true,
     run: async (request: AgentRunRequest) => {
       if (request.metadata.phase === "execution_brief") {
@@ -413,7 +414,7 @@ async function runBusiness(business: Business, defective: boolean | "until_rewor
       if (request.prompt.includes("## Verification Contract")) {
         const snapshotPath = request.prompt.match(/`(\.auto-crop-inputs\/[^`]+)`/)?.[1];
         const results = snapshotPath ? business.check(join(request.workspacePath, snapshotPath)) : {};
-        writeArtifact(request.workspacePath, "validation", {
+        request.runtimeActions!.submitArtifactEnvelope(deliveryEnvelope("validation", {
           verification: {
             checks: business.requirements.map((requirement) => ({
               requirement_id: requirement.id,
@@ -421,15 +422,15 @@ async function runBusiness(business: Business, defective: boolean | "until_rewor
               evidence: `Checked ${requirement.id} in the handed-over snapshot.`,
             })),
           },
-        });
+        }));
       } else {
         // "until_rework": defective until a verifier's feedback reaches this producer, then fixed.
         const isDefective = defective === "until_rework" ? !request.prompt.includes("## Rework Requested") : defective;
         const delivered = business.produce(request.workspacePath, isDefective);
-        writeArtifact(request.workspacePath, "implementation", {
+        request.runtimeActions!.submitArtifactEnvelope(deliveryEnvelope("implementation", {
           ...delivered,
           ...(request.prompt.includes("## Verification Requirements") ? { verification_requirements: business.requirements } : {}),
-        });
+        }));
       }
       return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
     },
@@ -490,30 +491,26 @@ function ceoReturning(blueprint: unknown): AgentAdapter {
   });
 }
 
-function writeArtifact(workspacePath: string, role: string, payload: Record<string, unknown>) {
-  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
-      artifact_kind: "deliverable",
-      artifact_role: role,
-      artifact_subtype: `${role}_result`,
-      task_type: `planned.${role}`,
-      payload: {
-        ...payload,
-        report_version: 2,
-        execution_report: {
-          work_summary: "Did the work.",
-          evidence: "Recorded the output.",
-          conclusion: "The work is done.",
-          vision_impact: "It moves the vision forward.",
-          remaining_gap: "Nothing further in this task.",
-          recommendation: "Continue.",
-        },
-        outcome_summary: "The work is done.",
+/** The Artifact Envelope the worker submits for a `role` delivery. */
+function deliveryEnvelope(role: string, payload: Record<string, unknown>): unknown {
+  return {
+    artifact_kind: "deliverable",
+    artifact_role: role,
+    artifact_subtype: `${role}_result`,
+    task_type: `planned.${role}`,
+    payload: {
+      ...payload,
+      report_version: 2,
+      execution_report: {
+        work_summary: "Did the work.",
+        evidence: "Recorded the output.",
+        conclusion: "The work is done.",
+        vision_impact: "It moves the vision forward.",
+        remaining_gap: "Nothing further in this task.",
+        recommendation: "Continue.",
       },
-      lineage: {},
-    }),
-    "utf8",
-  );
+      outcome_summary: "The work is done.",
+    },
+    lineage: {},
+  };
 }

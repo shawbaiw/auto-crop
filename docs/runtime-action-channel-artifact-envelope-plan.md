@@ -1,5 +1,7 @@
 # Runtime Action Channel Artifact Envelope Implementation Plan
 
+Status: implemented, including Slice 8 — the file delivery and its Artifact Syntax Repair are removed, and both Claude Code and Codex deliver through the action server. See ADR 0041's Consequences for what implementation added beyond this plan.
+
 ## Goal
 
 Implement ADR 0041: task deliveries enter the runtime as Artifact Envelopes through a Runtime Action Channel, then settlement validates and records the official Business Artifact, Proof links, task transition, Holds, completion events, and downstream handoff state.

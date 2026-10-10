@@ -33,6 +33,8 @@ import {
   runSchedulerOnce,
   type SchedulerEvent,
 } from "./scheduler";
+import { createProjectRuntimeActionChannel } from "./runtimeActionChannel";
+import { recoverTask } from "./taskRecovery";
 
 const createdDirs: string[] = [];
 
@@ -128,7 +130,7 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
-  it("keeps file-shim instructions out of real action-capable adapter prompts", async () => {
+  it("asks for the delivery through submit_artifact_envelope and settles it with its proof refs", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low", "repo-diff"),
     ]);
@@ -186,43 +188,110 @@ describe("runSchedulerOnce", () => {
     client.close();
   });
 
-  it("keeps the file shim in fallback adapter prompts", async () => {
-    const { projectRoot, repositories, client } = createSchedulerFixture([
-      createTaskRecord("task_1", "queued", "low", "repo-diff"),
-    ]);
+  /**
+   * Since ADR 0041 the Runtime Action Channel is the only way a delivery reaches the runtime. An
+   * adapter that cannot submit an Artifact Envelope would do the work and then settle as a missing
+   * delivery every time, so it is never handed the task.
+   */
+  it("does not dispatch a task to an adapter that cannot submit an Artifact Envelope", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+    let ran = false;
     const adapter: AgentAdapter = {
-      id: "mock-worker",
-      name: "Worker",
-      capabilities: ["code"],
-      detect: async () => true,
+      id: "mock-worker", name: "Envelope-less Worker", capabilities: ["code"], detect: async () => true,
       contractCapabilities: ["structured_execution_brief"],
-      run: async request => {
-        if (request.metadata.phase === "execution_brief") {
-          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Use the fallback file shim", expectedOutcome: "A settled delivery" }), stderr: "" };
-        }
-        expect(request.prompt).not.toContain("submit_artifact_envelope");
-        expect(request.prompt).toContain(".auto-crop/business-artifact.json");
-        mkdirSync(join(request.workspacePath, ".auto-crop-proof"), { recursive: true });
-        writeFileSync(join(request.workspacePath, ".auto-crop-proof", "task_1.diff"), "diff --git a/index.html b/index.html\n", "utf8");
-        writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "repo-diff"), workspacePath: request.workspacePath });
+      run: async () => {
+        ran = true;
         return { status: "complete", exitCode: 0, stdout: "", stderr: "" };
       },
     };
 
-    await runSchedulerOnce({
-      projectRoot,
-      repositories,
-      adapters: [adapter],
-      workerId: "worker",
-      maxTasks: 1,
-      approvalRequired: () => false,
-      proofCollector: createProofCollector({
-        proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
-      }),
-      emit: () => undefined,
+    const result = await runSchedulerOnce({
+      projectRoot, repositories, adapters: [adapter], workerId: "worker", maxTasks: 1,
+      approvalRequired: () => false, proofCollector: ({ task }) => [createProofForTask(task)], emit: () => undefined,
     });
 
-    expect(repositories.getTask("task_1")?.status).toBe("complete");
+    expect(ran).toBe(false);
+    expect(result.started).toEqual([]);
+    expect(repositories.getTask("task_1")?.status).toBe("queued");
+    expect(repositories.listTaskEventsForCompany("company_1").at(-1)?.message).toContain(
+      "Envelope-less Worker cannot submit an Artifact Envelope",
+    );
+    client.close();
+  });
+
+  /**
+   * An agent whose every call was rejected tried to deliver and was told why. The task must show that
+   * reason, not claim nothing was submitted.
+   */
+  it("settles a run whose every submission was rejected as an invalid delivery carrying the rejection", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+    const replies: unknown[] = [];
+    const adapter: AgentAdapter = {
+      id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
+      run: async (request) => {
+        if (request.metadata.phase === "execution_brief") {
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
+        }
+        const withoutReport = { ...(validDelivery({ id: "task_1" }) as Record<string, unknown>), payload: { summary: "Done." } };
+        replies.push(request.runtimeActions!.submitArtifactEnvelope(withoutReport));
+        return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
+      },
+    };
+
+    await runSchedulerOnce({
+      projectRoot, repositories, adapters: [adapter], workerId: "worker", maxTasks: 1,
+      approvalRequired: () => false, proofCollector: ({ task }) => [createProofForTask(task)], emit: () => undefined,
+    });
+
+    // The agent heard about the breach inside its run…
+    expect(replies).toEqual([expect.objectContaining({ ok: false, errors: expect.arrayContaining([expect.stringContaining("payload.execution_report")]) })]);
+    // …and the task parks on the same reason.
+    expect(repositories.getTask("task_1")).toMatchObject({ status: "blocked", latestFailureReason: "invalid_business_artifact" });
+    expect(repositories.getCurrentBusinessArtifactForTask("task_1")).toMatchObject({
+      artifactSubtype: "invalid_business_artifact_schema",
+      validationErrors: expect.arrayContaining([expect.stringContaining("payload.execution_report")]),
+    });
+    client.close();
+  });
+
+  /**
+   * A run that fails after submitting has still delivered: its candidate is kept for Proof
+   * recovery, as its file used to stay in the workspace. A redispatch supersedes it, so recovery can
+   * never recapture a delivery from a run that is not the task's latest.
+   */
+  it("keeps a run's delivery for Proof recovery when it does not complete, until the task is redispatched", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
+    const channel = createProjectRuntimeActionChannel(projectRoot);
+    let workRuns = 0;
+    const crashing = (submits: boolean): AgentAdapter => ({
+      id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
+      run: async (request): Promise<AgentRunResult> => {
+        if (request.metadata.phase === "execution_brief") {
+          return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
+        }
+        workRuns += 1;
+        if (submits) request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
+        // The agent crashes after submitting; confirmed stopped, so the workspace is free to redispatch.
+        return { status: "failed", exitCode: 1, stdout: "", stderr: "crashed", failureReason: "agent_failed", terminationConfirmed: true };
+      },
+    });
+    const dispatch = (submits: boolean) => runSchedulerOnce({
+      projectRoot, repositories, adapters: [crashing(submits)], workerId: "worker", maxTasks: 1,
+      approvalRequired: () => false, proofCollector: ({ task }) => [createProofForTask(task)], emit: () => undefined,
+    });
+
+    await dispatch(true);
+    expect(channel.latestTaskSubmission({ companyId: "company_1", taskId: "task_1" }).envelope).toMatchObject({
+      artifactSubtype: "prototype_implementation",
+    });
+
+    // Recovery with nothing to recapture re-runs the task; that run submits nothing.
+    recoverTask({ repositories, runtimeActionChannel: channel, taskId: "task_1", proofSchemas: [] });
+    await dispatch(false);
+    expect(workRuns).toBe(2);
+    expect(channel.latestTaskSubmission({ companyId: "company_1", taskId: "task_1" }).envelope).toBeNull();
     client.close();
   });
 
@@ -252,6 +321,9 @@ describe("runSchedulerOnce", () => {
               work_summary: "Submitted the delivery through the runtime action channel.",
               evidence: "The action call included a proof reference.",
               conclusion: "The prototype implementation is complete.",
+              vision_impact: "It advances the objective's build milestone.",
+              remaining_gap: "Validation with real users remains.",
+              recommendation: "Review the delivered implementation.",
             },
             outcome_summary: "The prototype implementation is complete.",
           },
@@ -288,7 +360,7 @@ describe("runSchedulerOnce", () => {
     const phases: string[] = [];
     const adapter: AgentAdapter = {
       id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
-      contractCapabilities: ["structured_execution_brief"],
+      contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
       run: async request => {
         phases.push(request.metadata.phase ?? "work");
         const items = projectCeoOfficeItems({ company: repositories.getCompany("company_1")!, tasks: repositories.listTasksForCompany("company_1"), taskEvents: repositories.listTaskEventsForCompany("company_1"), taskCompletionEvents: [] });
@@ -302,16 +374,11 @@ describe("runSchedulerOnce", () => {
       },
     };
     await runSchedulerOnce({ projectRoot, repositories, adapters: [adapter], workerId: "worker", maxTasks: 1, approvalRequired: () => false,
-      proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; }, emit: () => undefined });
+      proofCollector: ({ task }) => [createProofForTask(task)], emit: () => undefined });
     expect(phases).toEqual(["execution_brief", "work"]);
     client.close();
   });
 
-  /**
-   * The reported failure, pinned: a Chinese delivery quoted a phrase with bare ASCII quotes, its
-   * artifact did not parse, and the whole company blocked on work that had been done. One narrow repair
-   * run fixes the syntax; the runtime keeps it only if the content is unchanged.
-   */
   /**
    * Two writers reach every run: the dispatch settling its delivery, and whoever declares the run
    * timed out — `reconcileStaleRunningTasks`, which any read of company state can trigger. They used
@@ -327,24 +394,14 @@ describe("runSchedulerOnce", () => {
       const { projectRoot, repositories, client } = createSchedulerFixture([
         createTaskRecord("task_1", "queued", "low", "product-brief"),
       ]);
-      const broken = 'Mock implementation completed; rivals already offer "no sign-up" access.';
-      const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
       const adapter: AgentAdapter = {
         id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
-        contractCapabilities: ["structured_execution_brief"],
+        contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
         run: async (request) => {
           if (request.metadata.phase === "execution_brief") {
             return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
           }
-          const path = artifactPath(request.workspacePath);
-          if (request.prompt.startsWith("## Repair the Business Artifact syntax")) {
-            // A read of company state lands while the repair run is in flight.
-            reconcileStaleRunningTasks({ repositories, companyId: "company_1", now: () => readPathClock });
-            writeFileSync(path, readFileSync(path, "utf8").replace('"no sign-up"', '\\"no sign-up\\"'), "utf8");
-            return { status: "complete", exitCode: 0, stdout: "repaired", stderr: "" };
-          }
-          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
-          writeFileSync(path, readFileSync(path, "utf8").replace("Mock implementation completed.", broken), "utf8");
+          request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
           return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
         },
       };
@@ -353,7 +410,11 @@ describe("runSchedulerOnce", () => {
         projectRoot, repositories, adapters: [adapter], workerId: "worker_a", maxTasks: 1,
         now: () => start,
         approvalRequired: () => false,
-        proofCollector: ({ task }) => [createProofForTask(task)],
+        proofCollector: ({ task }) => {
+          // A read of company state lands while the run's delivery is being finalized.
+          reconcileStaleRunningTasks({ repositories, companyId: "company_1", now: () => readPathClock });
+          return [createProofForTask(task)];
+        },
         emit: (event) => events.push(event),
       });
       const run = client
@@ -433,12 +494,12 @@ describe("runSchedulerOnce", () => {
         createTaskRecord("task_1", "queued", "low", "product-brief"),
       ]);
       const adapter: AgentAdapter = {
-        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        id: "mock-worker", name: "Worker", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
         run: async (request) => {
           if (request.metadata.phase === "execution_brief") {
             return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
           }
-          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
+          request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
           // Past the grace, a read of company state declares this run timed out and frees the lock…
           reconcileStaleRunningTasks({ repositories, companyId: "company_1", now: () => new Date("2026-08-17T12:30:00.000Z") });
           // …and the next dispatch of the recovered task, in this same worker, takes it.
@@ -481,12 +542,12 @@ describe("runSchedulerOnce", () => {
         },
       };
       const adapter: AgentAdapter = {
-        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        id: "mock-worker", name: "Worker", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
         run: async (request) => {
           if (request.metadata.phase === "execution_brief") {
             return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
           }
-          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
+          request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
           return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
         },
       };
@@ -534,12 +595,12 @@ describe("runSchedulerOnce", () => {
         { ...createTaskRecord("task_1", "queued", "low", "product-brief"), artifactWorkspacePath: "/partial/output/from/an/earlier/run" },
       ]);
       const adapter: AgentAdapter = {
-        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        id: "mock-worker", name: "Worker", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
         run: async (request) => {
           if (request.metadata.phase === "execution_brief") {
             return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
           }
-          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
+          request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
           reconcileStaleRunningTasks({ repositories, companyId: "company_1", now: () => new Date("2026-08-17T12:30:00.000Z") });
           return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
         },
@@ -582,7 +643,7 @@ describe("runSchedulerOnce", () => {
         });
       }
       const adapter: AgentAdapter = {
-        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        id: "mock-worker", name: "Worker", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
         run: async (request) => {
           if (request.metadata.phase === "execution_brief") {
             return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write it", expectedOutcome: "A brief" }), stderr: "" };
@@ -622,30 +683,21 @@ describe("runSchedulerOnce", () => {
    * doing and when, and that saying so changed no outcome.
    */
   describe("what a dispatch records about itself", () => {
-    const quoted = 'Mock implementation completed; rivals already offer "no sign-up" access.';
 
-    it("records all four phases in order, attributing output to the phase that produced it", async () => {
+    it("records each phase in order, attributing output to the phase that produced it", async () => {
       const fixture = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
-      const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
       const adapter: AgentAdapter = {
         id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
-        contractCapabilities: ["structured_execution_brief"],
+        contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
         run: async (request) => {
           // A real CLI reports through the sink as bytes arrive; a mock reports what it would emit.
           if (request.metadata.phase === "execution_brief") {
             request.observe?.output("stdout", 64);
             return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
           }
-          const path = artifactPath(request.workspacePath);
-          if (request.prompt.startsWith("## Repair the Business Artifact syntax")) {
-            request.observe?.output("stdout", 16);
-            writeFileSync(path, readFileSync(path, "utf8").replace('"no sign-up"', '\\"no sign-up\\"'), "utf8");
-            return { status: "complete", exitCode: 0, stdout: "repaired", stderr: "" };
-          }
           request.observe?.output("stdout", 1024);
           request.observe?.output("stderr", 32);
-          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low"), workspacePath: request.workspacePath });
-          writeFileSync(path, readFileSync(path, "utf8").replace("Mock implementation completed.", quoted), "utf8");
+          request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
           return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
         },
       };
@@ -660,7 +712,6 @@ describe("runSchedulerOnce", () => {
       expect(fixture.repositories.listRunInvocations(runId).map((invocation) => invocation.phase)).toEqual([
         "preparing_brief",
         "executing",
-        "repairing_artifact",
         "finalizing",
       ]);
       // Every invocation is closed, and says what ended it.
@@ -673,7 +724,6 @@ describe("runSchedulerOnce", () => {
       }
       expect(byPhase.get("preparing_brief")).toBe(64);
       expect(byPhase.get("executing")).toBe(1024 + 32);
-      expect(byPhase.get("repairing_artifact")).toBe(16);
 
       // The owner is recorded, under a named policy version, with a heartbeat from its own clock.
       const run = fixture.client
@@ -692,7 +742,7 @@ describe("runSchedulerOnce", () => {
       const fixture = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
       let at = Date.parse("2026-09-21T00:00:00.000Z");
       const adapter: AgentAdapter = {
-        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+        id: "mock-worker", name: "Worker", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
         run: async (request) => {
           if (request.metadata.phase === "execution_brief") {
             return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
@@ -701,7 +751,7 @@ describe("runSchedulerOnce", () => {
           at += 240_000;
           request.observe?.output("stdout", 12);
           at += 60_000;
-          writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low"), workspacePath: request.workspacePath });
+          request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
           return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
         },
       };
@@ -747,7 +797,7 @@ describe("runSchedulerOnce", () => {
     let stopResult: ReturnType<typeof triggerKillSwitch> | null = null;
 
     const adapter: AgentAdapter = {
-      id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      id: "mock-worker", name: "Worker", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
       run: async (request) => {
         if (request.metadata.phase === "execution_brief") {
           return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
@@ -761,7 +811,7 @@ describe("runSchedulerOnce", () => {
         });
         // The adapter is told to stop, and reports the process gone.
         expect(request.signal?.aborted).toBe(true);
-        writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low", "product-brief"), workspacePath: request.workspacePath });
+        request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
         return { status: "failed", exitCode: null, stdout: "", stderr: "stopped", failureReason: "cancelled", terminationConfirmed: true };
       },
     };
@@ -812,12 +862,12 @@ describe("runSchedulerOnce", () => {
    */
   describe("holding a workspace", () => {
     const deliveringAdapter = (onWork?: (request: AgentRunRequest) => Partial<AgentRunResult>): AgentAdapter => ({
-      id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
+      id: "mock-worker", name: "Worker", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
       run: async (request) => {
         if (request.metadata.phase === "execution_brief") {
           return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
         }
-        writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low"), workspacePath: request.workspacePath });
+        request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
         return { status: "complete", exitCode: 0, stdout: "done", stderr: "", ...onWork?.(request) };
       },
     });
@@ -931,71 +981,6 @@ describe("runSchedulerOnce", () => {
     });
   });
 
-  describe("business artifact syntax repair", () => {
-    const quoted = 'Mock implementation completed; rivals already offer "no sign-up" access.';
-    const runWithRepair = async (repairEdit: (artifact: string) => string) => {
-      const fixture = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
-      const runs: Array<{ phase: string; grant?: string[] }> = [];
-      const artifactPath = (workspace: string) => join(workspace, ".auto-crop", "business-artifact.json");
-      const adapter: AgentAdapter = {
-        id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
-        contractCapabilities: ["structured_execution_brief"],
-        run: async (request) => {
-          if (request.metadata.phase === "execution_brief") {
-            return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
-          }
-          const path = artifactPath(request.workspacePath);
-          if (request.prompt.startsWith("## Repair the Business Artifact syntax")) {
-            runs.push({ phase: "repair", grant: request.grant?.granted });
-            writeFileSync(path, repairEdit(readFileSync(path, "utf8")), "utf8");
-          } else {
-            runs.push({ phase: "work" });
-            writeValidBusinessArtifact({ ...createTaskRecord("task_1", "running", "low"), workspacePath: request.workspacePath });
-            writeFileSync(path, readFileSync(path, "utf8").replace("Mock implementation completed.", quoted), "utf8");
-          }
-          return { status: "complete", exitCode: 0, stdout: "done", stderr: "" };
-        },
-      };
-      const events: SchedulerEventRecord[] = [];
-      const result = await runSchedulerOnce({
-        projectRoot: fixture.projectRoot, repositories: fixture.repositories, adapters: [adapter], workerId: "worker", maxTasks: 1,
-        approvalRequired: () => false, proofCollector: ({ task }) => [createProofForTask(task)], emit: (event) => events.push(event),
-      });
-      return { ...fixture, result, runs, events, artifactPath };
-    };
-
-    it("repairs the syntax once and delivers the work without re-running it", async () => {
-      const { repositories, client, result, runs } = await runWithRepair((artifact) => artifact.replace('"no sign-up"', '\\"no sign-up\\"'));
-
-      expect(runs.map((run) => run.phase)).toEqual(["work", "repair"]);
-      expect(runs[1]?.grant).toEqual(["workspace_read", "workspace_write"]);
-      expect(result.completed).toContain("task_1");
-      const artifact = repositories.getCurrentBusinessArtifactForTask("task_1");
-      expect(artifact?.validationStatus).toBe("valid");
-      expect((artifact?.payload as { summary?: string }).summary).toBe(quoted);
-      expect(repositories.listTaskEventsForCompany("company_1").find((event) => event.type === "task_warning")?.message).toContain(
-        "its syntax was repaired without changing content",
-      );
-      client.close();
-    });
-
-    it("discards a repair that changed content, and records the delivery as it was left", async () => {
-      const { repositories, client, result, artifactPath } = await runWithRepair((artifact) =>
-        artifact.replace('"no sign-up"', "free").replace("rivals already offer", "we uniquely offer"),
-      );
-
-      expect(result.failed).toContain("task_1");
-      expect(repositories.getTask("task_1")?.status).toBe("blocked");
-      expect(repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["invalid_business_artifact"]);
-      expect(repositories.getCurrentBusinessArtifactForTask("task_1")?.validationErrors.join(" ")).toContain("Invalid JSON");
-      expect(readFileSync(artifactPath(repositories.getTask("task_1")!.workspacePath!), "utf8")).toContain(quoted);
-      expect(repositories.listTaskEventsForCompany("company_1").find((event) => event.type === "task_warning")?.message).toContain(
-        "changed its content and was discarded",
-      );
-      client.close();
-    });
-  });
-
   it("dispatches substantive work with a warning when the execution brief is degraded", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
     const phases: string[] = [];
@@ -1008,17 +993,19 @@ describe("runSchedulerOnce", () => {
         id: "mock-worker",
         name: "Worker",
         capabilities: ["code"],
+        contractCapabilities: ["artifact_envelope"],
         detect: async () => true,
         run: async (request) => {
           phases.push(request.metadata.phase ?? "work");
           expect(request.prompt).toContain("Runtime-generated degraded execution brief");
+          request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: request.taskId }));
           return { status: "complete", exitCode: 0, stdout: "Completed substantive work", stderr: "" };
         },
       }],
       workerId: "worker",
       maxTasks: 1,
       approvalRequired: () => false,
-      proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: (event) => events.push(event),
     });
 
@@ -1036,7 +1023,7 @@ describe("runSchedulerOnce", () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "queued", "low")]);
     const phases: string[] = [];
     await runSchedulerOnce({ projectRoot, repositories, adapters: [{ id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
-      contractCapabilities: ["structured_execution_brief"],
+      contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
       run: async request => { phases.push(request.metadata.phase ?? "work"); return { status: "complete", exitCode: 0, stdout: "No structured plan", stderr: "" }; },
     }], workerId: "worker", maxTasks: 1, approvalRequired: () => false, proofCollector: () => { throw new Error("Must not collect proof"); }, emit: () => undefined });
     expect(phases).toEqual(["execution_brief"]);
@@ -1063,7 +1050,7 @@ describe("runSchedulerOnce", () => {
       repositories,
       adapters: [{
         id: "mock-worker", name: "Worker", capabilities: ["code"], detect: async () => true,
-        contractCapabilities: ["structured_execution_brief"],
+        contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
         run: async (request) => {
           phases.push(request.metadata.phase ?? "work");
           return { status: "failed", exitCode: null, stdout: "", stderr: "", failureReason: "timeout" };
@@ -1100,9 +1087,9 @@ describe("runSchedulerOnce", () => {
       );
 
       const held = await runSchedulerOnce({
-        projectRoot, repositories, adapters: [createMockAgentAdapter({ id: "mock-worker", name: "Worker", capabilities: ["code"] })],
+        projectRoot, repositories, adapters: [createMockAgentAdapter({ deliver: deliverValid, id: "mock-worker", name: "Worker", capabilities: ["code"] })],
         workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
-        proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+        proofCollector: ({ task }) => [createProofForTask(task)],
         emit: () => undefined,
       });
       expect(held.started, `a ${status} company must not dispatch`).toEqual([]);
@@ -1110,9 +1097,9 @@ describe("runSchedulerOnce", () => {
 
       repositories.updateCompanyStatus("company_1", "active", "2026-08-17T00:00:00.000Z");
       const running = await runSchedulerOnce({
-        projectRoot, repositories, adapters: [createMockAgentAdapter({ id: "mock-worker", name: "Worker", capabilities: ["code"] })],
+        projectRoot, repositories, adapters: [createMockAgentAdapter({ deliver: deliverValid, id: "mock-worker", name: "Worker", capabilities: ["code"] })],
         workerId: "worker_a", maxTasks: 1, approvalRequired: () => false,
-        proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+        proofCollector: ({ task }) => [createProofForTask(task)],
         emit: () => undefined,
       });
       expect(running.started).toEqual(["task_1"]);
@@ -1144,7 +1131,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: deliverValid,
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -1183,7 +1170,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: deliverValid,
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -1195,10 +1182,7 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
-        return [createProofForTask(task)];
-      },
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: (event) => events.push(event),
     });
 
@@ -1237,7 +1221,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: deliverValid,
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -1250,10 +1234,7 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
-        return [createProofForTask(task)];
-      },
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: () => undefined,
     });
 
@@ -1273,7 +1254,7 @@ describe("runSchedulerOnce", () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low"),
     ]);
-    const unavailable = createMockAgentAdapter({
+    const unavailable = createMockAgentAdapter({ deliver: deliverValid,
       id: "mock-worker",
       name: "Old Worker",
       capabilities: ["code"],
@@ -1288,7 +1269,7 @@ describe("runSchedulerOnce", () => {
     unavailable.run = async () => {
       throw new Error("Must not dispatch to an unavailable adapter");
     };
-    const fallback = createMockAgentAdapter({ id: "other-worker", name: "Other Worker", capabilities: ["code"], output: "proof" });
+    const fallback = createMockAgentAdapter({ deliver: deliverValid, id: "other-worker", name: "Other Worker", capabilities: ["code"], output: "proof" });
     const fallbackRun = fallback.run;
     fallback.run = async (request) => {
       runs.push(request.metadata.phase ?? "work");
@@ -1303,10 +1284,7 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }: { task: Task }) => {
-        writeValidBusinessArtifact(task);
-        return [createProofForTask(task)];
-      },
+      proofCollector: ({ task }: { task: Task }) => [createProofForTask(task)],
       emit: () => undefined,
     };
 
@@ -1352,10 +1330,12 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             prompt = request.prompt;
+            request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: request.taskId }));
             return {
               status: "complete",
               exitCode: 0,
@@ -1370,10 +1350,7 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
-        return [createProofForTask(task)];
-      },
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: () => undefined,
     });
 
@@ -1401,7 +1378,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: deliverValid,
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -1413,10 +1390,7 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
-        return [createProofForTask(task)];
-      },
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: (event) => events.push(event),
     });
 
@@ -1460,7 +1434,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: deliverValid,
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -1472,10 +1446,7 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
-        return [createProofForTask(task)];
-      },
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: (event) => events.push(event),
     });
 
@@ -1535,15 +1506,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "proof: created artifact" }),
-      ],
-      workerId: "worker_a",
-      maxTasks: 1,
-      now: () => new Date("2026-08-17T00:00:00.000Z"),
-      createId: createSequentialIdFactory(),
-      approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeBusinessArtifactWithOpenDecisions(task, [
+        createMockAgentAdapter({ deliver: (request) => deliveryWithOpenDecisions({ id: request.taskId }, [
           {
             decisionKind: "pricing_model",
             options: [
@@ -1554,9 +1517,14 @@ describe("runSchedulerOnce", () => {
             rationale: "Early buyers want a predictable bill and the usage spread is still narrow.",
             briefing: "Explored flat and usage-based pricing with interviewed buyers; the opportunity is predictable billing for solo buyers and monetization rests on a low-friction paid unlock.",
           },
-        ]);
-        return [createProofForTask(task)];
-      },
+        ]), id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "proof: created artifact" }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: (event) => events.push(event),
     });
 
@@ -1602,15 +1570,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "proof: created artifact" }),
-      ],
-      workerId: "worker_a",
-      maxTasks: 1,
-      now: () => new Date("2026-08-17T00:00:00.000Z"),
-      createId: createSequentialIdFactory(),
-      approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeBusinessArtifactWithOpenDecisions(task, [
+        createMockAgentAdapter({ deliver: (request) => deliveryWithOpenDecisions({ id: request.taskId }, [
           {
             decisionKind: "pricing_model",
             options: [
@@ -1621,9 +1581,14 @@ describe("runSchedulerOnce", () => {
             rationale: "Early buyers want a predictable bill.",
             briefing: "Explored flat and usage-based pricing with interviewed buyers; the opportunity is predictable billing for solo buyers and monetization rests on a low-friction paid unlock.",
           },
-        ]);
-        return [createProofForTask(task)];
-      },
+        ]), id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "proof: created artifact" }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: (event) => events.push(event),
     });
 
@@ -1645,15 +1610,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "proof: created artifact" }),
-      ],
-      workerId: "worker_a",
-      maxTasks: 1,
-      now: () => new Date("2026-08-17T00:00:00.000Z"),
-      createId: createSequentialIdFactory(),
-      approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeBusinessArtifactWithOpenDecisions(task, [
+        createMockAgentAdapter({ deliver: (request) => deliveryWithOpenDecisions({ id: request.taskId }, [
           {
             decisionKind: "brand_name",
             options: [
@@ -1664,9 +1621,14 @@ describe("runSchedulerOnce", () => {
             rationale: "Punchier for early word of mouth.",
             briefing: "Explored flat and usage-based pricing with interviewed buyers; the opportunity is predictable billing for solo buyers and monetization rests on a low-friction paid unlock.",
           },
-        ]);
-        return [createProofForTask(task)];
-      },
+        ]), id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "proof: created artifact" }),
+      ],
+      workerId: "worker_a",
+      maxTasks: 1,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+      approvalRequired: () => false,
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: (event) => events.push(event),
     });
 
@@ -1879,7 +1841,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: deliverValid,
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -1892,7 +1854,6 @@ describe("runSchedulerOnce", () => {
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
         return [{ ...createProofForTask(task), summary: "final proof" }];
       },
       emit: (event) => events.push(event),
@@ -1991,6 +1952,7 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
@@ -1998,6 +1960,7 @@ describe("runSchedulerOnce", () => {
             mkdirSync(join(workspacePath, "node_modules", "vite"), { recursive: true });
             writeFileSync(join(workspacePath, "node_modules", "vite", "index.js"), "module.exports = {}\n", "utf8");
             writeFileSync(join(workspacePath, "index.html"), "<main>Prototype</main>\n", "utf8");
+            request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: request.taskId }));
             return {
               status: "complete",
               exitCode: 0,
@@ -2013,7 +1976,6 @@ describe("runSchedulerOnce", () => {
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
         return [
           {
             ...createProofForTask(task),
@@ -2104,7 +2066,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: deliverValid,
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -2125,7 +2087,7 @@ describe("runSchedulerOnce", () => {
     expect(task?.latestFailureMessage).toContain("repo-diff proof missing");
     expect(task?.latestFailureMessage).toContain(".auto-crop-proof/*.diff");
     expect(task?.latestFailureMessage).toContain("top-level workspace *.diff/*.patch");
-    expect(task?.latestFailureMessage).toContain(".auto-crop/business-artifact.json is not diff proof");
+    expect(task?.latestFailureMessage).toContain("an Artifact Envelope is not diff proof");
 
     client.close();
   });
@@ -2249,6 +2211,7 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
@@ -2263,6 +2226,8 @@ describe("runSchedulerOnce", () => {
                 failureReason: "timeout",
               };
             }
+
+            request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: request.taskId }));
 
             return {
               status: "complete",
@@ -2279,7 +2244,6 @@ describe("runSchedulerOnce", () => {
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
         return [
           {
             ...createProofForTask(task),
@@ -2327,10 +2291,12 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             timeoutMs = request.timeoutMs;
+            request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: request.taskId }));
             return {
               status: "complete",
               exitCode: 0,
@@ -2346,7 +2312,6 @@ describe("runSchedulerOnce", () => {
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
         return [
           {
             ...createProofForTask(task),
@@ -2580,11 +2545,11 @@ describe("runSchedulerOnce", () => {
     const result = await runSchedulerOnce({
       projectRoot,
       repositories,
-      adapters: [createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code", "frontend", "test"] })],
+      adapters: [createMockAgentAdapter({ deliver: deliverValid, id: "mock-worker", name: "Mock Worker", capabilities: ["code", "frontend", "test"] })],
       workerId: "worker_a",
       maxTasks: 1,
       approvalRequired: () => false,
-      proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: () => undefined,
     });
 
@@ -2688,10 +2653,12 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             prompt = request.prompt;
+            request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: request.taskId }));
             return {
               status: "complete",
               exitCode: 0,
@@ -2706,10 +2673,7 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
-        return [createProofForTask(task)];
-      },
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: () => undefined,
     });
 
@@ -2768,6 +2732,7 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
@@ -2779,9 +2744,7 @@ describe("runSchedulerOnce", () => {
               "utf8",
             );
             mkdirSync(join(request.workspacePath, ".auto-crop"), { recursive: true });
-            writeFileSync(
-              join(request.workspacePath, ".auto-crop", "business-artifact.json"),
-              JSON.stringify({
+            request.runtimeActions!.submitArtifactEnvelope({
                 artifact_kind: "deliverable",
                 artifact_role: "implementation",
                 artifact_subtype: "prototype_implementation",
@@ -2800,9 +2763,7 @@ describe("runSchedulerOnce", () => {
                     "The implementation changes are recorded as a diff. This completes the build step for the objective; the remaining gap is review and downstream integration.",
                 },
                 lineage: { upstream_task_id: producer.id },
-              }),
-              "utf8",
-            );
+              });
             return {
               status: "complete",
               exitCode: 0,
@@ -2863,10 +2824,12 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             prompt = request.prompt;
+            request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: request.taskId }));
             return {
               status: "complete",
               exitCode: 0,
@@ -2881,10 +2844,7 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
-        return [createProofForTask(task)];
-      },
+      proofCollector: ({ task }) => [createProofForTask(task)],
       emit: () => undefined,
     });
 
@@ -2912,6 +2872,7 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
@@ -2926,6 +2887,8 @@ describe("runSchedulerOnce", () => {
                 failureReason: "timeout",
               };
             }
+
+            request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: request.taskId }));
 
             return {
               status: "complete",
@@ -2942,7 +2905,6 @@ describe("runSchedulerOnce", () => {
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
         return [
           {
             ...createProofForTask(task),
@@ -3220,10 +3182,12 @@ describe("runSchedulerOnce", () => {
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
             workspacePath = request.workspacePath;
+            request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: request.taskId }));
             return {
               status: "complete",
               exitCode: 0,
@@ -3239,7 +3203,6 @@ describe("runSchedulerOnce", () => {
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
       proofCollector: ({ task }) => {
-        writeValidBusinessArtifact(task);
         return [
           {
             ...createProofForTask(task),
@@ -3270,7 +3233,7 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: deliverValid,
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -3285,8 +3248,6 @@ describe("runSchedulerOnce", () => {
         if (task.id === "task_1") {
           throw new Error("schema missing");
         }
-
-        writeValidBusinessArtifact(task);
         return [createProofForTask(task)];
       },
       emit: (event) => events.push(event),
@@ -3370,7 +3331,18 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "prototype built" }),
+        createMockAgentAdapter({ deliver: () => ({
+        artifact_kind: "blocker",
+        artifact_role: "validation",
+        artifact_subtype: "prototype_screenshot_validation",
+        task_type: "local_prototype_exposure",
+        payload: {
+          blocker_class: "environment_blocked",
+          capability: "browser_screenshot",
+          target_url: "http://localhost:4173/",
+        },
+        lineage: {},
+          }), id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "prototype built" }),
       ],
       workerId: "worker_a",
       maxTasks: 1,
@@ -3379,24 +3351,7 @@ describe("runSchedulerOnce", () => {
       approvalRequired: () => false,
       proofCollector: ({ task }) => {
         const workspacePath = task.workspacePath!;
-        mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
         writeFileSync(join(workspacePath, "index.html"), "<main>prototype</main>", "utf8");
-        writeFileSync(
-          join(workspacePath, ".auto-crop", "business-artifact.json"),
-          JSON.stringify({
-            artifact_kind: "blocker",
-            artifact_role: "validation",
-            artifact_subtype: "prototype_screenshot_validation",
-            task_type: "local_prototype_exposure",
-            payload: {
-              blocker_class: "environment_blocked",
-              capability: "browser_screenshot",
-              target_url: "http://localhost:4173/",
-            },
-            lineage: {},
-          }),
-          "utf8",
-        );
         return [
           { id: `proof_${task.id}`, taskId: task.id, type: "file" as const, uri: join(workspacePath, "index.html"), summary: "File proof: index.html", verifiedAt: null },
         ];
@@ -3426,7 +3381,18 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: () => ({
+        artifact_kind: "blocker",
+        artifact_role: "validation",
+        artifact_subtype: "prototype_screenshot_capture",
+        task_type: "screenshot_capture",
+        payload: {
+          target_url: "http://127.0.0.1:4173/index.html?variant=A",
+          server_validation: { status: "running", http_status: 200, url: "http://127.0.0.1:4173/index.html?variant=A" },
+          proof: { schema: "screenshot", status: "blocked", created: false },
+        },
+        lineage: {},
+          }),
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -3440,27 +3406,7 @@ describe("runSchedulerOnce", () => {
       approvalRequired: () => false,
       // The shape a real codex run left for "Capture Prototype Screenshot": an honest blocker with a
       // reachable local URL, but without `blocker_class`/`capability`. No collectable proof.
-      proofCollector: ({ task }) => {
-        const workspacePath = task.workspacePath!;
-        mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-        writeFileSync(
-          join(workspacePath, ".auto-crop", "business-artifact.json"),
-          JSON.stringify({
-            artifact_kind: "blocker",
-            artifact_role: "validation",
-            artifact_subtype: "prototype_screenshot_capture",
-            task_type: "screenshot_capture",
-            payload: {
-              target_url: "http://127.0.0.1:4173/index.html?variant=A",
-              server_validation: { status: "running", http_status: 200, url: "http://127.0.0.1:4173/index.html?variant=A" },
-              proof: { schema: "screenshot", status: "blocked", created: false },
-            },
-            lineage: {},
-          }),
-          "utf8",
-        );
-        return [];
-      },
+      proofCollector: () => [],
       environmentBlockerFetch: async () => new Response("ok", { status: 200 }),
       emit: (event) => events.push(event),
     });
@@ -3486,7 +3432,18 @@ describe("runSchedulerOnce", () => {
       projectRoot,
       repositories,
       adapters: [
-        createMockAgentAdapter({
+        createMockAgentAdapter({ deliver: () => ({
+        artifact_kind: "blocker",
+        artifact_role: "validation",
+        artifact_subtype: "prototype_screenshot_capture",
+        task_type: "screenshot_capture",
+        payload: {
+          target_url: "http://127.0.0.1:4173/index.html?variant=A",
+          server_validation: { status: "running", http_status: 200, bytes: 4211, url: "http://127.0.0.1:4173/index.html?variant=A" },
+          proof: { schema: "screenshot", status: "blocked", created: false },
+        },
+        lineage: {},
+          }),
           id: "mock-worker",
           name: "Mock Worker",
           capabilities: ["code"],
@@ -3498,27 +3455,7 @@ describe("runSchedulerOnce", () => {
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }) => {
-        const workspacePath = task.workspacePath!;
-        mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-        writeFileSync(
-          join(workspacePath, ".auto-crop", "business-artifact.json"),
-          JSON.stringify({
-            artifact_kind: "blocker",
-            artifact_role: "validation",
-            artifact_subtype: "prototype_screenshot_capture",
-            task_type: "screenshot_capture",
-            payload: {
-              target_url: "http://127.0.0.1:4173/index.html?variant=A",
-              server_validation: { status: "running", http_status: 200, bytes: 4211, url: "http://127.0.0.1:4173/index.html?variant=A" },
-              proof: { schema: "screenshot", status: "blocked", created: false },
-            },
-            lineage: {},
-          }),
-          "utf8",
-        );
-        return [];
-      },
+      proofCollector: () => [],
       // The Local Prototype Server the agent started has already exited by the time the runtime checks.
       environmentBlockerFetch: async () => {
         throw new Error("ECONNREFUSED");
@@ -3545,7 +3482,7 @@ describe("Final Founder Report on Company Quiescence", () => {
   const NOW = "2026-08-17T00:00:00.000Z";
 
   function finalReportCeoAdapter(): AgentAdapter {
-    return createMockAgentAdapter({
+    return createMockAgentAdapter({ deliver: deliverValid,
       id: "codex",
       name: "Codex",
       capabilities: ["code", "frontend", "test"],
@@ -3569,7 +3506,7 @@ describe("Final Founder Report on Company Quiescence", () => {
   }
 
   function workerAdapter(): AgentAdapter {
-    return createMockAgentAdapter({
+    return createMockAgentAdapter({ deliver: deliverValid,
       id: "mock-worker",
       name: "Mock Worker",
       capabilities: ["code"],
@@ -3594,10 +3531,7 @@ describe("Final Founder Report on Company Quiescence", () => {
       now: input.now ?? (() => new Date(NOW)),
       createId: input.createId ?? createSequentialIdFactory(),
       approvalRequired: () => false,
-      proofCollector: ({ task }: { task: Task }) => {
-        writeValidBusinessArtifact(task);
-        return [createProofForTask(task)];
-      },
+      proofCollector: ({ task }: { task: Task }) => [createProofForTask(task)],
       emit: (event: SchedulerEvent) => {
         emitted.push(event);
       },
@@ -4238,73 +4172,59 @@ function createProofForTask(task: Task): Proof {
   };
 }
 
-function writeValidBusinessArtifact(task: Task): void {
-  if (!task.workspacePath) {
-    throw new Error(`Task ${task.id} has no workspace path`);
-  }
+/** The valid deliverable a mock agent submits for `task` through `submit_artifact_envelope`. */
+/** A mock agent's `deliver`: the valid deliverable for whichever task it is running. */
+const deliverValid = (request: AgentRunRequest): unknown => validDelivery({ id: request.taskId });
 
-  mkdirSync(join(task.workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(task.workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
-      artifact_kind: "deliverable",
-      artifact_role: "implementation",
-      artifact_subtype: "prototype_implementation",
-      task_type: "engineering.prototype_implementation",
-      payload: {
-        summary: "Mock implementation completed.",
-        execution_report: {
-                    work_summary: "Compared the requested inputs and checked the deliverable.",
-                    evidence: "Recorded checks support the reported result.",
-          conclusion: "The prototype implementation is complete and passes its mock proof.",
-          vision_impact: "It advances the objective's build milestone.",
-          remaining_gap: "Validation with real users before launch remains.",
-          recommendation: "Review the completed mock proof.",
-        },
-        outcome_summary:
-          "The prototype implementation is complete and passes its mock proof. It advances the objective's build milestone; the remaining gap is validation with real users before launch.",
+function validDelivery(task: Pick<Task, "id">): unknown {
+  return {
+    artifact_kind: "deliverable",
+    artifact_role: "implementation",
+    artifact_subtype: "prototype_implementation",
+    task_type: "engineering.prototype_implementation",
+    payload: {
+      summary: "Mock implementation completed.",
+      execution_report: {
+                  work_summary: "Compared the requested inputs and checked the deliverable.",
+                  evidence: "Recorded checks support the reported result.",
+        conclusion: "The prototype implementation is complete and passes its mock proof.",
+        vision_impact: "It advances the objective's build milestone.",
+        remaining_gap: "Validation with real users before launch remains.",
         recommendation: "Review the completed mock proof.",
-        evidence: ["mock proof"],
-        risks: [],
-        next_steps: ["CEO review"],
       },
-      lineage: { task_id: task.id },
-    }),
-    "utf8",
-  );
+      outcome_summary:
+        "The prototype implementation is complete and passes its mock proof. It advances the objective's build milestone; the remaining gap is validation with real users before launch.",
+      recommendation: "Review the completed mock proof.",
+      evidence: ["mock proof"],
+      risks: [],
+      next_steps: ["CEO review"],
+    },
+    lineage: { task_id: task.id },
+  };
 }
 
-function writeBusinessArtifactWithOpenDecisions(task: Task, openDecisions: unknown[]): void {
-  if (!task.workspacePath) {
-    throw new Error(`Task ${task.id} has no workspace path`);
-  }
-
-  mkdirSync(join(task.workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(task.workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
-      artifact_kind: "deliverable",
-      artifact_role: "spec",
-      artifact_subtype: "mvp_brief",
-      task_type: "product_planning",
-      payload: {
-        summary: "Mock brief completed.",
-        execution_report: {
-                    work_summary: "Compared the requested inputs and checked the deliverable.",
-                    evidence: "Recorded checks support the reported result.",
-          conclusion: "The brief settles on a pricing wedge and leaves the pricing model open.",
-          vision_impact: "It gives Growth a number to test.",
-          remaining_gap: "Willingness-to-pay evidence remains.",
-          recommendation: "Resolve the founder decision before pricing-dependent work continues.",
-        },
-        outcome_summary:
-          "The brief settles on a pricing wedge and leaves the pricing model open. It gives Growth a number to test; the remaining gap is willingness-to-pay evidence.",
-        open_decisions: openDecisions,
+function deliveryWithOpenDecisions(task: Pick<Task, "id">, openDecisions: unknown[]): unknown {
+  return {
+    artifact_kind: "deliverable",
+    artifact_role: "spec",
+    artifact_subtype: "mvp_brief",
+    task_type: "product_planning",
+    payload: {
+      summary: "Mock brief completed.",
+      execution_report: {
+                  work_summary: "Compared the requested inputs and checked the deliverable.",
+                  evidence: "Recorded checks support the reported result.",
+        conclusion: "The brief settles on a pricing wedge and leaves the pricing model open.",
+        vision_impact: "It gives Growth a number to test.",
+        remaining_gap: "Willingness-to-pay evidence remains.",
+        recommendation: "Resolve the founder decision before pricing-dependent work continues.",
       },
-      lineage: { task_id: task.id },
-    }),
-    "utf8",
-  );
+      outcome_summary:
+        "The brief settles on a pricing wedge and leaves the pricing model open. It gives Growth a number to test; the remaining gap is willingness-to-pay evidence.",
+      open_decisions: openDecisions,
+    },
+    lineage: { task_id: task.id },
+  };
 }
 
 function createBusinessArtifactRecord(id: string, taskId: string, sourceProofId: string): BusinessArtifact {

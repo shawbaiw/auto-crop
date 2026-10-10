@@ -25,7 +25,9 @@ describe("runtime action MCP server", () => {
     const workspace = mkdtempSync(join(tmpdir(), "auto-crop-foreign-workspace-"));
     const candidateDir = mkdtempSync(join(tmpdir(), "auto-crop-runtime-action-launch-"));
     createdDirs.push(workspace, candidateDir);
-    const server = runtimeActionMcpServer({ candidateDir, companyId: "company_1", taskId: "task_1", runId: "run_1" });
+    const server = runtimeActionMcpServer({
+      candidateDir, companyId: "company_1", taskId: "task_1", runId: "run_1", locale: "en", requireExecutionDetails: false,
+    });
     const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "submit_artifact_envelope", arguments: completeDeliverable("launched") } };
 
     const result = spawnSync(server.command, server.args, {
@@ -89,11 +91,11 @@ describe("runtime action MCP server", () => {
         structuredContent: { ok: true },
       },
     });
-    expect(createRuntimeActionChannel({ candidateDir }).consumeArtifactEnvelopeCandidate({
+    expect(createRuntimeActionChannel({ candidateDir }).consumeRunSubmission({
       companyId: "company_1",
       taskId: "task_1",
       runId: "run_1",
-    })).toMatchObject({ artifactSubtype: "submitted" });
+    }).envelope).toMatchObject({ artifactSubtype: "submitted" });
   });
 });
 
@@ -107,7 +109,7 @@ function env(overrides: Record<string, string> = {}) {
   };
 }
 
-/** A deliverable that also meets the delivery contract settlement enforces. */
+/** A deliverable that also meets the delivery contract the launched server enforces. */
 function completeDeliverable(subtype: string) {
   return {
     ...validEnvelope(subtype),

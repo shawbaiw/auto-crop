@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ import { applyTaskTransition } from "../runtime/taskTransition";
 import { resolveTaskAffordanceState } from "../runtime/taskAffordances";
 import { recordExecutionEvent } from "../runtime/executionEvents";
 import { createApiServer, type SchedulerWakeReason } from "./routes";
+import { createProjectRuntimeActionChannel } from "../runtime/runtimeActionChannel";
 
 const createdDirs: string[] = [];
 
@@ -751,7 +752,6 @@ describe("API routes", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-subtask-proof-"));
     createdDirs.push(workspacePath);
     writeFileSync(join(workspacePath, "prototype-audit-trail.patch"), "diff --git a/app/page.tsx b/app/page.tsx\n", "utf8");
-    writeValidBusinessArtifactFile(workspacePath, "department_subtask_1");
     const subtask = {
       ...createIsolatedTask(templateTask, "department_subtask_1", "Execute prototype slice", "failed", 101),
       latestFailureReason: "no_proof" as const,
@@ -765,6 +765,7 @@ describe("API routes", () => {
     fixture.repositories.createTask(parentTask);
     fixture.repositories.createTask(subtask);
     fixture.repositories.createTaskDependency({ taskId: parentTask.id, dependsOnTaskId: subtask.id });
+    leaveUnfinishedDelivery(fixture.projectRoot, subtask, validDelivery("department_subtask_1"));
 
     const refreshed = await postJson<{
       task: { id: string; status: string };
@@ -3771,15 +3772,14 @@ describe("department subtask Founder Decision lifecycle", () => {
     } else {
       repositories.updateTaskExecutionSummary(define.id, { latestFailureReason: "no_proof", latestFailureMessage: "no proof" });
       writeFileSync(join(workspacePath, "slice.diff"), "diff --git a/slice.md b/slice.md\n", "utf8");
-      mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-      writeFileSync(join(workspacePath, ".auto-crop", "business-artifact.json"), JSON.stringify({
+      leaveUnfinishedDelivery(fixture.projectRoot, define, {
         artifactKind: "deliverable",
         artifactRole: "plan",
         artifactSubtype: "slice_definition",
         taskType: "engineering.slice_definition",
         payload: decisionPayload,
         lineage: {},
-      }), "utf8");
+      });
       await postJson(`${fixture.baseUrl}/api/tasks/${define.id}/refresh`, {});
     }
 
@@ -3913,6 +3913,7 @@ async function startFixtureServer(options: {
 
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
+    projectRoot,
     repositories,
     events: server.events,
     plannerRequests,
@@ -4292,32 +4293,38 @@ function createBusinessArtifactRecord(id: string, taskId: string, sourceProofId:
   };
 }
 
-function writeValidBusinessArtifactFile(workspacePath: string, taskId: string): void {
-  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
-      artifactKind: "deliverable",
-      artifactRole: "implementation",
-      artifactSubtype: "prototype_implementation",
-      taskType: "engineering.prototype_implementation",
-      payload: {
-        result: `Recovered artifact for ${taskId}.`,
-        execution_report: {
-          conclusion: `Recovered deliverable for ${taskId} is complete and ready for review.`,
-          vision_impact: "It keeps the objective on track.",
-          remaining_gap: "Downstream integration remains.",
-          recommendation: "Review the recovered deliverable.",
-        },
-        outcome_summary: `Recovered deliverable for ${taskId} is complete and ready for review. It keeps the objective on track; the remaining gap is downstream integration.`,
-      },
-      lineage: {
-        founderVision: "Build an AI SaaS that creates pricing pages.",
-        taskId,
-      },
-    }),
-    "utf8",
+/**
+ * What a task's run that did not complete leaves in the project's Runtime Action Channel: the
+ * delivery the refresh endpoint's Proof recovery recaptures (ADR 0041).
+ */
+function leaveUnfinishedDelivery(projectRoot: string, task: { companyId: string; id: string }, envelope: unknown): void {
+  createProjectRuntimeActionChannel(projectRoot).submitArtifactEnvelope(
+    { companyId: task.companyId, taskId: task.id, runId: "run_unfinished" },
+    envelope,
   );
+}
+
+function validDelivery(taskId: string): unknown {
+  return {
+    artifactKind: "deliverable",
+    artifactRole: "implementation",
+    artifactSubtype: "prototype_implementation",
+    taskType: "engineering.prototype_implementation",
+    payload: {
+      result: `Recovered artifact for ${taskId}.`,
+      execution_report: {
+        conclusion: `Recovered deliverable for ${taskId} is complete and ready for review.`,
+        vision_impact: "It keeps the objective on track.",
+        remaining_gap: "Downstream integration remains.",
+        recommendation: "Review the recovered deliverable.",
+      },
+      outcome_summary: `Recovered deliverable for ${taskId} is complete and ready for review. It keeps the objective on track; the remaining gap is downstream integration.`,
+    },
+    lineage: {
+      founderVision: "Build an AI SaaS that creates pricing pages.",
+      taskId,
+    },
+  };
 }
 
 async function getJson<T>(url: string): Promise<T> {

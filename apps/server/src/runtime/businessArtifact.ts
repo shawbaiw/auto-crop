@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   isVerificationSatisfied,
   localizedTextSchema,
@@ -15,7 +13,7 @@ import {
 } from "@auto-crop/core";
 import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabilityGrant";
 import { parseActionIntents } from "./actionIntent";
-import { parseArtifactEnvelope, type ArtifactEnvelope } from "./artifactEnvelope";
+import type { ArtifactEnvelope } from "./artifactEnvelope";
 import { parseOpenDecisions } from "./founderDecision";
 import {
   evaluateVerificationReport,
@@ -23,27 +21,12 @@ import {
   type CaptureVerificationContext,
 } from "./verificationContract";
 
-const BUSINESS_ARTIFACT_PATH = join(".auto-crop", "business-artifact.json");
-const BUSINESS_ARTIFACT_TYPES = new Set<BusinessArtifactType>([
-  "research_findings",
-  "product_mvp_brief",
-  "implementation_summary",
-  "validation_result",
-  "preview_result",
-  "launch_plan",
-  "deployment_result",
-  "final_founder_report",
-  "blocker_report",
-  "direction_change_request",
-]);
-
 type DeclaredBusinessArtifact = {
   artifactKind: BusinessArtifactKind;
   artifactRole: BusinessArtifactRole;
   artifactSubtype: string;
   artifactType: BusinessArtifactType;
   taskType: string;
-  sourceProofId?: string;
   payload: unknown;
   lineage: unknown;
 };
@@ -81,6 +64,13 @@ export type CaptureBusinessArtifactInput = {
   requireExecutionDetails?: boolean;
   task: Task;
   proofs: Proof[];
+  /**
+   * The run's Artifact Envelope (ADR 0041), or null when it submitted none. The envelope is the only
+   * delivery: there is no workspace file to fall back to.
+   */
+  envelope: ArtifactEnvelope | null;
+  /** Errors of the run's last rejected submission, when it made no valid one: an invalid delivery, not a missing one. */
+  rejectedSubmission?: string[] | null;
   workspacePath: string;
   /**
    * The company's canonical content locale. A bare-string Execution Report field is normalized under
@@ -98,167 +88,64 @@ export type CaptureBusinessArtifactInput = {
   createId?: (prefix: string) => string;
 };
 
-export type CaptureBusinessArtifactFromEnvelopeInput = Omit<CaptureBusinessArtifactInput, "workspacePath"> & {
-  envelope: ArtifactEnvelope;
-  workspacePath?: string;
-};
-
 const VERIFIABLE_ENVIRONMENT_BLOCKER_CAPABILITIES = new Set(["browser_screenshot"]);
 
+/**
+ * Settle a run's Artifact Envelope into a Business Artifact. A missing envelope, or one that breaks
+ * the delivery contract, is captured as a not-reviewable blocker so the task parks on it with a Hold
+ * instead of passing as a delivery.
+ */
 export function captureBusinessArtifact(input: CaptureBusinessArtifactInput): BusinessArtifact {
   const timestamp = (input.now ?? (() => new Date()))().toISOString();
   const id = input.createId?.("business_artifact") ?? `business_artifact_${crypto.randomUUID()}`;
-  const sourcePath = join(input.workspacePath, BUSINESS_ARTIFACT_PATH);
-
-  if (!existsSync(sourcePath)) {
-    return {
-      id,
-      companyId: input.task.companyId,
-      taskId: input.task.id,
-      sourceProofId: input.proofs[0]?.id ?? null,
-      artifactKind: "blocker",
-      artifactRole: "none",
-      artifactSubtype: "missing_business_artifact_file",
-      artifactType: "blocker_report",
-      taskType: inferTaskType(input.task),
-      payload: {
-        reason: "missing_business_artifact_file",
-        expectedPath: BUSINESS_ARTIFACT_PATH,
-      },
-      lineage: {},
-      validationStatus: "invalid_schema",
-      validationErrors: [`Missing ${BUSINESS_ARTIFACT_PATH}.`],
-      reviewStatus: "not_reviewable",
-      isCurrent: true,
-      supersedesArtifactId: null,
-      deliveryWorkspacePath: input.workspacePath,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-  }
-
-  const raw = readFileSync(sourcePath, "utf8");
-  const parsed = parseDeclaredBusinessArtifact(raw, input.task, input.locale ?? "en", input.requireExecutionDetails ?? false);
-  if (!parsed.success) {
-    return {
-      id,
-      companyId: input.task.companyId,
-      taskId: input.task.id,
-      sourceProofId: input.proofs[0]?.id ?? null,
-      artifactKind: "blocker",
-      artifactRole: "none",
-      artifactSubtype: "invalid_business_artifact_schema",
-      artifactType: "blocker_report",
-      taskType: inferTaskType(input.task),
-      payload: {
-        reason: "invalid_business_artifact_schema",
-        expectedPath: BUSINESS_ARTIFACT_PATH,
-      },
-      lineage: {},
-      validationStatus: "invalid_schema",
-      validationErrors: parsed.errors,
-      reviewStatus: "not_reviewable",
-      isCurrent: true,
-      supersedesArtifactId: null,
-      deliveryWorkspacePath: input.workspacePath,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-  }
-  const artifactValue = normalizeParsedArtifactForCapturedProof(
-    parsed.value,
-    input.environmentBlockerVerification,
-  );
-  const contract = evaluateVerificationObligations(artifactValue, input.verificationContext);
-  if (contract.errors.length > 0) {
-    return {
-      id,
-      companyId: input.task.companyId,
-      taskId: input.task.id,
-      sourceProofId: artifactValue.sourceProofId ?? input.proofs[0]?.id ?? null,
-      artifactKind: artifactValue.artifactKind,
-      artifactRole: artifactValue.artifactRole,
-      artifactSubtype: artifactValue.artifactSubtype,
-      artifactType: artifactValue.artifactType,
-      taskType: artifactValue.taskType,
-      payload: artifactValue.payload,
-      lineage: artifactValue.lineage,
-      validationStatus: "invalid_schema",
-      validationErrors: contract.errors,
-      reviewStatus: "not_reviewable",
-      isCurrent: true,
-      supersedesArtifactId: null,
-      deliveryWorkspacePath: input.workspacePath,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-  }
-
-  return {
+  const invalidDelivery = (reason: "missing_artifact_envelope" | "invalid_business_artifact_schema", errors: string[]): BusinessArtifact => ({
     id,
     companyId: input.task.companyId,
     taskId: input.task.id,
-    sourceProofId: artifactValue.sourceProofId ?? input.proofs[0]?.id ?? null,
-    artifactKind: artifactValue.artifactKind,
-    artifactRole: artifactValue.artifactRole,
-    artifactSubtype: artifactValue.artifactSubtype,
-    artifactType: artifactValue.artifactType,
-    taskType: artifactValue.taskType,
-    payload: artifactValue.payload,
-    lineage: artifactValue.lineage,
-    validationStatus: "valid",
-    validationErrors: [],
-    reviewStatus: "unreviewed",
+    sourceProofId: input.proofs[0]?.id ?? null,
+    artifactKind: "blocker",
+    artifactRole: "none",
+    artifactSubtype: reason,
+    artifactType: "blocker_report",
+    taskType: inferTaskType(input.task),
+    payload: { reason },
+    lineage: {},
+    validationStatus: "invalid_schema",
+    validationErrors: errors,
+    reviewStatus: "not_reviewable",
     isCurrent: true,
     supersedesArtifactId: null,
     deliveryWorkspacePath: input.workspacePath,
-    ...(contract.verification ? { verification: contract.verification } : {}),
     createdAt: timestamp,
     updatedAt: timestamp,
-  };
-}
+  });
 
-export function captureBusinessArtifactFromEnvelope(input: CaptureBusinessArtifactFromEnvelopeInput): BusinessArtifact {
-  const timestamp = (input.now ?? (() => new Date()))().toISOString();
-  const id = input.createId?.("business_artifact") ?? `business_artifact_${crypto.randomUUID()}`;
-  const artifactValue: DeclaredBusinessArtifact = {
-    artifactKind: input.envelope.artifactKind,
-    artifactRole: input.envelope.artifactRole,
-    artifactSubtype: input.envelope.artifactSubtype,
-    artifactType: legacyArtifactTypeFor(input.envelope.artifactKind, input.envelope.artifactRole),
-    taskType: input.envelope.taskType,
-    payload: input.envelope.payload,
-    lineage: input.envelope.lineage,
-  };
+  if (!input.envelope) {
+    return input.rejectedSubmission?.length
+      ? invalidDelivery("invalid_business_artifact_schema", input.rejectedSubmission)
+      : invalidDelivery("missing_artifact_envelope", ["No Artifact Envelope was submitted through submit_artifact_envelope."]);
+  }
+  const contractErrors = artifactEnvelopeContractErrors(input.envelope, {
+    locale: input.locale ?? "en",
+    requireDetails: input.requireExecutionDetails ?? false,
+  });
+  if (contractErrors.length > 0) {
+    return invalidDelivery("invalid_business_artifact_schema", contractErrors);
+  }
+
   const normalized = normalizeParsedArtifactForCapturedProof(
-    artifactValue,
+    {
+      artifactKind: input.envelope.artifactKind,
+      artifactRole: input.envelope.artifactRole,
+      artifactSubtype: input.envelope.artifactSubtype,
+      artifactType: legacyArtifactTypeFor(input.envelope.artifactKind, input.envelope.artifactRole),
+      taskType: input.envelope.taskType,
+      payload: input.envelope.payload,
+      lineage: input.envelope.lineage,
+    },
     input.environmentBlockerVerification,
   );
   const contract = evaluateVerificationObligations(normalized, input.verificationContext);
-  if (contract.errors.length > 0) {
-    return {
-      id,
-      companyId: input.task.companyId,
-      taskId: input.task.id,
-      sourceProofId: input.proofs[0]?.id ?? null,
-      artifactKind: normalized.artifactKind,
-      artifactRole: normalized.artifactRole,
-      artifactSubtype: normalized.artifactSubtype,
-      artifactType: normalized.artifactType,
-      taskType: normalized.taskType,
-      payload: normalized.payload,
-      lineage: normalized.lineage,
-      validationStatus: "invalid_schema",
-      validationErrors: contract.errors,
-      reviewStatus: "not_reviewable",
-      isCurrent: true,
-      supersedesArtifactId: null,
-      deliveryWorkspacePath: input.workspacePath ?? input.task.workspacePath ?? null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-  }
-
   return {
     id,
     companyId: input.task.companyId,
@@ -271,16 +158,46 @@ export function captureBusinessArtifactFromEnvelope(input: CaptureBusinessArtifa
     taskType: normalized.taskType,
     payload: normalized.payload,
     lineage: normalized.lineage,
-    validationStatus: "valid",
-    validationErrors: [],
-    reviewStatus: "unreviewed",
+    validationStatus: contract.errors.length > 0 ? "invalid_schema" : "valid",
+    validationErrors: contract.errors,
+    reviewStatus: contract.errors.length > 0 ? "not_reviewable" : "unreviewed",
     isCurrent: true,
     supersedesArtifactId: null,
-    deliveryWorkspacePath: input.workspacePath ?? input.task.workspacePath ?? null,
-    ...(contract.verification ? { verification: contract.verification } : {}),
+    deliveryWorkspacePath: input.workspacePath,
+    ...(contract.errors.length === 0 && contract.verification ? { verification: contract.verification } : {}),
     createdAt: timestamp,
     updatedAt: timestamp,
   };
+}
+
+/**
+ * The delivery contract an envelope's payload must meet beyond its shape: a `deliverable` or
+ * `final_report` carries an Outcome Summary, an Execution Report and well-formed Founder Decisions.
+ *
+ * One function for both moments it is checked — when the agent submits, so it can correct the
+ * envelope in the same run, and at settlement, which is the authority. Two copies of these rules is
+ * how the action path once settled deliveries the file path would have rejected.
+ */
+export function artifactEnvelopeContractErrors(
+  envelope: Pick<ArtifactEnvelope, "artifactKind" | "payload">,
+  options: { locale: Locale; requireDetails: boolean },
+): string[] {
+  if (envelope.artifactKind !== "deliverable" && envelope.artifactKind !== "final_report") {
+    return [];
+  }
+  const errors: string[] = [];
+  const outcomeSummaryError = outcomeSummaryFieldError(envelope.payload);
+  if (outcomeSummaryError) {
+    errors.push(outcomeSummaryError);
+  }
+  const executionReportError = executionReportFieldError(envelope.payload, { required: true, ...options });
+  if (executionReportError) {
+    errors.push(executionReportError);
+  }
+  // An `open_decisions` entry on an unknown decisionKind is dropped silently; a malformed entry on a
+  // known decisionKind is a structural failure like any other required-field failure.
+  errors.push(...parseOpenDecisions(envelope.payload, options.locale).errors);
+  return errors;
 }
 
 /**
@@ -312,112 +229,6 @@ function evaluateVerificationObligations(
 
   const report = evaluateVerificationReport({ payload: artifact.payload, context: context.verifier });
   return { errors: [...errors, ...report.errors], verification: report.verification };
-}
-
-function parseDeclaredBusinessArtifact(raw: string, task: Task, locale: Locale, requireDetails: boolean):
-  | { success: true; value: DeclaredBusinessArtifact }
-  | { success: false; errors: string[] } {
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch (error) {
-    return { success: false, errors: [`Invalid JSON: ${(error as Error).message}`] };
-  }
-
-  if (!isRecord(json)) {
-    return { success: false, errors: ["root: Expected an object."] };
-  }
-
-  const errors: string[] = [];
-  const artifactKind = json.artifactKind ?? json.artifact_kind;
-  const artifactRole = json.artifactRole ?? json.artifact_role;
-  const artifactSubtype = json.artifactSubtype ?? json.artifact_subtype;
-  const artifactType = json.artifactType ?? json.artifact_type;
-  const taskType = json.taskType ?? json.task_type;
-  const sourceProofId = json.sourceProofId ?? json.source_proof_id;
-  const usesStructuredClassification =
-    artifactKind !== undefined || artifactRole !== undefined || artifactSubtype !== undefined;
-
-  let classification:
-    | {
-        artifactKind: BusinessArtifactKind;
-        artifactRole: BusinessArtifactRole;
-        artifactSubtype: string;
-        artifactType: BusinessArtifactType;
-      }
-    | null = null;
-
-  if (usesStructuredClassification) {
-    const envelope = parseArtifactEnvelope(json);
-    if (!envelope.success) {
-      errors.push(...envelope.errors);
-    } else {
-      classification = {
-        artifactKind: envelope.value.artifactKind,
-        artifactRole: envelope.value.artifactRole,
-        artifactSubtype: envelope.value.artifactSubtype,
-        artifactType: legacyArtifactTypeFor(envelope.value.artifactKind, envelope.value.artifactRole),
-      };
-    }
-  } else if (typeof artifactType === "string" && artifactType.trim().length > 0) {
-    classification = classifyLegacyArtifactType(artifactType.trim(), task);
-    if (!classification) {
-      errors.push("artifactType: Unknown legacy artifact type and artifact role could not be inferred.");
-    }
-  } else {
-    errors.push("artifactKind/artifact_kind: Required.");
-    errors.push("artifactRole/artifact_role: Required.");
-    errors.push("artifactSubtype/artifact_subtype: Required.");
-  }
-
-  if (typeof taskType !== "string" || taskType.trim().length === 0) {
-    errors.push("taskType: Expected a non-empty string.");
-  }
-  if (!("payload" in json)) {
-    errors.push("payload: Required.");
-  }
-  if (!("lineage" in json)) {
-    errors.push("lineage: Required.");
-  }
-  if (
-    classification &&
-    (classification.artifactKind === "deliverable" || classification.artifactKind === "final_report")
-  ) {
-    const outcomeSummaryError = outcomeSummaryFieldError(json.payload);
-    if (outcomeSummaryError) {
-      errors.push(outcomeSummaryError);
-    }
-    const executionReportError = executionReportFieldError(json.payload, { required: usesStructuredClassification, locale, requireDetails });
-    if (executionReportError) {
-      errors.push(executionReportError);
-    }
-    // An `open_decisions` entry on an unknown decisionKind is dropped silently; a malformed entry on a
-    // known decisionKind is a structural failure like any other required-field failure.
-    errors.push(...parseOpenDecisions(json.payload, locale).errors);
-  }
-  if (sourceProofId !== undefined && typeof sourceProofId !== "string") {
-    errors.push("sourceProofId/source_proof_id: Expected a string.");
-  }
-
-  if (errors.length > 0) {
-    return { success: false, errors };
-  }
-
-  const parsedTaskType = typeof taskType === "string" ? taskType.trim() : "";
-
-  return {
-    success: true,
-    value: {
-      artifactKind: classification!.artifactKind,
-      artifactRole: classification!.artifactRole,
-      artifactSubtype: classification!.artifactSubtype,
-      artifactType: classification!.artifactType,
-      taskType: parsedTaskType,
-      sourceProofId: typeof sourceProofId === "string" && sourceProofId.trim() ? sourceProofId.trim() : undefined,
-      payload: json.payload,
-      lineage: json.lineage,
-    },
-  };
 }
 
 /**
@@ -573,35 +384,19 @@ export function isVerifiableEnvironmentBlocker(
 }
 
 /**
- * Read an Environment-Blocked Blocker's checkable claim from `.auto-crop/business-artifact.json`.
+ * Read an Environment-Blocked Blocker's checkable claim from the run's Artifact Envelope.
  * The URL to check is resolved as `payload.target_url` -> `payload.server_validation.url` ->
  * the first `url` (local-url) proof.
  */
-export function readEnvironmentBlockerClaim(workspacePath: string, proofs: Proof[]): EnvironmentBlockerClaim | null {
-  const sourcePath = join(workspacePath, BUSINESS_ARTIFACT_PATH);
-  if (!existsSync(sourcePath)) {
-    return null;
-  }
-
-  let json: unknown;
-  try {
-    json = JSON.parse(readFileSync(sourcePath, "utf8"));
-  } catch {
-    return null;
-  }
-  if (!isRecord(json)) {
-    return null;
-  }
-
-  const artifactKind = json.artifactKind ?? json.artifact_kind;
-  const payload = json.payload;
-  if (artifactKind !== "blocker" || !isRecord(payload)) {
+export function readEnvironmentBlockerClaim(envelope: ArtifactEnvelope | null, proofs: Proof[]): EnvironmentBlockerClaim | null {
+  const payload = envelope?.payload;
+  if (envelope?.artifactKind !== "blocker" || !isRecord(payload)) {
     return null;
   }
   const capability = resolveEnvironmentBlockerCapability({
     artifactKind: "blocker",
-    artifactSubtype: json.artifactSubtype ?? json.artifact_subtype,
-    taskType: json.taskType ?? json.task_type,
+    artifactSubtype: envelope.artifactSubtype,
+    taskType: envelope.taskType,
     payload,
   });
   if (!capability) {
@@ -745,93 +540,6 @@ export async function verifyEnvironmentBlockerClaim(input: {
 
 function firstUrlString(value: unknown): string | null {
   return typeof value === "string" && /^https?:\/\//i.test(value.trim()) ? value.trim() : null;
-}
-
-function classifyLegacyArtifactType(
-  artifactType: string,
-  task: Task,
-): {
-  artifactKind: BusinessArtifactKind;
-  artifactRole: BusinessArtifactRole;
-  artifactSubtype: string;
-  artifactType: BusinessArtifactType;
-} | null {
-  if (BUSINESS_ARTIFACT_TYPES.has(artifactType as BusinessArtifactType)) {
-    return legacyClassificationFor(artifactType as BusinessArtifactType);
-  }
-
-  const inferredRole = inferArtifactRole(task);
-  if (!inferredRole) {
-    return null;
-  }
-
-  return {
-    artifactKind: "deliverable",
-    artifactRole: inferredRole,
-    artifactSubtype: artifactType,
-    artifactType: legacyArtifactTypeFor("deliverable", inferredRole),
-  };
-}
-
-function legacyClassificationFor(artifactType: BusinessArtifactType): {
-  artifactKind: BusinessArtifactKind;
-  artifactRole: BusinessArtifactRole;
-  artifactSubtype: string;
-  artifactType: BusinessArtifactType;
-} {
-  switch (artifactType) {
-    case "research_findings":
-      return { artifactKind: "deliverable", artifactRole: "findings", artifactSubtype: "research_findings", artifactType };
-    case "product_mvp_brief":
-      return { artifactKind: "deliverable", artifactRole: "spec", artifactSubtype: "mvp_brief", artifactType };
-    case "implementation_summary":
-      return { artifactKind: "deliverable", artifactRole: "implementation", artifactSubtype: "implementation_summary", artifactType };
-    case "validation_result":
-      return { artifactKind: "deliverable", artifactRole: "validation", artifactSubtype: "validation_result", artifactType };
-    case "preview_result":
-      return { artifactKind: "deliverable", artifactRole: "validation", artifactSubtype: "preview_result", artifactType };
-    case "launch_plan":
-      return { artifactKind: "deliverable", artifactRole: "launch", artifactSubtype: "launch_plan", artifactType };
-    case "deployment_result":
-      return { artifactKind: "deliverable", artifactRole: "launch", artifactSubtype: "deployment_result", artifactType };
-    case "final_founder_report":
-      return { artifactKind: "final_report", artifactRole: "report", artifactSubtype: "final_founder_report", artifactType };
-    case "direction_change_request":
-      return {
-        artifactKind: "direction_change_request",
-        artifactRole: "none",
-        artifactSubtype: "direction_change_request",
-        artifactType,
-      };
-    case "blocker_report":
-      return { artifactKind: "blocker", artifactRole: "none", artifactSubtype: "blocker_report", artifactType };
-  }
-}
-
-function inferArtifactRole(task: Task): BusinessArtifactRole | null {
-  const haystack = `${task.proofSchemaId} ${task.title} ${task.description}`.toLowerCase();
-  if (haystack.includes("research") || haystack.includes("keyword")) {
-    return "findings";
-  }
-  if (haystack.includes("brief") || haystack.includes("spec") || haystack.includes("mvp")) {
-    return "spec";
-  }
-  if (haystack.includes("implement") || haystack.includes("prototype") || haystack.includes("diff")) {
-    return "implementation";
-  }
-  if (haystack.includes("test") || haystack.includes("validat") || haystack.includes("preview")) {
-    return "validation";
-  }
-  if (haystack.includes("launch") || haystack.includes("deploy") || haystack.includes("seo")) {
-    return "launch";
-  }
-  if (haystack.includes("plan")) {
-    return "plan";
-  }
-  if (haystack.includes("report")) {
-    return "report";
-  }
-  return null;
 }
 
 function legacyArtifactTypeFor(

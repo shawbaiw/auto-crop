@@ -22,6 +22,8 @@ import { authorizeExecutionBudget, assertOrdinaryRecoveryAllowed } from "./budge
 import { applyTaskTransition } from "./taskTransition";
 import { createApiServer } from "../api/routes";
 import { resolveEffectiveTimeout } from "./executionProfile";
+import { deliverStaged, stageDelivery } from "./fixtures/stagedDelivery";
+import { createRuntimeActionChannel } from "./runtimeActionChannel";
 
 const cleanup: Array<() => void> = [];
 afterEach(() => { vi.unstubAllEnvs(); for (const close of cleanup.splice(0).reverse()) close(); });
@@ -34,17 +36,30 @@ function fixture() {
   const state = openState(root);
   cleanup.push(() => { try { state.client.close(); } catch { /* A restart test already closed it. */ } });
   mkdirSync(state.repositories.getTask("task_1")!.workspacePath!, { recursive: true });
+  stageValidDelivery(state.repositories.getTask("task_1")!);
   vi.stubEnv("AUTO_CROP_FORCE_AGENT_TIMEOUT_MS", "60");
   const input = (adapter: AgentAdapter): RunSchedulerOnceInput => ({
     projectRoot: root, repositories: state.repositories, adapters: [adapter], workerId: "owner", maxTasks: 1,
     approvalRequired: () => false, emit: () => undefined, heartbeatIntervalMs: 20,
     executionBudget: { runHardMs: 5000, taskTotalMs: 7000, briefMs: 1000, repairMs: 1000, finalizeMs: 1000, checkpointMs: 60, persistMs: 20 },
-    proofCollector: ({ task }) => { writeValidBusinessArtifact(task); return [createProofForTask(task)]; },
+    proofCollector: ({ task }) => [createProofForTask(task)],
   });
   return { ...state, root, input };
 }
+/** A fixture agent that, on completing its work, submits the delivery staged for its workspace. */
 function adapter(run: AgentAdapter["run"]): AgentAdapter {
-  return { id: "codex", name: "fixture", capabilities: ["code"], contractCapabilities: ["structured_execution_brief"], detect: async () => true, run };
+  return {
+    id: "codex", name: "fixture", capabilities: ["code"], contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
+    detect: async () => true,
+    run: async (request) => {
+      const result = await run(request);
+      const staged = deliverStaged(request);
+      if (request.metadata.phase !== "execution_brief" && result.status === "complete" && staged !== undefined) {
+        request.runtimeActions?.submitArtifactEnvelope(staged);
+      }
+      return result;
+    },
+  };
 }
 
 it.each(["silent", "repetitive"])("keeps one real %s invocation across the old budget, pins configuration and ignores legacy reapers", async mode => {
@@ -156,28 +171,24 @@ it("validates new-mode configuration without weakening legacy environment parsin
   expect(() => resolveBudgetSnapshot({}, timeout, { AUTO_CROP_FORCE_AGENT_TIMEOUT_MS: "bad" })).toThrow("AUTO_CROP_FORCE");
 });
 
-it("accounts brief, execution, syntax repair and finalization on one monotonic timeline", async () => {
+it("accounts brief, execution and finalization on one monotonic timeline", async () => {
   const f = fixture();
   let mono = 0;
   const base = Date.now();
   let calls = 0;
   const config = f.input(adapter(async request => {
     calls++;
-    if (request.metadata.phase === "execution_brief") { mono += 10; return brief; }
-    const artifact = join(request.workspacePath, ".auto-crop", "business-artifact.json");
-    mkdirSync(join(request.workspacePath, ".auto-crop"), { recursive: true });
-    if (calls === 2) { mono += 70; writeFileSync(artifact, '{"text":"OK",}'); }
-    else { mono += 20; writeFileSync(artifact, '{"text":"OK"}'); }
-    return complete;
+    mono += request.metadata.phase === "execution_brief" ? 10 : 70;
+    return request.metadata.phase === "execution_brief" ? brief : complete;
   }));
   config.executionClock = { monotonicMs: () => mono, utcNow: () => new Date(base + mono) };
   const collect = config.proofCollector;
   config.proofCollector = request => { mono += 15; return collect(request); };
   expect((await runSchedulerOnce(config)).completed).toEqual(["task_1"]);
   const run = f.client.prepare("SELECT id FROM agent_runs").get() as { id: string };
-  expect(f.repositories.executionBudget.getRun(run.id)).toMatchObject({ consumed_ms: 115, estimated: 0, settled: 1 });
-  expect(f.repositories.listRunInvocations(run.id).map(i => i.phase)).toEqual(["preparing_brief", "executing", "repairing_artifact", "finalizing"]);
-  expect(calls).toBe(3);
+  expect(f.repositories.executionBudget.getRun(run.id)).toMatchObject({ consumed_ms: 95, estimated: 0, settled: 1 });
+  expect(f.repositories.listRunInvocations(run.id).map(i => i.phase)).toEqual(["preparing_brief", "executing", "finalizing"]);
+  expect(calls).toBe(2);
 });
 
 it("rejects a success that crosses its finalization cap before the transaction commits", async () => {
@@ -246,15 +257,12 @@ function createProofForTask(task: Task): Proof {
   };
 }
 
-function writeValidBusinessArtifact(task: Task): void {
+function stageValidDelivery(task: Task): void {
   if (!task.workspacePath) {
     throw new Error(`Task ${task.id} has no workspace path`);
   }
 
-  mkdirSync(join(task.workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(task.workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
+  stageDelivery(task.workspacePath, {
       artifact_kind: "deliverable",
       artifact_role: "implementation",
       artifact_subtype: "prototype_implementation",
@@ -277,25 +285,16 @@ function writeValidBusinessArtifact(task: Task): void {
         next_steps: ["CEO review"],
       },
       lineage: { task_id: task.id },
-    }),
-    "utf8",
-  );
+    });
 }
 
-
-
-it.each(["preparing_brief", "executing", "repairing_artifact", "finalizing"] as const)("attributes a hard stop to %s and rejects late success", async phase => {
+it.each(["preparing_brief", "executing", "finalizing"] as const)("attributes a hard stop to %s and rejects late success", async phase => {
   const f = fixture();
   let mono = 0, calls = 0;
   const config = f.input(adapter(async request => {
     calls++;
     if (request.metadata.phase === "execution_brief") { if (phase === "preparing_brief") mono += 1100; return brief; }
     if (phase === "executing") mono += 5100;
-    if (phase === "repairing_artifact") {
-      mkdirSync(join(request.workspacePath, ".auto-crop"), { recursive: true });
-      writeFileSync(join(request.workspacePath, ".auto-crop/business-artifact.json"), '{"text":"OK",}');
-      if (calls === 3) mono += 1100;
-    }
     return complete;
   }));
   config.executionClock = { monotonicMs: () => mono, utcNow: () => new Date(1700000000000 + mono) };
@@ -537,7 +536,7 @@ it("keeps ordinary Partial Output recovery on the authorized Task instead of min
   await runSchedulerOnce(config);
   applyTaskTransition({ repositories: f.repositories, task: "task_1", status: "failed",
     executionSummary: { artifactWorkspacePath: f.repositories.getTask("task_1")!.workspacePath } });
-  const recovered = recoverTask({ repositories: f.repositories, taskId: "task_1", proofSchemas: [] });
+  const recovered = recoverTask({ repositories: f.repositories, taskId: "task_1", runtimeActionChannel: createRuntimeActionChannel(), proofSchemas: [] });
   expect(recovered.task.id).toBe("task_1");
   expect(recovered.task.status).toBe("queued");
   expect(recovered.followUpTask).toBeUndefined();

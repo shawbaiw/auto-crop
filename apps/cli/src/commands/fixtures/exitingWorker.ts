@@ -16,7 +16,7 @@ await runSchedulerOnce({
   approvalRequired: () => false, heartbeatIntervalMs: 20, executionLeaseMs: 90_000,
   proofCollector: () => [], emit: () => undefined,
   adapters: [{
-    id: "codex", name: "Local fixture", capabilities: ["code"], detect: async () => true,
+    id: "codex", name: "Local fixture", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
     run: async (request) => {
       if (request.metadata.phase === "execution_brief") {
         return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Write", approach: "Write", expectedOutcome: "File" }), stderr: "" };

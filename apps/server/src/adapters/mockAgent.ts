@@ -10,6 +10,11 @@ export type MockAgentOptions = {
   output?: string;
   status?: AgentRunResult["status"];
   failureReason?: AgentRunResult["failureReason"];
+  /**
+   * The Artifact Envelope the mock submits through the run's Runtime Action Channel, as an agent
+   * would by calling `submit_artifact_envelope`. Undefined submits nothing.
+   */
+  deliver?: (request: AgentRunRequest) => unknown;
   /** Launch support to report. Omitted: the mock makes no launch-isolation claim. */
   launchSupport?: Omit<AdapterLaunchSupport, "adapterId">;
 };
@@ -20,7 +25,7 @@ export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter 
     id: options.id,
     name: options.name,
     capabilities: options.capabilities,
-    contractCapabilities: options.contractCapabilities ?? ["structured_execution_brief"],
+    contractCapabilities: options.contractCapabilities ?? ["structured_execution_brief", "artifact_envelope"],
     async detect(): Promise<boolean> {
       return (options.detected ?? true) && launchSupport?.isolationLevel !== "unavailable";
     },
@@ -34,6 +39,10 @@ export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter 
           approach: "Compare the supplied inputs, perform the requested checks, and record their results",
           expectedOutcome: "A deliverable with evidence for the requested acceptance conditions",
         }) };
+      }
+      const envelope = options.deliver?.(request);
+      if (envelope !== undefined) {
+        request.runtimeActions?.submitArtifactEnvelope(envelope);
       }
       return {
         status: options.status ?? "complete",

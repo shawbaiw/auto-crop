@@ -18,10 +18,13 @@ import { refreshDependencyTasks } from "./dependencyCascade";
 import { refreshParentTaskAggregationTask } from "./parentTaskAggregation";
 import { applyTaskTransition } from "./taskTransition";
 import { captureProofs } from "./proof";
+import type { RuntimeActionChannel } from "./runtimeActionChannel";
 
 export type RefreshTaskDependencyStateInput = {
   repositories: ReturnType<typeof createRepositories>;
   taskId: string;
+  /** Where Proof recovery finds the delivery a run that did not complete left behind (ADR 0041). */
+  runtimeActionChannel: RuntimeActionChannel;
   proofSchemas?: ProofSchema[];
   now?: () => Date;
   createId?: (prefix: string) => string;
@@ -143,7 +146,11 @@ export function recoverProofIfPossible(
   }
 
   const { proof, workspacePath } = recovered;
+  const taskContext = { companyId: task.companyId, taskId: task.id };
+  const submission = input.runtimeActionChannel.latestTaskSubmission(taskContext);
   const businessArtifact = captureBusinessArtifact({
+    envelope: submission.envelope,
+    rejectedSubmission: submission.rejection,
     task,
     proofs: proof,
     workspacePath,
@@ -170,6 +177,8 @@ export function recoverProofIfPossible(
     input.repositories.appendProof(item);
   }
   input.repositories.createBusinessArtifact(businessArtifact);
+  // Captured: the candidate is now a Business Artifact and must not be recaptured as a second one.
+  input.runtimeActionChannel.discardTask(taskContext);
 
   if (unreviewable) {
     const now = input.now ?? (() => new Date());
@@ -385,7 +394,7 @@ function stillUnreviewableMessage(validationErrors: unknown[]): string {
 
 function proofRecoveryNotFoundMessage(task: Task): string {
   if (task.proofSchemaId === "repo-diff") {
-    return "No registerable repo-diff proof was found / repo-diff proof missing: expected .auto-crop-proof/*.diff or a top-level workspace *.diff/*.patch file; .auto-crop/business-artifact.json is not diff proof.";
+    return "No registerable repo-diff proof was found / repo-diff proof missing: expected .auto-crop-proof/*.diff or a top-level workspace *.diff/*.patch file; an Artifact Envelope is not diff proof.";
   }
   return "No registerable proof was found.";
 }
@@ -398,7 +407,7 @@ function businessArtifactFailureReason(artifact: BusinessArtifact): AgentFailure
     return "stale_business_artifact";
   }
   if (artifact.validationStatus !== "valid") {
-    return hasArtifactReason(artifact, "missing_business_artifact_file")
+    return hasArtifactReason(artifact, "missing_artifact_envelope")
       ? "missing_business_artifact"
       : "invalid_business_artifact";
   }

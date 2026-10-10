@@ -194,13 +194,11 @@ describe("startAutoCrop", () => {
           id: "codex",
           name: "Codex",
           capabilities: ["test"],
+          contractCapabilities: ["artifact_envelope"],
           detect: async () => true,
           run: async (request) => {
             if (request.metadata.phase === "execution_brief") return createMockAgentAdapter({ id: "planner", name: "Planner", capabilities: [] }).run(request);
-            mkdirSync(join(request.workspacePath, ".auto-crop"), { recursive: true });
-            writeFileSync(
-              join(request.workspacePath, ".auto-crop", "business-artifact.json"),
-              JSON.stringify({
+            request.runtimeActions!.submitArtifactEnvelope({
                 artifact_kind: "deliverable",
                 artifact_role: "validation",
                 artifact_subtype: "scheduler_wake_validation",
@@ -223,9 +221,7 @@ describe("startAutoCrop", () => {
                   next_steps: ["CEO review"],
                 },
                 lineage: { task_id: "task_1" },
-              }),
-              "utf8",
-            );
+              });
             return {
               status: "complete",
               exitCode: 0,

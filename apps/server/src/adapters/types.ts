@@ -59,6 +59,9 @@ export type AgentRunRequest = {
       companyId: string;
       taskId: string;
       runId: string;
+      /** The delivery contract settlement applies, so the server can reject a breach at submit time. */
+      locale: string;
+      requireExecutionDetails: boolean;
     };
   };
   /** How long the process gets to exit on its own after being asked, before the group is killed. */
