@@ -49,7 +49,7 @@ export type CompanyDashboardProps = {
   menuBar?: ReactNode;
   onLoadProof(): void;
   onLoadReviews(): void;
-  onKillSwitch(): void;
+  onPauseOperating(): void;
 };
 
 export function CompanyDashboard(props: CompanyDashboardProps) {
@@ -87,7 +87,7 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
         statusIcon={<Activity size={16} aria-hidden="true" />}
         title={t("dashboard.title")}
       />
-      {props.isPaused ? <section className="system-message system-message--danger">{t("app.globalPause")}</section> : null}
+      {props.isPaused ? <section className="system-message system-message--danger">{t("app.companyPaused")}</section> : null}
 
       <Workspace className="operations-grid">
         <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title={t("dashboard.ceoOffice")} variant="inverted">
@@ -192,8 +192,8 @@ export function CompanyDashboard(props: CompanyDashboardProps) {
         </RetroPanel>
         <RetroPanel icon={<ShieldAlert size={18} aria-hidden="true" />} title={t("dashboard.approvals")}>
           <p className="muted">{t("dashboard.permissionRequests")}</p>
-          <RetroButton onClick={props.onKillSwitch} variant="danger">
-            {t("menu.killSwitch")}
+          <RetroButton disabled={props.isPaused} onClick={props.onPauseOperating} variant="danger">
+            {t("menu.pauseOperating")}
           </RetroButton>
         </RetroPanel>
         <RetroPanel icon={<TimerReset size={18} aria-hidden="true" />} id="review" ref={sectionRefs.review} tabIndex={-1} title={t("dashboard.review")}>

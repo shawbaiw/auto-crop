@@ -62,6 +62,7 @@ import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
 import { resolveSettledFacts } from "./settledFacts";
 import { parkOnUnblockRequest, unblockRequestOf } from "./unblockRequest";
+import { COMPANY_PAUSED_STOP_REASON } from "./companyOperation";
 import { applyTaskTransition } from "./taskTransition";
 import type { ProofReference } from "./artifactEnvelope";
 import {
@@ -162,10 +163,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
     blocked: [],
     failed: [],
   };
-
-  if (input.repositories.isGlobalPaused()) {
-    return result;
-  }
 
   for (const company of input.repositories.listCompanies()) {
     reconcileStaleRunningTasks({
@@ -1089,11 +1086,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                     return;
                   }
                   if (cancelled) {
-                    applyTaskTransition({ repositories: settled.repositories, task, status: "cancelled",
-                      executionSummary: { latestFailureReason: "cancelled", latestFailureMessage: failure },
-                      resolution: "cancelled", now, createId });
-                    appendAndEmitTaskEvent(settled, { task, type: "task_warning", status: "cancelled",
-                      failureReason: "cancelled", failureMessage: failure, message: `Task cancelled: ${task.title}.` });
+                    settleStoppedTask(settled, task, stopHandle?.stopReason ?? null, failure, now, createId);
                     return;
                   }
                   recordRunOutput(settled);
@@ -1266,11 +1259,15 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             if (budget!.activeInvocation && heldWorkspacePath) {
               isolateForUnconfirmedTermination(settled, result, task, heldForRunId!, heldWorkspacePath, now, createId);
             } else {
-              applyTaskTransition({ repositories: settled.repositories, task, status: reason === "cancelled" ? "cancelled" : "failed",
+              if (reason === "cancelled") {
+                settleStoppedTask(settled, task, stopHandle?.stopReason ?? null, failure, now, createId);
+                return;
+              }
+              applyTaskTransition({ repositories: settled.repositories, task, status: "failed",
                 executionSummary: { latestFailureReason: reason, latestFailureMessage: failure }, now, createId });
-              appendAndEmitTaskEvent(settled, { task, type: reason === "cancelled" ? "task_warning" : "task_failed", status: reason === "cancelled" ? "cancelled" : "failed", message: failure,
+              appendAndEmitTaskEvent(settled, { task, type: "task_failed", status: "failed", message: failure,
                 failureReason: reason, failureMessage: failure });
-              if (reason !== "cancelled") result.failed.push(task.id);
+              result.failed.push(task.id);
             }
           });
         } finally {
@@ -1363,8 +1360,9 @@ function gatherFinalFounderReportContext(
 ): FinalFounderReportContext | null {
   const repositories = input.repositories;
   // Only a running company with real work can be quiescent. A `creating` / `creation_failed` /
-  // `draft` / `paused` company is not "done", it just is not going yet.
-  if (company.status !== "active") {
+  // `paused` company is not "done", it just is not going yet. A stopped one is done by definition: the
+  // founder ended it, and its report says where it got to (ADR 0044).
+  if (company.status !== "active" && company.status !== "stopped") {
     return null;
   }
 
@@ -1396,7 +1394,7 @@ function gatherFinalFounderReportContext(
     now,
   });
 
-  const quiescent = isCompanyQuiescent({
+  const quiescent = company.status === "stopped" || isCompanyQuiescent({
     tasks,
     waitStates: attention.waitStates,
     humanActions: attention.humanActions,
@@ -2066,6 +2064,35 @@ function blockTaskForMissingDeliverable(
     now: input.now,
     createId: input.createId,
   });
+}
+
+/**
+ * Settle the task of a run that stopped because someone asked it to (ADR 0044). This runs only once
+ * the process has exited, so the task is never rewritten under a live agent.
+ *
+ * A company pause puts the task back in the queue: the paused company dispatches nothing, and its
+ * resume runs the task again from the start of the interrupted step. Any other stop — a founder
+ * cancelling the task, or the company being stopped for good — cancels it.
+ */
+function settleStoppedTask(
+  settled: RunSchedulerOnceInput,
+  task: Task,
+  stopReason: string | null,
+  failure: string,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): void {
+  if (stopReason === COMPANY_PAUSED_STOP_REASON) {
+    applyTaskTransition({ repositories: settled.repositories, task, status: "queued", now, createId });
+    appendAndEmitTaskEvent(settled, { task, type: "task_warning", status: "queued",
+      message: `Task paused: ${task.title}. It runs again when the company resumes.` });
+    return;
+  }
+  applyTaskTransition({ repositories: settled.repositories, task, status: "cancelled",
+    executionSummary: { latestFailureReason: "cancelled", latestFailureMessage: failure },
+    resolution: "cancelled", now, createId });
+  appendAndEmitTaskEvent(settled, { task, type: "task_warning", status: "cancelled",
+    failureReason: "cancelled", failureMessage: failure, message: `Task cancelled: ${task.title}.` });
 }
 
 function unconfirmedTerminationMessage(task: Task, workspacePath: string): string {

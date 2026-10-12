@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Play, Power, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { AgentSummary } from "../api/client";
 import { AgentOption, CompanyFlowPage } from "../components/company-flow";
@@ -26,8 +26,6 @@ export type OnboardingProps = {
   permissionMode: string;
   isCreating: boolean;
   createError: string | null;
-  /** Present when setup was reopened for a company that already has a blueprint: the way back to it. */
-  onActivateCompany?(): void;
   onCompanyNameChange(value: string): void;
   onRetryAgents(): void;
   onSelectAgent(agentId: string): void;
@@ -48,14 +46,6 @@ export function Onboarding(props: OnboardingProps) {
   return (
     <CompanyFlowPage
       eyebrow={displayCompanyName ? t("app.localAgentCompany") : t("onboarding.eyebrow")}
-      headerActions={
-        props.onActivateCompany ? (
-          <Button onClick={props.onActivateCompany} size="sm" variant="outline">
-            <Power aria-hidden="true" />
-            {t("menu.activateCompany")}
-          </Button>
-        ) : null
-      }
       status={`${permissionLabel} ${t("onboarding.executionPolicy")}`}
       statusIcon={<ShieldCheck aria-hidden="true" />}
       title={displayCompanyName || t("app.title")}

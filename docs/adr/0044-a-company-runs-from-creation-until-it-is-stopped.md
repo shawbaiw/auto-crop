@@ -21,14 +21,19 @@ The Kill Switch did not match its role. It paused every company through a global
 **Pause Operating and Resume Operating** replace the Kill Switch
 
 - Pausing applies to one company. There is no global pause.
-- Pausing stops the company's live Agent Runs and Agent Sessions. Each interrupted task is parked by `applyTaskTransition` with a `company_paused` Hold (ADR 0020). It is not cancelled.
-- Resuming moves the company back to `active` and resolves every `company_paused` Hold, so those tasks queue again. The step that was running when the company paused starts again from its beginning.
+- Pausing changes the status first, so no new run starts. It then asks the company's live Agent Runs and Agent Sessions to stop.
+- The scheduler settles each interrupted run only when its process has exited, and then puts the task back in `queued`. It is not cancelled.
+  - A task is never rewritten under a live agent. A workspace is shared by the runs of a task, so requeueing a task while its old process still writes would let the next dispatch start in a directory that something else is writing to.
+  - A process that never exits is isolated as `termination_unconfirmed`, as with any other stop.
+  - A run that this server process cannot reach, because another worker owns it, is reported as unreachable and is not counted as stopped.
+- A requeued task needs no Hold. A paused company dispatches nothing, and the company status says why.
+- Resuming moves the company back to `active`, so the requeued tasks dispatch again. The step that was running when the company paused starts again from its beginning.
 
 **Stop Operating**
 
 - Stop Operating is final. The founder confirms it by typing the company name.
-- The company becomes `stopped` at once. Its live runs are stopped as for a pause, and nothing dispatches again.
-- A Final Founder Report is then authored in the background, as at Company Quiescence. If it fails, the deterministic fallback applies and the founder can ask for the report again.
+- The company becomes `stopped` at once. Its live runs are stopped as for a pause, but their tasks are cancelled when the processes exit. Nothing dispatches again.
+- A Final Founder Report is then authored in the background, as at Company Quiescence. A stopped company counts as quiescent. If the agent run fails, the deterministic fallback applies. If the report job fails for any other reason, the scheduler queues it again on its next tick, because a stopped company without a current report is always due one.
 - A stopped company is read-only. The server offers no Resume Affordance on any of its tasks, so the dashboard shows no action without a rule of its own.
 - A `creation_failed` company can also be stopped. It has no blueprint, so no report is written.
 

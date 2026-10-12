@@ -25,7 +25,7 @@ import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { createHandoffPackage, createProofCollector } from "./proof";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { ExecutionRegistry } from "./executionControl";
-import { triggerKillSwitch } from "./killSwitch";
+import { pauseCompany, stopCompany } from "./companyOperation";
 import { OBSERVATION_POLICY_VERSION, summarizeRunActivity } from "./executionObservation";
 import {
   reconcileFinalFounderReportUpgrade,
@@ -829,19 +829,22 @@ describe("runSchedulerOnce", () => {
 
 
   /**
-   * Emergency Stop against a dispatch that is actually running (execution-health P2b).
+   * Pausing or stopping a company against a dispatch that is actually running (ADR 0044).
    *
-   * It used to be a status change with no teeth: the task was written `cancelled`, every lock in the
-   * database was cleared — other companies' included — and the agent process kept running and
-   * spending. The founder was told the company had stopped while it had not.
+   * The stop must reach the agent process, and the task is only rewritten once that process has
+   * exited: a task requeued while its old agent still writes to the shared workspace would let the
+   * next dispatch start in a directory something else is writing.
    */
-  it("stops a live dispatch, and the dispatch it stopped settles nothing", async () => {
+  it.each([
+    ["pausing", "queued"],
+    ["stopping", "cancelled"],
+  ] as const)("%s a company stops its live dispatch and settles the task as %s", async (operation, expected) => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low", "product-brief"),
     ]);
     const registry = new ExecutionRegistry();
     const events: SchedulerEventRecord[] = [];
-    let stopResult: ReturnType<typeof triggerKillSwitch> | null = null;
+    let statusWhileStopping: string | undefined;
 
     const adapter: AgentAdapter = {
       id: "mock-worker", name: "Worker", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
@@ -849,15 +852,11 @@ describe("runSchedulerOnce", () => {
         if (request.metadata.phase === "execution_brief") {
           return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
         }
-        // The founder hits Emergency Stop while the agent is working.
-        stopResult = triggerKillSwitch({
-          companyId: "company_1",
-          repositories,
-          executionRegistry: registry,
-          now: () => new Date("2026-08-17T12:05:00.000Z"),
-        });
-        // The adapter is told to stop, and reports the process gone.
+        // The founder pauses or stops the company while the agent is working.
+        const input = { companyId: "company_1", repositories, executionRegistry: registry, now: () => new Date("2026-08-17T12:05:00.000Z") };
+        if (operation === "pausing") pauseCompany(input); else stopCompany(input);
         expect(request.signal?.aborted).toBe(true);
+        statusWhileStopping = repositories.getTask("task_1")?.status;
         request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
         return { status: "failed", exitCode: null, stdout: "", stderr: "stopped", failureReason: "cancelled", terminationConfirmed: true };
       },
@@ -871,34 +870,16 @@ describe("runSchedulerOnce", () => {
       emit: (event) => events.push(event),
     });
 
-    // The stop reached the live run, not just the row.
-    expect(stopResult).toMatchObject({ cancelledTasks: ["task_1"], unreachableTasks: [] });
-    // The task is cancelled, and the dispatch that lost the run wrote nothing over it.
-    expect(repositories.getTask("task_1")?.status).toBe("cancelled");
+    // Nothing was rewritten while the process was still running.
+    expect(statusWhileStopping).toBe("running");
+    expect(repositories.getTask("task_1")?.status).toBe(expected);
+    expect(repositories.listRunningAgentRuns("company_1")).toEqual([]);
+    // The dispatch that was stopped delivers nothing, and fails nothing.
     expect(repositories.listBusinessArtifactsForTask("task_1")).toEqual([]);
-    expect(repositories.listProofsForTask("task_1")).toEqual([]);
     expect(events.some((event) => event.type === "task_failed")).toBe(false);
-    // A cancelled company leaves no Holds behind for a founder to work through.
+    // Neither leaves a Hold for the founder to work through: a paused task is simply queued again.
     expect(repositories.listOpenTaskHolds("task_1")).toEqual([]);
-    client.close();
-  });
-
-  it("clears only the stopped company's locks", async () => {
-    const { repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "running", "low")]);
-    // Another company, mid-run, with its own lock.
-    repositories.createCompany({ ...createCompanyRecord(), id: "company_2", name: "Other Studio" });
-    repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T12:00:00.000Z");
-    repositories.acquireTaskLock("other_task", "worker_b", "2026-08-17T12:00:00.000Z");
-
-    triggerKillSwitch({
-      companyId: "company_1",
-      repositories,
-      executionRegistry: new ExecutionRegistry(),
-      now: () => new Date("2026-08-17T12:05:00.000Z"),
-    });
-
-    // Stopping one company must not unlock another's live execution.
-    expect(repositories.listTaskLocks().map((lock) => lock.taskId)).toEqual(["other_task"]);
+    expect(repositories.listTaskLocks()).toEqual([]);
     client.close();
   });
 
@@ -1122,12 +1103,11 @@ describe("runSchedulerOnce", () => {
   });
 
   /**
-   * The reported gap, pinned. Dispatch read only the task's own status, so a company still in
-   * `draft` — a plan the founder has not accepted — started spending agent runs the moment it was
-   * created, and the activate button changed nothing (ADR 0033).
+   * The reported gap, pinned. Dispatch read only the task's own status, so a company that was not
+   * running still spent agent runs (ADR 0033). Only an `active` company dispatches (ADR 0044).
    */
   it("dispatches nothing for a company that is not running, and everything once it is", async () => {
-    for (const status of ["draft", "creating", "paused", "review"] as const) {
+    for (const status of ["creating", "creation_failed", "paused", "stopped"] as const) {
       const { projectRoot, repositories, client } = createSchedulerFixture(
         [createTaskRecord("task_1", "queued", "low")],
         { status },
@@ -3679,6 +3659,23 @@ describe("Final Founder Report on Company Quiescence", () => {
       expect.objectContaining({ type: "company_report_ready", companyId: "company_1" }),
     );
 
+    client.close();
+  });
+
+  it("authors a report for a company stopped with work left, which is never quiescent on its own", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+    const { options, emitted } = reportSweepOptions({ projectRoot, repositories });
+
+    stopCompany({ companyId: "company_1", repositories, executionRegistry: new ExecutionRegistry(), now: options.now, createId: options.createId });
+    await runSchedulerOnce(options);
+    await runFinalFounderReportJobs(options);
+
+    // The stop ran nothing: the queued task is still queued, and the report says where the company got to.
+    expect(repositories.getTask("task_1")?.status).toBe("queued");
+    expect(repositories.getCurrentFinalFounderReport("company_1")).toMatchObject({ isCurrent: true });
+    expect(emitted).toContainEqual(expect.objectContaining({ type: "company_report_ready", companyId: "company_1" }));
     client.close();
   });
 

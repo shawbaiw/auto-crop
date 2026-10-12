@@ -137,6 +137,31 @@ export function createRepositories(database: DatabaseClient) {
         .run(status, updatedAt, id);
     },
 
+    /** A failed creation retried with edited input: the company takes the new choices before its next attempt. */
+    updateCompanyCreationInput(
+      id: string,
+      input: { companyName: string; founderVision: string; locale?: string; selectedCeoAgentId: string; permissionMode: string; assets: string[] },
+      updatedAt: string,
+    ): void {
+      database
+        .prepare(
+          `UPDATE companies
+           SET name = ?, founder_vision = ?, locale = ?, selected_ceo_agent_id = ?, permission_mode = ?,
+               creation_input = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          input.companyName,
+          input.founderVision,
+          input.locale ?? "en",
+          input.selectedCeoAgentId,
+          input.permissionMode,
+          JSON.stringify(input),
+          updatedAt,
+          id,
+        );
+    },
+
     createCreationAttempt(attempt: CreationAttempt): void {
       database
         .prepare(
@@ -1148,23 +1173,6 @@ export function createRepositories(database: DatabaseClient) {
           ownerEpoch: lock.owner_epoch,
         };
       });
-    },
-
-    setGlobalPaused(paused: boolean): void {
-      database
-        .prepare(
-          `INSERT INTO runtime_state (key, value)
-           VALUES ('global_paused', ?)
-           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-        )
-        .run(paused ? "true" : "false");
-    },
-
-    isGlobalPaused(): boolean {
-      const row = database
-        .prepare("SELECT value FROM runtime_state WHERE key = 'global_paused'")
-        .get() as { value: string } | undefined;
-      return row?.value === "true";
     },
 
     appendProof(proof: Proof): void {

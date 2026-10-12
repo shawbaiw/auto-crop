@@ -107,15 +107,7 @@ describe("startAutoCrop", () => {
       });
 
       expect(response.ok).toBe(true);
-      // The founder activates the plan before anything runs; a `draft` company dispatches nothing
-      // (ADR 0033), which is what the activate button is for.
-      const { company } = (await response.json()) as { company: { id: string } };
-      const activated = await fetch(`${started.url}/api/companies/${company.id}/activate`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
-      expect(activated.ok).toBe(true);
+      // A company runs from creation (ADR 0044): the scheduler picks its work up with no further step.
       await waitFor(() => logs.some((line) => line.includes("Scheduler tick: started=1")));
     } finally {
       await started.close();
@@ -157,7 +149,7 @@ describe("startAutoCrop", () => {
         permissionMode: "balanced",
         assets: [],
       });
-      const state = await waitForCompanyState(started.url, created.company.id, "draft");
+      const state = await waitForCompanyState(started.url, created.company.id, "active");
       const database = createDatabaseClient(join(projectRoot, ".auto-crop", "state.sqlite"));
       try {
         const repositories = createRepositories(database);

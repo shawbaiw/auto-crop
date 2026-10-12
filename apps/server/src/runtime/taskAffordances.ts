@@ -29,6 +29,12 @@ export function resolveTaskAffordanceState(
     .listReplanProposalsForTask(task.id)
     .some((proposal) => proposal.status === "proposed");
 
+  // A stopped company is read-only (ADR 0044). Its Holds still say why each task stopped, but nothing
+  // is offered — so every surface and every guard agree without a rule of their own.
+  if (repositories.getCompany(task.companyId)?.status === "stopped") {
+    return { holds, affordances: [] };
+  }
+
   return {
     holds,
     affordances: resolveTaskAffordances({ status: task.status, holds, hasProposedReplan }),

@@ -39,8 +39,9 @@ test("creates and operates a mock agent company through the dashboard", async ({
   await page.getByRole("button", { name: /create company/i }).click();
 
   await expect(page.getByLabel("Founder vision")).toHaveCount(0);
+  // The company runs as soon as its blueprint exists (ADR 0044) and opens on CEO Office.
   await expect(page.getByRole("heading", { name: "Pricing Page Studio" })).toBeVisible();
-  await openMenuItem(page, "Company", "Activate Company");
+  await openMenuItem(page, "Work", "View Tasks");
   await expect(page.getByRole("heading", { name: "Company Operating Dashboard" })).toBeVisible();
 
   const companyId = fixture.repositories.fetchQueuedTasks(1)[0]?.companyId;
@@ -85,8 +86,9 @@ test("creates and operates a mock agent company through the dashboard", async ({
   await openMenuItem(page, "Proof", "Load Review");
   await expect(page.getByText("Completed 0 task(s), 0 missing proof.")).toBeVisible();
 
-  await openMenuItem(page, "Company", "Kill Switch");
-  await expect(page.getByText("Global pause active")).toBeVisible();
+  await openMenuItem(page, "Company", "Pause Operating");
+  await expect(page.getByText("This company is paused. No new work starts until you resume it.")).toBeVisible();
+  expect(fixture.repositories.getCompany(companyId)?.status).toBe("paused");
 });
 
 async function openMenuItem(page: Page, menu: string, item: string) {

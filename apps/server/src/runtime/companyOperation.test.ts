@@ -5,128 +5,145 @@ import { createMockAgentAdapter } from "../adapters/mockAgent";
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
-import { triggerKillSwitch } from "./killSwitch";
+import { COMPANY_PAUSED_STOP_REASON, COMPANY_STOPPED_STOP_REASON, pauseCompany, resumeCompany, stopCompany } from "./companyOperation";
 import { runSchedulerOnce } from "./scheduler";
 
-describe("triggerKillSwitch", () => {
-  it.each(["before", "after"])("rolls cancellation back when outbox fails %s insertion", (when) => {
-    const { client, repositories } = createKillSwitchFixture();
-    repositories.writeTaskStatusUnchecked("task_1", "running");
-    repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T00:00:00.000Z");
-    repositories.createAgentRun({
-      id: "agent_run_1", taskId: "task_1", agentId: "codex", status: "running",
-      startedAt: "2026-08-17T00:00:00.000Z", finishedAt: null, logPath: "test.log",
-    });
-    try {
-      expect(() => triggerKillSwitch({
-        companyId: "company_1", repositories: { ...repositories, appendOutboxEvent: (event) => {
-          if (when === "after") repositories.appendOutboxEvent(event);
-          throw new Error("outbox failed");
-        } },
-      })).toThrow("outbox failed");
-      // Pause remains a control request; a failed settlement cannot announce a completed stop.
-      expect(repositories.isGlobalPaused()).toBe(true);
-      expect(repositories.getTask("task_1")?.status).toBe("running");
-      expect(repositories.listRunningAgentRuns("company_1")).toHaveLength(1);
-      expect(repositories.listTaskLocks()).toHaveLength(1);
-      expect(repositories.listOutboxEvents({ companyId: "company_1" })).toEqual([]);
-      triggerKillSwitch({ companyId: "company_1", repositories });
-      triggerKillSwitch({ companyId: "company_1", repositories });
-      const events = repositories.listOutboxEvents({ companyId: "company_1" });
-      expect(events).toHaveLength(1);
-      expect(events[0].payload).toMatchObject({ runId: "agent_run_1", reason: "cancelled", terminationConfirmed: null });
-    } finally { client.close(); }
-  });
-
-  it("sets global pause, cancels active runs, releases locks, and moves company to review", () => {
-    const { client, repositories } = createKillSwitchFixture();
+describe("company operation", () => {
+  it("pauses one company: it stops dispatching and its live runs are asked to stop", () => {
+    const { client, repositories } = createCompanyOperationFixture();
     const stopped: Array<{ taskId: string; reason: string }> = [];
     const registry = new ExecutionRegistry();
     registry.register({
-      taskId: "task_1",
-      companyId: "company_1",
-      runId: "agent_run_1",
-      ownerEpoch: 1,
-      stopReason: null,
+      taskId: "task_1", companyId: "company_1", runId: "agent_run_1", ownerEpoch: 1, stopReason: null,
       requestStop: (reason) => stopped.push({ taskId: "task_1", reason }),
     });
-    repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T00:00:00.000Z");
     repositories.writeTaskStatusUnchecked("task_1", "running");
     repositories.createAgentRun({
-      id: "agent_run_1",
-      taskId: "task_1",
-      agentId: "codex",
-      status: "running",
-      logPath: ".auto-crop/companies/company_1/logs/task_1.log",
-      startedAt: "2026-08-17T00:00:00.000Z",
-      finishedAt: null,
+      id: "agent_run_1", taskId: "task_1", agentId: "codex", status: "running",
+      logPath: "task_1.log", startedAt: "2026-08-17T00:00:00.000Z", finishedAt: null,
     });
 
-    const result = triggerKillSwitch({
-      companyId: "company_1",
-      repositories,
-      now: () => new Date("2026-08-17T00:00:10.000Z"),
-      executionRegistry: registry,
-      stopCompanySessions: () => ["session_1"],
+    const result = pauseCompany({
+      companyId: "company_1", repositories, executionRegistry: registry,
+      now: () => new Date("2026-08-17T00:00:10.000Z"), stopCompanySessions: () => ["session_1"],
     });
 
-    expect(result.cancelledTasks).toEqual(["task_1"]);
-    expect(result.releasedLocks).toEqual(["task_1"]);
-    expect(result.stoppedSessions).toEqual(["session_1"]);
-    // The stop reached the live process, not only the row.
-    expect(stopped).toEqual([{ taskId: "task_1", reason: "emergency_stop" }]);
-    expect(result.unreachableTasks).toEqual([]);
-    expect(repositories.isGlobalPaused()).toBe(true);
-    expect(repositories.getCompany("company_1")?.status).toBe("review");
-    expect(repositories.getTask("task_1")?.status).toBe("cancelled");
-    expect(repositories.listTaskLocks()).toEqual([]);
-
+    expect(result).toMatchObject({ ok: true, interruptedTasks: ["task_1"], unreachableTasks: [], stoppedSessions: ["session_1"] });
+    expect(stopped).toEqual([{ taskId: "task_1", reason: COMPANY_PAUSED_STOP_REASON }]);
+    expect(repositories.getCompany("company_1")?.status).toBe("paused");
+    // The run settles when its process exits, not here: the task is not rewritten under a live agent.
+    expect(repositories.getTask("task_1")?.status).toBe("running");
     client.close();
   });
 
-  it("makes the scheduler stop claiming new tasks while paused", async () => {
-    const { client, repositories } = createKillSwitchFixture();
-    repositories.setGlobalPaused(true);
-
-    const result = await runSchedulerOnce({
-      projectRoot: ".",
-      repositories,
-      adapters: [
-        createMockAgentAdapter({
-          id: "codex",
-          name: "Codex",
-          capabilities: ["code"],
-        }),
-      ],
-      workerId: "worker_a",
-      maxTasks: 1,
-      approvalRequired: () => false,
-      proofCollector: () => [],
-      emit: () => undefined,
+  it("reports a running run this process cannot reach instead of counting it as stopped", () => {
+    const { client, repositories } = createCompanyOperationFixture();
+    repositories.writeTaskStatusUnchecked("task_1", "running");
+    repositories.createAgentRun({
+      id: "agent_run_1", taskId: "task_1", agentId: "codex", status: "running",
+      logPath: "task_1.log", startedAt: "2026-08-17T00:00:00.000Z", finishedAt: null,
     });
 
-    expect(result.started).toEqual([]);
+    const result = pauseCompany({ companyId: "company_1", repositories, executionRegistry: new ExecutionRegistry() });
+
+    expect(result).toMatchObject({ ok: true, interruptedTasks: [], unreachableTasks: ["task_1"] });
+    client.close();
+  });
+
+  it("resumes only a paused company, and pauses only an active one", () => {
+    const { client, repositories } = createCompanyOperationFixture();
+
+    expect(resumeCompany({ companyId: "company_1", repositories })).toMatchObject({ ok: false, status: "active" });
+    expect(pauseCompany({ companyId: "company_1", repositories, executionRegistry: new ExecutionRegistry() }).ok).toBe(true);
+    expect(pauseCompany({ companyId: "company_1", repositories, executionRegistry: new ExecutionRegistry() })).toMatchObject({ ok: false, status: "paused" });
+    expect(resumeCompany({ companyId: "company_1", repositories })).toMatchObject({ ok: true });
+    expect(repositories.getCompany("company_1")?.status).toBe("active");
+    client.close();
+  });
+
+  it("does not dispatch for a paused company, and dispatches again once it resumes", async () => {
+    const { client, repositories } = createCompanyOperationFixture();
+    const adapters = [createMockAgentAdapter({ id: "codex", name: "Codex", capabilities: ["code"] })];
+    const tick = () => runSchedulerOnce({
+      projectRoot: ".", repositories, adapters, workerId: "worker_a", maxTasks: 1,
+      approvalRequired: () => false, proofCollector: () => [], emit: () => undefined,
+    });
+
+    pauseCompany({ companyId: "company_1", repositories, executionRegistry: new ExecutionRegistry() });
+    expect((await tick()).started).toEqual([]);
     expect(repositories.getTask("task_1")?.status).toBe("queued");
 
+    resumeCompany({ companyId: "company_1", repositories });
+    expect((await tick()).started).toEqual(["task_1"]);
+    client.close();
+  });
+
+  it("pausing one company leaves another company dispatching", async () => {
+    const { client, repositories } = createCompanyOperationFixture();
+    repositories.createCompany({ ...companyRecord(), id: "company_2", name: "Other Studio" });
+    repositories.createTask({ ...taskRecord(), id: "task_2", companyId: "company_2", workspacePath: ".auto-crop/workspaces/task_2" });
+
+    pauseCompany({ companyId: "company_1", repositories, executionRegistry: new ExecutionRegistry() });
+    const result = await runSchedulerOnce({
+      projectRoot: ".", repositories, adapters: [createMockAgentAdapter({ id: "codex", name: "Codex", capabilities: ["code"] })],
+      workerId: "worker_a", maxTasks: 2, approvalRequired: () => false, proofCollector: () => [], emit: () => undefined,
+    });
+
+    expect(result.started).toEqual(["task_2"]);
+    client.close();
+  });
+
+  it("stops a company for good: its live runs are asked to stop and a Final Founder Report is queued", () => {
+    const { client, repositories } = createCompanyOperationFixture();
+    const stopped: string[] = [];
+    const registry = new ExecutionRegistry();
+    registry.register({
+      taskId: "task_1", companyId: "company_1", runId: "agent_run_1", ownerEpoch: 1, stopReason: null,
+      requestStop: (reason) => stopped.push(reason),
+    });
+
+    const result = stopCompany({
+      companyId: "company_1", repositories, executionRegistry: registry,
+      now: () => new Date("2026-08-17T00:00:10.000Z"), createId: (prefix) => `${prefix}_1`,
+    });
+
+    expect(result).toMatchObject({ ok: true, interruptedTasks: ["task_1"] });
+    expect(stopped).toEqual([COMPANY_STOPPED_STOP_REASON]);
+    expect(repositories.getCompany("company_1")?.status).toBe("stopped");
+    expect(repositories.getActiveFinalFounderReportJob("company_1")).toMatchObject({ status: "preparing" });
+    // Stopping is final: there is nothing to resume or pause.
+    expect(resumeCompany({ companyId: "company_1", repositories })).toMatchObject({ ok: false, status: "stopped" });
+    expect(stopCompany({ companyId: "company_1", repositories })).toMatchObject({ ok: false, status: "stopped" });
+    client.close();
+  });
+
+  it("stops a company whose creation failed without queueing a report it has nothing to report on", () => {
+    const { client, repositories } = createCompanyOperationFixture();
+    repositories.updateCompanyStatus("company_1", "creation_failed", "2026-08-17T00:00:00.000Z");
+    repositories.writeTaskStatusUnchecked("task_1", "cancelled");
+    const emptyCompany = { ...companyRecord(), id: "company_2", status: "creation_failed" as const };
+    repositories.createCompany(emptyCompany);
+
+    expect(stopCompany({ companyId: "company_2", repositories }).ok).toBe(true);
+    expect(repositories.getCompany("company_2")?.status).toBe("stopped");
+    expect(repositories.getActiveFinalFounderReportJob("company_2")).toBeNull();
+    client.close();
+  });
+
+  it("refuses to stop a company that is still being created", () => {
+    const { client, repositories } = createCompanyOperationFixture();
+    repositories.updateCompanyStatus("company_1", "creating", "2026-08-17T00:00:00.000Z");
+
+    expect(stopCompany({ companyId: "company_1", repositories })).toMatchObject({ ok: false, status: "creating" });
     client.close();
   });
 });
 
-function createKillSwitchFixture() {
+function createCompanyOperationFixture() {
   const client = createDatabaseClient(":memory:");
   migrate(client);
   const repositories = createRepositories(client);
-  const company: Company = {
-    id: "company_1",
-    name: "Pricing Page Studio",
-    founderVision: "Build an AI SaaS that creates pricing pages.",
-    locale: "en",
-    selectedCeoAgentId: "codex",
-    playbookId: "ai-saas",
-    status: "active",
-    createdAt: "2026-08-17T00:00:00.000Z",
-    updatedAt: "2026-08-17T00:00:00.000Z",
-  };
+  const company = companyRecord();
   const department: Department = {
     id: "department_1",
     companyId: "company_1",
@@ -151,7 +168,33 @@ function createKillSwitchFixture() {
     currentValue: "not_started",
     status: "active",
   };
-  const task: Task = {
+  const task = taskRecord();
+
+  repositories.createCompany(company);
+  repositories.createDepartment(department);
+  repositories.createObjective(objective);
+  repositories.createKeyResult(keyResult);
+  repositories.createTask(task);
+
+  return { client, repositories };
+}
+
+function companyRecord(): Company {
+  return {
+    id: "company_1",
+    name: "Pricing Page Studio",
+    founderVision: "Build an AI SaaS that creates pricing pages.",
+    locale: "en",
+    selectedCeoAgentId: "codex",
+    playbookId: "ai-saas",
+    status: "active",
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+  };
+}
+
+function taskRecord(): Task {
+  return {
     id: "task_1",
     companyId: "company_1",
     departmentId: "department_1",
@@ -166,12 +209,4 @@ function createKillSwitchFixture() {
     riskLevel: "low",
     position: 0,
   };
-
-  repositories.createCompany(company);
-  repositories.createDepartment(department);
-  repositories.createObjective(objective);
-  repositories.createKeyResult(keyResult);
-  repositories.createTask(task);
-
-  return { client, repositories };
 }

@@ -44,6 +44,10 @@ Two affordances have runtime state preconditions — refresh and recover. Those 
 
 An affordance that no route honours is worse than no affordance: it renders a button that silently does nothing. `taskAffordanceCoverage.test.ts` pins every `TaskAffordanceKind` to a route that actually changes state. A new kind must ship with its route in the same change.
 
+## Pausing And Stopping A Company Never Rewrites A Live Task
+
+Pause Operating and Stop Operating change the company status, then ask its live runs to stop through the execution registry. They never write the task. The scheduler settles a stopped run once its process exits: `company_paused` puts the task back in `queued`, and any other stop reason cancels it (`settleStoppedTask`). A workspace is shared by the runs of a task, so a task requeued under a live agent would let the next dispatch start in a directory something else is writing to. See ADR 0044.
+
 ## Reconciliation Passes
 
 The runtime repairs state on read rather than trusting every writer. Three passes run during `buildCompanyState`, and the distinction between them matters:

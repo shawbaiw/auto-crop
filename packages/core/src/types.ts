@@ -1,7 +1,7 @@
 import type { Locale, LocalizedText } from "./localizedText";
 import type { ArtifactVerification, DependencyInputRole, VerificationRequirement } from "./verification";
 
-export type CompanyStatus = "creating" | "creation_failed" | "draft" | "active" | "paused" | "review";
+export type CompanyStatus = "creating" | "creation_failed" | "active" | "paused" | "stopped";
 export type PermissionMode = "safe" | "balanced" | "autonomous";
 export type ObjectiveStatus = "active" | "complete" | "paused";
 export type KeyResultStatus = "active" | "met" | "missed";

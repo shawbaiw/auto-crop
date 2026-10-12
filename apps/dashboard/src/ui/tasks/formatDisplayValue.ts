@@ -99,14 +99,16 @@ export function formatArtifactReviewStatus(status: string, t: Translate): string
 
 export function formatCompanyStatus(status: string, t: Translate): string {
   switch (status) {
-    case "draft":
-      return t("display.companyStatusDraft");
+    case "creating":
+      return t("display.companyStatusCreating");
+    case "creation_failed":
+      return t("display.companyStatusCreationFailed");
     case "active":
       return t("display.companyStatusActive");
     case "paused":
       return t("display.companyStatusPaused");
-    case "review":
-      return t("display.companyStatusReview");
+    case "stopped":
+      return t("display.companyStatusStopped");
     default:
       return formatCodeLabel(status);
   }

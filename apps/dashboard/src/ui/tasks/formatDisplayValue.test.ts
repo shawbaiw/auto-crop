@@ -17,8 +17,10 @@ function translate(locale: "en" | "zh") {
 
 describe("formatDisplayValue", () => {
   it("localizes company and proof display values", () => {
-    expect(formatCompanyStatus("active", translate("en"))).toBe("Active");
-    expect(formatCompanyStatus("active", translate("zh"))).toBe("运行中");
+    expect(formatCompanyStatus("active", translate("en"))).toBe("Operating");
+    expect(formatCompanyStatus("stopped", translate("en"))).toBe("Stopped");
+    expect(formatCompanyStatus("active", translate("zh"))).toBe("运营中");
+    expect(formatCompanyStatus("stopped", translate("zh"))).toBe("已停止");
     expect(formatPermissionMode("autonomous", translate("en"))).toBe("Autonomous");
     expect(formatPermissionMode("safe", translate("zh"))).not.toBe("safe");
     expect(formatProofType("command_output", translate("en"))).toBe("Command output");

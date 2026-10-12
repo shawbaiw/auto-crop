@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe("API routes", () => {
-  it("detects agents, creates a company, activates it, exposes proof/reviews, cancels tasks, and triggers kill switch", async () => {
+  it("detects agents, creates a running company, exposes proof/reviews, cancels tasks, and pauses, resumes and stops the company", async () => {
     const fixture = await startFixtureServer();
 
     const agents = await getJson<{ agents: Array<{ id: string; detected: boolean }> }>(
@@ -48,7 +48,7 @@ describe("API routes", () => {
         assets: ["README.md"],
       },
     );
-    expect(created.company.status).toBe("draft");
+    expect(created.company.status).toBe("active");
     expect(created.company.name).toBe("Pricing Page Studio");
 
     const companies = await getJson<{
@@ -62,12 +62,6 @@ describe("API routes", () => {
         updatedAt: expect.any(String),
       }),
     ]);
-
-    const activated = await postJson<{ company: { status: string } }>(
-      `${fixture.baseUrl}/api/companies/${created.company.id}/activate`,
-      {},
-    );
-    expect(activated.company.status).toBe("active");
 
     const task = activatedTasks(fixture, created.company.id, 1)[0];
     expect(task).toBeDefined();
@@ -174,12 +168,35 @@ describe("API routes", () => {
       startedAt: "2026-08-17T00:00:00.000Z",
       finishedAt: null,
     });
-    const killed = await postJson<{ paused: boolean; company: { status: string } }>(
-      `${fixture.baseUrl}/api/kill-switch`,
-      { companyId: created.company.id },
+    const paused = await postJson<{ company: { status: string }; unreachableTasks: string[] }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/pause`,
+      {},
     );
-    expect(killed.paused).toBe(true);
-    expect(killed.company.status).toBe("review");
+    expect(paused.company.status).toBe("paused");
+    // No process of this server runs that task, so the pause says so instead of claiming it stopped.
+    expect(paused.unreachableTasks).toEqual([task.id]);
+    const resumed = await postJson<{ company: { status: string } }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/resume`,
+      {},
+    );
+    expect(resumed.company.status).toBe("active");
+    const stopped = await postJson<{ company: { status: string } }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/stop`,
+      {},
+    );
+    expect(stopped.company.status).toBe("stopped");
+    // Stopping is final: resuming it is refused, and so is new input.
+    const resumeStopped = await fetch(`${fixture.baseUrl}/api/companies/${created.company.id}/resume`, { method: "POST" });
+    expect(resumeStopped.status).toBe(409);
+    const intake = await fetch(`${fixture.baseUrl}/api/companies/${created.company.id}/ceo-intakes`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: "Add a pricing calculator." }),
+    });
+    expect(intake.status).toBe(409);
+    // A stopped company is read-only: no task offers an action.
+    const stoppedState = await getJson<{ tasks: Array<{ affordances: unknown[] }> }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
+    );
+    expect(stoppedState.tasks.every((stateTask) => stateTask.affordances.length === 0)).toBe(true);
 
     await fixture.close();
   });
@@ -259,7 +276,7 @@ describe("API routes", () => {
     expect(fixture.repositories.listCompanies()).toHaveLength(1);
 
     releaseAgent();
-    await waitForCompanyStatus(fixture, body.company.id, "draft");
+    await waitForCompanyStatus(fixture, body.company.id, "active");
     expect(fixture.repositories.listTasksForCompany(body.company.id).length).toBeGreaterThan(0);
 
     await fixture.close();
@@ -287,7 +304,7 @@ describe("API routes", () => {
     expect(body.company.locale).toBe("zh");
     expect(fixture.repositories.getCompany(body.company.id)?.locale).toBe("zh");
 
-    await waitForCompanyStatus(fixture, body.company.id, "draft");
+    await waitForCompanyStatus(fixture, body.company.id, "active");
     const state = (await (await fetch(`${fixture.baseUrl}/api/companies/${body.company.id}/state`)).json()) as {
       company: { locale: string };
     };
@@ -316,7 +333,7 @@ describe("API routes", () => {
     expect(body.company.locale).toBe("en");
     expect(fixture.repositories.getCompany(body.company.id)?.locale).toBe("en");
 
-    await waitForCompanyStatus(fixture, body.company.id, "draft");
+    await waitForCompanyStatus(fixture, body.company.id, "active");
     await fixture.close();
   });
 
@@ -325,7 +342,7 @@ describe("API routes", () => {
     const fixture = await startFixtureServer({ useDefaultCreateId: true });
 
     const created = await postCreatingCompany(fixture, "default-id-key-1");
-    await waitForCompanyStatus(fixture, created.company.id, "draft");
+    await waitForCompanyStatus(fixture, created.company.id, "active");
 
     expect(fixture.repositories.listCreationAttemptsForCompany(created.company.id)).toEqual([
       expect.objectContaining({ status: "complete", failureMessage: null }),
@@ -344,7 +361,7 @@ describe("API routes", () => {
     await fixture.close();
   });
 
-  it("keeps a company draft when only the final creation event write fails", async () => {
+  it("keeps a company running when only the final creation event write fails", async () => {
     const logs: string[] = [];
     const fixture = await startFixtureServer({
       failCompanyEventTypes: new Set(["company_creation_completed"]),
@@ -354,7 +371,7 @@ describe("API routes", () => {
     const created = await postCreatingCompany(fixture, "final-event-failure-key-1");
     await waitForCreationAttemptStatus(fixture, created.company.id, "complete");
 
-    expect(fixture.repositories.getCompany(created.company.id)).toMatchObject({ status: "draft" });
+    expect(fixture.repositories.getCompany(created.company.id)).toMatchObject({ status: "active" });
     expect(fixture.repositories.listCreationAttemptsForCompany(created.company.id)).toEqual([
       expect.objectContaining({ status: "complete", failureMessage: null }),
     ]);
@@ -394,10 +411,40 @@ describe("API routes", () => {
       tasks: unknown[];
     }>(`${fixture.baseUrl}/api/companies/${created.company.id}/retry-creation`, {});
     expect(retried.company.id).toBe(created.company.id);
-    expect(retried.company.status).toBe("draft");
+    expect(retried.company.status).toBe("active");
     expect(retried.tasks.length).toBeGreaterThan(0);
     expect(fixture.repositories.listCreationAttemptsForCompany(created.company.id)).toHaveLength(2);
 
+    await fixture.close();
+  });
+
+  it("retries a failed creation with the founder's edited input, keeping what was not changed", async () => {
+    const fixture = await startFixtureServer({ ceoAgent: createFlakyCreationAgent() });
+    const created = await postCreatingCompany(fixture, "retry-key-edited");
+    await waitForCompanyStatus(fixture, created.company.id, "creation_failed");
+
+    const emptyName = await fetch(`${fixture.baseUrl}/api/companies/${created.company.id}/retry-creation`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ companyName: "  " }),
+    });
+    expect(emptyName.status).toBe(400);
+
+    const retried = await postJson<{ company: { id: string; name: string; founderVision: string; permissionMode: string } }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/retry-creation`,
+      { companyName: "Shopify Pricing", founderVision: "Build pricing pages for Shopify stores.", permissionMode: "safe" },
+    );
+
+    expect(retried.company).toMatchObject({
+      id: created.company.id,
+      name: "Shopify Pricing",
+      founderVision: "Build pricing pages for Shopify stores.",
+      permissionMode: "safe",
+    });
+    expect(fixture.repositories.getCompany(created.company.id)?.creationInput).toMatchObject({
+      companyName: "Shopify Pricing",
+      founderVision: "Build pricing pages for Shopify stores.",
+      permissionMode: "safe",
+      selectedCeoAgentId: "codex",
+    });
     await fixture.close();
   });
 
@@ -802,7 +849,7 @@ describe("API routes", () => {
       }),
     ]);
     expect(fixture.repositories.getTask(parentTask.id)?.status).toBe("queued");
-    expect(schedulerWakeRequests).toEqual(["parent_aggregation_queued"]);
+    expect(schedulerWakeRequests).toEqual(["company_created", "parent_aggregation_queued"]);
 
     await fixture.close();
   });
@@ -2651,7 +2698,7 @@ describe("API routes", () => {
         relevantWaitStates: [expect.objectContaining({ label: "Wait for search indexing signals.", status: "waiting" })],
       }),
     ]);
-    expect(schedulerWakeRequests).toEqual([]);
+    expect(schedulerWakeRequests).toEqual(["company_created"]);
 
     now = new Date("2026-08-17T01:01:00.000Z");
     const after = await getJson<{
@@ -2668,7 +2715,7 @@ describe("API routes", () => {
     expect(after.tasks).toContainEqual(expect.objectContaining({ id: prepTask.id, status: "queued" }));
     expect(after.activity).toContainEqual(expect.objectContaining({ type: "dependency_ready", taskId: indexingTask.id, status: "queued" }));
     expect(after.founderReport.nextSteps).toContain("Check Wait for search indexing signals.");
-    expect(schedulerWakeRequests).toEqual(["dependency_cascade_queued"]);
+    expect(schedulerWakeRequests).toEqual(["company_created", "dependency_cascade_queued"]);
 
     await fixture.close();
   });
@@ -2757,7 +2804,7 @@ describe("API routes", () => {
     );
     expect(before.tasks).toContainEqual(expect.objectContaining({ id: prepTask.id, status: "queued" }));
     expect(before.tasks).toContainEqual(expect.objectContaining({ id: unrelatedBlockedTask.id, status: "blocked" }));
-    expect(schedulerWakeRequests).toEqual([]);
+    expect(schedulerWakeRequests).toEqual(["company_created"]);
 
     const invalid = await fetch(
       `${fixture.baseUrl}/api/companies/${created.company.id}/human-actions/${humanActionId}/confirm`,
@@ -2788,7 +2835,7 @@ describe("API routes", () => {
     expect(fixture.repositories.getTask(launchTask.id)?.status).toBe("queued");
     expect(fixture.repositories.getTask(prepTask.id)?.status).toBe("queued");
     expect(fixture.repositories.getTask(unrelatedBlockedTask.id)?.status).toBe("blocked");
-    expect(schedulerWakeRequests).toEqual(["dependency_cascade_queued"]);
+    expect(schedulerWakeRequests).toEqual(["company_created", "dependency_cascade_queued"]);
 
     const after = await getJson<{
       humanActions: Array<{ id: string; status: string; evidence: Record<string, string> }>;
@@ -3017,7 +3064,7 @@ describe("API routes", () => {
     );
     expect(state.tasks).toContainEqual(expect.objectContaining({ id: internalProducer.id, status: "complete" }));
     expect(state.tasks).toContainEqual(expect.objectContaining({ id: internalConsumer.id, status: "queued" }));
-    expect(schedulerWakeRequests).toEqual(["dependency_cascade_queued"]);
+    expect(schedulerWakeRequests).toEqual(["company_created", "dependency_cascade_queued"]);
     expect(state.humanActions).toEqual([
       expect.objectContaining({
         id: deploymentHumanActionId,
@@ -3171,7 +3218,7 @@ describe("API routes", () => {
       }),
     );
     expect(fixture.repositories.getTask(consumerTask!.id)?.status).toBe("queued");
-    expect(schedulerWakeRequests).toEqual(["dependency_cascade_queued"]);
+    expect(schedulerWakeRequests).toEqual(["company_created", "dependency_cascade_queued"]);
 
     const state = await getJson<{
       tasks: Array<{ id: string; status: string }>;
@@ -3332,7 +3379,7 @@ describe("API routes", () => {
       }),
     );
     expect(fixture.repositories.getTask(consumerTask!.id)?.status).toBe("blocked");
-    expect(schedulerWakeRequests).toEqual([]);
+    expect(schedulerWakeRequests).toEqual(["company_created"]);
 
     await fixture.close();
   });
@@ -4343,7 +4390,7 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   const json = await response.json() as { company?: { id?: string; status?: string } };
   if (json.company?.id && json.company.status === "creating") {
     const companiesUrl = url.endsWith("/api/companies") ? url : url.replace(/\/[^/]+\/retry-creation$/, "");
-    return (await waitForCompanyStateUrl(companiesUrl, json.company.id, "draft")) as T;
+    return (await waitForCompanyStateUrl(companiesUrl, json.company.id, "active")) as T;
   }
   return json as T;
 }

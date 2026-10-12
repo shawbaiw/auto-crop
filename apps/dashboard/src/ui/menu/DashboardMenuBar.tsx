@@ -13,10 +13,11 @@ export type DashboardMenuBarProps = {
   hasBlueprint: boolean;
   isCreating: boolean;
   isPaused: boolean;
-  onActivateCompany(): void;
-  onBackToSetup(): void;
+  /** Only an operating company can be paused; the server says which companies are (ADR 0044). */
+  canPauseOperating: boolean;
   onCreateCompany(): void;
-  onKillSwitch(): void;
+  onPauseOperating(): void;
+  onResumeOperating(): void;
   onLoadProof(): void;
   onLoadReviews(): void;
   onOpenEvidence(): void;
@@ -38,10 +39,10 @@ export function DashboardMenuBar({
   hasBlueprint,
   isCreating,
   isPaused,
-  onActivateCompany,
-  onBackToSetup,
+  canPauseOperating,
   onCreateCompany,
-  onKillSwitch,
+  onPauseOperating,
+  onResumeOperating,
   onLoadProof,
   onLoadReviews,
   onOpenEvidence,
@@ -83,28 +84,16 @@ export function DashboardMenuBar({
             onSelect: onCreateCompany,
             shortcut: "Cmd+Enter",
           },
-          {
-            disabled: !hasBlueprint,
-            id: "activate-company",
-            label: t("menu.activateCompany"),
-            onSelect: onActivateCompany,
-            shortcut: "Shift+Cmd+Enter",
-          },
-          {
-            disabled: view === "onboarding" || view === "creating",
-            id: "back-to-setup",
-            label: t("menu.backToSetup"),
-            onSelect: onBackToSetup,
-            shortcut: "Cmd+B",
-          },
           { id: "company-separator", type: "separator" },
-          {
-            disabled: view !== "dashboard" || !hasBlueprint,
-            id: "kill-switch",
-            label: t("menu.killSwitch"),
-            onSelect: onKillSwitch,
-            shortcut: "Shift+Cmd+K",
-          },
+          isPaused
+            ? { id: "resume-operating", label: t("menu.resumeOperating"), onSelect: onResumeOperating, shortcut: "Shift+Cmd+K" }
+            : {
+                disabled: !canPauseOperating,
+                id: "pause-operating",
+                label: t("menu.pauseOperating"),
+                onSelect: onPauseOperating,
+                shortcut: "Shift+Cmd+K",
+              },
         ],
       },
       {
@@ -231,10 +220,10 @@ export function DashboardMenuBar({
       hasBlueprint,
       isCreating,
       isPaused,
-      onActivateCompany,
-      onBackToSetup,
+      canPauseOperating,
       onCreateCompany,
-      onKillSwitch,
+      onPauseOperating,
+      onResumeOperating,
       onLoadProof,
       onLoadReviews,
       onOpenEvidence,

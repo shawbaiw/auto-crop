@@ -89,7 +89,7 @@ describe("createCompany", () => {
       selectedCeoAgentId: "codex",
       playbookId: blueprint.company.playbookId,
       permissionMode: "balanced" as const,
-      status: "draft" as const,
+      status: "active" as const,
       createdAt: "2026-08-17T00:00:00.000Z",
       updatedAt: "2026-08-17T00:00:00.000Z",
     };
@@ -104,7 +104,7 @@ describe("createCompany", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(result.company.status).toBe("draft");
+    expect(result.company.status).toBe("active");
     expect(repositories.getCompany("company_1")?.name).toBe("Pricing Page Studio");
     expect(result.departments.map((department) => department.name)).toEqual([
       "Product",
@@ -120,7 +120,7 @@ describe("createCompany", () => {
     client.close();
   });
 
-  it("creates a draft company from founder vision, selected CEO, permission mode, and assets", async () => {
+  it("creates a running company from founder vision, selected CEO, permission mode, and assets", async () => {
     const projectRoot = createTempProjectRoot();
     const client = createDatabaseClient(":memory:");
     migrate(client);
@@ -164,7 +164,7 @@ describe("createCompany", () => {
     expect(result.company.name).toBe("Pricing Page Studio");
     expect(result.company.playbookId).toBe("ai-saas");
     expect(result.company.permissionMode).toBe("balanced");
-    expect(result.company.status).toBe("draft");
+    expect(result.company.status).toBe("active");
     expect(result.company.locale).toBe("en");
 
     expect(repositories.getCompany(result.company.id)?.name).toBe("Pricing Page Studio");
@@ -185,10 +185,8 @@ describe("createCompany", () => {
     expect(repositories.listObjectives(result.company.id)).toHaveLength(1);
     expect(repositories.listObjectives(result.company.id)[0]?.titleText?.zh).toBe("验证第一个 AI SaaS 切入点");
     expect(repositories.listKeyResults(result.company.id)).toHaveLength(2);
-    // Created queued, but not dispatchable until the founder activates the plan (ADR 0033).
+    // Created queued, and dispatchable at once: a company runs from creation (ADR 0044).
     expect(repositories.listTasksForCompany(result.company.id).every((task) => task.status === "queued")).toBe(true);
-    expect(repositories.fetchQueuedTasks(10)).toEqual([]);
-    repositories.updateCompanyStatus(result.company.id, "active", "2026-09-20T00:00:00.000Z");
     expect(repositories.fetchQueuedTasks(10).length).toBeGreaterThan(0);
     expect(result.tasks.map((task) => task.position)).toEqual(result.tasks.map((_, index) => index));
     expect(repositories.listTasksForCompany(result.company.id).map((task) => task.title)).toEqual(

@@ -36,6 +36,14 @@ export type CompanySummary = {
   permissionMode?: string;
 };
 
+export type CompanyOperationResponse = {
+  company: CompanySummary;
+  /** Tasks whose live run was asked to stop; each settles when its process exits. */
+  interruptedTasks: string[];
+  /** Tasks recorded as running that this server cannot reach. */
+  unreachableTasks: string[];
+};
+
 export type CompanyListItem = CompanySummary & {
   createdAt: string;
   updatedAt: string;
@@ -596,7 +604,6 @@ export type ApiClient = {
     returnReason?: CeoReviewReturnReason;
     note?: string;
   }): Promise<FounderDecisionResolutionResponse>;
-  activateCompany(companyId: string): Promise<{ company: CompanySummary }>;
   getTaskProof(taskId: string): Promise<{ proof: ProofSummary[] }>;
   getCompanyReviews(companyId: string): Promise<{ reviews: ReviewSummary[] }>;
   refreshTask(taskId: string): Promise<TaskRefreshResponse>;
@@ -620,7 +627,10 @@ export type ApiClient = {
     updatedTasks: TaskSummary[];
     events: ServerEvent[];
   }>;
-  triggerKillSwitch(companyId: string): Promise<{ paused: boolean; company: CompanySummary }>;
+  /** Pause Operating, Resume Operating and Stop Operating (ADR 0044). A stop is final. */
+  pauseCompany(companyId: string): Promise<CompanyOperationResponse>;
+  resumeCompany(companyId: string): Promise<CompanyOperationResponse>;
+  stopCompany(companyId: string): Promise<CompanyOperationResponse>;
   /**
    * `onOpen` runs on the first connection and on every reconnect. The stream does not replay
    * events published while no subscriber was connected, so callers resync from a snapshot there.
@@ -656,9 +666,6 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     async resolveFounderDecision(input) {
       return postJson(`${baseUrl}/api/founder-decisions`, input, requestTimeoutMs);
     },
-    async activateCompany(companyId) {
-      return postJson(`${baseUrl}/api/companies/${companyId}/activate`, {}, requestTimeoutMs);
-    },
     async getTaskProof(taskId) {
       return getJson(`${baseUrl}/api/tasks/${taskId}/proof`, requestTimeoutMs);
     },
@@ -692,8 +699,14 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     async confirmHumanAction(companyId, humanActionId, input) {
       return postJson(`${baseUrl}/api/companies/${companyId}/human-actions/${humanActionId}/confirm`, input, requestTimeoutMs);
     },
-    async triggerKillSwitch(companyId) {
-      return postJson(`${baseUrl}/api/kill-switch`, { companyId }, requestTimeoutMs);
+    async pauseCompany(companyId) {
+      return postJson(`${baseUrl}/api/companies/${companyId}/pause`, {}, requestTimeoutMs);
+    },
+    async resumeCompany(companyId) {
+      return postJson(`${baseUrl}/api/companies/${companyId}/resume`, {}, requestTimeoutMs);
+    },
+    async stopCompany(companyId) {
+      return postJson(`${baseUrl}/api/companies/${companyId}/stop`, {}, requestTimeoutMs);
     },
     subscribeEvents(companyId, handler, onOpen) {
       const events = new EventSource(`${baseUrl}/api/events?companyId=${encodeURIComponent(companyId)}`);

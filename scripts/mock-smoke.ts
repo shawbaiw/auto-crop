@@ -99,15 +99,10 @@ try {
   await waitFor(async () => {
     ready = await getJson<typeof created>(`${baseUrl}/api/companies/${created.company.id}/state`);
     assert(ready.company.status !== "creation_failed", "Company creation failed.");
-    return ready.company.status === "draft";
+    return ready.company.status === "active";
   });
-  assert(ready.company.name === "Pricing Page Studio", "CEO blueprint should be reviewable.");
-
-  const activated = await postJson<{ company: { status: string } }>(
-    `${baseUrl}/api/companies/${created.company.id}/activate`,
-    {},
-  );
-  assert(activated.company.status === "active", "Company should activate.");
+  // A company runs from creation (ADR 0044): there is no activation step.
+  assert(ready.company.name === "Pricing Page Studio", "CEO blueprint should be readable.");
 
   await runSchedulerOnce({
     projectRoot,
@@ -163,11 +158,12 @@ try {
   assert(reviews.reviews.some((review) => review.id === reviewResult.reviewId
     && review.summary === "Completed 0 task(s), 0 missing proof."), "Review should be readable.");
 
-  const killed = await postJson<{ paused: boolean; company: { status: string } }>(`${baseUrl}/api/kill-switch`, {
-    companyId: created.company.id,
-  });
-  assert(killed.paused, "Kill switch should set global pause.");
-  assert(killed.company.status === "review", "Kill switch should move company to review.");
+  const paused = await postJson<{ company: { status: string } }>(`${baseUrl}/api/companies/${created.company.id}/pause`, {});
+  assert(paused.company.status === "paused", "Pause Operating should pause the company.");
+  const resumed = await postJson<{ company: { status: string } }>(`${baseUrl}/api/companies/${created.company.id}/resume`, {});
+  assert(resumed.company.status === "active", "Resume Operating should resume the company.");
+  const stopped = await postJson<{ company: { status: string } }>(`${baseUrl}/api/companies/${created.company.id}/stop`, {});
+  assert(stopped.company.status === "stopped", "Stop Operating should stop the company.");
 
   console.log("Mock smoke test passed.");
   console.log(`Project root: ${projectRoot}`);
