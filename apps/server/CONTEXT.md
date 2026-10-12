@@ -50,10 +50,9 @@ Pause Operating and Stop Operating change the company status, then ask its live 
 
 ## Reconciliation Passes
 
-The runtime repairs state on read rather than trusting every writer. Three passes run during `buildCompanyState`, and the distinction between them matters:
+The runtime repairs state on read rather than trusting every writer. Two passes run during `buildCompanyState`, and the distinction between them matters:
 
 - `reconcileStaleRunningTasks` — a run whose deadline passed while nobody was watching.
-- `reconcileReviewTasksForAutomaticAcceptance` — **one-time per company**, marked in `runtime_state`. It exists for a single model change (ADR 0017) and every later call is a no-op.
 - `reconcileTaskHolds` — **standing, never marked**. It repairs the Hold invariant from current facts on every read, and also runs whenever one task's affordances are resolved, because a founder can act on a task without loading the board first. It is deliberately not a migration: the drift it repairs is a recurring class of mistake, not a one-time schema change.
 
 `reconcileTaskHolds` may sharpen the unattributed `runtime_interrupted` fallback using facts the pure rule cannot see — an upstream that still owes a deliverable makes it a dependency wait, not an unknown interruption. Refinement only ever narrows the fallback; an attributed Hold is left exactly as derived.

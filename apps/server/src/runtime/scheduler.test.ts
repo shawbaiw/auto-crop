@@ -28,7 +28,6 @@ import { ExecutionRegistry } from "./executionControl";
 import { pauseCompany, stopCompany } from "./companyOperation";
 import { OBSERVATION_POLICY_VERSION, summarizeRunActivity } from "./executionObservation";
 import {
-  reconcileFinalFounderReportUpgrade,
   runFinalFounderReportJobs,
   runSchedulerOnce,
   type SchedulerEvent,
@@ -1664,47 +1663,6 @@ describe("runSchedulerOnce", () => {
     expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("automatic_acceptance:task_1");
     const [completion] = repositories.listTaskCompletionEventsForCompany("company_1");
     expect(completion?.nextStepItems.some((item) => item.type === "founder_decision")).toBe(false);
-
-    client.close();
-  });
-
-  it("reconciles a pre-existing review task the deterministic model would accept (ADR 0017 migration)", async () => {
-    const stranded = createTaskRecord("task_1", "review", "medium");
-    const { projectRoot, repositories, client } = createSchedulerFixture([stranded]);
-    const proof = createProofForTask(stranded);
-    repositories.appendProof(proof);
-    repositories.createBusinessArtifact({
-      ...createBusinessArtifactRecord("business_artifact_1", stranded.id, proof.id),
-      artifactRole: "implementation",
-      artifactSubtype: "prototype_implementation",
-      artifactType: "implementation_summary",
-      taskType: "engineering.prototype_implementation",
-      payload: { summary: "Prototype implementation complete." },
-      reviewStatus: "unreviewed",
-    });
-    const events: SchedulerEventRecord[] = [];
-
-    await runSchedulerOnce({
-      projectRoot,
-      repositories,
-      adapters: [
-        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "" }),
-      ],
-      workerId: "worker_a",
-      maxTasks: 1,
-      now: () => new Date("2026-09-03T00:00:00.000Z"),
-      createId: createSequentialIdFactory(),
-      approvalRequired: () => false,
-      proofCollector: () => [],
-      emit: (event) => events.push(event),
-    });
-
-    expect(repositories.getTask("task_1")?.status).toBe("complete");
-    expect(repositories.getCurrentBusinessArtifactForTask("task_1")?.reviewStatus).toBe("accepted");
-    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("automatic_acceptance:task_1");
-    const [completion] = repositories.listTaskCompletionEventsForCompany("company_1");
-    expect(completion).toMatchObject({ taskId: "task_1", outcome: "accepted", acceptanceProvenance: "automatic_acceptance" });
-    expect(completion).not.toHaveProperty("outcomeSummaryText");
 
     client.close();
   });
@@ -3919,128 +3877,6 @@ describe("Final Founder Report on Company Quiescence", () => {
     client.close();
   });
 
-  describe("upgrade regeneration for pre-existing completed companies", () => {
-    function seededReportSections(): FinalFounderReport["sections"] {
-      return {
-        vision: { en: "Seeded vision.", zh: "预置愿景。" },
-        actualResult: { en: "Seeded result.", zh: "预置成果。" },
-        departmentContributions: [{ en: "Seeded contribution.", zh: "预置贡献。" }],
-        goalFit: { en: "Seeded fit.", zh: "预置契合。" },
-        remainingGaps: { en: "Seeded gaps.", zh: "预置差距。" },
-        recommendedNextStep: { en: "Seeded next step.", zh: "预置下一步。" },
-      };
-    }
-
-    it("gives an all-`complete` report-less company exactly one report on the first tick", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-        createTaskRecord("task_2", "complete", "low"),
-      ]);
-
-      const { emitted } = await runReportSweep({ projectRoot, repositories });
-
-      const reports = repositories.listFinalFounderReportsForCompany("company_1");
-      expect(reports).toHaveLength(1);
-      expect(reports[0]).toMatchObject({ isCurrent: true, generatedBy: "ceo_agent" });
-      expect(repositories.hasFinalFounderReportUpgradeRun("company_1")).toBe(true);
-      expect(emitted).toContainEqual(
-        expect.objectContaining({ type: "company_report_ready", companyId: "company_1" }),
-      );
-
-      client.close();
-    });
-
-    it("produces no duplicate report on a second tick", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-      ]);
-      const driver = persistentReportDriver({ projectRoot, repositories });
-
-      await driver.cycle();
-      driver.setClock("2026-08-20T00:00:00.000Z");
-      await driver.cycle();
-
-      expect(repositories.listFinalFounderReportsForCompany("company_1")).toHaveLength(1);
-
-      client.close();
-    });
-
-    it("leaves a company that already has a report untouched", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-      ]);
-      repositories.createFinalFounderReport({
-        id: "founder_report_seed",
-        companyId: "company_1",
-        classification: "achieved",
-        sections: seededReportSections(),
-        generatedBy: "ceo_agent",
-        isCurrent: true,
-        supersedesReportId: null,
-        createdAt: NOW,
-        updatedAt: NOW,
-      });
-
-      await runReportSweep({ projectRoot, repositories });
-
-      const reports = repositories.listFinalFounderReportsForCompany("company_1");
-      expect(reports).toHaveLength(1);
-      expect(reports[0].id).toBe("founder_report_seed");
-      expect(repositories.hasFinalFounderReportUpgradeRun("company_1")).toBe(true);
-
-      client.close();
-    });
-
-    it("does not enqueue for a company with a blocked task, leaving it to the normal quiescent path", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-        { ...createTaskRecord("task_2", "blocked", "low"), latestFailureReason: "retry_exhausted" },
-      ]);
-
-      // The upgrade pass in isolation: a non-`complete` task means no job is enqueued, but the
-      // one-time marker is still recorded.
-      reconcileFinalFounderReportUpgrade(
-        reportSweepOptions({ projectRoot, repositories }).options,
-        repositories.getCompany("company_1")!,
-        () => new Date(NOW),
-        createSequentialIdFactory(),
-      );
-      expect(repositories.listPendingFinalFounderReportJobs()).toHaveLength(0);
-      expect(repositories.hasFinalFounderReportUpgradeRun("company_1")).toBe(true);
-
-      // The normal quiescent path still gives it a report, classified `stalled`.
-      await runReportSweep({ projectRoot, repositories });
-      const reports = repositories.listFinalFounderReportsForCompany("company_1");
-      expect(reports).toHaveLength(1);
-      expect(reports[0].classification).toBe("stalled");
-
-      client.close();
-    });
-
-    it("still yields a deterministic_fallback report when the agent run fails on the upgrade path", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-      ]);
-
-      await runReportSweep({
-        projectRoot,
-        repositories,
-        ceoAdapter: createMockAgentAdapter({
-          id: "codex",
-          name: "Codex",
-          capabilities: ["code", "frontend", "test"],
-          status: "failed",
-        }),
-      });
-
-      const reports = repositories.listFinalFounderReportsForCompany("company_1");
-      expect(reports).toHaveLength(1);
-      expect(reports[0]).toMatchObject({ generatedBy: "deterministic_fallback", isCurrent: true });
-      expect(repositories.hasFinalFounderReportUpgradeRun("company_1")).toBe(true);
-
-      client.close();
-    });
-  });
 });
 
 describe("the settlement transaction", () => {

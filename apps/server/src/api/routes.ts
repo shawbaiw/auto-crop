@@ -51,7 +51,6 @@ import {
 import { pauseCompany, resumeCompany, stopCompany } from "../runtime/companyOperation";
 import { confirmReplanProposal, createReplanProposalForTask, rejectReplanProposal, ReplanNotOfferedError, StaleReplanProposalError } from "../runtime/replan";
 import { isReplanProposalCurrent } from "../runtime/replanContext";
-import { reconcileReviewTasksForAutomaticAcceptance } from "../runtime/reviewReconciliation";
 import { recoverTask } from "../runtime/taskRecovery";
 import {
   checkTaskAffordance,
@@ -1199,17 +1198,6 @@ function buildCompanyState(
   //
   // The repairs below stay: none of them judges an execution. They repair state the runtime already
   // settled, which is safe to do on a read and pointless to defer.
-  // One-time migration pass (ADR 0017 §Migration): the first company-state read after this company
-  // gets the deterministic model accepts the `review` tasks it would have accepted; a per-company
-  // marker makes every later read a no-op. Its events are read back below with the rest of company
-  // state; a downstream task it unblocks wakes the scheduler.
-  reconcileReviewTasksForAutomaticAcceptance({
-    repositories,
-    companyId: currentCompany.id,
-    now: options?.now,
-    createId: options?.createId,
-    requestSchedulerWake: () => options?.requestSchedulerWake?.("dependency_cascade_queued"),
-  });
   // Standing repair of the Task Hold invariant (ADR 0020): whatever parked a task — a path that
   // predates Holds, one that bypassed the seam, or a Hold left open after the task moved on — the
   // founder gets a task with an owner and a way forward rather than a silent stall.

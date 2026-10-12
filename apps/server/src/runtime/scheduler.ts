@@ -56,7 +56,6 @@ import { defaultExecutionRegistry, type ExecutionRegistry } from "./executionCon
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { buildProofContractInstructions } from "./proofContract";
-import { reconcileReviewTasksForAutomaticAcceptance } from "./reviewReconciliation";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
@@ -171,24 +170,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
       now,
       createId,
     });
-    // One-time migration pass (ADR 0017 §Migration): on the first tick after this company gets the
-    // deterministic model, accept the `review` tasks it would have accepted. A per-company marker
-    // makes every later call a no-op; any newly-queued downstream is picked up by
-    // `fetchQueuedTasks` in this same tick.
-    const reconciledReview = reconcileReviewTasksForAutomaticAcceptance({
-      repositories: input.repositories,
-      companyId: company.id,
-      now,
-      createId,
-      requestSchedulerWake: () => undefined,
-    });
-    for (const event of reconciledReview.events) {
-      emitTaskEvent(input, event);
-    }
-    // One-time upgrade pass (ADR 0018 §Upgrade regeneration): a company that finished before this
-    // feature shipped gets its closing report enqueued once. Also per-company-marked; `runFinal
-    // FounderReportJobs` (a later tick) authors it off this path.
-    reconcileFinalFounderReportUpgrade(input, company, now, createId);
   }
 
   if (input.repositories.executionBudget.ownerBlocked(input.workerId)) return result;
@@ -1453,56 +1434,6 @@ function standingReportCoversCompany(
       currentReport,
     )
   );
-}
-
-/**
- * One-time upgrade pass (ADR 0018 §Upgrade regeneration), run on the scheduler tick alongside the
- * ADR 0017 review reconciliation. A company that finished before the Final Founder Report shipped —
- * quiescent, every task `complete`, no report — gets exactly one report generation job enqueued
- * here. `runFinalFounderReportJobs` then authors it from the accepted Business Artifacts that already
- * exist, falling back deterministically if the CEO Agent run fails. No task is re-run and no per-task
- * Task Outcome Summary is synthesized for old work. A per-company marker in `runtime_state` makes
- * every later tick a no-op.
- *
- * Companies with a non-`complete` task are left to `maybeEnqueueFinalFounderReportJob`, which gives
- * them a normal report on their next quiescent tick; companies that already have a report (or an
- * in-flight job) are left alone. Safe to run more than once before the marker is set — the standing
- * report / job checks stop a duplicate.
- */
-export function reconcileFinalFounderReportUpgrade(
-  input: RunSchedulerOnceInput,
-  company: Company,
-  now: () => Date,
-  createId: (prefix: string) => string,
-): void {
-  const repositories = input.repositories;
-  if (repositories.hasFinalFounderReportUpgradeRun(company.id)) {
-    return;
-  }
-
-  const tasks = repositories.listTasksForCompany(company.id);
-  const everyTaskComplete = tasks.length > 0 && tasks.every((task) => task.status === "complete");
-  const alreadyReported =
-    repositories.getCurrentFinalFounderReport(company.id) !== null ||
-    repositories.getActiveFinalFounderReportJob(company.id) !== null;
-
-  if (everyTaskComplete && !alreadyReported) {
-    const context = gatherFinalFounderReportContext(input, company, now, createId);
-    if (context?.quiescent) {
-      const timestamp = now().toISOString();
-      repositories.createFinalFounderReportJob({
-        id: createId("founder_report_job"),
-        companyId: company.id,
-        status: "preparing",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        finishedAt: null,
-        failureMessage: null,
-      });
-    }
-  }
-
-  repositories.markFinalFounderReportUpgradeRun(company.id, now().toISOString());
 }
 
 function maybeEnqueueFinalFounderReportJob(
