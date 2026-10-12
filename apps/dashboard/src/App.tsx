@@ -61,7 +61,8 @@ export default function App({ apiClient }: AppProps) {
   const [founderVisionError, setFounderVisionError] = useState<string | null>(null);
   const [permissionMode, setPermissionMode] = useState("balanced");
   const [blueprint, setBlueprint] = useState<CreateCompanyResponse | null>(null);
-  // Read by the event-stream open handler, which outlives the render that subscribed it.
+  // Read by the event-stream callbacks, which outlive the render that subscribed them: the stream
+  // stays open across view changes, because events published while it reconnects are lost.
   const companyStatusRef = useRef<string | null>(null);
   companyStatusRef.current = blueprint?.company.status ?? null;
   const [isCreating, setIsCreating] = useState(false);
@@ -85,6 +86,8 @@ export default function App({ apiClient }: AppProps) {
   const [isPaused, setIsPaused] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [view, setView] = useState<AppView>("company-picker");
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("company");
   const [dashboardFocusTarget, setDashboardFocusTarget] = useState<DashboardFocusTarget | null>(null);
 
@@ -231,7 +234,7 @@ export default function App({ apiClient }: AppProps) {
           .then((response) => {
             if (cancelled || requestRevision !== revision) return;
             if (["task_review", "company_creation_completed", "company_creation_failed", "company_report_ready"].includes(event.type)) {
-              applyCompanyState(response, viewAfterReloadEvent(event, view, response.company.status));
+              applyCompanyState(response, viewAfterReloadEvent(event, viewRef.current, response.company.status));
             } else {
               // Keep the live activity stream and task status just received over SSE. Refresh the
               // authoritative business projection without replacing them with a snapshot in flight.
@@ -250,21 +253,29 @@ export default function App({ apiClient }: AppProps) {
           .catch(() => undefined);
       }
     }, () => {
-      // A creation that finished before this stream connected sent its completion to no one, so
-      // the creation view would wait forever. Ask the server whether it is still creating.
-      if (companyStatusRef.current !== "creating") return;
+      // The stream does not replay. Whatever happened before it first connected, or while it was
+      // reconnecting, reached no one — a creation that already finished, a task that moved — so the
+      // live view is known to be stale here and the snapshot is the newer truth. A later event's
+      // reload bumps the revision and supersedes this one.
+      // The setup form shows no company state, and re-entering it would reset the wizard step.
+      if (viewRef.current === "onboarding") return;
       const requestRevision = ++revision;
       void client
         .getCompanyState(blueprint.company.id)
         .then((response) => {
           if (cancelled || requestRevision !== revision) return;
-          if (companyStatusRef.current !== "creating" || response.company.status === "creating") return;
-          applyCompanyState(response, defaultCompanyView(response.company.status));
+          if (companyStatusRef.current === "creating") {
+            if (response.company.status !== "creating") {
+              applyCompanyState(response, defaultCompanyView(response.company.status));
+            }
+            return;
+          }
+          applyCompanyState(response, viewRef.current);
         })
         .catch(() => undefined);
     });
     return () => { cancelled = true; unsubscribe(); };
-  }, [blueprint?.company.id, client, view]);
+  }, [blueprint?.company.id, client]);
 
   useEffect(() => {
     function handleFullscreenChange() {

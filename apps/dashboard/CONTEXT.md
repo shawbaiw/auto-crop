@@ -35,7 +35,12 @@ They return with the next snapshot that agrees: `adoptSettledTasks` takes the se
 
 ### The event stream does not replay
 
-An event published while no subscriber is connected is gone. The dashboard subscribes only after `Create Company` returns, and a fast CEO Agent can finish the blueprint before that, so `company_creation_completed` reaches no one and the Creation Loading Page would wait forever. `subscribeEvents` therefore reports every (re)connection, and while a company is still `creating` the App re-reads its state at that moment instead of trusting that the event will come.
+An event published while no subscriber is connected is gone. The dashboard subscribes only after `Create Company` returns, and a fast CEO Agent can finish the blueprint before that, so `company_creation_completed` reaches no one and the Creation Loading Page would wait forever. The same happens to task events during a reconnect: the board keeps showing a task as `queued` that the server has already blocked.
+
+Two rules follow:
+
+- **The stream is per company, not per view.** Changing views must not close and reopen it — every reopen is a window in which events are lost. Callbacks read the current view from a ref instead of resubscribing.
+- **Every (re)connection resyncs from a snapshot.** `subscribeEvents` reports each open, and the App adopts the server's state there wholesale. This is the one place a snapshot overrides the live stream rather than waiting to agree with it (see Settled Task): after a gap, the live view is the one known to be stale. A reload for any later event bumps the revision and supersedes it.
 
 ## Modern UI Direction
 

@@ -2136,6 +2136,50 @@ describe("Dashboard App", () => {
     expect(screen.queryByText("Task started: Create landing page (codex).")).not.toBeInTheDocument();
   });
 
+  it("keeps one event stream across view changes", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompanyAndOpenDashboard(user);
+    const subscriptions = vi.mocked(api.subscribeEvents).mock.calls.length;
+
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Departments" }));
+    expect(await screen.findByText("Department Workspace")).toBeInTheDocument();
+
+    expect(api.subscribeEvents).toHaveBeenCalledTimes(subscriptions);
+  });
+
+  it("recovers task changes missed while the event stream was reconnecting", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    let openStream: (() => void) | undefined;
+    api.subscribeEvents = vi.fn((_companyId, _handler, onOpen) => {
+      openStream = onOpen;
+      return () => undefined;
+    });
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+
+    // task_started was published while the stream was down; only a snapshot can tell us.
+    const created = createCompanyResponse();
+    api.getCompanyState = vi.fn(async () => ({
+      ...created,
+      tasks: created.tasks.map((task) => (task.id === "task_1" ? { ...task, status: "running" } : task)),
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: [],
+    }));
+    act(() => openStream?.());
+
+    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) in progress"));
+  });
+
   it("shows failed task reasons in the Department Workspace from SSE", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
