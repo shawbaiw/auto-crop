@@ -620,7 +620,11 @@ export type ApiClient = {
     events: ServerEvent[];
   }>;
   triggerKillSwitch(companyId: string): Promise<{ paused: boolean; company: CompanySummary }>;
-  subscribeEvents(companyId: string, handler: (event: ServerEvent) => void): () => void;
+  /**
+   * `onOpen` runs on the first connection and on every reconnect. The stream does not replay
+   * events published while no subscriber was connected, so callers resync from a snapshot there.
+   */
+  subscribeEvents(companyId: string, handler: (event: ServerEvent) => void, onOpen?: () => void): () => void;
 };
 
 export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: number } = {}): ApiClient {
@@ -690,8 +694,11 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     async triggerKillSwitch(companyId) {
       return postJson(`${baseUrl}/api/kill-switch`, { companyId }, requestTimeoutMs);
     },
-    subscribeEvents(companyId, handler) {
+    subscribeEvents(companyId, handler, onOpen) {
       const events = new EventSource(`${baseUrl}/api/events?companyId=${encodeURIComponent(companyId)}`);
+      if (onOpen) {
+        events.addEventListener("open", () => onOpen());
+      }
       const listener = (event: MessageEvent) => {
         handler(JSON.parse(event.data) as ServerEvent);
       };

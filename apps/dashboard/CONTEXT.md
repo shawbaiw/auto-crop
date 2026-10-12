@@ -33,6 +33,10 @@ A task's `holds` and `affordances` were computed for the status the server saw. 
 
 They return with the next snapshot that agrees: `adoptSettledTasks` takes the server's version of a task only where its status matches what the live stream already showed. Where the two disagree the snapshot is simply in flight, and mixing the two is the same fabrication in a subtler place.
 
+### The event stream does not replay
+
+An event published while no subscriber is connected is gone. The dashboard subscribes only after `Create Company` returns, and a fast CEO Agent can finish the blueprint before that, so `company_creation_completed` reaches no one and the Creation Loading Page would wait forever. `subscribeEvents` therefore reports every (re)connection, and while a company is still `creating` the App re-reads its state at that moment instead of trusting that the event will come.
+
 ## Modern UI Direction
 
 New dashboard UI uses a modern workbench direction: clean surfaces, low visual noise, soft borders, restrained shadows, and product-specific affordances. Tailwind is the default styling path for new components. shadcn/Radix-derived components are acceptable for basic accessible interactions, but the product-defining surfaces stay owned by Auto-Crop components. See `docs/adr/0001-modern-dashboard-ui-foundation.md`.

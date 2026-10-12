@@ -1,5 +1,5 @@
 import { ExecutionActionsContext } from "./ui/tasks/TaskExecutionPanel";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   createApiClient,
   type AgentSummary,
@@ -61,6 +61,9 @@ export default function App({ apiClient }: AppProps) {
   const [founderVisionError, setFounderVisionError] = useState<string | null>(null);
   const [permissionMode, setPermissionMode] = useState("balanced");
   const [blueprint, setBlueprint] = useState<CreateCompanyResponse | null>(null);
+  // Read by the event-stream open handler, which outlives the render that subscribed it.
+  const companyStatusRef = useRef<string | null>(null);
+  companyStatusRef.current = blueprint?.company.status ?? null;
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [events, setEvents] = useState<ServerEvent[]>([]);
@@ -246,6 +249,19 @@ export default function App({ apiClient }: AppProps) {
           })
           .catch(() => undefined);
       }
+    }, () => {
+      // A creation that finished before this stream connected sent its completion to no one, so
+      // the creation view would wait forever. Ask the server whether it is still creating.
+      if (companyStatusRef.current !== "creating") return;
+      const requestRevision = ++revision;
+      void client
+        .getCompanyState(blueprint.company.id)
+        .then((response) => {
+          if (cancelled || requestRevision !== revision) return;
+          if (companyStatusRef.current !== "creating" || response.company.status === "creating") return;
+          applyCompanyState(response, defaultCompanyView(response.company.status));
+        })
+        .catch(() => undefined);
     });
     return () => { cancelled = true; unsubscribe(); };
   }, [blueprint?.company.id, client, view]);

@@ -323,7 +323,7 @@ describe("Dashboard App", () => {
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
     expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
-    expect(api.subscribeEvents).toHaveBeenCalledWith("company_1", expect.any(Function));
+    expect(api.subscribeEvents).toHaveBeenCalledWith("company_1", expect.any(Function), expect.any(Function));
 
     act(() => {
       api.lastEventHandler?.({
@@ -333,6 +333,36 @@ describe("Dashboard App", () => {
         status: "draft",
       });
     });
+
+    expect(await screen.findByText("Department Workspace")).toBeInTheDocument();
+    expect(api.getCompanyState).toHaveBeenCalledWith("company_1");
+  });
+
+  it("leaves the creation view when creation completed before the event stream connected", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    let openStream: (() => void) | undefined;
+    api.createCompany = vi.fn(async () => createCreatingCompanyResponse());
+    api.getCompanyState = vi.fn(async () => ({
+      ...createCompanyResponse(),
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: [],
+    }));
+    api.subscribeEvents = vi.fn((_companyId, _handler, onOpen) => {
+      openStream = onOpen;
+      return () => undefined;
+    });
+
+    render(<App apiClient={api} />);
+
+    await fillReadyToCreate(user);
+    await user.click(screen.getByRole("button", { name: /create company/i }));
+    expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+
+    // The completion event was published before this subscriber existed, so it never arrives.
+    act(() => openStream?.());
 
     expect(await screen.findByText("Department Workspace")).toBeInTheDocument();
     expect(api.getCompanyState).toHaveBeenCalledWith("company_1");
