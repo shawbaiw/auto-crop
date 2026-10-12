@@ -52,6 +52,8 @@ The modern theme uses shadcn-compatible token names. `src/components/ui` is rese
 
 Implement the redesign foundation before page migration: dashboard-local Tailwind/shadcn setup, modern tokens, primitive UI, and a reusable modern AppShell skeleton. The first page migration is done only when the pages keep their behavior, stop rendering CRT/Retro UI, and pass desktop/mobile visual inspection. Light theme ships first; dark mode waits. Existing localization rules still apply.
 
+After creation the founder works in one Workbench with three-column pages; its structure, CEO Office tabs, Execution Trace behaviour, status colours and the founder term list are in `docs/adr/0002-one-workbench.md`. Never show an internal term from that list's left column.
+
 Assemble the foundation manually rather than relying on shadcn CLI defaults. Start with Button, Input, Textarea, and Label primitives only; add heavier Radix-backed primitives when a migrated page needs them. A delivered page slice must not mix modern and Retro UI, even though temporary mixing is acceptable while developing that slice.
 
 ## Glossary
