@@ -27,6 +27,10 @@ The registry is exhaustive over the union, so a new affordance cannot be added w
 
 Adding an `inline` affordance also requires a handler keyed in `TaskStatusAction`, which is a compile error to omit.
 
+## Workbench Commands Are Decided Once
+
+Company-level founder commands (Create Company, Pause and Resume Operating, page navigation, the proof commands, fullscreen) are defined in `components/workbench/workbenchCommands.ts`, each with its label key, whether it can run now, and its handler. Every surface that offers one renders it from there: the legacy menu bar until P2, then the Workbench header. A surface lays commands out; it never decides on its own when one is available, so the two surfaces cannot disagree during the migration. Task actions are not commands: they come from server affordances, as above.
+
 ## Server State Is Never Synthesised
 
 A task's `holds` and `affordances` were computed for the status the server saw. When a live event moves a task locally, that pairing is broken, so the client **drops** them rather than carrying them onto a status they were not computed for — otherwise the board offers an action for a state the server never offered it for.

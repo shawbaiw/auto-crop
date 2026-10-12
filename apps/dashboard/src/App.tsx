@@ -24,6 +24,7 @@ import {
   type VisionGapSummary,
   type WaitStateSummary,
 } from "./api/client";
+import { workbenchCommands } from "./components/workbench/workbenchCommands";
 import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
 import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
 import { CompanyOperations } from "./pages/CompanyOperations";
@@ -791,30 +792,35 @@ export default function App({ apiClient }: AppProps) {
     }
   }
 
+  const commands = workbenchCommands({
+    view: view === "company-picker" ? "onboarding" : view,
+    canCreateCompany: view === "onboarding" && onboardingStep === "vision",
+    hasBlueprint: Boolean(blueprint),
+    hasProof: proof.length > 0,
+    isCreating,
+    isPaused,
+    canPauseOperating: blueprint?.company.status === "active",
+    isFullscreen,
+    fullscreenAvailable: isFullscreenAvailable(),
+    onCreateCompany: handleCreateCompany,
+    onPauseOperating: handlePauseOperating,
+    onResumeOperating: handleResumeOperating,
+    onViewTasks: () => focusDashboardSection("tasks"),
+    onViewDepartments: viewDepartmentWorkspace,
+    onViewOperations: viewCompanyOperations,
+    onLoadProof: handleMenuLoadProof,
+    onLoadReviews: handleMenuLoadReviews,
+    onOpenEvidence: handleOpenEvidence,
+    onToggleFullscreen: handleToggleFullscreen,
+  });
+
   const menuBar = (
     <DashboardMenuBar
       agents={agents}
-      fullscreenAvailable={isFullscreenAvailable()}
-      hasBlueprint={Boolean(blueprint)}
-      hasProof={proof.length > 0}
-      isCreating={isCreating}
-      canCreateCompany={view === "onboarding" && onboardingStep === "vision"}
-      isFullscreen={isFullscreen}
+      commands={commands}
       isPaused={isPaused}
-      canPauseOperating={blueprint?.company.status === "active"}
-      onCreateCompany={handleCreateCompany}
-      onPauseOperating={handlePauseOperating}
-      onResumeOperating={handleResumeOperating}
-      onLoadProof={handleMenuLoadProof}
-      onLoadReviews={handleMenuLoadReviews}
-      onOpenEvidence={handleOpenEvidence}
       onSelectAgent={handleSelectAgent}
-      onToggleFullscreen={handleToggleFullscreen}
-      onViewDepartments={viewDepartmentWorkspace}
-      onViewOperations={viewCompanyOperations}
-      onViewTasks={() => focusDashboardSection("tasks")}
       selectedAgentId={selectedAgentId}
-      view={view === "company-picker" ? "onboarding" : view}
     />
   );
 
