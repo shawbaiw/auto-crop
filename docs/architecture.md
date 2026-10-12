@@ -38,7 +38,7 @@ The dashboard uses a reusable flat CRT / Classic Macintosh interface layer rathe
 The application menu is inside the CRT screen face at the top of the dashboard. `DashboardMenuBar` maps runtime state to reusable menu groups:
 
 - `Auto-Crop`: product-level commands.
-- `Company`: create company, activate company, return to setup, and kill switch.
+- `Company`: create company, and pause or resume operating.
 - `Agents`: detected CEO agents, current-agent checked state, and disabled unavailable agents.
 - `Work`: task and department navigation.
 - `Proof`: load proof, load review, and evidence navigation.
@@ -86,11 +86,11 @@ Reads:
 
 Company lifecycle:
 
-- `POST /api/companies`
-- `POST /api/companies/:id/activate`
-- `POST /api/companies/:id/retry-creation`
+- `POST /api/companies` — the company runs as soon as its blueprint is written (ADR 0044)
+- `POST /api/companies/:id/retry-creation` — optionally with edited input
+- `POST /api/companies/:id/pause`, `POST /api/companies/:id/resume`
+- `POST /api/companies/:id/stop` — final; a Final Founder Report follows
 - `POST /api/companies/:id/ceo-intakes`
-- `POST /api/kill-switch`
 
 Moving a stopped task forward — each of these is a Resume Affordance, and each is guarded by one:
 

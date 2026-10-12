@@ -77,7 +77,7 @@ export function CompanyOperations({
         statusIcon={<Activity size={16} aria-hidden="true" />}
         title={t("operations.title")}
       />
-      {isPaused ? <section className="system-message system-message--danger">{t("app.globalPause")}</section> : null}
+      {isPaused ? <section className="system-message system-message--danger">{t("app.companyPaused")}</section> : null}
 
       <Workspace className="operations-grid">
         <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title={t("operations.companyState")} variant="inverted">

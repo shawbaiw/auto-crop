@@ -22,7 +22,7 @@ export * from "./runtime/executionProfile";
 export * from "./runtime/proof";
 export * from "./runtime/failure";
 export * from "./runtime/review";
-export * from "./runtime/killSwitch";
+export * from "./runtime/companyOperation";
 export * from "./runtime/executionEvents";
 export * from "./runtime/recoveryCoordinator";
 export * from "./runtime/automaticRecovery";

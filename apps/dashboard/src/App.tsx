@@ -64,6 +64,7 @@ export default function App({ apiClient }: AppProps) {
   // Read by the event-stream callbacks, which outlive the render that subscribed them: the stream
   // stays open across view changes, because events published while it reconnects are lost.
   const companyStatusRef = useRef<string | null>(null);
+  const isPaused = blueprint?.company.status === "paused";
   companyStatusRef.current = blueprint?.company.status ?? null;
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -83,7 +84,6 @@ export default function App({ apiClient }: AppProps) {
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [companyListLoadState, setCompanyListLoadState] = useState<CompanyListLoadState>("loading");
   const [companyListLoadError, setCompanyListLoadError] = useState<string | null>(null);
-  const [isPaused, setIsPaused] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [view, setView] = useState<AppView>("company-picker");
   const viewRef = useRef(view);
@@ -294,12 +294,6 @@ export default function App({ apiClient }: AppProps) {
         return;
       }
 
-      if (event.key === "Enter" && event.shiftKey && blueprint) {
-        event.preventDefault();
-        void handleActivateCompany();
-        return;
-      }
-
       if (event.key === "Enter" && view === "onboarding" && !isCreating) {
         event.preventDefault();
         if (onboardingStep === "vision") {
@@ -311,15 +305,9 @@ export default function App({ apiClient }: AppProps) {
       }
 
       const key = event.key.toLowerCase();
-      if (key === "b" && (view === "dashboard" || view === "department-workspace")) {
+      if (key === "k" && event.shiftKey && blueprint && (isPaused || blueprint.company.status === "active")) {
         event.preventDefault();
-        handleBackToSetup();
-        return;
-      }
-
-      if (key === "k" && event.shiftKey && view === "dashboard" && blueprint) {
-        event.preventDefault();
-        void handleKillSwitch();
+        void (isPaused ? handleResumeOperating() : handlePauseOperating());
         return;
       }
 
@@ -502,20 +490,6 @@ export default function App({ apiClient }: AppProps) {
     }
   }
 
-  async function handleActivateCompany() {
-    if (!blueprint) {
-      return;
-    }
-
-    const response = await client.activateCompany(blueprint.company.id);
-    writeCurrentCompanyId(blueprint.company.id);
-    setBlueprint({
-      ...blueprint,
-      company: response.company,
-    });
-    setView("dashboard");
-  }
-
   async function handleLoadProof() {
     const firstTask = blueprint?.tasks[0];
 
@@ -536,17 +510,17 @@ export default function App({ apiClient }: AppProps) {
     setReviews(response.reviews);
   }
 
-  async function handleKillSwitch() {
-    if (!blueprint) {
-      return;
-    }
+  // Pause Operating and Resume Operating (ADR 0044). The company's own status is what says it is paused.
+  async function handlePauseOperating() {
+    if (!blueprint) return;
+    const response = await client.pauseCompany(blueprint.company.id);
+    setBlueprint((current) => (current ? { ...current, company: response.company } : current));
+  }
 
-    const response = await client.triggerKillSwitch(blueprint.company.id);
-    setIsPaused(response.paused);
-    setBlueprint({
-      ...blueprint,
-      company: response.company,
-    });
+  async function handleResumeOperating() {
+    if (!blueprint) return;
+    const response = await client.resumeCompany(blueprint.company.id);
+    setBlueprint((current) => (current ? { ...current, company: response.company } : current));
   }
 
   /**
@@ -760,10 +734,6 @@ export default function App({ apiClient }: AppProps) {
     setView("onboarding");
   }
 
-  function handleBackToSetup() {
-    setView("onboarding");
-  }
-
   function focusDashboardSection(section: DashboardFocusSection) {
     if (blueprint && view === "department-workspace") {
       setView("dashboard");
@@ -831,10 +801,10 @@ export default function App({ apiClient }: AppProps) {
       canCreateCompany={view === "onboarding" && onboardingStep === "vision"}
       isFullscreen={isFullscreen}
       isPaused={isPaused}
-      onActivateCompany={handleActivateCompany}
-      onBackToSetup={handleBackToSetup}
+      canPauseOperating={blueprint?.company.status === "active"}
       onCreateCompany={handleCreateCompany}
-      onKillSwitch={handleKillSwitch}
+      onPauseOperating={handlePauseOperating}
+      onResumeOperating={handleResumeOperating}
       onLoadProof={handleMenuLoadProof}
       onLoadReviews={handleMenuLoadReviews}
       onOpenEvidence={handleOpenEvidence}
@@ -966,7 +936,7 @@ export default function App({ apiClient }: AppProps) {
         founderReport={blueprint.founderReport}
         isPaused={isPaused}
         menuBar={menuBar}
-        onKillSwitch={handleKillSwitch}
+        onPauseOperating={handlePauseOperating}
         onLoadProof={handleLoadProof}
         onLoadReviews={handleLoadReviews}
         objectives={blueprint.objectives}
@@ -989,7 +959,6 @@ export default function App({ apiClient }: AppProps) {
       founderVision={founderVision}
       founderVisionError={founderVisionError}
       isCreating={isCreating}
-      onActivateCompany={blueprint ? () => void handleActivateCompany() : undefined}
       onBack={goToPreviousStep}
       onCompanyNameChange={handleCompanyNameChange}
       onCreateCompany={handleCreateCompany}
@@ -1370,7 +1339,8 @@ function defaultCompanyView(companyStatus: string): AppView {
   if (companyStatus === "creating" || companyStatus === "creation_failed") {
     return "creating";
   }
-  return companyStatus === "draft" ? "department-workspace" : "dashboard";
+  // A created company opens on CEO Office, whatever its status (dashboard ADR 0002).
+  return "department-workspace";
 }
 
 function readCurrentCompanyId(): string | null {

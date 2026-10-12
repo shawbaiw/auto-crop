@@ -25,10 +25,9 @@ import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { createHandoffPackage, createProofCollector } from "./proof";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { ExecutionRegistry } from "./executionControl";
-import { triggerKillSwitch } from "./killSwitch";
+import { pauseCompany, stopCompany } from "./companyOperation";
 import { OBSERVATION_POLICY_VERSION, summarizeRunActivity } from "./executionObservation";
 import {
-  reconcileFinalFounderReportUpgrade,
   runFinalFounderReportJobs,
   runSchedulerOnce,
   type SchedulerEvent,
@@ -829,19 +828,22 @@ describe("runSchedulerOnce", () => {
 
 
   /**
-   * Emergency Stop against a dispatch that is actually running (execution-health P2b).
+   * Pausing or stopping a company against a dispatch that is actually running (ADR 0044).
    *
-   * It used to be a status change with no teeth: the task was written `cancelled`, every lock in the
-   * database was cleared — other companies' included — and the agent process kept running and
-   * spending. The founder was told the company had stopped while it had not.
+   * The stop must reach the agent process, and the task is only rewritten once that process has
+   * exited: a task requeued while its old agent still writes to the shared workspace would let the
+   * next dispatch start in a directory something else is writing.
    */
-  it("stops a live dispatch, and the dispatch it stopped settles nothing", async () => {
+  it.each([
+    ["pausing", "queued"],
+    ["stopping", "cancelled"],
+  ] as const)("%s a company stops its live dispatch and settles the task as %s", async (operation, expected) => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low", "product-brief"),
     ]);
     const registry = new ExecutionRegistry();
     const events: SchedulerEventRecord[] = [];
-    let stopResult: ReturnType<typeof triggerKillSwitch> | null = null;
+    let statusWhileStopping: string | undefined;
 
     const adapter: AgentAdapter = {
       id: "mock-worker", name: "Worker", capabilities: ["code"], contractCapabilities: ["artifact_envelope"], detect: async () => true,
@@ -849,15 +851,11 @@ describe("runSchedulerOnce", () => {
         if (request.metadata.phase === "execution_brief") {
           return { status: "complete", exitCode: 0, stdout: JSON.stringify({ purpose: "Build", approach: "Build it", expectedOutcome: "A prototype" }), stderr: "" };
         }
-        // The founder hits Emergency Stop while the agent is working.
-        stopResult = triggerKillSwitch({
-          companyId: "company_1",
-          repositories,
-          executionRegistry: registry,
-          now: () => new Date("2026-08-17T12:05:00.000Z"),
-        });
-        // The adapter is told to stop, and reports the process gone.
+        // The founder pauses or stops the company while the agent is working.
+        const input = { companyId: "company_1", repositories, executionRegistry: registry, now: () => new Date("2026-08-17T12:05:00.000Z") };
+        if (operation === "pausing") pauseCompany(input); else stopCompany(input);
         expect(request.signal?.aborted).toBe(true);
+        statusWhileStopping = repositories.getTask("task_1")?.status;
         request.runtimeActions!.submitArtifactEnvelope(validDelivery({ id: "task_1" }));
         return { status: "failed", exitCode: null, stdout: "", stderr: "stopped", failureReason: "cancelled", terminationConfirmed: true };
       },
@@ -871,34 +869,16 @@ describe("runSchedulerOnce", () => {
       emit: (event) => events.push(event),
     });
 
-    // The stop reached the live run, not just the row.
-    expect(stopResult).toMatchObject({ cancelledTasks: ["task_1"], unreachableTasks: [] });
-    // The task is cancelled, and the dispatch that lost the run wrote nothing over it.
-    expect(repositories.getTask("task_1")?.status).toBe("cancelled");
+    // Nothing was rewritten while the process was still running.
+    expect(statusWhileStopping).toBe("running");
+    expect(repositories.getTask("task_1")?.status).toBe(expected);
+    expect(repositories.listRunningAgentRuns("company_1")).toEqual([]);
+    // The dispatch that was stopped delivers nothing, and fails nothing.
     expect(repositories.listBusinessArtifactsForTask("task_1")).toEqual([]);
-    expect(repositories.listProofsForTask("task_1")).toEqual([]);
     expect(events.some((event) => event.type === "task_failed")).toBe(false);
-    // A cancelled company leaves no Holds behind for a founder to work through.
+    // Neither leaves a Hold for the founder to work through: a paused task is simply queued again.
     expect(repositories.listOpenTaskHolds("task_1")).toEqual([]);
-    client.close();
-  });
-
-  it("clears only the stopped company's locks", async () => {
-    const { repositories, client } = createSchedulerFixture([createTaskRecord("task_1", "running", "low")]);
-    // Another company, mid-run, with its own lock.
-    repositories.createCompany({ ...createCompanyRecord(), id: "company_2", name: "Other Studio" });
-    repositories.acquireTaskLock("task_1", "worker_a", "2026-08-17T12:00:00.000Z");
-    repositories.acquireTaskLock("other_task", "worker_b", "2026-08-17T12:00:00.000Z");
-
-    triggerKillSwitch({
-      companyId: "company_1",
-      repositories,
-      executionRegistry: new ExecutionRegistry(),
-      now: () => new Date("2026-08-17T12:05:00.000Z"),
-    });
-
-    // Stopping one company must not unlock another's live execution.
-    expect(repositories.listTaskLocks().map((lock) => lock.taskId)).toEqual(["other_task"]);
+    expect(repositories.listTaskLocks()).toEqual([]);
     client.close();
   });
 
@@ -1122,12 +1102,11 @@ describe("runSchedulerOnce", () => {
   });
 
   /**
-   * The reported gap, pinned. Dispatch read only the task's own status, so a company still in
-   * `draft` — a plan the founder has not accepted — started spending agent runs the moment it was
-   * created, and the activate button changed nothing (ADR 0033).
+   * The reported gap, pinned. Dispatch read only the task's own status, so a company that was not
+   * running still spent agent runs (ADR 0033). Only an `active` company dispatches (ADR 0044).
    */
   it("dispatches nothing for a company that is not running, and everything once it is", async () => {
-    for (const status of ["draft", "creating", "paused", "review"] as const) {
+    for (const status of ["creating", "creation_failed", "paused", "stopped"] as const) {
       const { projectRoot, repositories, client } = createSchedulerFixture(
         [createTaskRecord("task_1", "queued", "low")],
         { status },
@@ -1684,47 +1663,6 @@ describe("runSchedulerOnce", () => {
     expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("automatic_acceptance:task_1");
     const [completion] = repositories.listTaskCompletionEventsForCompany("company_1");
     expect(completion?.nextStepItems.some((item) => item.type === "founder_decision")).toBe(false);
-
-    client.close();
-  });
-
-  it("reconciles a pre-existing review task the deterministic model would accept (ADR 0017 migration)", async () => {
-    const stranded = createTaskRecord("task_1", "review", "medium");
-    const { projectRoot, repositories, client } = createSchedulerFixture([stranded]);
-    const proof = createProofForTask(stranded);
-    repositories.appendProof(proof);
-    repositories.createBusinessArtifact({
-      ...createBusinessArtifactRecord("business_artifact_1", stranded.id, proof.id),
-      artifactRole: "implementation",
-      artifactSubtype: "prototype_implementation",
-      artifactType: "implementation_summary",
-      taskType: "engineering.prototype_implementation",
-      payload: { summary: "Prototype implementation complete." },
-      reviewStatus: "unreviewed",
-    });
-    const events: SchedulerEventRecord[] = [];
-
-    await runSchedulerOnce({
-      projectRoot,
-      repositories,
-      adapters: [
-        createMockAgentAdapter({ id: "mock-worker", name: "Mock Worker", capabilities: ["code"], output: "" }),
-      ],
-      workerId: "worker_a",
-      maxTasks: 1,
-      now: () => new Date("2026-09-03T00:00:00.000Z"),
-      createId: createSequentialIdFactory(),
-      approvalRequired: () => false,
-      proofCollector: () => [],
-      emit: (event) => events.push(event),
-    });
-
-    expect(repositories.getTask("task_1")?.status).toBe("complete");
-    expect(repositories.getCurrentBusinessArtifactForTask("task_1")?.reviewStatus).toBe("accepted");
-    expect(events.map((event) => `${event.type}:${event.taskId}`)).toContain("automatic_acceptance:task_1");
-    const [completion] = repositories.listTaskCompletionEventsForCompany("company_1");
-    expect(completion).toMatchObject({ taskId: "task_1", outcome: "accepted", acceptanceProvenance: "automatic_acceptance" });
-    expect(completion).not.toHaveProperty("outcomeSummaryText");
 
     client.close();
   });
@@ -3682,6 +3620,23 @@ describe("Final Founder Report on Company Quiescence", () => {
     client.close();
   });
 
+  it("authors a report for a company stopped with work left, which is never quiescent on its own", async () => {
+    const { projectRoot, repositories, client } = createSchedulerFixture([
+      createTaskRecord("task_1", "queued", "low"),
+    ]);
+    const { options, emitted } = reportSweepOptions({ projectRoot, repositories });
+
+    stopCompany({ companyId: "company_1", repositories, executionRegistry: new ExecutionRegistry(), now: options.now, createId: options.createId });
+    await runSchedulerOnce(options);
+    await runFinalFounderReportJobs(options);
+
+    // The stop ran nothing: the queued task is still queued, and the report says where the company got to.
+    expect(repositories.getTask("task_1")?.status).toBe("queued");
+    expect(repositories.getCurrentFinalFounderReport("company_1")).toMatchObject({ isCurrent: true });
+    expect(emitted).toContainEqual(expect.objectContaining({ type: "company_report_ready", companyId: "company_1" }));
+    client.close();
+  });
+
   it("enqueues a tracked generation job and does not run the CEO Agent on the enqueuing tick", async () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "queued", "low"),
@@ -3922,128 +3877,6 @@ describe("Final Founder Report on Company Quiescence", () => {
     client.close();
   });
 
-  describe("upgrade regeneration for pre-existing completed companies", () => {
-    function seededReportSections(): FinalFounderReport["sections"] {
-      return {
-        vision: { en: "Seeded vision.", zh: "预置愿景。" },
-        actualResult: { en: "Seeded result.", zh: "预置成果。" },
-        departmentContributions: [{ en: "Seeded contribution.", zh: "预置贡献。" }],
-        goalFit: { en: "Seeded fit.", zh: "预置契合。" },
-        remainingGaps: { en: "Seeded gaps.", zh: "预置差距。" },
-        recommendedNextStep: { en: "Seeded next step.", zh: "预置下一步。" },
-      };
-    }
-
-    it("gives an all-`complete` report-less company exactly one report on the first tick", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-        createTaskRecord("task_2", "complete", "low"),
-      ]);
-
-      const { emitted } = await runReportSweep({ projectRoot, repositories });
-
-      const reports = repositories.listFinalFounderReportsForCompany("company_1");
-      expect(reports).toHaveLength(1);
-      expect(reports[0]).toMatchObject({ isCurrent: true, generatedBy: "ceo_agent" });
-      expect(repositories.hasFinalFounderReportUpgradeRun("company_1")).toBe(true);
-      expect(emitted).toContainEqual(
-        expect.objectContaining({ type: "company_report_ready", companyId: "company_1" }),
-      );
-
-      client.close();
-    });
-
-    it("produces no duplicate report on a second tick", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-      ]);
-      const driver = persistentReportDriver({ projectRoot, repositories });
-
-      await driver.cycle();
-      driver.setClock("2026-08-20T00:00:00.000Z");
-      await driver.cycle();
-
-      expect(repositories.listFinalFounderReportsForCompany("company_1")).toHaveLength(1);
-
-      client.close();
-    });
-
-    it("leaves a company that already has a report untouched", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-      ]);
-      repositories.createFinalFounderReport({
-        id: "founder_report_seed",
-        companyId: "company_1",
-        classification: "achieved",
-        sections: seededReportSections(),
-        generatedBy: "ceo_agent",
-        isCurrent: true,
-        supersedesReportId: null,
-        createdAt: NOW,
-        updatedAt: NOW,
-      });
-
-      await runReportSweep({ projectRoot, repositories });
-
-      const reports = repositories.listFinalFounderReportsForCompany("company_1");
-      expect(reports).toHaveLength(1);
-      expect(reports[0].id).toBe("founder_report_seed");
-      expect(repositories.hasFinalFounderReportUpgradeRun("company_1")).toBe(true);
-
-      client.close();
-    });
-
-    it("does not enqueue for a company with a blocked task, leaving it to the normal quiescent path", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-        { ...createTaskRecord("task_2", "blocked", "low"), latestFailureReason: "retry_exhausted" },
-      ]);
-
-      // The upgrade pass in isolation: a non-`complete` task means no job is enqueued, but the
-      // one-time marker is still recorded.
-      reconcileFinalFounderReportUpgrade(
-        reportSweepOptions({ projectRoot, repositories }).options,
-        repositories.getCompany("company_1")!,
-        () => new Date(NOW),
-        createSequentialIdFactory(),
-      );
-      expect(repositories.listPendingFinalFounderReportJobs()).toHaveLength(0);
-      expect(repositories.hasFinalFounderReportUpgradeRun("company_1")).toBe(true);
-
-      // The normal quiescent path still gives it a report, classified `stalled`.
-      await runReportSweep({ projectRoot, repositories });
-      const reports = repositories.listFinalFounderReportsForCompany("company_1");
-      expect(reports).toHaveLength(1);
-      expect(reports[0].classification).toBe("stalled");
-
-      client.close();
-    });
-
-    it("still yields a deterministic_fallback report when the agent run fails on the upgrade path", async () => {
-      const { projectRoot, repositories, client } = createSchedulerFixture([
-        createTaskRecord("task_1", "complete", "low"),
-      ]);
-
-      await runReportSweep({
-        projectRoot,
-        repositories,
-        ceoAdapter: createMockAgentAdapter({
-          id: "codex",
-          name: "Codex",
-          capabilities: ["code", "frontend", "test"],
-          status: "failed",
-        }),
-      });
-
-      const reports = repositories.listFinalFounderReportsForCompany("company_1");
-      expect(reports).toHaveLength(1);
-      expect(reports[0]).toMatchObject({ generatedBy: "deterministic_fallback", isCurrent: true });
-      expect(repositories.hasFinalFounderReportUpgradeRun("company_1")).toBe(true);
-
-      client.close();
-    });
-  });
 });
 
 describe("the settlement transaction", () => {

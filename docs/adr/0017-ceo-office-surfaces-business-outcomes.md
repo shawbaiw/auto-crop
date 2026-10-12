@@ -45,6 +45,8 @@ A **Founder Decision** is a choice reserved for the human founder that a complet
 
 ### Migration
 
+_Removed in October 2026: the one-time pass below served data that predates this ADR. All such data was test data and has been deleted (ADR 0044)._
+
 No data backfill: no Task Outcome Summary or Task Completion Event is synthesized for already-`complete` tasks. On ship, a one-time reconciliation re-evaluates tasks currently in `review` against the deterministic acceptance check — accepting those that qualify (provenance `automatic_acceptance`, no summary) and moving the rest to the restructured manual panel. Existing `blocked` tasks follow their normal paths. The known stuck company is not migrated, following the ADR 0015 precedent.
 
 ## Consequences

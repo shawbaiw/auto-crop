@@ -137,6 +137,31 @@ export function createRepositories(database: DatabaseClient) {
         .run(status, updatedAt, id);
     },
 
+    /** A failed creation retried with edited input: the company takes the new choices before its next attempt. */
+    updateCompanyCreationInput(
+      id: string,
+      input: { companyName: string; founderVision: string; locale?: string; selectedCeoAgentId: string; permissionMode: string; assets: string[] },
+      updatedAt: string,
+    ): void {
+      database
+        .prepare(
+          `UPDATE companies
+           SET name = ?, founder_vision = ?, locale = ?, selected_ceo_agent_id = ?, permission_mode = ?,
+               creation_input = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          input.companyName,
+          input.founderVision,
+          input.locale ?? "en",
+          input.selectedCeoAgentId,
+          input.permissionMode,
+          JSON.stringify(input),
+          updatedAt,
+          id,
+        );
+    },
+
     createCreationAttempt(attempt: CreationAttempt): void {
       database
         .prepare(
@@ -1150,23 +1175,6 @@ export function createRepositories(database: DatabaseClient) {
       });
     },
 
-    setGlobalPaused(paused: boolean): void {
-      database
-        .prepare(
-          `INSERT INTO runtime_state (key, value)
-           VALUES ('global_paused', ?)
-           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-        )
-        .run(paused ? "true" : "false");
-    },
-
-    isGlobalPaused(): boolean {
-      const row = database
-        .prepare("SELECT value FROM runtime_state WHERE key = 'global_paused'")
-        .get() as { value: string } | undefined;
-      return row?.value === "true";
-    },
-
     appendProof(proof: Proof): void {
       database
         .prepare(
@@ -1983,39 +1991,6 @@ export function createRepositories(database: DatabaseClient) {
       database.prepare("DELETE FROM verification_handoffs WHERE task_id = ?").run(taskId);
     },
 
-    hasReviewReconciliationRun(companyId: string): boolean {
-      const row = database
-        .prepare("SELECT value FROM runtime_state WHERE key = ?")
-        .get(reviewReconciliationKey(companyId)) as { value: string } | undefined;
-      return row !== undefined;
-    },
-
-    markReviewReconciliationRun(companyId: string, at: string): void {
-      database
-        .prepare(
-          `INSERT INTO runtime_state (key, value)
-           VALUES (?, ?)
-           ON CONFLICT(key) DO NOTHING`,
-        )
-        .run(reviewReconciliationKey(companyId), at);
-    },
-
-    hasFinalFounderReportUpgradeRun(companyId: string): boolean {
-      const row = database
-        .prepare("SELECT value FROM runtime_state WHERE key = ?")
-        .get(finalFounderReportUpgradeKey(companyId)) as { value: string } | undefined;
-      return row !== undefined;
-    },
-
-    markFinalFounderReportUpgradeRun(companyId: string, at: string): void {
-      database
-        .prepare(
-          `INSERT INTO runtime_state (key, value)
-           VALUES (?, ?)
-           ON CONFLICT(key) DO NOTHING`,
-        )
-        .run(finalFounderReportUpgradeKey(companyId), at);
-    },
 
     listRunningAgentRunsForOwner(ownerId: string): AgentRun[] {
       return (database.prepare("SELECT * FROM agent_runs WHERE status = 'running' AND owner_id = ? ORDER BY id")
@@ -2939,16 +2914,6 @@ function mapTaskDependency(row: TaskDependencyRow): TaskDependency {
 
 function taskAttemptsResetKey(taskId: string): string {
   return `task_attempts_reset:${taskId}`;
-}
-
-function reviewReconciliationKey(companyId: string): string {
-  // Bump the version suffix to force a re-run when the deterministic acceptance conditions change.
-  return `review_reconciliation_v1:${companyId}`;
-}
-
-function finalFounderReportUpgradeKey(companyId: string): string {
-  // Marks that the one-time Final Founder Report upgrade pass (ADR 0018) has examined this company.
-  return `final_founder_report_upgrade_v1:${companyId}`;
 }
 
 function stringifyLocalizedText(text: LocalizedText | null | undefined): string | null {

@@ -109,7 +109,7 @@ export async function createCompany(input: CreateCompanyInput): Promise<CreateCo
     selectedCeoAgentId: input.selectedCeoAgent.id,
     playbookId: blueprintResult.blueprint.company.playbookId,
     permissionMode: input.permissionMode,
-    status: "draft",
+    status: "active",
     createdAt: now,
     updatedAt: now,
   };

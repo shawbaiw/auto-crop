@@ -33,7 +33,6 @@ describe("Dashboard App", () => {
     expect(screen.getByLabelText("Company name")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Step 2 / Choose CEO" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Founder vision")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Activate Company" })).not.toBeInTheDocument();
     expect(api.listCompanies).toHaveBeenCalledTimes(1);
     expect(api.listAgents).not.toHaveBeenCalled();
     expect(api.subscribeEvents).not.toHaveBeenCalled();
@@ -176,7 +175,8 @@ describe("Dashboard App", () => {
     expect(await screen.findByRole("heading", { name: "Recent Companies" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /ops lab/i }));
 
-    expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
+    // A company opens on CEO Office (dashboard ADR 0002).
+    expect(await screen.findByText("Department Workspace")).toBeInTheDocument();
     expect(api.getCompanyState).toHaveBeenCalledWith("company_2");
     expect(window.localStorage.getItem("auto-crop.currentCompanyId")).toBe("company_2");
   });
@@ -331,7 +331,7 @@ describe("Dashboard App", () => {
         type: "company_creation_completed",
         companyId: "company_1",
         message: "Company Creation completed.",
-        status: "draft",
+        status: "active",
       });
     });
 
@@ -2127,7 +2127,7 @@ describe("Dashboard App", () => {
     expect(within(taskReview).getByRole("button", { name: "Return to department" })).toBeEnabled();
   });
 
-  it("returns to setup from workspace views without showing the generated blueprint", async () => {
+  it("offers no way back to setup from a company that is operating", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
@@ -2135,19 +2135,33 @@ describe("Dashboard App", () => {
 
     await createCompany(user);
     await user.click(screen.getByRole("menuitem", { name: "Company" }));
-    await user.click(screen.getByRole("menuitem", { name: "Back to Setup" }));
+    expect(screen.queryByRole("menuitem", { name: /setup/i })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.keyboard("{Meta>}b{/Meta}");
 
-    expect(await screen.findByRole("heading", { name: "Step 3 / Founder Vision" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Blueprint Review" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Create landing page")).not.toBeInTheDocument();
+    // A running company never returns to the name and vision form (ADR 0044).
+    expect(screen.getByText("Department Workspace")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Founder vision")).not.toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole("button", { name: "Activate Company" }));
-    expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
+  it("pauses and resumes operating from the Company menu", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompanyAndOpenDashboard(user);
+
     await user.click(screen.getByRole("menuitem", { name: "Company" }));
-    await user.click(screen.getByRole("menuitem", { name: "Back to Setup" }));
+    await user.click(screen.getByRole("menuitem", { name: "Pause Operating" }));
+    expect(api.pauseCompany).toHaveBeenCalledWith("company_1");
+    expect(await screen.findByText("This company is paused. No new work starts until you resume it.")).toBeInTheDocument();
 
-    expect(await screen.findByRole("heading", { name: "Step 3 / Founder Vision" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Blueprint Review" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Company" }));
+    await user.click(screen.getByRole("menuitem", { name: "Resume Operating" }));
+    expect(api.resumeCompany).toHaveBeenCalledWith("company_1");
+    await waitFor(() =>
+      expect(screen.queryByText("This company is paused. No new work starts until you resume it.")).not.toBeInTheDocument(),
+    );
   });
 
   it("updates task event stream messages from SSE", async () => {
@@ -3296,6 +3310,7 @@ describe("Dashboard App", () => {
     const restoreStorage = installMockLocalStorage({
       "auto-crop.currentCompanyId": "company_1",
       "auto-crop.currentLanguage": "en",
+      "auto-crop.currentView": "dashboard",
     });
     const api = createMockApiClient();
     const created = createCompanyResponse();
@@ -3350,7 +3365,6 @@ describe("Dashboard App", () => {
     await user.click(screen.getByRole("menuitem", { name: "Company" }));
 
     expect(screen.getByRole("menuitem", { name: "Create Company" })).toBeDisabled();
-    expect(screen.getByRole("menuitem", { name: "Kill Switch" })).toBeDisabled();
   });
 
   it("focuses dashboard sections from Work and Proof menu commands", async () => {
@@ -3430,7 +3444,10 @@ describe("Dashboard App", () => {
   });
 
   it("hydrates persisted company state, proof, and activity after refresh", async () => {
-    const restoreStorage = installMockLocalStorage({ "auto-crop.currentCompanyId": "company_1" });
+    const restoreStorage = installMockLocalStorage({
+      "auto-crop.currentCompanyId": "company_1",
+      "auto-crop.currentView": "dashboard",
+    });
     const api = createMockApiClient();
     const created = createCompanyResponse();
     api.getCompanyState = vi.fn(async () => ({
@@ -4046,7 +4063,7 @@ function createCompanyResponse(): Awaited<ReturnType<ApiClient["createCompany"]>
     company: {
       id: "company_1",
       name: "Pricing Page Studio",
-      status: "draft",
+      status: "active",
       playbookId: "ai-saas",
       founderVision: "Build an AI SaaS that creates pricing pages.",
     },
@@ -4782,16 +4799,6 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
         replanProposals: created.replanProposals ?? [],
       };
     },
-    async activateCompany(companyId) {
-      return {
-        company: {
-          id: companyId,
-          name: "Pricing Page Studio",
-          status: "active",
-          playbookId: "ai-saas",
-        },
-      };
-    },
     async getTaskProof(taskId) {
       return {
         proof: [
@@ -4910,17 +4917,21 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
       updatedTasks: [{ ...createCompanyResponse().tasks[0], id: "task_2", status: "queued" }],
       events: [{ type: "dependency_ready", taskId: "task_2", message: "Human Action confirmed; task queued." }],
     })),
-    async triggerKillSwitch(companyId) {
-      return {
-        paused: true,
-        company: {
-          id: companyId,
-          name: "Pricing Page Studio",
-          status: "review",
-          playbookId: "ai-saas",
-        },
-      };
-    },
+    pauseCompany: vi.fn(async (companyId: string) => ({
+      company: { id: companyId, name: "Pricing Page Studio", status: "paused", playbookId: "ai-saas" },
+      interruptedTasks: [],
+      unreachableTasks: [],
+    })),
+    resumeCompany: vi.fn(async (companyId: string) => ({
+      company: { id: companyId, name: "Pricing Page Studio", status: "active", playbookId: "ai-saas" },
+      interruptedTasks: [],
+      unreachableTasks: [],
+    })),
+    stopCompany: vi.fn(async (companyId: string) => ({
+      company: { id: companyId, name: "Pricing Page Studio", status: "stopped", playbookId: "ai-saas" },
+      interruptedTasks: [],
+      unreachableTasks: [],
+    })),
     subscribeEvents: vi.fn(function (
       this: ApiClient & { lastEventHandler?: (event: ServerEvent) => void },
       _companyId,

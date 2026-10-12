@@ -44,12 +44,15 @@ Two affordances have runtime state preconditions — refresh and recover. Those 
 
 An affordance that no route honours is worse than no affordance: it renders a button that silently does nothing. `taskAffordanceCoverage.test.ts` pins every `TaskAffordanceKind` to a route that actually changes state. A new kind must ship with its route in the same change.
 
+## Pausing And Stopping A Company Never Rewrites A Live Task
+
+Pause Operating and Stop Operating change the company status, then ask its live runs to stop through the execution registry. They never write the task. The scheduler settles a stopped run once its process exits: `company_paused` puts the task back in `queued`, and any other stop reason cancels it (`settleStoppedTask`). A workspace is shared by the runs of a task, so a task requeued under a live agent would let the next dispatch start in a directory something else is writing to. See ADR 0044.
+
 ## Reconciliation Passes
 
-The runtime repairs state on read rather than trusting every writer. Three passes run during `buildCompanyState`, and the distinction between them matters:
+The runtime repairs state on read rather than trusting every writer. Two passes run during `buildCompanyState`, and the distinction between them matters:
 
 - `reconcileStaleRunningTasks` — a run whose deadline passed while nobody was watching.
-- `reconcileReviewTasksForAutomaticAcceptance` — **one-time per company**, marked in `runtime_state`. It exists for a single model change (ADR 0017) and every later call is a no-op.
 - `reconcileTaskHolds` — **standing, never marked**. It repairs the Hold invariant from current facts on every read, and also runs whenever one task's affordances are resolved, because a founder can act on a task without loading the board first. It is deliberately not a migration: the drift it repairs is a recurring class of mistake, not a one-time schema change.
 
 `reconcileTaskHolds` may sharpen the unattributed `runtime_interrupted` fallback using facts the pure rule cannot see — an upstream that still owes a deliverable makes it a dependency wait, not an unknown interruption. Refinement only ever narrows the fallback; an attributed Hold is left exactly as derived.
@@ -194,7 +197,7 @@ Never read a runtime fact back from an agent's workspace. What a verifier was ha
 - **Execution Registry**: The in-process map from task to the live run's stop handle, so a stop request reaches a process rather than only a row. Per-process: a run owned by another worker is reported unreachable, not silently counted as stopped. _Avoid_: process table, job registry.
 - **Task lock run binding**: The run a task lock is held for (`task_locks.run_id`). A release must name the same run, which is what keeps an unwinding dispatch from releasing the lock its successor took — task and owner alone cannot tell two dispatches apart. _Avoid_: lock owner, worker id.
 - **Finalization grace**: The span past a run's budget in which it may still be settling (capture and settlement), during which it is not declared timed out. _Avoid_: extra timeout, slack.
-- **Running company**: `status = 'active'`, the only state `fetchQueuedTasks` dispatches from — activation is what starts spending, and `draft` / `creating` / `paused` / `review` dispatch nothing. _Avoid_: company enabled, not paused.
+- **Running company**: `status = 'active'`, the only state `fetchQueuedTasks` dispatches from. A company becomes active when its Company Creation completes, and `creating` / `creation_failed` / `paused` / `stopped` dispatch nothing (ADR 0044). _Avoid_: company enabled, not paused.
 - **Agent Quota Exhausted**: The failure reason and Hold for a run the CLI stopped because its account is out of quota — attributed to the account, not the agent, and not counted against the Bounded Recovery ceiling. _Avoid_: rate limit error, agent failure.
 - **Local Network capability**: `local_network`, held by runs whose deliverable needs a listener (`local-url`, `screenshot`); Codex takes it as `sandbox_workspace_write.network_access`, Claude Code cannot withhold it. _Avoid_: network flag, sandbox exception.
 - **Verification Gate**: A declared verifier's passing, current verdict on the exact artifact being consumed, which `resolveDependencyReadiness` requires before any other consumer may use that output. _Avoid_: verification dependency, blocking check.

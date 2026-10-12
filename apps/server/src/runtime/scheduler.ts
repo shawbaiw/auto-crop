@@ -56,12 +56,12 @@ import { defaultExecutionRegistry, type ExecutionRegistry } from "./executionCon
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
 import { buildProofContractInstructions } from "./proofContract";
-import { reconcileReviewTasksForAutomaticAcceptance } from "./reviewReconciliation";
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
 import { resolveSettledFacts } from "./settledFacts";
 import { parkOnUnblockRequest, unblockRequestOf } from "./unblockRequest";
+import { COMPANY_PAUSED_STOP_REASON } from "./companyOperation";
 import { applyTaskTransition } from "./taskTransition";
 import type { ProofReference } from "./artifactEnvelope";
 import {
@@ -163,10 +163,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
     failed: [],
   };
 
-  if (input.repositories.isGlobalPaused()) {
-    return result;
-  }
-
   for (const company of input.repositories.listCompanies()) {
     reconcileStaleRunningTasks({
       repositories: input.repositories,
@@ -174,24 +170,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
       now,
       createId,
     });
-    // One-time migration pass (ADR 0017 §Migration): on the first tick after this company gets the
-    // deterministic model, accept the `review` tasks it would have accepted. A per-company marker
-    // makes every later call a no-op; any newly-queued downstream is picked up by
-    // `fetchQueuedTasks` in this same tick.
-    const reconciledReview = reconcileReviewTasksForAutomaticAcceptance({
-      repositories: input.repositories,
-      companyId: company.id,
-      now,
-      createId,
-      requestSchedulerWake: () => undefined,
-    });
-    for (const event of reconciledReview.events) {
-      emitTaskEvent(input, event);
-    }
-    // One-time upgrade pass (ADR 0018 §Upgrade regeneration): a company that finished before this
-    // feature shipped gets its closing report enqueued once. Also per-company-marked; `runFinal
-    // FounderReportJobs` (a later tick) authors it off this path.
-    reconcileFinalFounderReportUpgrade(input, company, now, createId);
   }
 
   if (input.repositories.executionBudget.ownerBlocked(input.workerId)) return result;
@@ -1089,11 +1067,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                     return;
                   }
                   if (cancelled) {
-                    applyTaskTransition({ repositories: settled.repositories, task, status: "cancelled",
-                      executionSummary: { latestFailureReason: "cancelled", latestFailureMessage: failure },
-                      resolution: "cancelled", now, createId });
-                    appendAndEmitTaskEvent(settled, { task, type: "task_warning", status: "cancelled",
-                      failureReason: "cancelled", failureMessage: failure, message: `Task cancelled: ${task.title}.` });
+                    settleStoppedTask(settled, task, stopHandle?.stopReason ?? null, failure, now, createId);
                     return;
                   }
                   recordRunOutput(settled);
@@ -1266,11 +1240,15 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             if (budget!.activeInvocation && heldWorkspacePath) {
               isolateForUnconfirmedTermination(settled, result, task, heldForRunId!, heldWorkspacePath, now, createId);
             } else {
-              applyTaskTransition({ repositories: settled.repositories, task, status: reason === "cancelled" ? "cancelled" : "failed",
+              if (reason === "cancelled") {
+                settleStoppedTask(settled, task, stopHandle?.stopReason ?? null, failure, now, createId);
+                return;
+              }
+              applyTaskTransition({ repositories: settled.repositories, task, status: "failed",
                 executionSummary: { latestFailureReason: reason, latestFailureMessage: failure }, now, createId });
-              appendAndEmitTaskEvent(settled, { task, type: reason === "cancelled" ? "task_warning" : "task_failed", status: reason === "cancelled" ? "cancelled" : "failed", message: failure,
+              appendAndEmitTaskEvent(settled, { task, type: "task_failed", status: "failed", message: failure,
                 failureReason: reason, failureMessage: failure });
-              if (reason !== "cancelled") result.failed.push(task.id);
+              result.failed.push(task.id);
             }
           });
         } finally {
@@ -1363,8 +1341,9 @@ function gatherFinalFounderReportContext(
 ): FinalFounderReportContext | null {
   const repositories = input.repositories;
   // Only a running company with real work can be quiescent. A `creating` / `creation_failed` /
-  // `draft` / `paused` company is not "done", it just is not going yet.
-  if (company.status !== "active") {
+  // `paused` company is not "done", it just is not going yet. A stopped one is done by definition: the
+  // founder ended it, and its report says where it got to (ADR 0044).
+  if (company.status !== "active" && company.status !== "stopped") {
     return null;
   }
 
@@ -1396,7 +1375,7 @@ function gatherFinalFounderReportContext(
     now,
   });
 
-  const quiescent = isCompanyQuiescent({
+  const quiescent = company.status === "stopped" || isCompanyQuiescent({
     tasks,
     waitStates: attention.waitStates,
     humanActions: attention.humanActions,
@@ -1455,56 +1434,6 @@ function standingReportCoversCompany(
       currentReport,
     )
   );
-}
-
-/**
- * One-time upgrade pass (ADR 0018 §Upgrade regeneration), run on the scheduler tick alongside the
- * ADR 0017 review reconciliation. A company that finished before the Final Founder Report shipped —
- * quiescent, every task `complete`, no report — gets exactly one report generation job enqueued
- * here. `runFinalFounderReportJobs` then authors it from the accepted Business Artifacts that already
- * exist, falling back deterministically if the CEO Agent run fails. No task is re-run and no per-task
- * Task Outcome Summary is synthesized for old work. A per-company marker in `runtime_state` makes
- * every later tick a no-op.
- *
- * Companies with a non-`complete` task are left to `maybeEnqueueFinalFounderReportJob`, which gives
- * them a normal report on their next quiescent tick; companies that already have a report (or an
- * in-flight job) are left alone. Safe to run more than once before the marker is set — the standing
- * report / job checks stop a duplicate.
- */
-export function reconcileFinalFounderReportUpgrade(
-  input: RunSchedulerOnceInput,
-  company: Company,
-  now: () => Date,
-  createId: (prefix: string) => string,
-): void {
-  const repositories = input.repositories;
-  if (repositories.hasFinalFounderReportUpgradeRun(company.id)) {
-    return;
-  }
-
-  const tasks = repositories.listTasksForCompany(company.id);
-  const everyTaskComplete = tasks.length > 0 && tasks.every((task) => task.status === "complete");
-  const alreadyReported =
-    repositories.getCurrentFinalFounderReport(company.id) !== null ||
-    repositories.getActiveFinalFounderReportJob(company.id) !== null;
-
-  if (everyTaskComplete && !alreadyReported) {
-    const context = gatherFinalFounderReportContext(input, company, now, createId);
-    if (context?.quiescent) {
-      const timestamp = now().toISOString();
-      repositories.createFinalFounderReportJob({
-        id: createId("founder_report_job"),
-        companyId: company.id,
-        status: "preparing",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        finishedAt: null,
-        failureMessage: null,
-      });
-    }
-  }
-
-  repositories.markFinalFounderReportUpgradeRun(company.id, now().toISOString());
 }
 
 function maybeEnqueueFinalFounderReportJob(
@@ -2066,6 +1995,35 @@ function blockTaskForMissingDeliverable(
     now: input.now,
     createId: input.createId,
   });
+}
+
+/**
+ * Settle the task of a run that stopped because someone asked it to (ADR 0044). This runs only once
+ * the process has exited, so the task is never rewritten under a live agent.
+ *
+ * A company pause puts the task back in the queue: the paused company dispatches nothing, and its
+ * resume runs the task again from the start of the interrupted step. Any other stop — a founder
+ * cancelling the task, or the company being stopped for good — cancels it.
+ */
+function settleStoppedTask(
+  settled: RunSchedulerOnceInput,
+  task: Task,
+  stopReason: string | null,
+  failure: string,
+  now: () => Date,
+  createId: (prefix: string) => string,
+): void {
+  if (stopReason === COMPANY_PAUSED_STOP_REASON) {
+    applyTaskTransition({ repositories: settled.repositories, task, status: "queued", now, createId });
+    appendAndEmitTaskEvent(settled, { task, type: "task_warning", status: "queued",
+      message: `Task paused: ${task.title}. It runs again when the company resumes.` });
+    return;
+  }
+  applyTaskTransition({ repositories: settled.repositories, task, status: "cancelled",
+    executionSummary: { latestFailureReason: "cancelled", latestFailureMessage: failure },
+    resolution: "cancelled", now, createId });
+  appendAndEmitTaskEvent(settled, { task, type: "task_warning", status: "cancelled",
+    failureReason: "cancelled", failureMessage: failure, message: `Task cancelled: ${task.title}.` });
 }
 
 function unconfirmedTerminationMessage(task: Task, workspacePath: string): string {

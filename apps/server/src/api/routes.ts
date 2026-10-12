@@ -48,10 +48,9 @@ import {
   ceoReturnProgressLabelText,
   ceoReviewDecisionMessageText,
 } from "../runtime/localizedRuntimeText";
-import { triggerKillSwitch } from "../runtime/killSwitch";
+import { pauseCompany, resumeCompany, stopCompany } from "../runtime/companyOperation";
 import { confirmReplanProposal, createReplanProposalForTask, rejectReplanProposal, ReplanNotOfferedError, StaleReplanProposalError } from "../runtime/replan";
 import { isReplanProposalCurrent } from "../runtime/replanContext";
-import { reconcileReviewTasksForAutomaticAcceptance } from "../runtime/reviewReconciliation";
 import { recoverTask } from "../runtime/taskRecovery";
 import {
   checkTaskAffordance,
@@ -82,7 +81,12 @@ export type ApiServerOptions = {
   requestSchedulerWake?: (reason: SchedulerWakeReason) => void;
 };
 
-export type SchedulerWakeReason = "dependency_cascade_queued" | "parent_aggregation_queued" | "budget_authorized";
+export type SchedulerWakeReason =
+  | "dependency_cascade_queued"
+  | "parent_aggregation_queued"
+  | "budget_authorized"
+  | "company_created"
+  | "company_resumed";
 const creationAttemptTimeoutMs = 10 * 60 * 1000;
 const creationAttemptGraceMs = 30 * 1000;
 
@@ -257,15 +261,30 @@ async function routeRequest(
     return;
   }
 
-  const activateMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/activate$/);
-  if (method === "POST" && activateMatch) {
-    const companyId = activateMatch[1];
-    options.repositories.updateCompanyStatus(
+  const operationMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/(pause|resume|stop)$/);
+  if (method === "POST" && operationMatch) {
+    const [, companyId, operation] = operationMatch;
+    const input = {
       companyId,
-      "active",
-      (options.now ?? (() => new Date()))().toISOString(),
-    );
-    sendJson(response, 200, { company: options.repositories.getCompany(companyId) });
+      repositories: options.repositories,
+      now: options.now,
+      createId: options.createId,
+      stopCompanySessions: (id: string, reason: string) => defaultAgentSessionManager.stopCompanySessions(id, reason),
+    };
+    const result = operation === "pause" ? pauseCompany(input) : operation === "resume" ? resumeCompany(input) : stopCompany(input);
+    if (!result.ok) {
+      if (result.reason === "not_found") {
+        sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      } else {
+        sendJson(response, 409, {
+          error: `A ${result.status} company cannot ${operation}.`,
+          company: options.repositories.getCompany(companyId),
+        });
+      }
+      return;
+    }
+    if (operation === "resume") options.requestSchedulerWake?.("company_resumed");
+    sendJson(response, 200, result);
     return;
   }
 
@@ -284,9 +303,31 @@ async function routeRequest(
       return;
     }
 
-    const creationInput = company.creationInput;
-    if (!isCreationInput(creationInput)) {
+    const storedInput = company.creationInput;
+    if (!isCreationInput(storedInput)) {
       sendJson(response, 409, { error: "Company Creation input is missing and cannot be retried." });
+      return;
+    }
+
+    // The founder may correct what they asked for before trying again (ADR 0044). Anything they did not
+    // send keeps its original value.
+    const edits = await readJson<{
+      companyName?: string;
+      founderVision?: string;
+      locale?: string;
+      selectedCeoAgentId?: string;
+      permissionMode?: PolicyMode;
+    }>(request);
+    const creationInput = {
+      ...storedInput,
+      ...(edits.companyName !== undefined ? { companyName: edits.companyName.trim() } : {}),
+      ...(edits.founderVision !== undefined ? { founderVision: edits.founderVision.trim() } : {}),
+      ...(edits.locale !== undefined && isLocale(edits.locale) ? { locale: edits.locale as Locale } : {}),
+      ...(edits.selectedCeoAgentId !== undefined ? { selectedCeoAgentId: edits.selectedCeoAgentId } : {}),
+      ...(edits.permissionMode !== undefined ? { permissionMode: edits.permissionMode } : {}),
+    };
+    if (!creationInput.companyName) {
+      sendJson(response, 400, { error: "Company name is required." });
       return;
     }
 
@@ -298,6 +339,7 @@ async function routeRequest(
 
     const timestamp = (options.now ?? (() => new Date()))().toISOString();
     const attemptId = createRouteId(options, "creation_attempt");
+    options.repositories.updateCompanyCreationInput(company.id, creationInput, timestamp);
     options.repositories.updateCompanyStatus(company.id, "creating", timestamp);
     options.repositories.createCreationAttempt({
       id: attemptId,
@@ -430,6 +472,10 @@ async function routeRequest(
 
     if (!company) {
       sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      return;
+    }
+    if (company.status === "stopped") {
+      sendJson(response, 409, { error: "A stopped company takes no new input.", company });
       return;
     }
 
@@ -1133,22 +1179,6 @@ async function routeRequest(
     return;
   }
 
-  if (method === "POST" && url.pathname === "/api/kill-switch") {
-    const body = await readJson<{ companyId: string }>(request);
-    const result = triggerKillSwitch({
-      companyId: body.companyId,
-      repositories: options.repositories,
-      now: options.now,
-      stopCompanySessions: (companyId, reason) => defaultAgentSessionManager.stopCompanySessions(companyId, reason),
-    });
-    sendJson(response, 200, {
-      ...result,
-      paused: options.repositories.isGlobalPaused(),
-      company: options.repositories.getCompany(body.companyId),
-    });
-    return;
-  }
-
   sendJson(response, 404, { error: "Not found" });
 }
 
@@ -1168,17 +1198,6 @@ function buildCompanyState(
   //
   // The repairs below stay: none of them judges an execution. They repair state the runtime already
   // settled, which is safe to do on a read and pointless to defer.
-  // One-time migration pass (ADR 0017 §Migration): the first company-state read after this company
-  // gets the deterministic model accepts the `review` tasks it would have accepted; a per-company
-  // marker makes every later read a no-op. Its events are read back below with the rest of company
-  // state; a downstream task it unblocks wakes the scheduler.
-  reconcileReviewTasksForAutomaticAcceptance({
-    repositories,
-    companyId: currentCompany.id,
-    now: options?.now,
-    createId: options?.createId,
-    requestSchedulerWake: () => options?.requestSchedulerWake?.("dependency_cascade_queued"),
-  });
   // Standing repair of the Task Hold invariant (ADR 0020): whatever parked a task — a path that
   // predates Holds, one that bypassed the seam, or a Hold left open after the task moved on — the
   // founder gets a task with an owner and a way forward rather than a silent stall.
@@ -1435,15 +1454,11 @@ async function completeCompanyCreation(input: {
     if (!company) {
       throw new Error(`Company not found: ${companyId}`);
     }
-    const draftCompany: Company = {
-      ...company,
-      status: "draft",
-      updatedAt: timestamp,
-    };
-    options.repositories.updateCompanyStatus(companyId, "draft", timestamp);
+    // The records are written while the company is still `creating`, so the scheduler cannot pick up a
+    // half-written plan; the company starts operating only once all of it exists (ADR 0044).
     writeCompanyBlueprintRecords({
       projectRoot: options.projectRoot,
-      company: draftCompany,
+      company,
       blueprint: blueprintResult.blueprint,
       repositories: options.repositories,
       createdAt: timestamp,
@@ -1451,13 +1466,14 @@ async function completeCompanyCreation(input: {
       proofSchemaNormalizations: blueprintResult.proofSchemaNormalizations,
     });
     recordsWritten = true;
+    options.repositories.updateCompanyStatus(companyId, "active", timestamp);
 
     const recordsEvent = createCompanyEvent(
       options,
       companyId,
       "company_creation_records_created",
       "Company departments and tasks created.",
-      "draft",
+      "active",
     );
     options.repositories.appendCompanyEvent(recordsEvent);
     events.publish(summarizeCompanyEvent(recordsEvent));
@@ -1472,15 +1488,16 @@ async function completeCompanyCreation(input: {
       companyId,
       "company_creation_completed",
       "Company Creation completed.",
-      "draft",
+      "active",
     );
     options.repositories.appendCompanyEvent(completedEvent);
     events.publish(summarizeCompanyEvent(completedEvent));
+    options.requestSchedulerWake?.("company_created");
   } catch (error) {
     const timestamp = (options.now ?? (() => new Date()))().toISOString();
     const message = `Company Creation failed: ${(error as Error).message}`;
     if (recordsWritten) {
-      options.repositories.updateCompanyStatus(companyId, "draft", timestamp);
+      options.repositories.updateCompanyStatus(companyId, "active", timestamp);
       options.repositories.updateCreationAttempt(input.attemptId, {
         status: "complete",
         finishedAt: timestamp,
@@ -1498,7 +1515,7 @@ async function completeCompanyCreation(input: {
           message: "Company Creation completed.",
           messageText: localizedTextFromString("Company Creation completed."),
           createdAt: timestamp,
-          status: "draft",
+          status: "active",
         };
         try {
           options.repositories.appendCompanyEvent(completedEvent);
