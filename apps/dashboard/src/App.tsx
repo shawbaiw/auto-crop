@@ -963,7 +963,7 @@ export default function App({ apiClient }: AppProps) {
     );
   }
 
-  return renderAppFrame(
+  return renderModernAppFrame(
     <Onboarding
       agents={agents}
       agentLoadState={agentLoadState}
@@ -974,7 +974,7 @@ export default function App({ apiClient }: AppProps) {
       founderVision={founderVision}
       founderVisionError={founderVisionError}
       isCreating={isCreating}
-      menuBar={menuBar}
+      onActivateCompany={blueprint ? () => void handleActivateCompany() : undefined}
       onBack={goToPreviousStep}
       onCompanyNameChange={handleCompanyNameChange}
       onCreateCompany={handleCreateCompany}

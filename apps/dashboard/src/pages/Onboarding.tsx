@@ -1,11 +1,15 @@
-import { ArrowLeft, ArrowRight, Building2, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Play, Power, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { AgentSummary } from "../api/client";
-import { RetroButton, RetroField, RetroListRow, RetroPanel, RetroSelect, RetroStatus, RetroTextarea } from "../ui/retro";
-import { ModalFrame, PageHeader, Workspace } from "../ui/layout";
+import { AgentOption, CompanyFlowPage } from "../components/company-flow";
+import { ComposerInput } from "../components/composer";
+import { Alert, Button, Card, Input, Label, RadioGroup, RadioGroupItem } from "../components/ui";
+import { cn } from "../lib/utils";
 import { useLanguage } from "../ui/language";
 
 export type OnboardingStep = "company" | "agents" | "vision";
+
+const onboardingSteps: OnboardingStep[] = ["company", "agents", "vision"];
 
 export type OnboardingProps = {
   step: OnboardingStep;
@@ -19,8 +23,9 @@ export type OnboardingProps = {
   founderVisionError: string | null;
   permissionMode: string;
   isCreating: boolean;
-  menuBar?: ReactNode;
   createError: string | null;
+  /** Present when setup was reopened for a company that already has a blueprint: the way back to it. */
+  onActivateCompany?(): void;
   onCompanyNameChange(value: string): void;
   onRetryAgents(): void;
   onSelectAgent(agentId: string): void;
@@ -34,159 +39,188 @@ export type OnboardingProps = {
 export function Onboarding(props: OnboardingProps) {
   const { t } = useLanguage();
   const selectedAgent = props.agents.find((agent) => agent.id === props.selectedAgentId);
-  const titleId = "onboarding-dialog-title";
   const displayCompanyName = props.companyName.trim();
   const permissionOptions = [
     { value: "safe", label: t("onboarding.safe") },
     { value: "balanced", label: t("onboarding.balanced") },
     { value: "autonomous", label: t("onboarding.autonomous") },
   ];
+  const permissionLabel =
+    permissionOptions.find((option) => option.value === props.permissionMode)?.label ?? props.permissionMode;
 
   return (
-    <ModalFrame labelledBy={titleId} menuBar={props.menuBar}>
-          <PageHeader
-            eyebrow={displayCompanyName ? t("app.localAgentCompany") : t("onboarding.eyebrow")}
-            status={t("app.localAgentCompany")}
-            statusIcon={<Building2 size={16} aria-hidden="true" />}
-            title={displayCompanyName || t("app.title")}
-            titleId={titleId}
-          />
+    <CompanyFlowPage
+      eyebrow={displayCompanyName ? t("app.localAgentCompany") : t("onboarding.eyebrow")}
+      headerActions={
+        props.onActivateCompany ? (
+          <Button onClick={props.onActivateCompany} size="sm" variant="outline">
+            <Power aria-hidden="true" />
+            {t("menu.activateCompany")}
+          </Button>
+        ) : null
+      }
+      status={`${permissionLabel} ${t("onboarding.executionPolicy")}`}
+      statusIcon={<ShieldCheck aria-hidden="true" />}
+      title={displayCompanyName || t("app.title")}
+      titleId="onboarding-dialog-title"
+    >
+      <StepProgress step={props.step} />
 
-          <Workspace className="onboarding-wizard">
-            {props.step === "company" ? (
-              <RetroPanel title={t("onboarding.stepCompany")}>
-                <RetroField htmlFor="company-name" label={t("onboarding.companyName")}>
-                  <input
-                    aria-label={t("onboarding.companyName")}
-                    className="retro-input"
-                    id="company-name"
-                    onChange={(event) => props.onCompanyNameChange(event.target.value)}
-                    placeholder={t("onboarding.companyPlaceholder")}
-                    value={props.companyName}
-                  />
-                </RetroField>
-                {props.companyNameError ? (
-                  <div className="system-message system-message--danger" role="alert">
-                    {props.companyNameError}
-                  </div>
-                ) : null}
-                <div className="onboarding-wizard__actions">
-                  <RetroButton
-                    icon={<ArrowRight size={16} aria-hidden="true" />}
-                    onClick={props.onNext}
-                    variant="primary"
-                  >
-                    {t("onboarding.next")}
-                  </RetroButton>
-                </div>
-              </RetroPanel>
+      {props.step === "company" ? (
+        <StepCard title={t("onboarding.stepCompany")}>
+          <div className="grid gap-2">
+            <Label htmlFor="company-name">{t("onboarding.companyName")}</Label>
+            <Input
+              id="company-name"
+              onChange={(event) => props.onCompanyNameChange(event.target.value)}
+              placeholder={t("onboarding.companyPlaceholder")}
+              value={props.companyName}
+            />
+          </div>
+          {props.companyNameError ? (
+            <Alert role="alert" variant="destructive">
+              {props.companyNameError}
+            </Alert>
+          ) : null}
+          <StepActions>
+            <Button onClick={props.onNext}>
+              {t("onboarding.next")}
+              <ArrowRight aria-hidden="true" />
+            </Button>
+          </StepActions>
+        </StepCard>
+      ) : null}
+
+      {props.step === "agents" ? (
+        <StepCard title={t("onboarding.stepAgents")}>
+          <div className="grid gap-2">
+            {props.agentLoadState === "loading" ? <Alert role="status">{t("onboarding.scanningAgents")}</Alert> : null}
+            {props.agentLoadState === "failed" ? (
+              <Alert role="status" variant="destructive">
+                {t("onboarding.apiDisconnected")}
+              </Alert>
             ) : null}
-
-            {props.step === "agents" ? (
-              <RetroPanel title={t("onboarding.stepAgents")}>
-                <div className="agent-grid">
-                  {props.agentLoadState === "loading" ? (
-                    <div className="system-message" role="status">
-                      {t("onboarding.scanningAgents")}
-                    </div>
-                  ) : null}
-                  {props.agentLoadState === "failed" ? (
-                    <div className="system-message system-message--danger" role="status">
-                      {t("onboarding.apiDisconnected")}
-                    </div>
-                  ) : null}
-                  {props.agentLoadState === "ready" && props.agents.length === 0 ? (
-                    <div className="system-message" role="status">
-                      {t("onboarding.noAgents")}
-                    </div>
-                  ) : null}
-                  {props.agents.map((agent) => (
-                    <RetroListRow
-                      disabled={!agent.detected}
-                      key={agent.id}
-                      meta={agent.detected ? t("onboarding.available") : t("onboarding.unavailable")}
-                      onClick={() => props.onSelectAgent(agent.id)}
-                      selected={agent.id === props.selectedAgentId}
-                      title={agent.name}
-                    />
-                  ))}
-                </div>
-                {props.agentSelectionError ? (
-                  <div className="system-message system-message--danger" role="alert">
-                    {props.agentSelectionError}
-                  </div>
-                ) : null}
-                <div className="onboarding-wizard__actions">
-                  <RetroButton icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
-                    {t("onboarding.back")}
-                  </RetroButton>
-                  {props.agentLoadState === "failed" ? (
-                    <RetroButton icon={<RefreshCw size={16} aria-hidden="true" />} onClick={props.onRetryAgents}>
-                      {t("onboarding.retry")}
-                    </RetroButton>
-                  ) : null}
-                  <RetroButton
-                    icon={<ArrowRight size={16} aria-hidden="true" />}
-                    onClick={props.onNext}
-                    variant="primary"
-                  >
-                    {t("onboarding.next")}
-                  </RetroButton>
-                </div>
-              </RetroPanel>
+            {props.agentLoadState === "ready" && props.agents.length === 0 ? (
+              <Alert role="status">{t("onboarding.noAgents")}</Alert>
             ) : null}
-
-            {props.step === "vision" ? (
-              <RetroPanel title={t("onboarding.stepVision")}>
-                {selectedAgent ? <p className="muted">{t("onboarding.ceoAgent")}: {selectedAgent.name}</p> : null}
-                <RetroField htmlFor="founder-vision" label={t("onboarding.founderVision")}>
-                  <RetroTextarea
-                    aria-label={t("onboarding.founderVision")}
-                    id="founder-vision"
-                    onChange={(event) => props.onVisionChange(event.target.value)}
-                    placeholder={t("onboarding.visionPlaceholder")}
-                    value={props.founderVision}
-                  />
-                </RetroField>
-                {props.founderVisionError ? (
-                  <div className="system-message system-message--danger" role="alert">
-                    {props.founderVisionError}
-                  </div>
-                ) : null}
-                <RetroField htmlFor="permission-mode" label={t("onboarding.permissionMode")}>
-                  <RetroSelect
-                    id="permission-mode"
-                    label={t("onboarding.permissionMode")}
-                    onValueChange={props.onPermissionModeChange}
-                    options={permissionOptions}
-                    value={props.permissionMode}
-                  />
-                </RetroField>
-                {props.createError ? (
-                  <div className="system-message system-message--danger" role="alert">
-                    {props.createError}
-                  </div>
-                ) : null}
-                <div className="onboarding-wizard__actions">
-                  <RetroButton disabled={props.isCreating} icon={<ArrowLeft size={16} aria-hidden="true" />} onClick={props.onBack}>
-                    {t("onboarding.back")}
-                  </RetroButton>
-                  <RetroButton
-                    disabled={props.isCreating}
-                    icon={<Play size={16} aria-hidden="true" />}
-                    onClick={props.onCreateCompany}
-                    variant="primary"
-                  >
-                    {props.isCreating ? t("onboarding.creating") : t("menu.createCompany")}
-                  </RetroButton>
-                </div>
-              </RetroPanel>
+            {props.agents.map((agent) => (
+              <AgentOption
+                agent={agent}
+                key={agent.id}
+                onSelect={props.onSelectAgent}
+                selected={agent.id === props.selectedAgentId}
+              />
+            ))}
+          </div>
+          {props.agentSelectionError ? (
+            <Alert role="alert" variant="destructive">
+              {props.agentSelectionError}
+            </Alert>
+          ) : null}
+          <StepActions>
+            <Button onClick={props.onBack} variant="ghost">
+              <ArrowLeft aria-hidden="true" />
+              {t("onboarding.back")}
+            </Button>
+            {props.agentLoadState === "failed" ? (
+              <Button onClick={props.onRetryAgents} variant="outline">
+                <RefreshCw aria-hidden="true" />
+                {t("onboarding.retry")}
+              </Button>
             ) : null}
-          </Workspace>
+            <Button onClick={props.onNext}>
+              {t("onboarding.next")}
+              <ArrowRight aria-hidden="true" />
+            </Button>
+          </StepActions>
+        </StepCard>
+      ) : null}
 
-          <RetroStatus icon={<ShieldCheck size={16} aria-hidden="true" />}>
-            {props.permissionMode} {t("onboarding.executionPolicy")}
-          </RetroStatus>
-    </ModalFrame>
+      {props.step === "vision" ? (
+        <StepCard title={t("onboarding.stepVision")}>
+          {selectedAgent ? (
+            <p className="text-sm text-muted-foreground">
+              {t("onboarding.ceoAgent")}: <span className="font-medium text-foreground">{selectedAgent.name}</span>
+            </p>
+          ) : null}
+          <div className="grid gap-2">
+            <Label htmlFor="founder-vision">{t("onboarding.founderVision")}</Label>
+            <ComposerInput
+              id="founder-vision"
+              onChange={(event) => props.onVisionChange(event.target.value)}
+              placeholder={t("onboarding.visionPlaceholder")}
+              value={props.founderVision}
+            />
+          </div>
+          {props.founderVisionError ? (
+            <Alert role="alert" variant="destructive">
+              {props.founderVisionError}
+            </Alert>
+          ) : null}
+          <div className="grid gap-2">
+            <span className="text-sm font-medium leading-none text-foreground" id="permission-mode-label">
+              {t("onboarding.permissionMode")}
+            </span>
+            <RadioGroup
+              aria-labelledby="permission-mode-label"
+              className="sm:grid-cols-3"
+              onValueChange={props.onPermissionModeChange}
+              value={props.permissionMode}
+            >
+              {permissionOptions.map((option) => (
+                <Label
+                  className="flex cursor-pointer items-center gap-3 rounded-md border border-border bg-background px-3 py-3 font-normal transition-colors hover:bg-accent has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-secondary"
+                  htmlFor={`permission-mode-${option.value}`}
+                  key={option.value}
+                >
+                  <RadioGroupItem id={`permission-mode-${option.value}`} value={option.value} />
+                  {option.label}
+                </Label>
+              ))}
+            </RadioGroup>
+          </div>
+          {props.createError ? (
+            <Alert role="alert" variant="destructive">
+              {props.createError}
+            </Alert>
+          ) : null}
+          <StepActions>
+            <Button disabled={props.isCreating} onClick={props.onBack} variant="ghost">
+              <ArrowLeft aria-hidden="true" />
+              {t("onboarding.back")}
+            </Button>
+            <Button disabled={props.isCreating} onClick={props.onCreateCompany}>
+              <Play aria-hidden="true" />
+              {props.isCreating ? t("onboarding.creating") : t("menu.createCompany")}
+            </Button>
+          </StepActions>
+        </StepCard>
+      ) : null}
+    </CompanyFlowPage>
   );
+}
+
+function StepProgress({ step }: { step: OnboardingStep }) {
+  const current = onboardingSteps.indexOf(step);
+
+  return (
+    <div aria-hidden="true" className="grid grid-cols-3 gap-2">
+      {onboardingSteps.map((id, index) => (
+        <span className={cn("h-1 rounded-full bg-border", index <= current && "bg-primary")} key={id} />
+      ))}
+    </div>
+  );
+}
+
+function StepCard({ children, title }: { children: ReactNode; title: string }) {
+  return (
+    <Card className="grid gap-5 p-4 sm:p-6">
+      <h2 className="text-base font-semibold text-foreground">{title}</h2>
+      {children}
+    </Card>
+  );
+}
+
+function StepActions({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap justify-end gap-2">{children}</div>;
 }

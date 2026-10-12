@@ -27,12 +27,13 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
 
     expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "CEO Office" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "CEO Office" })).toBeInTheDocument();
     expect(document.querySelector("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Step 1 / Company Name" })).toBeInTheDocument();
     expect(screen.getByLabelText("Company name")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Step 2 / Choose CEO" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Founder vision")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Activate Company" })).not.toBeInTheDocument();
     expect(api.listCompanies).toHaveBeenCalledTimes(1);
     expect(api.listAgents).not.toHaveBeenCalled();
     expect(api.subscribeEvents).not.toHaveBeenCalled();
@@ -201,7 +202,7 @@ describe("Dashboard App", () => {
 
     await user.type(await screen.findByLabelText("Company name"), "MATT");
 
-    expect(screen.getByRole("dialog", { name: "MATT" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "MATT" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "MATT" })).toBeInTheDocument();
   });
 
@@ -2088,8 +2089,7 @@ describe("Dashboard App", () => {
     expect(screen.queryByRole("heading", { name: "Blueprint Review" })).not.toBeInTheDocument();
     expect(screen.queryByText("Create landing page")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("menuitem", { name: "Company" }));
-    await user.click(screen.getByRole("menuitem", { name: "Activate Company" }));
+    await user.click(screen.getByRole("button", { name: "Activate Company" }));
     expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: "Company" }));
     await user.click(screen.getByRole("menuitem", { name: "Back to Setup" }));
@@ -3063,7 +3063,7 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
 
-    await screen.findByRole("heading", { name: "CEO Office" });
+    await createCompany(user);
     await user.click(screen.getByRole("menuitem", { name: "View" }));
     await user.click(screen.getByRole("menuitem", { name: "Skin" }));
     await user.click(screen.getByRole("menuitem", { name: "极客02" }));
@@ -3076,27 +3076,26 @@ describe("Dashboard App", () => {
       "auto-crop.currentSkin": "geek02",
     });
     const api = createMockApiClient();
+    const user = userEvent.setup();
 
     try {
       render(<App apiClient={api} />);
 
-      await screen.findByRole("heading", { name: "CEO Office" });
+      await createCompany(user);
       expect(document.querySelector(".theme-root")).toHaveAttribute("data-skin", "geek02");
     } finally {
       restoreStorage();
     }
   });
 
-  it("switches language from the reusable View menu", async () => {
+  it("switches language from the onboarding language switch", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
 
     expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: "View" }));
-    await user.click(screen.getByRole("menuitem", { name: "Language" }));
-    await user.click(screen.getByRole("menuitem", { name: "中文" }));
+    await user.click(within(screen.getByRole("group", { name: "Language" })).getByRole("button", { name: "中文" }));
 
     expect(screen.getByRole("heading", { name: "CEO 办公室" })).toBeInTheDocument();
     expect(window.localStorage.getItem("auto-crop.currentLanguage")).toBe("zh");
@@ -3188,7 +3187,10 @@ describe("Dashboard App", () => {
       render(<App apiClient={api} />);
 
       expect(await screen.findByRole("heading", { name: "CEO 办公室" })).toBeInTheDocument();
-      expect(screen.getByRole("menuitem", { name: "视图" })).toBeInTheDocument();
+      expect(within(screen.getByRole("group", { name: "语言" })).getByRole("button", { name: "中文" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
     } finally {
       restoreStorage();
     }
@@ -3228,7 +3230,7 @@ describe("Dashboard App", () => {
     }
   });
 
-  it("selects detected agents from the reusable Agents menu", async () => {
+  it("selects detected agents from the onboarding agent list", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
@@ -3237,11 +3239,9 @@ describe("Dashboard App", () => {
     await user.type(await screen.findByLabelText("Company name"), "Pricing Page Studio");
     await user.click(screen.getByRole("button", { name: /next/i }));
     await screen.findByRole("heading", { name: "Step 2 / Choose CEO" });
-    await user.click(screen.getByRole("menuitem", { name: "Agents" }));
-    await user.click(screen.getByRole("menuitem", { name: "Claude Code" }));
-    await user.click(screen.getByRole("menuitem", { name: "Agents" }));
+    await user.click(await screen.findByRole("button", { name: /Claude Code/ }));
 
-    expect(screen.getByRole("menuitemcheckbox", { name: "Claude Code" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("button", { name: /Claude Code/ })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("keeps disabled menu commands visible without triggering actions", async () => {
@@ -3250,10 +3250,10 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
 
-    await screen.findByRole("heading", { name: "CEO Office" });
+    await createCompany(user);
     await user.click(screen.getByRole("menuitem", { name: "Company" }));
 
-    expect(screen.getByRole("menuitem", { name: "Back to Setup" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Create Company" })).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "Kill Switch" })).toBeDisabled();
   });
 
@@ -3326,7 +3326,7 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
 
-    await screen.findByRole("heading", { name: "CEO Office" });
+    await createCompany(user);
     await user.click(screen.getByRole("menuitem", { name: "View" }));
     await user.click(screen.getByRole("menuitem", { name: "Fullscreen" }));
 
@@ -3852,14 +3852,15 @@ async function fillReadyToCreate(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: /codex/i }));
   await user.click(screen.getByRole("button", { name: /next/i }));
   await user.type(screen.getByLabelText("Founder vision"), "Build an AI SaaS that creates pricing pages.");
-  await user.click(screen.getByRole("button", { name: /permission mode/i }));
-  await user.click(screen.getByRole("option", { name: "Balanced" }));
+  await user.click(within(screen.getByRole("radiogroup", { name: "Permission mode" })).getByRole("radio", { name: "Balanced" }));
 }
 
 async function createCompany(user: ReturnType<typeof userEvent.setup>) {
   await fillReadyToCreate(user);
   await user.click(screen.getByRole("button", { name: /create company/i }));
 
+  // Onboarding titles itself with the company name too, so wait for it to leave first.
+  await waitFor(() => expect(screen.queryByLabelText("Founder vision")).not.toBeInTheDocument());
   expect(await screen.findByRole("heading", { name: "Pricing Page Studio" })).toBeInTheDocument();
 }
 

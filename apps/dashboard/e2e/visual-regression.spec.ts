@@ -7,25 +7,57 @@ const viewports = [
   { height: 844, name: "mobile", width: 390 },
 ];
 
+const company = {
+  id: "company_visual",
+  name: "Pricing Page Studio",
+  status: "draft",
+  playbookId: "ai-saas",
+  locale: "en",
+  founderVision: "Build an AI SaaS that creates pricing pages.",
+  selectedCeoAgentId: "codex",
+  createdAt: "2026-08-17T00:00:00.000Z",
+  updatedAt: "2026-08-18T00:00:00.000Z",
+  taskCount: 3,
+};
+
 for (const viewport of viewports) {
   test(`captures modern company picker screenshots on ${viewport.name}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ height: viewport.height, width: viewport.width });
+    await mockApi(page, { companies: [company] });
     await page.goto("/");
-    await expect(page.locator("#company-picker-title")).toBeVisible();
-    await expect(page.locator(".crt-viewport")).toHaveCount(0);
-
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-    expect(overflow).toBeLessThanOrEqual(0);
+    await expect(page.getByRole("button", { name: /Pricing Page Studio/ })).toBeVisible();
+    await expectModernPage(page);
 
     await page.screenshot({ fullPage: true, path: testInfo.outputPath(`modern-company-picker-${viewport.name}.png`) });
   });
 
-  // The company picker is modern; onboarding is still legacy, so CRT coverage enters through it.
+  test(`captures modern onboarding screenshots for every step on ${viewport.name}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ height: viewport.height, width: viewport.width });
+    await mockApi(page, { companies: [] });
+    await page.goto("/");
+
+    await expect(page.getByLabel("Company name")).toBeVisible();
+    await expectModernPage(page);
+    await page.screenshot({ fullPage: true, path: testInfo.outputPath(`modern-onboarding-company-${viewport.name}.png`) });
+
+    await page.getByLabel("Company name").fill("Pricing Page Studio");
+    await page.getByRole("button", { name: "Next" }).click();
+    await expect(page.getByRole("button", { name: /Codex/ })).toBeVisible();
+    await expectModernPage(page);
+    await page.screenshot({ fullPage: true, path: testInfo.outputPath(`modern-onboarding-agents-${viewport.name}.png`) });
+
+    await page.getByRole("button", { name: "Next" }).click();
+    await page.getByLabel("Founder vision").fill("Build an AI SaaS that creates pricing pages.");
+    await expectModernPage(page);
+    await page.screenshot({ fullPage: true, path: testInfo.outputPath(`modern-onboarding-vision-${viewport.name}.png`) });
+  });
+
+  // Company flow pages are modern; the Department Workspace is still legacy, so CRT coverage enters there.
   test(`captures CRT visual regression screenshots for every skin on ${viewport.name}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ height: viewport.height, width: viewport.width });
 
     for (const skinId of skinIds) {
-      await openLegacyOnboarding(page, `/?skin=${skinId}&crt=full`);
+      await openLegacyWorkspace(page, `/?skin=${skinId}&crt=full`);
 
       const screenshot = await page.locator(".crt-screen-face").screenshot({
         path: testInfo.outputPath(`crt-${skinId}-${viewport.name}.png`),
@@ -36,7 +68,7 @@ for (const viewport of viewports) {
 }
 
 test("measures CRT full-quality frame cost", async ({ page }) => {
-  await openLegacyOnboarding(page, "/?skin=mono&crt=full");
+  await openLegacyWorkspace(page, "/?skin=mono&crt=full");
 
   const frameMetrics = await page.evaluate(
     () =>
@@ -69,11 +101,56 @@ test("measures CRT full-quality frame cost", async ({ page }) => {
   expect(frameMetrics.maxFrameMs).toBeLessThan(120);
 });
 
-async function openLegacyOnboarding(page: Page, url: string) {
+async function expectModernPage(page: Page) {
+  await expect(page.locator(".crt-viewport")).toHaveCount(0);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+}
+
+async function openLegacyWorkspace(page: Page, url: string) {
+  await page.addInitScript((companyId) => window.localStorage.setItem("auto-crop.currentCompanyId", companyId), company.id);
+  await mockApi(page, { companies: [company] });
   await page.goto(url);
-  await page.locator("#company-picker-title").waitFor();
-  await page.getByRole("button", { name: /create new company/i }).click();
   await expect(page.locator(".crt-screen-face")).toBeVisible();
+}
+
+/** Serves just enough of the API for a page to render, without a server or a live event stream. */
+async function mockApi(page: Page, { companies }: { companies: (typeof company)[] }) {
+  const state = {
+    company,
+    departments: [{ id: "dept_product", name: "Product", responsibility: "Define the first wedge.", leadAgentId: "codex" }],
+    objectives: [],
+    keyResults: [],
+    tasks: [],
+    ceoOfficeItems: [],
+    proof: [],
+    businessArtifacts: [],
+    reviews: [],
+    activity: [],
+    replanProposals: [],
+    taskProgressEvents: [],
+    taskCompletionEvents: [],
+    founderDecisions: [],
+    humanActions: [],
+    waitStates: [],
+    visionGaps: [],
+    ceoIntakes: [],
+  };
+  await page.route(
+    (url) => url.pathname.startsWith("/api/"),
+    async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/api/events") {
+        await route.abort();
+      } else if (path === "/api/agents") {
+        await route.fulfill({ json: { agents: [{ id: "codex", name: "Codex", capabilities: ["code"], detected: true }] } });
+      } else if (path.endsWith("/state")) {
+        await route.fulfill({ json: state });
+      } else {
+        await route.fulfill({ json: { companies } });
+      }
+    },
+  );
 }
 
 function renderedContrastRatio(png: Buffer) {
