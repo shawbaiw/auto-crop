@@ -1,7 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "baseUrl": ".",
     "jsx": "react-jsx",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "rootDir": ".",
     "types": ["node", "vite/client", "vitest/globals", "@testing-library/jest-dom"]
   },

@@ -1,8 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 * {
   box-sizing: border-box;
 }
 
 :root {
+  --background: 210 33% 98%;
+  --foreground: 222 38% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 38% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 38% 12%;
+  --primary: 222 55% 18%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 214 32% 92%;
+  --secondary-foreground: 222 38% 16%;
+  --muted: 214 32% 93%;
+  --muted-foreground: 218 14% 42%;
+  --accent: 168 58% 90%;
+  --accent-foreground: 180 48% 17%;
+  --destructive: 0 72% 48%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 215 22% 84%;
+  --input: 215 22% 84%;
+  --ring: 184 70% 34%;
+  --radius: 0.5rem;
   --font-ui: Monaco, "SFMono-Regular", "Courier New", ui-monospace, monospace;
   --pixel-unit: 2px;
   --border-px: 2px;
@@ -74,6 +98,35 @@ button {
 
 p {
   line-height: 1.5;
+}
+
+.modern-dashboard-shell {
+  --background: 210 33% 98%;
+  --foreground: 222 38% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 38% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 38% 12%;
+  --primary: 222 55% 18%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 214 32% 92%;
+  --secondary-foreground: 222 38% 16%;
+  --muted: 214 32% 93%;
+  --muted-foreground: 218 14% 42%;
+  --accent: 168 58% 90%;
+  --accent-foreground: 180 48% 17%;
+  --destructive: 0 72% 48%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 215 22% 84%;
+  --input: 215 22% 84%;
+  --ring: 184 70% 34%;
+  --radius: 0.5rem;
+}
+
+.modern-dashboard-shell button,
+.modern-dashboard-shell h1,
+.modern-dashboard-shell h2 {
+  text-transform: none;
 }
 
 .theme-root {
