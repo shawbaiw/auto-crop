@@ -75,6 +75,36 @@ describe("Dashboard App", () => {
     expect(document.querySelector("[class*='retro-']")).not.toBeInTheDocument();
   });
 
+  it("keeps the language chosen on the company picker after moving to onboarding", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    api.listCompanies = vi.fn(async () => ({
+      companies: [
+        {
+          id: "company_2",
+          name: "Ops Lab",
+          status: "active",
+          playbookId: "ai-saas",
+          selectedCeoAgentId: "codex",
+          createdAt: "2026-08-17T00:00:00.000Z",
+          updatedAt: "2026-08-18T00:00:00.000Z",
+          taskCount: 2,
+        },
+      ],
+    }));
+
+    render(<App apiClient={api} />);
+
+    const languages = await screen.findByRole("group", { name: "Language" });
+    await user.click(within(languages).getByRole("button", { name: "中文" }));
+    expect(await screen.findByRole("heading", { name: "最近公司" })).toBeInTheDocument();
+    expect(within(languages).getByRole("button", { name: "中文" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("button", { name: "创建新公司" }));
+
+    expect(await screen.findByText("创始人设置")).toBeInTheDocument();
+  });
+
   it("retries company loading without passing the click event as load options", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();

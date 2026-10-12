@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cardClassName } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 export type ModernAppShellProps = {
@@ -23,11 +24,11 @@ export function ModernAppShell({
       <div className="mx-auto grid min-h-screen w-full max-w-[1440px] grid-rows-[auto_minmax(0,1fr)_auto] px-4 py-4 font-sans sm:px-6 lg:px-8">
         {header ? <header className="z-10 border-b border-border/70 py-3">{header}</header> : null}
         <div className={cn("grid min-h-0 gap-5 py-5", sidebar ? "lg:grid-cols-[280px_minmax(0,1fr)]" : "grid-cols-1")}>
-          {sidebar ? <aside className="min-h-0 rounded-lg border border-border/80 bg-card p-3 text-card-foreground shadow-workbench">{sidebar}</aside> : null}
+          {sidebar ? <aside className={cn(cardClassName, "min-h-0 p-3")}>{sidebar}</aside> : null}
           <main
             className={cn(
               "min-w-0",
-              surface === "panel" && "rounded-lg border border-border/80 bg-card p-4 text-card-foreground shadow-workbench sm:p-6",
+              surface === "panel" && cn(cardClassName, "p-4 sm:p-6"),
               className,
             )}
           >

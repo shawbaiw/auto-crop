@@ -1,5 +1,5 @@
 import { inflateSync } from "node:zlib";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const skinIds = ["mono", "classic", "powder", "geek01", "geek02", "retro01", "retro02", "game01", "game02"];
 const viewports = [
@@ -8,12 +8,24 @@ const viewports = [
 ];
 
 for (const viewport of viewports) {
+  test(`captures modern company picker screenshots on ${viewport.name}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ height: viewport.height, width: viewport.width });
+    await page.goto("/");
+    await expect(page.locator("#company-picker-title")).toBeVisible();
+    await expect(page.locator(".crt-viewport")).toHaveCount(0);
+
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+
+    await page.screenshot({ fullPage: true, path: testInfo.outputPath(`modern-company-picker-${viewport.name}.png`) });
+  });
+
+  // The company picker is modern; onboarding is still legacy, so CRT coverage enters through it.
   test(`captures CRT visual regression screenshots for every skin on ${viewport.name}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ height: viewport.height, width: viewport.width });
 
     for (const skinId of skinIds) {
-      await page.goto(`/?skin=${skinId}&crt=full`);
-      await expect(page.locator(".crt-screen-face")).toBeVisible();
+      await openLegacyOnboarding(page, `/?skin=${skinId}&crt=full`);
 
       const screenshot = await page.locator(".crt-screen-face").screenshot({
         path: testInfo.outputPath(`crt-${skinId}-${viewport.name}.png`),
@@ -24,8 +36,7 @@ for (const viewport of viewports) {
 }
 
 test("measures CRT full-quality frame cost", async ({ page }) => {
-  await page.goto("/?skin=mono&crt=full");
-  await expect(page.locator(".crt-screen-face")).toBeVisible();
+  await openLegacyOnboarding(page, "/?skin=mono&crt=full");
 
   const frameMetrics = await page.evaluate(
     () =>
@@ -57,6 +68,13 @@ test("measures CRT full-quality frame cost", async ({ page }) => {
   expect(frameMetrics.averageFrameMs).toBeLessThan(50);
   expect(frameMetrics.maxFrameMs).toBeLessThan(120);
 });
+
+async function openLegacyOnboarding(page: Page, url: string) {
+  await page.goto(url);
+  await page.locator("#company-picker-title").waitFor();
+  await page.getByRole("button", { name: /create new company/i }).click();
+  await expect(page.locator(".crt-screen-face")).toBeVisible();
+}
 
 function renderedContrastRatio(png: Buffer) {
   const pixels = parsePngRgb(png);

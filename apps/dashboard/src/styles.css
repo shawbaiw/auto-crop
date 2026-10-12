@@ -100,33 +100,14 @@ p {
   line-height: 1.5;
 }
 
-.modern-dashboard-shell {
-  --background: 210 33% 98%;
-  --foreground: 222 38% 12%;
-  --card: 0 0% 100%;
-  --card-foreground: 222 38% 12%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222 38% 12%;
-  --primary: 222 55% 18%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 214 32% 92%;
-  --secondary-foreground: 222 38% 16%;
-  --muted: 214 32% 93%;
-  --muted-foreground: 218 14% 42%;
-  --accent: 168 58% 90%;
-  --accent-foreground: 180 48% 17%;
-  --destructive: 0 72% 48%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 215 22% 84%;
-  --input: 215 22% 84%;
-  --ring: 184 70% 34%;
-  --radius: 0.5rem;
-}
-
-.modern-dashboard-shell button,
-.modern-dashboard-shell h1,
-.modern-dashboard-shell h2 {
-  text-transform: none;
+/*
+ * Legacy Retro UI uppercases every button and heading; modern surfaces opt out until those rules are removed.
+ * In the base layer with :where() so it beats the legacy element selectors but never a utility like `uppercase`.
+ */
+@layer base {
+  .modern-dashboard-shell :where(button, h1, h2, h3) {
+    text-transform: none;
+  }
 }
 
 .theme-root {
@@ -162,7 +143,7 @@ p {
 .retro-menu-bar {
   align-self: start;
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   color: var(--ink);
   height: 34px;
   min-height: 34px;
@@ -207,7 +188,7 @@ p {
 
 .retro-menu-popover {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   box-shadow: 4px 4px 0 color-mix(in srgb, var(--ink) 34%, transparent);
   display: grid;
   left: 0;
@@ -278,7 +259,7 @@ p {
 .page-header {
   align-items: stretch;
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   grid-template-columns: 1fr auto;
 }
@@ -322,19 +303,6 @@ h3 {
   gap: var(--screen-gap);
 }
 
-.company-picker__list {
-  display: grid;
-  gap: 8px;
-}
-
-.company-picker__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: flex-end;
-  margin-top: 12px;
-}
-
 .app-modal-backdrop {
   align-items: center;
   background:
@@ -343,7 +311,7 @@ h3 {
     color-mix(in srgb, var(--field) 82%, var(--ink));
   background-position: 0 0, 4px 4px, 0 0;
   background-size: 8px 8px, 8px 8px, auto;
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   min-height: min(780px, calc(100vh - 92px));
   padding: clamp(14px, 3vw, 32px);
@@ -351,7 +319,7 @@ h3 {
 
 .app-modal-card {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   box-shadow: calc(var(--hard-shadow-offset) + 4px) calc(var(--hard-shadow-offset) + 4px) 0 var(--titlebar);
   display: grid;
   gap: var(--screen-gap);
@@ -374,7 +342,7 @@ h3 {
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--ink) 16%, transparent) 0 1px, transparent 1px 4px),
     var(--surface-alt);
-  border-left: var(--border-px) solid var(--border);
+  border-left: var(--border-px) solid var(--retro-border);
 }
 
 .app-modal-card::-webkit-scrollbar-thumb {
@@ -392,13 +360,13 @@ h3 {
 }
 
 .app-modal-card > .retro-status {
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   width: fit-content;
 }
 
 .creation-progress {
   background: var(--surface-alt);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 8px;
   padding: 12px;
@@ -408,7 +376,7 @@ h3 {
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--ink) 24%, transparent) 0 1px, transparent 1px 12px),
     var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   height: 28px;
   overflow: hidden;
   position: relative;
@@ -518,7 +486,7 @@ h3 {
 }
 
 .ceo-task-dependency-graph__lane {
-  border: 1px solid color-mix(in srgb, var(--border) 62%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--retro-border) 62%, var(--surface));
   display: grid;
   gap: 10px;
   grid-template-rows: auto 1fr;
@@ -528,7 +496,7 @@ h3 {
 
 .ceo-task-dependency-graph__lane > h4 {
   align-items: center;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 46%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--retro-border) 46%, var(--surface));
   color: var(--accent-secondary);
   display: flex;
   font-size: 0.76rem;
@@ -544,7 +512,7 @@ h3 {
 }
 
 .ceo-task-dependency-graph__edges {
-  border-top: 1px dashed color-mix(in srgb, var(--border) 52%, var(--surface));
+  border-top: 1px dashed color-mix(in srgb, var(--retro-border) 52%, var(--surface));
   color: var(--accent-secondary);
   display: flex;
   flex-wrap: wrap;
@@ -553,7 +521,7 @@ h3 {
 }
 
 .ceo-task-dependency-graph__edges > span {
-  border: 1px solid color-mix(in srgb, var(--border) 46%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--retro-border) 46%, var(--surface));
   font-size: 0.72rem;
   padding: 2px 6px;
 }
@@ -565,7 +533,7 @@ h3 {
 
 .ceo-task-node__main {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   color: var(--ink);
   cursor: pointer;
   display: grid;
@@ -652,7 +620,7 @@ h3 {
   background:
     linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
     var(--surface-alt);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 12px;
   padding: 12px;
@@ -685,7 +653,7 @@ h3 {
 .ceo-pending-item {
   align-items: center;
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 10px;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -710,7 +678,7 @@ h3 {
   background:
     linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
     var(--surface-alt);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 12px;
   padding: 12px;
@@ -739,7 +707,7 @@ h3 {
 .ceo-outcome,
 .ceo-founder-decision {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -814,7 +782,7 @@ h3 {
 }
 
 .ceo-office-timeline__item--quiet {
-  border-left: 4px solid var(--border);
+  border-left: 4px solid var(--retro-border);
 }
 
 .ceo-office-timeline__title {
@@ -874,7 +842,7 @@ h3 {
 
 .retro-dialog {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   box-shadow: calc(var(--hard-shadow-offset) + 4px) calc(var(--hard-shadow-offset) + 4px) 0 var(--titlebar);
   display: grid;
   gap: 10px;
@@ -933,7 +901,7 @@ h3 {
 }
 
 .ceo-founder-decision__option {
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 6px;
   padding: 8px;
@@ -955,7 +923,7 @@ h3 {
 .human-action-card,
 .wait-state-card {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 10px;
   padding: 10px;
@@ -995,7 +963,7 @@ h3 {
 
 .ceo-task-review-detail {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 10px;
   padding: 10px;
@@ -1009,7 +977,7 @@ h3 {
 
 .ceo-task-review-detail__grid > section,
 .ceo-task-review-detail__grid > details {
-  border: 1px solid color-mix(in srgb, var(--border) 56%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--retro-border) 56%, var(--surface));
   display: grid;
   gap: 8px;
   padding: 8px;
@@ -1074,7 +1042,7 @@ h3 {
   background:
     linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
     var(--surface-alt);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -1092,7 +1060,7 @@ h3 {
   background:
     linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
     var(--surface-alt);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 12px;
   grid-template-rows: auto auto minmax(120px, 1fr) auto;
@@ -1102,7 +1070,7 @@ h3 {
 
 .department-leader-report__mission {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   font-size: 0.9rem;
   line-height: 1.45;
   padding: 8px 10px;
@@ -1150,7 +1118,7 @@ h3 {
 }
 
 .department-progress-flow__step::after {
-  background: var(--border);
+  background: var(--retro-border);
   content: "";
   height: 100%;
   left: 13px;
@@ -1165,8 +1133,8 @@ h3 {
 
 .department-progress-flow__step > span {
   align-items: center;
-  background: color-mix(in srgb, var(--surface) 82%, var(--border));
-  border: 1px solid color-mix(in srgb, var(--border) 36%, var(--surface));
+  background: color-mix(in srgb, var(--surface) 82%, var(--retro-border));
+  border: 1px solid color-mix(in srgb, var(--retro-border) 36%, var(--surface));
   color: color-mix(in srgb, var(--ink) 72%, var(--surface));
   display: inline-flex;
   font-size: 0.75rem;
@@ -1180,8 +1148,8 @@ h3 {
 
 .department-progress-flow__step--complete > span,
 .department-progress-flow__step--current > span {
-  background: color-mix(in srgb, var(--surface) 74%, var(--border));
-  border-color: color-mix(in srgb, var(--border) 46%, var(--surface));
+  background: color-mix(in srgb, var(--surface) 74%, var(--retro-border));
+  border-color: color-mix(in srgb, var(--retro-border) 46%, var(--surface));
   color: var(--ink);
 }
 
@@ -1220,7 +1188,7 @@ h3 {
 .department-message-box {
   align-self: end;
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -1239,7 +1207,7 @@ h3 {
 }
 
 .department-message-box__send {
-  background: color-mix(in srgb, var(--surface) 70%, var(--border));
+  background: color-mix(in srgb, var(--surface) 70%, var(--retro-border));
   bottom: 10px;
   box-shadow: none;
   min-height: 34px;
@@ -1260,7 +1228,7 @@ h3 {
 }
 
 .department-message-box__send:disabled {
-  background: color-mix(in srgb, var(--surface) 78%, var(--border));
+  background: color-mix(in srgb, var(--surface) 78%, var(--retro-border));
   color: color-mix(in srgb, var(--ink) 58%, var(--surface));
   cursor: not-allowed;
 }
@@ -1340,7 +1308,7 @@ h3 {
 
 /* A Revision's before and after, side by side (ADR 0043). Wide content wraps instead of scrolling. */
 .replan-diff {
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   border-collapse: collapse;
   font-size: 0.8rem;
   table-layout: fixed;
@@ -1355,7 +1323,7 @@ h3 {
 
 .replan-diff th,
 .replan-diff td {
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   overflow-wrap: anywhere;
   padding: 6px 8px;
   text-align: left;
@@ -1381,14 +1349,14 @@ h3 {
   background:
     linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
     var(--surface-alt);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   font-size: 0.72rem;
   padding: 7px 8px;
 }
 
 .retro-panel {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   color: var(--ink);
   min-width: 0;
 }
@@ -1439,13 +1407,13 @@ h3 {
   background:
     linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
     var(--surface-alt);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   padding: 7px 8px;
 }
 
 .retro-button {
   align-items: center;
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   box-shadow: var(--hard-shadow-offset) var(--hard-shadow-offset) 0 var(--titlebar);
   cursor: pointer;
   display: inline-flex;
@@ -1512,7 +1480,7 @@ h3 {
 .retro-input,
 .retro-select-trigger {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   color: var(--ink);
   min-height: 42px;
   padding: 10px 12px;
@@ -1552,7 +1520,7 @@ h3 {
 
 .retro-select-popover {
   background: var(--surface);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   box-shadow: var(--hard-shadow-offset) var(--hard-shadow-offset) 0 var(--titlebar);
   display: grid;
   gap: 0;
@@ -1598,7 +1566,7 @@ h3 {
 
 .retro-list-row {
   background: var(--surface-alt);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   color: var(--ink);
   cursor: pointer;
   display: grid;
@@ -1643,7 +1611,7 @@ h3 {
 .retro-status {
   align-items: center;
   background: var(--titlebar);
-  border-left: var(--border-px) solid var(--border);
+  border-left: var(--border-px) solid var(--retro-border);
   color: var(--titlebar-ink);
   display: inline-flex;
   font-size: 0.78rem;
@@ -1655,7 +1623,7 @@ h3 {
 }
 
 .app-shell > .retro-status {
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   width: fit-content;
 }
 
@@ -1665,7 +1633,7 @@ h3 {
 
 .retro-badge {
   background: var(--surface-alt);
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   color: var(--ink);
   display: inline-flex;
   font-size: 0.74rem;
@@ -1708,7 +1676,7 @@ h3 {
     var(--surface-alt);
   background-position: 0 0, 4px 4px, 0 0;
   background-size: 8px 8px, 8px 8px, auto;
-  border: var(--border-px) solid var(--border);
+  border: var(--border-px) solid var(--retro-border);
   font-size: 0.8rem;
   font-weight: 700;
   line-height: 1.45;
@@ -1875,12 +1843,12 @@ h3 {
 
   .retro-status {
     border-left: 0;
-    border-top: var(--border-px) solid var(--border);
+    border-top: var(--border-px) solid var(--retro-border);
     justify-content: flex-start;
   }
 
   .app-shell > .retro-status {
-    border: var(--border-px) solid var(--border);
+    border: var(--border-px) solid var(--retro-border);
   }
 
   .agent-grid {

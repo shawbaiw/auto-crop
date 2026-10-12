@@ -819,21 +819,21 @@ export default function App({ apiClient }: AppProps) {
     />
   );
 
-  function renderAppFrame(children: ReactNode) {
-    return (
-      <ThemeProvider defaultSkin={defaultSkin}>
-        <LanguageProvider defaultLanguage={defaultLanguage} syncLocale={blueprint?.company.locale ?? null}>
-          <CRTViewport>{children}</CRTViewport>
-        </LanguageProvider>
-      </ThemeProvider>
-    );
-  }
-
+  // LanguageProvider stays the root element of every view, modern or legacy, so React keeps one
+  // instance across navigation and a language chosen on one view survives the move to the next.
   function renderModernAppFrame(children: ReactNode) {
     return (
       <LanguageProvider defaultLanguage={defaultLanguage} syncLocale={blueprint?.company.locale ?? null}>
         {children}
       </LanguageProvider>
+    );
+  }
+
+  function renderAppFrame(children: ReactNode) {
+    return renderModernAppFrame(
+      <ThemeProvider defaultSkin={defaultSkin}>
+        <CRTViewport>{children}</CRTViewport>
+      </ThemeProvider>,
     );
   }
 
