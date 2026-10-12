@@ -129,8 +129,8 @@
 - **Onboarding Wizard**: The sequential setup flow shown before a company is created. It collects company name, CEO Agent, Founder Vision, and Permission Mode one step at a time.
 - **Creation Loading Page**: The CRT-styled intermediate page shown after `Create Company` while the backend waits for the CEO Agent to produce a blueprint.
 - **Department Workspace**: The post-creation default view that shows a left rail of `CEO` plus generated departments, and a right-side role workspace for the selected role.
-- **Reusable Retro UI**: Existing dashboard primitives under `apps/dashboard/src/ui/`, including `AppShell`, `PageHeader`, `Workspace`, `RetroPanel`, `RetroButton`, `RetroField`, `RetroTextarea`, `RetroSelect`, `RetroListRow`, `RetroBadge`, `RetroStatus`, `VideotexLog`, and `VideotexKeyValue`.
+- **Reusable Retro UI**: Legacy dashboard primitives under `apps/dashboard/src/ui/`, including `AppShell`, `PageHeader`, `Workspace`, `RetroPanel`, `RetroButton`, `RetroField`, `RetroTextarea`, `RetroSelect`, `RetroListRow`, `RetroBadge`, `RetroStatus`, `VideotexLog`, and `VideotexKeyValue`. They remain available during the modern dashboard migration but are not the target visual system. _Avoid_: new dashboard design system.
 
 ## UI Implementation Rule
 
-New dashboard flows must reuse existing reusable retro components wherever possible. Create new UI primitives only when the existing component set has a clear gap, and prefer small composition components over new styling systems.
+New dashboard UI work targets the Modern Dashboard UI rather than extending CRT or retro styling. During migration, keep legacy Retro UI working until the replacing surface is ready, then remove the obsolete retro styling and CRT effects.
