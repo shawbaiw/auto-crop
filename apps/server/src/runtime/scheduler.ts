@@ -60,8 +60,8 @@ import { reconcileReviewTasksForAutomaticAcceptance } from "./reviewReconciliati
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
+import { resolveSettledFacts } from "./settledFacts";
 import { applyTaskTransition } from "./taskTransition";
-import { pendingReworkFeedback } from "./verificationRework";
 import type { ProofReference } from "./artifactEnvelope";
 import {
   isVerifyingTask,
@@ -616,7 +616,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             budget?.enter("preparing_brief");
             observer.enterPhase("preparing_brief");
             beat();
-            const preparation = await prepareExecutionBrief({ adapter: controlledAdapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs });
+            // Read once per dispatch, so the brief and the work are told the same facts.
+            const settledFacts = resolveSettledFacts(input.repositories, task);
+            const preparation = await prepareExecutionBrief({ adapter: controlledAdapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs, settledFacts });
             const remainingMs = budget ? (budget.reason ? 0 : budget.remainingMs())
               : request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
             const willDispatchSubstantiveWork = preparation.kind !== "failed" && remainingMs > 0;
@@ -671,7 +673,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                   grant,
                   acceptedProofTypes: proofRefPolicy.acceptedTypes,
                   verification: verificationPromptContext,
-                  rework: pendingReworkFeedback(input.repositories, task),
+                  settledFacts,
                 }) +
                   executionBriefPrompt(preparation),
               });

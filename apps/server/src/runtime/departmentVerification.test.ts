@@ -17,7 +17,8 @@ import { resolveTaskAffordanceState } from "./taskAffordances";
 import { reconcileTaskHolds } from "./taskHoldReconciliation";
 import { refreshTaskDependencyState } from "./taskRefresh";
 import { evaluateVerificationReport, prepareVerificationInputs } from "./verificationContract";
-import { applyVerificationRework, pendingReworkFeedback } from "./verificationRework";
+import { applyVerificationRework } from "./verificationRework";
+import { resolveSettledFacts } from "./settledFacts";
 import { channelWithUnfinishedDelivery } from "./fixtures/stagedDelivery";
 
 /**
@@ -401,8 +402,8 @@ describe("department subtask verification", () => {
     const { execute, validate } = harness.subtasks();
     expect(harness.runOrder).toEqual(["define", "execute", "validate", "execute", "validate"]);
     const executePrompts = harness.promptHistory.filter((entry) => entry.stage === "execute").map((entry) => entry.prompt);
-    expect(executePrompts[0]).not.toContain("## Rework Requested");
-    expect(executePrompts[1]).toContain("## Rework Requested");
+    expect(executePrompts[0]).not.toContain("## Settled Facts");
+    expect(executePrompts[1]).toContain("## Settled Facts");
     expect(executePrompts[1]).toContain("`app-script` (failed)");
     expect(executePrompts[1]).toContain("app.js throws on load.");
     expect(executePrompts[1]).not.toContain("`home-page`");
@@ -612,7 +613,7 @@ describe("verification contract", () => {
     ]);
     expect(repositories.getTask(faulted.id)?.status).toBe("queued");
     expect(repositories.getTask(sound.id)?.status).toBe("complete");
-    expect(pendingReworkFeedback(repositories, repositories.getTask(faulted.id)!)[0]?.failedChecks.map((check) => check.requirementId)).toEqual(["r1"]);
+    expect(reworkChecks(repositories, faulted.id).map((check: { requirementId: string }) => check.requirementId)).toEqual(["r1"]);
 
     // A producer parked on a Founder Decision is not the verifier's to send back.
     const decided = { ...baseTask("producer_c", "review", "landing-page-file") };
@@ -780,7 +781,7 @@ describe("verification contract", () => {
     expect(repositories.getTask(validate.id)?.status).toBe("waiting_dependency");
     expect(repositories.getTask(parent.id)).toMatchObject({ status: "waiting_dependency" });
     expect(repositories.getCurrentBusinessArtifactForTask(parent.id)?.reviewStatus).toBe("returned");
-    expect(pendingReworkFeedback(repositories, repositories.getTask(execute.id)!)[0]?.failedChecks.map((check) => check.requirementId)).toEqual(["accessible"]);
+    expect(reworkChecks(repositories, execute.id).map((check: { requirementId: string }) => check.requirementId)).toEqual(["accessible"]);
   });
 
   /**
@@ -1178,4 +1179,10 @@ function keyResultRecord(): KeyResult {
     currentValue: "not_started",
     status: "active",
   };
+}
+
+/** The failed checks the Settled Facts send back to one producer. */
+function reworkChecks(repositories: ReturnType<typeof createRepositories>, producerTaskId: string) {
+  const fact = resolveSettledFacts(repositories, repositories.getTask(producerTaskId)!).find((entry) => entry.kind === "verification_rework");
+  return fact?.kind === "verification_rework" ? fact.failedChecks : [];
 }

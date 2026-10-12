@@ -425,7 +425,7 @@ async function runBusiness(business: Business, defective: boolean | "until_rewor
         }));
       } else {
         // "until_rework": defective until a verifier's feedback reaches this producer, then fixed.
-        const isDefective = defective === "until_rework" ? !request.prompt.includes("## Rework Requested") : defective;
+        const isDefective = defective === "until_rework" ? !request.prompt.includes("Verification Rework `") : defective;
         const delivered = business.produce(request.workspacePath, isDefective);
         request.runtimeActions!.submitArtifactEnvelope(deliveryEnvelope("implementation", {
           ...delivered,

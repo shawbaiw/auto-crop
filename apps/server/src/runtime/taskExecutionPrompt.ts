@@ -3,6 +3,7 @@ import { describeRuntimeCapability, type AgentCapabilityGrant } from "../policie
 import type { TaskHandoff } from "./dependencyReadiness";
 import { LOCALE_LANGUAGE_NAME } from "./localePromptText";
 import { buildProofContractInstructions } from "./proofContract";
+import { renderSettledFacts, type SettledFact } from "./settledFacts";
 
 export type BuildTaskExecutionPromptInput = {
   company: Company;
@@ -15,40 +16,17 @@ export type BuildTaskExecutionPromptInput = {
    * submitted envelope against. Omitted only by callers that do not launch an agent.
    */
   acceptedProofTypes?: ProofType[];
-  /** Failed checks a verifier sent back to this task, to fix in this run. */
-  rework?: Array<{
-    round: number;
-    verifierTitle: string;
-    failedChecks: Array<{ requirementId: string; description: string; outcome: string; evidence: string }>;
-  }>;
+  /**
+   * What has already been decided or supplied for this task, from {@link resolveSettledFacts}. The
+   * dispatch always passes it; there is no other channel by which a re-run learns what was settled.
+   */
+  settledFacts?: SettledFact[];
   /** This task's Verification Contract obligations, resolved by the runtime before dispatch. */
   verification?: {
     producesRequirements: boolean;
     inputs: VerificationInputs | null;
   };
 };
-
-/**
- * Tell a producer what its verifier found. The previous delivery was judged and failed; this run exists
- * to fix exactly those checks, so they lead the prompt's task-specific instructions.
- */
-function buildReworkInstructions(rework: BuildTaskExecutionPromptInput["rework"]): string[] {
-  if (!rework || rework.length === 0) {
-    return [];
-  }
-  return [
-    "## Rework Requested",
-    "",
-    "Your previous delivery was verified and did not pass. Fix every check below in the existing work, then deliver again;",
-    "the verifier will check a fresh snapshot of your new output against the same requirements.",
-    ...rework.flatMap((entry) => [
-      "",
-      `${entry.verifierTitle}, verification round ${entry.round}:`,
-      ...entry.failedChecks.map((check) => `- \`${check.requirementId}\` (${check.outcome}): ${check.description} — evidence: ${check.evidence}`),
-    ]),
-    "",
-  ];
-}
 
 /**
  * State the Verification Contract a run is under. A requirements producer declares the checks its
@@ -326,12 +304,12 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
   const proofInstructions = buildProofContractInstructions(task);
   const grantInstructions = buildCapabilityGrantInstructions(grant);
   const verificationInstructions = buildVerificationInstructions(input.verification, languageName);
-  const reworkInstructions = buildReworkInstructions(input.rework);
+  const settledFacts = renderSettledFacts(input.settledFacts ?? []);
   const basePrompt = [
     ...companyContext,
     task.description,
     "",
-    ...reworkInstructions,
+    ...settledFacts,
     ...(grantInstructions.length > 0 ? [...grantInstructions, ""] : []),
     ...artifactInstructions,
     "",

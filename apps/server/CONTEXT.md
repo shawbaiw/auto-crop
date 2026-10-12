@@ -117,6 +117,12 @@ A department subtask never goes through acceptance. Its delivery parks in `revie
 
 `applyVerificationRework` decides what follows a verdict that did not pass and records it in `verification_reworks`, one row per failed report. The round budget (`MAX_VERIFICATION_ROUNDS`) counts those rows, not Agent Runs — every run in a rework loop succeeds, so the Bounded Recovery counter never sees it. Rework reaches a producer as prompt feedback read at dispatch, never as a dependency on its verifier (ADR 0026).
 
+## A Run Is Told What Was Settled By One Function
+
+`resolveSettledFacts` (`src/runtime/settledFacts.ts`) is the only way a run learns what has already been decided or supplied for its task: Founder Decisions resolved on it, Human Action Confirmations on it or gating it, and Verification Rework it still owes. The dispatch calls it once and hands the same list to the execution brief and the work prompt, whatever caused the run — first run, retry, recovery, rework or a revision. Each fact names its source record, and the prompt states one rule for all of them rather than a paragraph per kind.
+
+Do not add a second channel for one of these, such as a section only the rework path fills or a file in the workspace: a fact kept by the path that caused the re-run is forgotten by the next kind of re-run, and a revised keyword task re-asks the founder for the keyword (ADR 0043). A new kind of settled input is a new case in this function.
+
 ## A Delivery Is Finalized In One Place
 
 `finalizeDelivery` (`src/runtime/deliveryFinalization.ts`) decides where a valid delivered artifact leaves its task: held, verification failed, CEO review, Founder Decision, internal delivery, or accepted. The scheduler and proof recovery both call it. A path that delivers an artifact and then chooses a status or Hold itself is a second copy of this policy — the shape of the bug where a recovered subtask skipped its Founder Decision (ADR 0024). Acceptance and completion recording are idempotent, so reaching the same delivery twice writes nothing twice.

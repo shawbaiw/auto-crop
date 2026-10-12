@@ -476,7 +476,7 @@ function collectVisionGaps(event: TaskCompletionEvent): VisionGap[] {
   return [...fromNextSteps, ...fromEventPayload];
 }
 
-function collectHumanActions(
+export function collectHumanActions(
   event: TaskCompletionEvent,
   confirmationsByActionId: Map<string, HumanActionConfirmation>,
 ): HumanAction[] {

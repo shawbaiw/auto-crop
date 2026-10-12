@@ -277,19 +277,6 @@ function isReworkable(repositories: Repositories, producer: Task): boolean {
   return repositories.listOpenTaskHolds(producer.id).every((hold) => REWORKABLE_PRODUCER_HOLDS.includes(hold.kind));
 }
 
-/** Feedback for a producer's next run: every pending rework that faults it, oldest first. */
-export function pendingReworkFeedback(repositories: Repositories, producer: Task): Array<{
-  round: number;
-  verifierTitle: string;
-  failedChecks: VerificationRework["failedChecks"];
-}> {
-  return repositories.listPendingReworksForProducer(producer.id).map((rework) => ({
-    round: rework.round,
-    verifierTitle: repositories.getTask(rework.verifierTaskId)?.title ?? rework.verifierTaskId,
-    failedChecks: rework.failedChecks.filter((check) => !check.targetTaskId || check.targetTaskId === producer.id),
-  }));
-}
-
 /** A producer delivered again: the reworks it owed are answered. */
 export function markReworkRedelivered(repositories: Repositories, producer: Task): void {
   for (const rework of repositories.listPendingReworksForProducer(producer.id)) {
