@@ -857,9 +857,7 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
 
-    await user.click(screen.getByRole("menuitem", { name: "View" }));
-    await user.click(screen.getByRole("menuitem", { name: "Language" }));
-    await user.click(screen.getByRole("menuitem", { name: "中文" }));
+    await runCommand(user, "View", "Language", "中文");
 
     // Chrome follows the toggle...
     const timeline = screen.getByRole("region", { name: "时间线" });
@@ -2134,8 +2132,8 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
 
     await createCompany(user);
-    await user.click(screen.getByRole("menuitem", { name: "Company" }));
-    expect(screen.queryByRole("menuitem", { name: /setup/i })).not.toBeInTheDocument();
+    await openMenu(user, "Company");
+    expect(queryCommand(/setup/i)).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
     await user.keyboard("{Meta>}b{/Meta}");
 
@@ -2151,13 +2149,11 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompanyAndOpenDashboard(user);
 
-    await user.click(screen.getByRole("menuitem", { name: "Company" }));
-    await user.click(screen.getByRole("menuitem", { name: "Pause Operating" }));
+    await runCommand(user, "Company", "Pause Operating");
     expect(api.pauseCompany).toHaveBeenCalledWith("company_1");
     expect(await screen.findByText("This company is paused. No new work starts until you resume it.")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("menuitem", { name: "Company" }));
-    await user.click(screen.getByRole("menuitem", { name: "Resume Operating" }));
+    await runCommand(user, "Company", "Resume Operating");
     expect(api.resumeCompany).toHaveBeenCalledWith("company_1");
     await waitFor(() =>
       expect(screen.queryByText("This company is paused. No new work starts until you resume it.")).not.toBeInTheDocument(),
@@ -2210,8 +2206,7 @@ describe("Dashboard App", () => {
     await createCompanyAndOpenDashboard(user);
     const subscriptions = vi.mocked(api.subscribeEvents).mock.calls.length;
 
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Departments" }));
+    await runCommand(user, "Work", "View Departments");
     expect(await screen.findByText("Department Workspace")).toBeInTheDocument();
 
     expect(api.subscribeEvents).toHaveBeenCalledTimes(subscriptions);
@@ -2771,8 +2766,7 @@ describe("Dashboard App", () => {
 
     expect(screen.queryByRole("heading", { name: "Agent Activity" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+    await runCommand(user, "Work", "View Operations");
 
     expect(await screen.findByRole("heading", { name: "Company Operations" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Agent Activity" })).toBeInTheDocument();
@@ -2811,8 +2805,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+    await runCommand(user, "Work", "View Operations");
 
     expect(await screen.findByText("Waiting · Create landing page — Waiting for dependency deliverable: Research brief (running).")).toBeInTheDocument();
     expect(screen.getByText("Retrying · Create landing page — Retrying with a larger execution budget.")).toBeInTheDocument();
@@ -2847,8 +2840,7 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
     await createCompany(user);
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+    await runCommand(user, "Work", "View Operations");
 
     expect(screen.getByText("Review Queue")).toBeInTheDocument();
     expect(screen.getByText("Parent proof summary")).toBeInTheDocument();
@@ -2919,8 +2911,7 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
     await createCompany(user);
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+    await runCommand(user, "Work", "View Operations");
 
     await user.click(await screen.findByRole("button", { name: "Replan mode for Create landing page" }));
     await user.click(screen.getByRole("option", { name: "Revision — rewrite this task" }));
@@ -3044,8 +3035,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+    await runCommand(user, "Work", "View Operations");
     await user.click(await screen.findByRole("button", { name: "Create Replan Proposal" }));
 
     expect(await screen.findByText("Replan Proposals")).toBeInTheDocument();
@@ -3064,8 +3054,7 @@ describe("Dashboard App", () => {
 
     expect(api.confirmReplanProposal).toHaveBeenCalledWith("replan_proposal_1");
     expect(await screen.findByText("Produce proof for Create landing page")).toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Departments" }));
+    await runCommand(user, "Work", "View Departments");
 
     expect(
       await screen.findByRole("button", {
@@ -3174,9 +3163,7 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
 
     await createCompany(user);
-    await user.click(screen.getByRole("menuitem", { name: "View" }));
-    await user.click(screen.getByRole("menuitem", { name: "Skin" }));
-    await user.click(screen.getByRole("menuitem", { name: "极客02" }));
+    await runCommand(user, "View", "Skin", "极客02");
 
     expect(document.querySelector(".theme-root")).toHaveAttribute("data-skin", "geek02");
   });
@@ -3274,9 +3261,7 @@ describe("Dashboard App", () => {
     expect(screen.getByText("Generated landing page")).toBeInTheDocument();
     expect(screen.getByText("Task is ready for review.")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("menuitem", { name: "View" }));
-    await user.click(screen.getByRole("menuitem", { name: "Language" }));
-    await user.click(screen.getByRole("menuitem", { name: "中文" }));
+    await runCommand(user, "View", "Language", "中文");
 
     expect(screen.getByText("工程")).toBeInTheDocument();
     expect(screen.getAllByText(/创建落地页/).length).toBeGreaterThan(0);
@@ -3331,9 +3316,7 @@ describe("Dashboard App", () => {
       expect(await screen.findByRole("heading", { name: "公司运营仪表盘" })).toBeInTheDocument();
 
       // The toggle still switches chrome afterward.
-      await user.click(screen.getByRole("menuitem", { name: "视图" }));
-      await user.click(screen.getByRole("menuitem", { name: "语言" }));
-      await user.click(screen.getByRole("menuitem", { name: "English" }));
+      await runCommand(user, "视图", "语言", "English");
 
       expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
     } finally {
@@ -3362,9 +3345,9 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
 
     await createCompany(user);
-    await user.click(screen.getByRole("menuitem", { name: "Company" }));
+    await openMenu(user, "Company");
 
-    expect(screen.getByRole("menuitem", { name: "Create Company" })).toBeDisabled();
+    expect(getCommand("Create Company")).toBeDisabled();
   });
 
   it("focuses dashboard sections from Work and Proof menu commands", async () => {
@@ -3374,12 +3357,10 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompanyAndOpenDashboard(user);
 
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Tasks" }));
+    await runCommand(user, "Work", "View Tasks");
     await waitFor(() => expect(document.activeElement).toHaveAttribute("id", "active-tasks"));
 
-    await user.click(screen.getByRole("menuitem", { name: "Proof" }));
-    await user.click(screen.getByRole("menuitem", { name: "Load Review" }));
+    await runCommand(user, "Proof", "Load Review");
     await waitFor(() => expect(document.activeElement).toHaveAttribute("id", "review"));
     expect(await screen.findByText("Ready for next cycle")).toBeInTheDocument();
   });
@@ -3391,8 +3372,7 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompanyAndOpenDashboard(user);
 
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Departments" }));
+    await runCommand(user, "Work", "View Departments");
 
     expect(await screen.findByRole("heading", { name: "Pricing Page Studio" })).toBeInTheDocument();
     expect(screen.getByText("Department Workspace")).toBeInTheDocument();
@@ -3407,8 +3387,8 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompanyAndOpenDashboard(user);
 
-    await user.click(screen.getByRole("menuitem", { name: "Proof" }));
-    await expect(screen.getByRole("menuitem", { name: /Open Evidence/ })).toBeDisabled();
+    await openMenu(user, "Proof");
+    await expect(getCommand(/Open Evidence/)).toBeDisabled();
     expect(screen.getByText("Cmd+3")).toBeInTheDocument();
 
     await user.keyboard("{Meta>}3{/Meta}");
@@ -3437,8 +3417,7 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
 
     await createCompany(user);
-    await user.click(screen.getByRole("menuitem", { name: "View" }));
-    await user.click(screen.getByRole("menuitem", { name: "Fullscreen" }));
+    await runCommand(user, "View", "Fullscreen");
 
     expect(requestFullscreen).toHaveBeenCalledTimes(1);
   });
@@ -3944,8 +3923,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    await user.click(screen.getByRole("menuitem", { name: "Work" }));
-    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+    await runCommand(user, "Work", "View Operations");
 
     expect(await screen.findByRole("heading", { name: "Agent Activity" })).toBeInTheDocument();
     expect(
@@ -3956,6 +3934,29 @@ describe("Dashboard App", () => {
     ).toBeInTheDocument();
   });
 });
+
+// Every test reaches founder commands through these helpers, never through the menu bar's roles
+// directly, so when the P2 header replaces the menu bar only these four functions change.
+
+/** Runs a command by its path, such as ("Work", "View Tasks") or ("View", "Language", "中文"). */
+async function runCommand(user: ReturnType<typeof userEvent.setup>, ...path: [string, string, ...string[]]) {
+  for (const name of path) {
+    await user.click(screen.getByRole("menuitem", { name }));
+  }
+}
+
+/** Opens a command group without running anything, to inspect the commands in it. */
+async function openMenu(user: ReturnType<typeof userEvent.setup>, group: string) {
+  await user.click(screen.getByRole("menuitem", { name: group }));
+}
+
+function getCommand(name: string | RegExp) {
+  return screen.getByRole("menuitem", { name });
+}
+
+function queryCommand(name: string | RegExp) {
+  return screen.queryByRole("menuitem", { name });
+}
 
 async function fillReadyToCreate(user: ReturnType<typeof userEvent.setup>) {
   expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
@@ -3979,8 +3980,7 @@ async function createCompany(user: ReturnType<typeof userEvent.setup>) {
 
 async function createCompanyAndOpenDashboard(user: ReturnType<typeof userEvent.setup>) {
   await createCompany(user);
-  await user.click(screen.getByRole("menuitem", { name: "Work" }));
-  await user.click(screen.getByRole("menuitem", { name: "View Tasks" }));
+  await runCommand(user, "Work", "View Tasks");
   expect(await screen.findByRole("heading", { name: "Company Operating Dashboard" })).toBeInTheDocument();
 }
 
