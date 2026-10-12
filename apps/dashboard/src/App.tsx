@@ -1,5 +1,5 @@
 import { ExecutionActionsContext } from "./ui/tasks/TaskExecutionPanel";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   createApiClient,
   type AgentSummary,
@@ -61,6 +61,10 @@ export default function App({ apiClient }: AppProps) {
   const [founderVisionError, setFounderVisionError] = useState<string | null>(null);
   const [permissionMode, setPermissionMode] = useState("balanced");
   const [blueprint, setBlueprint] = useState<CreateCompanyResponse | null>(null);
+  // Read by the event-stream callbacks, which outlive the render that subscribed them: the stream
+  // stays open across view changes, because events published while it reconnects are lost.
+  const companyStatusRef = useRef<string | null>(null);
+  companyStatusRef.current = blueprint?.company.status ?? null;
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [events, setEvents] = useState<ServerEvent[]>([]);
@@ -82,6 +86,8 @@ export default function App({ apiClient }: AppProps) {
   const [isPaused, setIsPaused] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [view, setView] = useState<AppView>("company-picker");
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("company");
   const [dashboardFocusTarget, setDashboardFocusTarget] = useState<DashboardFocusTarget | null>(null);
 
@@ -184,7 +190,9 @@ export default function App({ apiClient }: AppProps) {
   }, [blueprint, view]);
 
   useEffect(() => {
-    if (view === "onboarding" && onboardingStep === "agents" && agentLoadState === "idle") {
+    // The creation view names the CEO; after a refresh straight into it the agents were never listed.
+    const needsAgents = (view === "onboarding" && onboardingStep === "agents") || view === "creating";
+    if (needsAgents && agentLoadState === "idle") {
       void detectAgents();
     }
   }, [agentLoadState, onboardingStep, view]);
@@ -228,7 +236,7 @@ export default function App({ apiClient }: AppProps) {
           .then((response) => {
             if (cancelled || requestRevision !== revision) return;
             if (["task_review", "company_creation_completed", "company_creation_failed", "company_report_ready"].includes(event.type)) {
-              applyCompanyState(response, viewAfterReloadEvent(event, view, response.company.status));
+              applyCompanyState(response, viewAfterReloadEvent(event, viewRef.current, response.company.status));
             } else {
               // Keep the live activity stream and task status just received over SSE. Refresh the
               // authoritative business projection without replacing them with a snapshot in flight.
@@ -246,9 +254,30 @@ export default function App({ apiClient }: AppProps) {
           })
           .catch(() => undefined);
       }
+    }, () => {
+      // The stream does not replay. Whatever happened before it first connected, or while it was
+      // reconnecting, reached no one — a creation that already finished, a task that moved — so the
+      // live view is known to be stale here and the snapshot is the newer truth. A later event's
+      // reload bumps the revision and supersedes this one.
+      // The setup form shows no company state, and re-entering it would reset the wizard step.
+      if (viewRef.current === "onboarding") return;
+      const requestRevision = ++revision;
+      void client
+        .getCompanyState(blueprint.company.id)
+        .then((response) => {
+          if (cancelled || requestRevision !== revision) return;
+          if (companyStatusRef.current === "creating") {
+            if (response.company.status !== "creating") {
+              applyCompanyState(response, defaultCompanyView(response.company.status));
+            }
+            return;
+          }
+          applyCompanyState(response, viewRef.current);
+        })
+        .catch(() => undefined);
     });
     return () => { cancelled = true; unsubscribe(); };
-  }, [blueprint?.company.id, client, view]);
+  }, [blueprint?.company.id, client]);
 
   useEffect(() => {
     function handleFullscreenChange() {
@@ -819,23 +848,30 @@ export default function App({ apiClient }: AppProps) {
     />
   );
 
-  function renderAppFrame(children: ReactNode) {
+  // LanguageProvider stays the root element of every view, modern or legacy, so React keeps one
+  // instance across navigation and a language chosen on one view survives the move to the next.
+  function renderModernAppFrame(children: ReactNode) {
     return (
+      <LanguageProvider defaultLanguage={defaultLanguage} syncLocale={blueprint?.company.locale ?? null}>
+        {children}
+      </LanguageProvider>
+    );
+  }
+
+  function renderAppFrame(children: ReactNode) {
+    return renderModernAppFrame(
       <ThemeProvider defaultSkin={defaultSkin}>
-        <LanguageProvider defaultLanguage={defaultLanguage} syncLocale={blueprint?.company.locale ?? null}>
-          <CRTViewport>{children}</CRTViewport>
-        </LanguageProvider>
-      </ThemeProvider>
+        <CRTViewport>{children}</CRTViewport>
+      </ThemeProvider>,
     );
   }
 
   if (view === "company-picker") {
-    return renderAppFrame(
+    return renderModernAppFrame(
       <CompanyPicker
         companies={companies}
         loadError={companyListLoadError}
         loadState={companyListLoadState}
-        menuBar={menuBar}
         onCreateNew={handleCreateNewCompany}
         onOpenCompany={openCompany}
         onRetry={loadCompanies}
@@ -844,18 +880,20 @@ export default function App({ apiClient }: AppProps) {
   }
 
   if (view === "creating") {
-    const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
+    // After a refresh the setup form is empty; the company being created knows its own choices.
+    const creatingAgentId = blueprint?.company.selectedCeoAgentId ?? selectedAgentId;
+    const selectedAgent = agents.find((agent) => agent.id === creatingAgentId) ?? null;
 
-    return renderAppFrame(
+    return renderModernAppFrame(
       <CompanyCreationLoading
         companyName={blueprint?.company.name ?? companyName.trim()}
         events={creationEvents}
         isFailed={blueprint?.company.status === "creation_failed"}
         isRetrying={isCreating}
-        menuBar={menuBar}
         onRetry={handleRetryCompanyCreation}
-        permissionMode={permissionMode}
+        permissionMode={blueprint?.company.permissionMode ?? permissionMode}
         selectedAgent={selectedAgent}
+        selectedAgentId={creatingAgentId || undefined}
       />,
     );
   }
@@ -940,7 +978,7 @@ export default function App({ apiClient }: AppProps) {
     );
   }
 
-  return renderAppFrame(
+  return renderModernAppFrame(
     <Onboarding
       agents={agents}
       agentLoadState={agentLoadState}
@@ -951,7 +989,7 @@ export default function App({ apiClient }: AppProps) {
       founderVision={founderVision}
       founderVisionError={founderVisionError}
       isCreating={isCreating}
-      menuBar={menuBar}
+      onActivateCompany={blueprint ? () => void handleActivateCompany() : undefined}
       onBack={goToPreviousStep}
       onCompanyNameChange={handleCompanyNameChange}
       onCreateCompany={handleCreateCompany}

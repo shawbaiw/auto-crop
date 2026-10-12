@@ -29,7 +29,7 @@ export function ThemeProvider({ children, defaultSkin = "mono" }: ThemeProviderP
         "--ink": palette.colors.ink,
         "--surface": palette.colors.surface,
         "--surface-alt": palette.colors.surfaceAlt,
-        "--border": palette.colors.border,
+        "--retro-border": palette.colors.border,
         "--titlebar": palette.colors.titlebar,
         "--titlebar-ink": palette.colors.titlebarInk,
         "--selected-bg": palette.colors.selectedBg,

@@ -1,16 +1,13 @@
-import { Building2, FolderOpen, Plus, RefreshCw } from "lucide-react";
-import type { ReactNode } from "react";
-import type { CompanyListItem } from "../api/client";
-import { ModalFrame, PageHeader, Workspace } from "../ui/layout";
+import { FolderOpen, Plus, RefreshCw } from "lucide-react";
+import type { CompanyListItem as CompanyListItemData } from "../api/client";
+import { CompanyFlowPage, CompanyListItem } from "../components/company-flow";
+import { Alert, AlertDescription, AlertTitle, Button, Card } from "../components/ui";
 import { useLanguage } from "../ui/language";
-import { RetroButton, RetroListRow, RetroPanel, RetroStatus } from "../ui/retro";
-import { formatCompanyStatus } from "../ui/tasks/formatDisplayValue";
 
 export type CompanyPickerProps = {
-  companies: CompanyListItem[];
+  companies: CompanyListItemData[];
   loadError?: string | null;
   loadState: "loading" | "ready" | "failed";
-  menuBar?: ReactNode;
   onCreateNew(): void;
   onOpenCompany(companyId: string): void;
   onRetry(): void;
@@ -20,70 +17,56 @@ export function CompanyPicker({
   companies,
   loadError,
   loadState,
-  menuBar,
   onCreateNew,
   onOpenCompany,
   onRetry,
 }: CompanyPickerProps) {
   const { t } = useLanguage();
-  const titleId = "company-picker-title";
 
   return (
-    <ModalFrame labelledBy={titleId} menuBar={menuBar}>
-      <PageHeader
-        eyebrow={t("companyPicker.eyebrow")}
-        status={t("app.localAgentCompany")}
-        statusIcon={<Building2 size={16} aria-hidden="true" />}
-        title={t("companyPicker.title")}
-        titleId={titleId}
-      />
-
-      <Workspace className="company-picker">
-        <RetroPanel title={t("companyPicker.recentCompanies")}>
-          {loadState === "loading" ? (
-            <div className="system-message" role="status">
-              {t("companyPicker.loading")}
-            </div>
-          ) : null}
-          {loadState === "failed" ? (
-            <div className="system-message system-message--danger" role="status">
-              <div>{t("companyPicker.failed")}</div>
-              {loadError ? <div className="system-message__detail">{loadError}</div> : null}
-            </div>
-          ) : null}
-          {loadState === "ready" && companies.length === 0 ? (
-            <div className="system-message" role="status">
-              {t("companyPicker.empty")}
-            </div>
-          ) : null}
-          {companies.length > 0 ? (
-            <div className="company-picker__list">
-              {companies.map((company) => (
-                <RetroListRow
-                  key={company.id}
-                  meta={`${formatCompanyStatus(company.status, t)} / ${company.taskCount} ${t("companyPicker.tasks")}`}
-                  onClick={() => onOpenCompany(company.id)}
-                  title={company.name}
-                />
-              ))}
-            </div>
-          ) : null}
-          <div className="company-picker__actions">
-            {loadState === "failed" ? (
-              <RetroButton icon={<RefreshCw size={16} aria-hidden="true" />} onClick={() => onRetry()}>
-                {t("onboarding.retry")}
-              </RetroButton>
-            ) : null}
-            <RetroButton icon={<Plus size={16} aria-hidden="true" />} onClick={onCreateNew} variant="primary">
-              {t("companyPicker.createNew")}
-            </RetroButton>
+    <CompanyFlowPage
+      eyebrow={t("companyPicker.eyebrow")}
+      status={t("companyPicker.status")}
+      statusIcon={<FolderOpen aria-hidden="true" />}
+      title={t("companyPicker.title")}
+      titleId="company-picker-title"
+    >
+      <Card className="grid gap-4 p-4 sm:p-5">
+        <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("companyPicker.recentCompanies")}
+          </h2>
+        </div>
+        {loadState === "loading" ? <Alert role="status">{t("companyPicker.loading")}</Alert> : null}
+        {loadState === "failed" ? (
+          <Alert role="status" variant="destructive">
+            <AlertTitle>{t("companyPicker.failed")}</AlertTitle>
+            {loadError ? <AlertDescription>{loadError}</AlertDescription> : null}
+          </Alert>
+        ) : null}
+        {loadState === "ready" && companies.length === 0 ? (
+          <Alert role="status">{t("companyPicker.empty")}</Alert>
+        ) : null}
+        {companies.length > 0 ? (
+          <div className="grid gap-2">
+            {companies.map((company) => (
+              <CompanyListItem company={company} key={company.id} onOpen={onOpenCompany} />
+            ))}
           </div>
-        </RetroPanel>
-      </Workspace>
-
-      <RetroStatus icon={<FolderOpen size={16} aria-hidden="true" />}>
-        {t("companyPicker.status")}
-      </RetroStatus>
-    </ModalFrame>
+        ) : null}
+        <div className="flex flex-wrap justify-end gap-2">
+          {loadState === "failed" ? (
+            <Button onClick={() => onRetry()} variant="outline">
+              <RefreshCw aria-hidden="true" />
+              {t("onboarding.retry")}
+            </Button>
+          ) : null}
+          <Button onClick={onCreateNew}>
+            <Plus aria-hidden="true" />
+            {t("companyPicker.createNew")}
+          </Button>
+        </div>
+      </Card>
+    </CompanyFlowPage>
   );
 }

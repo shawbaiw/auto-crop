@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import type { Proof } from "@auto-crop/core";
+import { fixtureApiPort } from "./fixtureApi";
 import {
   aiSaasPlaybook,
   createApiServer,
@@ -26,18 +26,21 @@ test.afterAll(async () => {
 });
 
 test("creates and operates a mock agent company through the dashboard", async ({ page }) => {
-  await page.goto(`/?apiUrl=${encodeURIComponent(fixture.baseUrl)}`);
+  await page.goto("/");
 
+  // No companies yet, so the dashboard opens straight into the onboarding wizard.
   await expect(page.getByRole("heading", { name: "CEO Office" })).toBeVisible();
+  await page.getByLabel("Company name").fill("Pricing Page Studio");
+  await page.getByRole("button", { name: "Next" }).click();
   await page.getByRole("button", { name: /codex/i }).click();
+  await page.getByRole("button", { name: "Next" }).click();
   await page.getByLabel("Founder vision").fill("Build an AI SaaS that creates pricing pages.");
-  await page.getByRole("button", { name: /permission mode/i }).click();
-  await page.getByRole("option", { name: "Balanced" }).click();
+  await page.getByRole("radiogroup", { name: "Permission mode" }).getByRole("radio", { name: "Balanced" }).click();
   await page.getByRole("button", { name: /create company/i }).click();
 
-  await expect(page.getByText("Pricing Page Studio")).toBeVisible();
-  await expect(page.getByText("Validate the first AI SaaS wedge")).toBeVisible();
-  await page.getByRole("button", { name: /activate company/i }).click();
+  await expect(page.getByLabel("Founder vision")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Pricing Page Studio" })).toBeVisible();
+  await openMenuItem(page, "Company", "Activate Company");
   await expect(page.getByRole("heading", { name: "Company Operating Dashboard" })).toBeVisible();
 
   const companyId = fixture.repositories.fetchQueuedTasks(1)[0]?.companyId;
@@ -61,8 +64,10 @@ test("creates and operates a mock agent company through the dashboard", async ({
     emit: (event) => fixture.events.publish(event),
   });
 
-  await expect(page.getByText("Task is ready for review.")).toBeVisible();
-  await page.getByRole("button", { name: /load proof/i }).click();
+  // The mock agent returns a text log, not the business artifact the product brief's proof schema
+  // requires, so the runtime blocks that task. The dashboard must show it live over the event stream.
+  await expect(page.getByText(/missing business artifact/i).first()).toBeVisible();
+  await openMenuItem(page, "Proof", "Load Proof");
   await expect(page.getByText("agent.log")).toBeVisible();
 
   if (!companyId) {
@@ -77,13 +82,17 @@ test("creates and operates a mock agent company through the dashboard", async ({
     createId: () => "review_e2e_1",
   });
 
-  await page.getByRole("button", { name: /load review/i }).click();
-  await expect(page.getByText("Completed 1 task(s), 0 missing proof.")).toBeVisible();
+  await openMenuItem(page, "Proof", "Load Review");
+  await expect(page.getByText("Completed 0 task(s), 0 missing proof.")).toBeVisible();
 
-  await page.getByRole("button", { name: /kill switch/i }).click();
+  await openMenuItem(page, "Company", "Kill Switch");
   await expect(page.getByText("Global pause active")).toBeVisible();
-  await expect(page.locator(".page-header").getByText("review")).toBeVisible();
 });
+
+async function openMenuItem(page: Page, menu: string, item: string) {
+  await page.getByRole("menuitem", { name: menu, exact: true }).click();
+  await page.getByRole("menuitem", { name: item, exact: true }).click();
+}
 
 async function startFixtureServer() {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-dashboard-e2e-"));
@@ -112,12 +121,10 @@ async function startFixtureServer() {
     createId: createSequentialIdFactory(),
   });
 
-  await new Promise<void>((resolve) => server.httpServer.listen(0, "127.0.0.1", resolve));
-  const address = server.httpServer.address() as AddressInfo;
+  await new Promise<void>((resolve) => server.httpServer.listen(fixtureApiPort, "127.0.0.1", resolve));
 
   return {
     agents,
-    baseUrl: `http://127.0.0.1:${address.port}`,
     events: server.events,
     projectRoot,
     repositories,
