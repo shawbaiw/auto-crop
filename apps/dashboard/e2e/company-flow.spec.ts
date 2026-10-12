@@ -41,8 +41,7 @@ test("creates and operates a mock agent company through the dashboard", async ({
   await expect(page.getByLabel("Founder vision")).toHaveCount(0);
   // The company runs as soon as its blueprint exists (ADR 0044) and opens on CEO Office.
   await expect(page.getByRole("heading", { name: "Pricing Page Studio" })).toBeVisible();
-  await openMenuItem(page, "Work", "View Tasks");
-  await expect(page.getByRole("heading", { name: "Company Operating Dashboard" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "CEO Office" })).toBeVisible();
 
   const companyId = fixture.repositories.fetchQueuedTasks(1)[0]?.companyId;
   await runSchedulerOnce({
@@ -67,9 +66,11 @@ test("creates and operates a mock agent company through the dashboard", async ({
 
   // The mock agent returns a text log, not the business artifact the product brief's proof schema
   // requires, so the runtime blocks that task. The dashboard must show it live over the event stream.
+  await openPage(page, "Operations Diagnostics");
   await expect(page.getByText(/missing business artifact/i).first()).toBeVisible();
-  await openMenuItem(page, "Proof", "Load Proof");
-  await expect(page.getByText("agent.log")).toBeVisible();
+  // Deliverables loads by itself; there is no Load Proof step.
+  await openPage(page, "Deliverables");
+  await expect(page.getByText(/agent\.log/)).toBeVisible();
 
   if (!companyId) {
     throw new Error("Missing created company.");
@@ -83,17 +84,18 @@ test("creates and operates a mock agent company through the dashboard", async ({
     createId: () => "review_e2e_1",
   });
 
-  await openMenuItem(page, "Proof", "Load Review");
+  // The review arrives with no event, so the page reads it when it opens again.
+  await openPage(page, "CEO Office");
+  await openPage(page, "Deliverables");
   await expect(page.getByText("Completed 0 task(s), 0 missing proof.")).toBeVisible();
 
-  await openMenuItem(page, "Company", "Pause Operating");
+  await page.getByRole("banner").getByRole("button", { name: "Pause Operating" }).click();
   await expect(page.getByText("This company is paused. No new work starts until you resume it.")).toBeVisible();
   expect(fixture.repositories.getCompany(companyId)?.status).toBe("paused");
 });
 
-async function openMenuItem(page: Page, menu: string, item: string) {
-  await page.getByRole("menuitem", { name: menu, exact: true }).click();
-  await page.getByRole("menuitem", { name: item, exact: true }).click();
+async function openPage(page: Page, name: string) {
+  await page.getByRole("navigation", { name: "Workbench" }).getByRole("button", { name, exact: true }).click();
 }
 
 async function startFixtureServer() {

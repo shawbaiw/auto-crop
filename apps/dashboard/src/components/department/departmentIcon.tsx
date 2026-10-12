@@ -1,6 +1,5 @@
 import { Code2, FlaskConical, LineChart, Megaphone, Package } from "lucide-react";
 import type { ReactNode } from "react";
-import { departmentName } from "../../ui/language/localizedNames";
 
 export function departmentIcon(departmentName: string): ReactNode {
   const normalizedName = departmentName.toLowerCase();

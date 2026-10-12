@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Play, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { AgentSummary } from "../api/client";
 import { AgentOption, CompanyFlowPage } from "../components/company-flow";
@@ -34,6 +34,8 @@ export type OnboardingProps = {
   onBack(): void;
   onNext(): void;
   onCreateCompany(): void;
+  /** Offered when a company already exists, so the founder can go back to it (dashboard ADR 0002). */
+  onCancel?(): void;
 };
 
 export function Onboarding(props: OnboardingProps) {
@@ -46,6 +48,14 @@ export function Onboarding(props: OnboardingProps) {
   return (
     <CompanyFlowPage
       eyebrow={displayCompanyName ? t("app.localAgentCompany") : t("onboarding.eyebrow")}
+      headerActions={
+        props.onCancel ? (
+          <Button disabled={props.isCreating} onClick={props.onCancel} size="sm" variant="ghost">
+            <X aria-hidden="true" />
+            {t("onboarding.cancel")}
+          </Button>
+        ) : undefined
+      }
       status={`${permissionLabel} ${t("onboarding.executionPolicy")}`}
       statusIcon={<ShieldCheck aria-hidden="true" />}
       title={displayCompanyName || t("app.title")}

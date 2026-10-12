@@ -20,7 +20,7 @@ An eligibility rule kept on both sides is a rule that drifts. See ADR 0020.
 `ui/tasks/affordanceControls.ts` maps every `TaskAffordanceKind` to one of:
 
 - `inline` — drawn on the task row itself, with its label keys and the handler that performs it;
-- `surface` — drawn by a named surface elsewhere (the CEO Office cards, the Human Action panel, the Operations replan list);
+- `surface` — drawn by a named surface elsewhere (the CEO Office cards, the Human Action panel, the new plans on Operations Diagnostics);
 - `unsurfaced` — nothing draws it, **and the reason is written down**.
 
 The registry is exhaustive over the union, so a new affordance cannot be added without someone deciding where it appears. `unsurfaced` is a legitimate answer but never a silent one: an affordance nothing renders because nobody thought about it is how the replan gap survived; one that nothing renders because someone argued for it is a decision. `affordanceControls.test.ts` enforces all three shapes.
@@ -29,7 +29,7 @@ Adding an `inline` affordance also requires a handler keyed in `TaskStatusAction
 
 ## Workbench Commands Are Decided Once
 
-Company-level founder commands (Create Company, Pause and Resume Operating, page navigation, the proof commands, fullscreen) are defined in `components/workbench/workbenchCommands.ts`, each with its label key, whether it can run now, and its handler. Every surface that offers one renders it from there: the legacy menu bar until P2, then the Workbench header. A surface lays commands out; it never decides on its own when one is available, so the two surfaces cannot disagree during the migration. Task actions are not commands: they come from server affordances, as above.
+Company-level founder commands (Create Company, Pause, Resume and Stop Operating) are defined in `components/workbench/workbenchCommands.ts`, each with its label key, whether it can run now, and its handler. Every place that offers one reads it from there: the Workbench header, Settings, and the two keyboard shortcuts (Cmd+Enter in the Onboarding Wizard, Shift+Cmd+K for Pause and Resume). A surface lays commands out; it never decides on its own when one is available. Page navigation is the rail's, not a command. Task actions are not commands either: they come from server affordances, as above.
 
 ## Server State Is Never Synthesised
 

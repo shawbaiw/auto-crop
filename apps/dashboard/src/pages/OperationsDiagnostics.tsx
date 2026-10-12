@@ -1,26 +1,20 @@
-import { Activity, Building2, FileCheck2, GitBranchPlus, ListChecks, ShieldAlert } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
-import type { CompanySummary, DepartmentSummary, HumanActionSummary, ReplanProposalSummary, ServerEvent, TaskSummary, WaitStateSummary } from "../api/client";
-import { VideotexKeyValue, VideotexLog } from "../ui/data";
-import { HumanActionPanel } from "../ui/humanActions/HumanActionPanel";
+import { Activity, AlertTriangle, FileCheck2, GitBranchPlus, ListChecks } from "lucide-react";
+import { useMemo } from "react";
+import type { HumanActionSummary, ReplanProposalSummary, ServerEvent, TaskSummary, WaitStateSummary } from "../api/client";
+import { ReplanProposalCard } from "../components/replan/ReplanProposalCard";
+import { ReplanRequestForm, type ReplanRequest } from "../components/replan/ReplanRequestForm";
+import { Card } from "../components/ui";
+import { WorkbenchSection } from "../components/workbench/WorkbenchSection";
+import { KeyValueList, LineList, type KeyValueItem } from "../components/workbench/KeyValueList";
 import { useLanguage, type TranslationKey } from "../ui/language";
+import { taskTitle } from "../ui/language/localizedNames";
 import { resolveLocalizedValue } from "../ui/language/localizedText";
-import { AppShell, PageHeader, Workspace } from "../ui/layout";
-import { RetroButton, RetroPanel } from "../ui/retro";
-import { formatCodeLabel, formatCompanyStatus, formatReplanProposalStatus } from "../ui/tasks/formatDisplayValue";
-import { formatTaskFailureReason, formatTaskStatus } from "../ui/tasks/formatTaskStatus";
-import { WaitStatePanel } from "../ui/waitStates/WaitStatePanel";
-import { ReplanProposalCard } from "../ui/replan/ReplanProposalCard";
-import { ReplanRequestForm, type ReplanRequest } from "../ui/replan/ReplanRequestForm";
+import { formatCodeLabel } from "../ui/tasks/formatDisplayValue";
+import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 
-export type CompanyOperationsProps = {
-  company: CompanySummary;
-  departments: DepartmentSummary[];
+export type OperationsDiagnosticsProps = {
   events: ServerEvent[];
   humanActions: HumanActionSummary[];
-  isPaused: boolean;
-  menuBar?: ReactNode;
-  onConfirmHumanAction(humanActionId: string, evidence: Record<string, string>): Promise<void> | void;
   onConfirmReplanProposal(proposalId: string): Promise<void> | void;
   onCreateReplanProposal(taskId: string, request: ReplanRequest): Promise<void> | void;
   onRejectReplanProposal(proposalId: string, note: string | null): Promise<void> | void;
@@ -29,21 +23,22 @@ export type CompanyOperationsProps = {
   waitStates: WaitStateSummary[];
 };
 
-export function CompanyOperations({
-  company,
-  departments,
+const stuckStatuses = new Set(["blocked", "failed", "needs_replan"]);
+
+/**
+ * How work is flowing and where it is stuck, with raw codes kept under Details (dashboard ADR 0002).
+ * New plans are requested and confirmed here until P4 moves them to the department page.
+ */
+export function OperationsDiagnostics({
   events,
   humanActions,
-  isPaused,
-  menuBar,
-  onConfirmHumanAction,
   onConfirmReplanProposal,
   onCreateReplanProposal,
   onRejectReplanProposal,
   replanProposals,
   tasks,
   waitStates,
-}: CompanyOperationsProps) {
+}: OperationsDiagnosticsProps) {
   const { language, t } = useLanguage();
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const activityRows = useMemo(
@@ -67,116 +62,123 @@ export function CompanyOperations({
   // Proposals awaiting a decision first; the rest is history.
   const orderedProposals = [...replanProposals].sort((left, right) =>
     Number(right.status === "proposed") - Number(left.status === "proposed") || right.createdAt.localeCompare(left.createdAt));
-  const taskCounts = countTaskStates(tasks);
+  const counts = countTasks(tasks);
+  const stuckTasks = tasks.filter((task) => stuckStatuses.has(task.status));
+  const reviewTasks = tasks.filter((task) => task.taskKind !== "department_subtask" && task.status === "review");
 
   return (
-    <AppShell className="app-shell--workbench" menuBar={menuBar}>
-      <PageHeader
-        eyebrow={company.name}
-        status={formatCompanyStatus(company.status, t)}
-        statusIcon={<Activity size={16} aria-hidden="true" />}
-        title={t("operations.title")}
-      />
-      {isPaused ? <section className="system-message system-message--danger">{t("app.companyPaused")}</section> : null}
+    <div className="grid gap-4">
+      <p className="text-sm text-muted-foreground">{t("diagnostics.intro")}</p>
 
-      <Workspace className="operations-grid">
-        <RetroPanel icon={<Building2 size={18} aria-hidden="true" />} title={t("operations.companyState")} variant="inverted">
-          <VideotexKeyValue
-            items={[
-              { label: t("operations.state"), value: formatCompanyStatus(company.status, t) },
-              { label: t("operations.playbook"), value: company.playbookId },
-              { label: t("operations.departments"), value: String(departments.length).padStart(2, "0") },
-            ]}
+      <WorkbenchSection icon={<ListChecks aria-hidden="true" />} title={t("diagnostics.taskFlow")}>
+        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Stat label={t("diagnostics.countRunning")} tone="text-blue-700" value={counts.running} />
+          <Stat label={t("diagnostics.countWaiting")} tone="text-slate-600" value={counts.waiting} />
+          <Stat label={t("diagnostics.countReview")} tone="text-violet-700" value={counts.review} />
+          <Stat label={t("diagnostics.countNeedsYou")} tone="text-amber-700" value={counts.needsYou} />
+          <Stat label={t("diagnostics.countFailed")} tone="text-red-700" value={counts.failed} />
+          <Stat label={t("diagnostics.countComplete")} tone="text-emerald-700" value={counts.complete} />
+          <Stat
+            label={t("diagnostics.needsYourAction")}
+            tone="text-amber-700"
+            value={humanActions.filter((action) => action.status === "pending").length}
           />
-        </RetroPanel>
-        <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title={t("operations.taskFlow")}>
-          <VideotexKeyValue
-            items={[
-              { label: t("operations.running"), value: String(taskCounts.running).padStart(2, "0") },
-              { label: t("operations.waiting"), value: String(taskCounts.waiting_dependency).padStart(2, "0") },
-              { label: t("operations.retrying"), value: String(taskCounts.retrying).padStart(2, "0") },
-              { label: t("operations.review"), value: String(taskCounts.review).padStart(2, "0") },
-              { label: t("operations.blocked"), value: String(taskCounts.blocked).padStart(2, "0") },
-              { label: t("operations.needsReplan"), value: String(taskCounts.needs_replan).padStart(2, "0") },
-              { label: t("operations.failed"), value: String(taskCounts.failed).padStart(2, "0") },
-            ]}
-          />
-        </RetroPanel>
-        <RetroPanel icon={<ShieldAlert size={18} aria-hidden="true" />} title={t("operations.attention")}>
-          <HumanActionPanel
-            actions={humanActions.filter((action) => action.status === "pending")}
-            onConfirm={onConfirmHumanAction}
-            title={t("department.humanActions")}
-          />
-          <WaitStatePanel title={t("department.waitStates")} waitStates={waitStates} />
-          <VideotexLog
-            emptyMessage={
-              humanActions.some((action) => action.status === "pending") || waitStates.length > 0 ? "" : t("operations.noAttention")
-            }
-            rows={tasks
-              .filter((task) => task.status === "blocked" || task.status === "failed" || task.status === "needs_replan")
-              .map((task) => `${taskTitle(task, language)} / ${formatTaskStatus(task, t)}`)}
-          />
-        </RetroPanel>
-      </Workspace>
+          <Stat label={t("diagnostics.waitingFor")} tone="text-slate-600" value={waitStates.length} />
+        </dl>
+      </WorkbenchSection>
 
-      <Workspace>
-        <RetroPanel icon={<GitBranchPlus size={18} aria-hidden="true" />} title={t("operations.replanProposals")}>
-          <div className="replan-proposals">
-            {tasksAwaitingReplanProposal.map((task) => (
-              <div className="replan-card" key={task.id}>
-                <ReplanRequestForm onSubmit={(request) => onCreateReplanProposal(task.id, request)} taskTitle={taskTitle(task, language)} />
-              </div>
-            ))}
+      <WorkbenchSection icon={<AlertTriangle aria-hidden="true" />} title={t("diagnostics.stuck")}>
+        {stuckTasks.length === 0 ? <p className="text-sm text-muted-foreground">{t("diagnostics.noStuck")}</p> : null}
+        <ul className="grid gap-2">
+          {stuckTasks.map((task) => (
+            <li className="grid gap-1 rounded-md border border-border/70 p-3" key={task.id}>
+              <p className="text-sm">
+                {stuckSentence(task, language, t)}
+              </p>
+              <details className="text-sm">
+                <summary className="cursor-pointer text-muted-foreground">{t("workbench.details")}</summary>
+                <KeyValueList className="mt-2" items={taskDetails(task, t)} />
+              </details>
+            </li>
+          ))}
+        </ul>
+      </WorkbenchSection>
 
-            {replanProposals.length === 0 && tasksAwaitingReplanProposal.length === 0 ? (
-              <p className="muted">{t("operations.noReplanProposals")}</p>
-            ) : null}
-
-            {orderedProposals.map((proposal) => (
-              <ReplanProposalCard
-                key={proposal.id}
-                onConfirm={onConfirmReplanProposal}
-                onReject={onRejectReplanProposal}
-                proposal={proposal}
-                tasks={tasks}
-              />
-            ))}
-          </div>
-        </RetroPanel>
-      </Workspace>
-
-      <Workspace className="control-grid">
-        <RetroPanel icon={<Activity size={18} aria-hidden="true" />} title={t("operations.agentActivity")}>
-          <VideotexLog emptyMessage={t("operations.waitingActivity")} rows={activityRows} />
-        </RetroPanel>
-        <RetroPanel icon={<FileCheck2 size={18} aria-hidden="true" />} title={t("operations.reviewQueue")}>
-          <VideotexLog
-            emptyMessage={t("operations.noReviewTasks")}
-            rows={tasks
-              .filter((task) => task.taskKind !== "department_subtask" && task.status === "review")
-              .map((task) => taskTitle(task, language))}
+      <WorkbenchSection icon={<GitBranchPlus aria-hidden="true" />} title={t("diagnostics.newPlans")}>
+        <p className="text-sm text-muted-foreground">{t("diagnostics.newPlansNote")}</p>
+        {tasksAwaitingReplanProposal.map((task) => (
+          <Card className="p-4" key={task.id}>
+            <ReplanRequestForm onSubmit={(request) => onCreateReplanProposal(task.id, request)} taskTitle={taskTitle(task, language)} />
+          </Card>
+        ))}
+        {replanProposals.length === 0 && tasksAwaitingReplanProposal.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("diagnostics.noNewPlans")}</p>
+        ) : null}
+        {orderedProposals.map((proposal) => (
+          <ReplanProposalCard
+            key={proposal.id}
+            onConfirm={onConfirmReplanProposal}
+            onReject={onRejectReplanProposal}
+            proposal={proposal}
+            tasks={tasks}
           />
-        </RetroPanel>
-        <RetroPanel icon={<ListChecks size={18} aria-hidden="true" />} title={t("operations.departments")}>
-          <VideotexLog
-            emptyMessage={t("operations.noDepartments")}
-            rows={departments.map((department) => resolveLocalizedValue(department.nameText, language, department.name))}
-          />
-        </RetroPanel>
-      </Workspace>
-    </AppShell>
+        ))}
+      </WorkbenchSection>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <WorkbenchSection icon={<Activity aria-hidden="true" />} title={t("diagnostics.activity")}>
+          <LineList emptyMessage={t("operations.waitingActivity")} lines={activityRows} />
+        </WorkbenchSection>
+        <WorkbenchSection icon={<FileCheck2 aria-hidden="true" />} title={t("diagnostics.reviewQueue")}>
+          <LineList emptyMessage={t("diagnostics.noReview")} lines={reviewTasks.map((task) => taskTitle(task, language))} />
+        </WorkbenchSection>
+      </div>
+    </div>
   );
 }
 
-function countTaskStates(tasks: TaskSummary[]) {
-  return tasks.reduce(
-    (counts, task) => ({
-      ...counts,
-      [task.status]: (counts[task.status as keyof typeof counts] ?? 0) + 1,
-    }),
-    { blocked: 0, failed: 0, needs_replan: 0, retrying: 0, review: 0, running: 0, waiting_dependency: 0 },
+
+function Stat({ label, tone, value }: { label: string; tone: string; value: number }) {
+  return (
+    <div className="grid gap-0.5 rounded-md bg-muted/60 px-3 py-2">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className={`m-0 text-xl font-semibold ${tone}`}>{value}</dd>
+    </div>
   );
+}
+
+/** "{title} is {status}." — without a doubled stop when the status already ends a sentence. */
+function stuckSentence(task: TaskSummary, language: "en" | "zh", t: (key: TranslationKey) => string): string {
+  return t("diagnostics.stuckSentence")
+    .replace("{title}", taskTitle(task, language))
+    .replace("{status}", formatTaskStatus(task, t))
+    .replace(/([.。!?！？])[.。]$/, "$1");
+}
+
+function countTasks(tasks: TaskSummary[]) {
+  const counts = { running: 0, waiting: 0, review: 0, needsYou: 0, failed: 0, complete: 0 };
+  for (const task of tasks) {
+    if (task.status === "running" || task.status === "retrying") counts.running += 1;
+    else if (task.status === "queued" || task.status === "waiting_dependency") counts.waiting += 1;
+    else if (task.status === "review") counts.review += 1;
+    else if (task.status === "blocked" || task.status === "needs_replan") counts.needsYou += 1;
+    else if (task.status === "failed") counts.failed += 1;
+    else if (task.status === "complete") counts.complete += 1;
+  }
+  return counts;
+}
+
+/** The raw execution details behind a stuck task's plain sentence. */
+function taskDetails(task: TaskSummary, t: (key: TranslationKey) => string): KeyValueItem[] {
+  return [
+    { label: t("diagnostics.detailStatus"), value: task.status },
+    ...(task.failureReason ? [{ label: t("diagnostics.detailReason"), value: task.failureReason }] : []),
+    ...(task.failureMessage ? [{ label: t("diagnostics.detailMessage"), value: task.failureMessage }] : []),
+    ...(task.effectiveTimeoutMs ? [{ label: t("diagnostics.detailBudget"), value: formatBudget(task.effectiveTimeoutMs) }] : []),
+    ...(task.executionProfileName ? [{ label: t("diagnostics.detailProfile"), value: task.executionProfileName }] : []),
+    ...(task.dependencyNote ? [{ label: t("diagnostics.detailDependency"), value: task.dependencyNote }] : []),
+    ...(task.artifactWorkspacePath ? [{ label: t("diagnostics.detailWorkspace"), value: task.artifactWorkspacePath }] : []),
+  ];
 }
 
 function formatAgentActivityEvent(event: ServerEvent, task: TaskSummary | undefined, language: "en" | "zh", t: (key: TranslationKey) => string): string {
@@ -275,10 +277,6 @@ function formatAgentActivityDetail(event: ServerEvent, language: "en" | "zh", t:
   }
 
   return cleanActivityMessage(resolveLocalizedValue(event.messageText, language, event.message)) ?? t("operations.newActivity");
-}
-
-function taskTitle(task: TaskSummary, language: "en" | "zh"): string {
-  return resolveLocalizedValue(task.titleText, language, task.title);
 }
 
 function formatFailureDetail(reason: string | undefined, t: (key: TranslationKey) => string): string {

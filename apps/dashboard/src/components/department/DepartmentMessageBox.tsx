@@ -1,7 +1,6 @@
 import { MessageSquareText, Send } from "lucide-react";
 import { useId, useState } from "react";
 import { useLanguage } from "../../ui/language";
-import { departmentName } from "../../ui/language/localizedNames";
 import { RetroButton } from "../../ui/retro";
 
 export function DepartmentMessageBox({

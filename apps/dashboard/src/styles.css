@@ -31,15 +31,6 @@
   --pixel-unit: 2px;
   --border-px: 2px;
   --hard-shadow-offset: 6px;
-  --scanline-spacing: 4px;
-  --scanline-opacity: 0.2;
-  --phosphor-strength: 0.14;
-  --bloom-strength: 0.16;
-  --noise-strength: 0.11;
-  --rgb-misregistration: 1px;
-  --sync-fault-strength: 0.32;
-  --stable-content-max: 1280px;
-  --screen-gutter: clamp(10px, 1.45vw, 22px);
   --screen-gap: clamp(10px, 1vw, 14px);
   color: var(--ink);
   background: var(--field);
@@ -74,9 +65,7 @@ textarea:focus-visible {
   outline-offset: var(--pixel-unit);
 }
 
-.retro-panel:focus-visible,
-.workspace:focus-visible,
-.proof-evidence-row:focus-visible {
+.retro-panel:focus-visible {
   outline: var(--border-px) solid var(--accent-primary);
   outline-offset: var(--pixel-unit);
 }
@@ -116,158 +105,6 @@ p {
   min-height: 100vh;
 }
 
-.app-shell {
-  align-content: start;
-  display: grid;
-  gap: var(--screen-gap);
-  margin: 0 auto;
-  max-width: min(var(--stable-content-max), 100%);
-  min-height: inherit;
-  padding: var(--screen-gutter);
-  width: 100%;
-}
-
-.app-shell--workbench {
-  max-width: none;
-}
-
-.app-shell--department-workspace {
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.app-shell--modal {
-  grid-template-rows: auto minmax(0, 1fr);
-  max-width: none;
-}
-
-.retro-menu-bar {
-  align-self: start;
-  background: var(--surface);
-  border: var(--border-px) solid var(--retro-border);
-  color: var(--ink);
-  height: 34px;
-  min-height: 34px;
-  overflow: visible;
-  position: sticky;
-  top: var(--screen-gutter);
-  z-index: 30;
-}
-
-.retro-menu-bar__mobile {
-  display: none;
-}
-
-.retro-menu-strip {
-  align-items: stretch;
-  display: flex;
-  min-height: 30px;
-}
-
-.retro-menu-root {
-  position: relative;
-}
-
-.retro-menu-trigger {
-  background: transparent;
-  border: 0;
-  color: var(--ink);
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-weight: 700;
-  height: 100%;
-  min-height: 30px;
-  padding: 0 14px;
-  text-transform: none;
-}
-
-.retro-menu-trigger:hover,
-.retro-menu-trigger.is-open {
-  background: var(--selected-bg);
-  color: var(--selected-fg);
-}
-
-.retro-menu-popover {
-  background: var(--surface);
-  border: var(--border-px) solid var(--retro-border);
-  box-shadow: 4px 4px 0 color-mix(in srgb, var(--ink) 34%, transparent);
-  display: grid;
-  left: 0;
-  min-width: 264px;
-  padding: 5px 0;
-  position: absolute;
-  top: calc(100% + var(--border-px));
-  z-index: 40;
-}
-
-.retro-menu-popover--submenu {
-  left: calc(100% - 2px);
-  top: -7px;
-}
-
-.retro-menu-item-wrap {
-  position: relative;
-}
-
-.retro-menu-item {
-  align-items: center;
-  background: var(--surface);
-  border: 0;
-  color: var(--ink);
-  cursor: pointer;
-  display: grid;
-  font-size: 0.78rem;
-  font-weight: 700;
-  gap: 8px;
-  grid-template-columns: 18px minmax(0, 1fr) auto auto;
-  min-height: 28px;
-  padding: 4px 12px 4px 9px;
-  text-align: left;
-  text-transform: none;
-  white-space: nowrap;
-  width: 100%;
-}
-
-.retro-menu-item.is-active:not(:disabled),
-.retro-menu-item:hover:not(:disabled) {
-  background: var(--selected-bg);
-  color: var(--selected-fg);
-}
-
-.retro-menu-item:disabled {
-  color: color-mix(in srgb, var(--ink) 36%, var(--surface));
-  cursor: default;
-}
-
-.retro-menu-item__check {
-  display: inline-flex;
-  justify-content: center;
-}
-
-.retro-menu-item__shortcut,
-.retro-menu-item__submenu {
-  color: inherit;
-  font-size: 0.72rem;
-  justify-self: end;
-}
-
-.retro-menu-separator {
-  border-top: 1px solid color-mix(in srgb, var(--ink) 40%, transparent);
-  height: 1px;
-  margin: 5px 0;
-}
-
-.page-header {
-  align-items: stretch;
-  background: var(--surface);
-  border: var(--border-px) solid var(--retro-border);
-  display: grid;
-  grid-template-columns: 1fr auto;
-}
-
-.page-header > div:first-child {
-  padding: 10px 14px;
-}
-
 .eyebrow {
   color: var(--accent-secondary);
   display: inline-block;
@@ -298,103 +135,26 @@ h3 {
   text-transform: uppercase;
 }
 
-.workspace {
-  display: grid;
-  gap: var(--screen-gap);
-}
-
-.app-modal-backdrop {
-  align-items: center;
-  background:
-    linear-gradient(45deg, color-mix(in srgb, var(--ink) 10%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--ink) 10%, transparent) 75%),
-    linear-gradient(45deg, color-mix(in srgb, var(--ink) 10%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--ink) 10%, transparent) 75%),
-    color-mix(in srgb, var(--field) 82%, var(--ink));
-  background-position: 0 0, 4px 4px, 0 0;
-  background-size: 8px 8px, 8px 8px, auto;
-  border: var(--border-px) solid var(--retro-border);
-  display: grid;
-  min-height: min(780px, calc(100vh - 92px));
-  padding: clamp(14px, 3vw, 32px);
-}
-
-.app-modal-card {
-  background: var(--surface);
-  border: var(--border-px) solid var(--retro-border);
-  box-shadow: calc(var(--hard-shadow-offset) + 4px) calc(var(--hard-shadow-offset) + 4px) 0 var(--titlebar);
-  display: grid;
-  gap: var(--screen-gap);
-  justify-self: center;
-  max-height: min(760px, calc(100vh - 130px));
-  max-width: min(860px, 100%);
-  overflow: auto;
-  padding: var(--screen-gap);
-  scrollbar-color: var(--titlebar) var(--surface-alt);
-  scrollbar-width: thin;
-  width: min(860px, 100%);
-}
-
-.app-modal-card::-webkit-scrollbar {
-  height: 14px;
-  width: 14px;
-}
-
-.app-modal-card::-webkit-scrollbar-track {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--ink) 16%, transparent) 0 1px, transparent 1px 4px),
-    var(--surface-alt);
-  border-left: var(--border-px) solid var(--retro-border);
-}
-
-.app-modal-card::-webkit-scrollbar-thumb {
-  background: var(--titlebar);
-  border: var(--border-px) solid var(--surface-alt);
-}
-
-.app-modal-card::-webkit-scrollbar-corner {
-  background: var(--surface-alt);
-}
-
-.app-modal-card > .retro-status {
-  border: var(--border-px) solid var(--retro-border);
-  width: fit-content;
-}
-
-.department-workspace {
-  align-items: start;
-  grid-template-columns: minmax(190px, 0.2fr) minmax(0, 1fr);
+/* Retro UI content inside the modern Workbench, until P4 replaces CEO Office and the department pages. */
+.legacy-workspace {
   min-height: 0;
-}
-
-.department-workspace__rail .retro-panel__body {
-  gap: 10px;
 }
 
 .department-workspace__main {
   display: grid;
   gap: var(--screen-gap);
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.34fr);
   height: 100%;
   min-width: 0;
   min-height: 0;
 }
 
 .department-workspace__main > .retro-panel {
-  grid-column: 1 / -1;
-}
-
-.app-shell--department-workspace .department-workspace,
-.app-shell--department-workspace .department-workspace > .retro-panel,
-.app-shell--department-workspace .department-workspace__main > .retro-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
 
-.app-shell--department-workspace .department-workspace > .retro-panel,
-.app-shell--department-workspace .department-workspace__main > .retro-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.app-shell--department-workspace .retro-panel__body {
+.department-workspace__main .retro-panel__body {
   align-content: start;
   min-height: 0;
 }
@@ -1175,119 +935,12 @@ h3 {
   gap: 8px;
 }
 
-.operations-grid {
-  grid-template-columns: 1.25fr 1fr 1fr;
-}
-
-.department-band {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
-.control-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
 .replan-proposals {
   display: grid;
   gap: 14px;
 }
 
-.replan-card {
-  border-left: 6px solid var(--accent-primary);
-  display: grid;
-  gap: 12px;
-  padding-left: 12px;
-}
-
-.replan-card__header {
-  align-items: start;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  justify-content: space-between;
-}
-
-.replan-card__header p {
-  min-width: min(100%, 260px);
-}
-
-.replan-card__header span {
-  background: var(--titlebar);
-  color: var(--titlebar-ink);
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 5px 8px;
-  text-transform: uppercase;
-}
-
-.replan-review-section {
-  display: grid;
-  gap: 8px;
-}
-
-.replan-card--stale {
-  border-left-color: var(--danger);
-}
-
-.replan-request,
-.replan-card__actions {
-  display: grid;
-  gap: 8px;
-  justify-items: start;
-}
-
-.replan-request .retro-field,
-.replan-card__actions .retro-field {
-  width: 100%;
-}
-
 /* A Revision's before and after, side by side (ADR 0043). Wide content wraps instead of scrolling. */
-.replan-diff {
-  border: var(--border-px) solid var(--retro-border);
-  border-collapse: collapse;
-  font-size: 0.8rem;
-  table-layout: fixed;
-  width: 100%;
-}
-
-.replan-diff caption {
-  font-weight: 700;
-  padding: 4px 0;
-  text-align: left;
-}
-
-.replan-diff th,
-.replan-diff td {
-  border: var(--border-px) solid var(--retro-border);
-  overflow-wrap: anywhere;
-  padding: 6px 8px;
-  text-align: left;
-  vertical-align: top;
-}
-
-.replan-diff thead th {
-  background: var(--surface-alt);
-}
-
-.replan-diff__changed td:last-child {
-  background: color-mix(in srgb, var(--surface) 82%, var(--accent-primary));
-}
-
-.replan-diff__requirements {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding-left: 16px;
-}
-
-.replan-review-section h3 {
-  background:
-    linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),
-    var(--surface-alt);
-  border: var(--border-px) solid var(--retro-border);
-  font-size: 0.72rem;
-  padding: 7px 8px;
-}
 
 .retro-panel {
   background: var(--surface);
@@ -1325,8 +978,7 @@ h3 {
 }
 
 .retro-title-rail__icon,
-.retro-button__icon,
-.retro-status__icon {
+.retro-button__icon {
   align-items: center;
   display: inline-flex;
 }
@@ -1376,8 +1028,7 @@ h3 {
   color: var(--titlebar-ink);
 }
 
-.retro-button:active,
-.retro-list-row:active {
+.retro-button:active {
   box-shadow: none;
   transform: translate(var(--pixel-unit), var(--pixel-unit));
 }
@@ -1412,8 +1063,7 @@ h3 {
 }
 
 .retro-textarea,
-.retro-input,
-.retro-select-trigger {
+.retro-input {
   background: var(--surface);
   border: var(--border-px) solid var(--retro-border);
   color: var(--ink);
@@ -1429,135 +1079,6 @@ h3 {
 .retro-textarea {
   min-height: 146px;
   resize: vertical;
-}
-
-.retro-select {
-  display: block;
-  position: relative;
-}
-
-.retro-select-trigger {
-  align-items: center;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  padding-right: 38px;
-  text-align: left;
-}
-
-.retro-select-trigger svg {
-  pointer-events: none;
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.retro-select-popover {
-  background: var(--surface);
-  border: var(--border-px) solid var(--retro-border);
-  box-shadow: var(--hard-shadow-offset) var(--hard-shadow-offset) 0 var(--titlebar);
-  display: grid;
-  gap: 0;
-  left: 0;
-  margin-top: 6px;
-  min-width: 100%;
-  padding: 4px;
-  position: absolute;
-  top: 100%;
-  z-index: 20;
-}
-
-.retro-option {
-  background: var(--surface);
-  border: 0;
-  color: var(--ink);
-  cursor: pointer;
-  display: flex;
-  justify-content: flex-start;
-  min-height: 36px;
-  padding: 8px 10px;
-  text-align: left;
-  width: 100%;
-}
-
-.retro-option:hover,
-.retro-option.is-active,
-.retro-option[aria-selected="true"] {
-  background:
-    linear-gradient(45deg, color-mix(in srgb, var(--ink) 18%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--ink) 18%, transparent) 75%),
-    linear-gradient(45deg, color-mix(in srgb, var(--ink) 18%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--ink) 18%, transparent) 75%),
-    var(--selected-bg);
-  background-position: 0 0, 4px 4px, 0 0;
-  background-size: 8px 8px, 8px 8px, auto;
-  color: var(--selected-fg);
-}
-
-.retro-list-row {
-  background: var(--surface-alt);
-  border: var(--border-px) solid var(--retro-border);
-  color: var(--ink);
-  cursor: pointer;
-  display: grid;
-  gap: 6px;
-  min-height: 90px;
-  padding: 12px;
-  text-align: left;
-}
-
-.retro-list-row:hover,
-.retro-list-row.is-selected {
-  background:
-    linear-gradient(45deg, color-mix(in srgb, var(--ink) 18%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--ink) 18%, transparent) 75%),
-    linear-gradient(45deg, color-mix(in srgb, var(--ink) 18%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--ink) 18%, transparent) 75%),
-    var(--selected-bg);
-  background-position: 0 0, 4px 4px, 0 0;
-  background-size: 8px 8px, 8px 8px, auto;
-  color: var(--selected-fg);
-}
-
-.retro-list-row strong {
-  align-items: center;
-  display: inline-flex;
-  font-size: 1rem;
-  gap: 8px;
-  line-height: 1.15;
-  text-transform: uppercase;
-}
-
-.retro-list-row__icon {
-  align-items: center;
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-
-.retro-list-row span {
-  color: inherit;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-}
-
-.retro-status {
-  align-items: center;
-  background: var(--titlebar);
-  border-left: var(--border-px) solid var(--retro-border);
-  color: var(--titlebar-ink);
-  display: inline-flex;
-  font-size: 0.78rem;
-  font-weight: 700;
-  gap: 8px;
-  min-height: 42px;
-  padding: 0 12px;
-  text-transform: uppercase;
-}
-
-.app-shell > .retro-status {
-  border: var(--border-px) solid var(--retro-border);
-  width: fit-content;
-}
-
-.retro-status--danger {
-  background: var(--danger);
 }
 
 .retro-badge {
@@ -1612,11 +1133,6 @@ h3 {
   min-height: 48px;
   padding: 12px;
   text-transform: uppercase;
-}
-
-.system-message--danger {
-  background: var(--danger);
-  color: var(--titlebar-ink);
 }
 
 .system-message__detail {
@@ -1696,96 +1212,26 @@ h3 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .retro-button:active,
-  .retro-list-row:active {
+  .retro-button:active {
     animation: none;
     transform: none;
   }
 }
 
-@media (max-width: 980px) {
-  .operations-grid,
-  .department-band,
-  .control-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 760px) {
-  .app-shell {
-    padding: 16px;
-  }
-
-  .app-modal-backdrop {
-    align-items: start;
-    min-height: calc(100vh - 86px);
-    padding: 10px;
-  }
-
-  .app-modal-card {
-    box-shadow: 4px 4px 0 var(--titlebar);
-    max-height: calc(100vh - 110px);
-    padding: 10px;
-  }
-
-  .retro-menu-bar__desktop {
-    display: none;
-  }
-
-  .retro-menu-bar__mobile {
-    display: block;
-  }
-
-  .retro-menu-root,
-  .retro-menu-trigger {
-    width: 100%;
-  }
-
-  .retro-menu-trigger {
-    text-align: left;
-  }
-
-  .retro-menu-popover {
-    max-height: min(70vh, 520px);
-    overflow: auto;
-    width: 100%;
-  }
-
-  .page-header,
-  .department-workspace,
-  .operations-grid,
-  .control-grid,
-  .department-band {
-    grid-template-columns: 1fr;
-  }
-
-  .app-shell--department-workspace .department-workspace__main {
-    grid-template-columns: 1fr;
-  }
-
   .department-overview {
     grid-template-columns: 1fr;
-  }
-
-  .retro-status {
-    border-left: 0;
-    border-top: var(--border-px) solid var(--retro-border);
-    justify-content: flex-start;
-  }
-
-  .app-shell > .retro-status {
-    border: var(--border-px) solid var(--retro-border);
   }
 }
 
 /* CEO Office is a viewport, not a document whose height grows with its history. */
-.app-shell--department-workspace:has(.ceo-intake-report) {
-  height: calc(100dvh - var(--crt-frame-inset, 0px) * 2);
-  min-height: 0;
+.legacy-workspace:has(.ceo-intake-report) {
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
-.department-workspace:has(.ceo-intake-report) {
-  overflow: hidden;
+.legacy-workspace:has(.ceo-intake-report) > .department-workspace__main {
+  flex: 1;
 }
 .department-workspace__main:has(.ceo-intake-report) > .retro-panel > .retro-panel__body {
   overflow: hidden;
@@ -1823,28 +1269,8 @@ h3 {
   display: grid;
   gap: 6px;
 }
-.department-workspace:has(.ceo-intake-report) > .department-workspace__rail {
-  overflow: auto;
-}
-
-.crt-viewport--frame-frameless .app-shell--department-workspace:has(.ceo-intake-report) { height: 100dvh; }
 
 @media (max-width: 760px) {
-  .department-workspace:has(.ceo-intake-report) {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 6px;
-  }
-  .department-workspace:has(.ceo-intake-report) .department-workspace__rail .retro-panel__body {
-    display: flex;
-    overflow-x: auto;
-    padding: 6px;
-  }
-  .department-workspace:has(.ceo-intake-report) .department-workspace__rail .retro-list-row {
-    flex: 0 0 auto;
-    min-height: 36px;
-    padding: 6px;
-  }
   .role-summary:has(> .ceo-intake-report) > .muted { display: none; }
   .ceo-intake-report { padding: 6px; gap: 6px; }
   .ceo-intake-report__footer .department-message-box textarea { min-height: 64px; }

@@ -3,9 +3,9 @@ import "../../test/setup";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { CompanySummary, ReplanProposalSummary, TaskSummary } from "../../api/client";
-import { CompanyOperations } from "../../pages/CompanyOperations";
-import { LanguageProvider } from "../language";
+import type { ReplanProposalSummary, TaskSummary } from "../../api/client";
+import { OperationsDiagnostics } from "../../pages/OperationsDiagnostics";
+import { LanguageProvider } from "../../ui/language";
 import { ReplanProposalCard } from "./ReplanProposalCard";
 import { ReplanRequestForm } from "./ReplanRequestForm";
 
@@ -119,20 +119,18 @@ describe("requesting a proposal", () => {
     await user.click(screen.getByRole("button", { name: "Create Replan Proposal" }));
     expect(onSubmit).toHaveBeenLastCalledWith({ mode: null, note: null });
 
-    await user.click(screen.getByRole("button", { name: "Replan mode for Pick a low-KD keyword" }));
-    await user.click(screen.getByRole("option", { name: "Revision — rewrite this task" }));
+    await user.selectOptions(screen.getByLabelText("Replan mode for Pick a low-KD keyword"), "Revision — rewrite this task");
     await user.type(screen.getByLabelText("Note for the planner"), "Accept an estimate.");
     await user.click(screen.getByRole("button", { name: "Create Replan Proposal" }));
     expect(onSubmit).toHaveBeenLastCalledWith({ mode: "revision", note: "Accept an estimate." });
   });
 
-  it("is offered on Operations for a task whose only proposal went stale, and not while a current one waits", () => {
-    const company = { id: "company_1", name: "Keyword Studio", status: "active", playbookId: "ai-saas" } as CompanySummary;
+  it("is offered on Operations Diagnostics for a task whose only proposal went stale, and not while a current one waits", () => {
     const operations = (proposals: ReplanProposalSummary[]) => (
       <LanguageProvider defaultLanguage="en">
-        <CompanyOperations
-          company={company} departments={[]} events={[]} humanActions={[]} isPaused={false} waitStates={[]}
-          onConfirmHumanAction={vi.fn()} onConfirmReplanProposal={vi.fn()} onCreateReplanProposal={vi.fn()} onRejectReplanProposal={vi.fn()}
+        <OperationsDiagnostics
+          events={[]} humanActions={[]} waitStates={[]}
+          onConfirmReplanProposal={vi.fn()} onCreateReplanProposal={vi.fn()} onRejectReplanProposal={vi.fn()}
           replanProposals={proposals} tasks={[keyword, verifier]}
         />
       </LanguageProvider>

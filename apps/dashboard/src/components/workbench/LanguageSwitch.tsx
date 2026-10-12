@@ -7,7 +7,7 @@ export function LanguageSwitch() {
 
   return (
     <div aria-label={t("menu.language")} className="inline-flex items-center gap-1" role="group">
-      <Languages aria-hidden="true" className="mr-1 size-4 text-muted-foreground" />
+      <Languages aria-hidden="true" className="mr-1 hidden size-4 text-muted-foreground sm:block" />
       {languageOrder.map((languageId) => (
         <Button
           aria-pressed={languageId === language}

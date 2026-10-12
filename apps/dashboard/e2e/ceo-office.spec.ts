@@ -20,7 +20,7 @@ test("CEO Office keeps a fixed viewport, follows new cards, and preserves histor
   });
   await page.route(/\/api\/(?:companies|agents|events)(?:\/|\?|$)/, async route => {
     const path = new URL(route.request().url()).pathname;
-    const company = { id: "c", name: "Viewport Studio", status: "draft", playbookId: "custom", locale: "en", founderVision: "Compare options with evidence", selectedCeoAgentId: "agent" };
+    const company = { id: "c", name: "Viewport Studio", status: "active", playbookId: "custom", locale: "en", founderVision: "Compare options with evidence", selectedCeoAgentId: "agent" };
     const state = { company, departments: [{ id: "d", name: "Research", responsibility: "Compare options", leadAgentId: "agent" }], objectives: [], keyResults: [], tasks: [{ id: "t", title: "Compare options", status: "complete", departmentId: "d" }], ceoOfficeItems: Array.from({ length: count }, (_, index) => report(index)), proof: [], businessArtifacts: [], reviews: [], activity: [], replanProposals: [], taskProgressEvents: [], taskCompletionEvents: [], founderDecisions: [], humanActions: [], waitStates: [], visionGaps: [], ceoIntakes: [] };
     await route.fulfill({ json: path === "/api/agents" ? { agents: [{ id: "agent", name: "Agent", capabilities: [], detected: true }] } : path.endsWith("/state") ? state : { companies: [company] } });
   });
