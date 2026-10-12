@@ -57,6 +57,15 @@ export default {
       boxShadow: {
         workbench: "0 18px 45px -32px hsl(220 30% 30% / 0.34)",
       },
+      keyframes: {
+        "progress-indeterminate": {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(250%)" },
+        },
+      },
+      animation: {
+        "progress-indeterminate": "progress-indeterminate 1.8s ease-in-out infinite",
+      },
     },
   },
   plugins: [],

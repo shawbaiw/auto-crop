@@ -291,7 +291,7 @@ describe("Dashboard App", () => {
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
     expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "CEO Office" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "CEO Office" })).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).toBeInTheDocument();
     expect(document.querySelector("dialog")).not.toBeInTheDocument();
     expect(screen.getByText("Creating Company")).toBeInTheDocument();
@@ -386,6 +386,58 @@ describe("Dashboard App", () => {
 
     expect(api.retryCompanyCreation).toHaveBeenCalledWith("company_1");
     expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+  });
+
+  it("restores a company still being created with its own CEO and permission mode", async () => {
+    const restoreStorage = installMockLocalStorage({ "auto-crop.currentCompanyId": "company_1" });
+    const api = createMockApiClient();
+    const creating = createCreatingCompanyResponse();
+    api.getCompanyState = vi.fn(async () => ({
+      ...creating,
+      company: { ...creating.company, permissionMode: "autonomous" },
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: [],
+    }));
+
+    try {
+      render(<App apiClient={api} />);
+
+      const summary = await screen.findByRole("region", { name: "Company Creation" });
+      expect(within(summary).getByText("Autonomous")).toBeInTheDocument();
+      expect(await within(summary).findByText("Codex")).toBeInTheDocument();
+    } finally {
+      restoreStorage();
+    }
+  });
+
+  it("shows creation stages in the interface language", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    const creating = createCreatingCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...creating,
+      creationEvents: [
+        {
+          type: "company_creation_accepted",
+          companyId: "company_1",
+          message: "Company Creation accepted.",
+          messageText: { en: "Company Creation accepted.", zh: "已接受公司创建。" },
+          status: "creating",
+        },
+      ],
+    }));
+
+    render(<App apiClient={api} />);
+
+    await fillReadyToCreate(user);
+    await user.click(screen.getByRole("button", { name: /create company/i }));
+    expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+
+    await user.click(within(screen.getByRole("group", { name: "Language" })).getByRole("button", { name: "中文" }));
+
+    expect(await screen.findByText("已接受公司创建。")).toBeInTheDocument();
   });
 
   it("lands in the Department Workspace with CEO selected after creation", async () => {

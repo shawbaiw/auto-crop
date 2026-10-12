@@ -6,6 +6,7 @@ import {
   formatArtifactRole,
   formatArtifactValidationStatus,
   formatCompanyStatus,
+  formatPermissionMode,
   formatProofType,
 } from "./formatDisplayValue";
 
@@ -18,6 +19,8 @@ describe("formatDisplayValue", () => {
   it("localizes company and proof display values", () => {
     expect(formatCompanyStatus("active", translate("en"))).toBe("Active");
     expect(formatCompanyStatus("active", translate("zh"))).toBe("运行中");
+    expect(formatPermissionMode("autonomous", translate("en"))).toBe("Autonomous");
+    expect(formatPermissionMode("safe", translate("zh"))).not.toBe("safe");
     expect(formatProofType("command_output", translate("en"))).toBe("Command output");
     expect(formatProofType("command_output", translate("zh"))).toBe("命令输出");
   });

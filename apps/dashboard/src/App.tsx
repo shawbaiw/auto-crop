@@ -190,7 +190,9 @@ export default function App({ apiClient }: AppProps) {
   }, [blueprint, view]);
 
   useEffect(() => {
-    if (view === "onboarding" && onboardingStep === "agents" && agentLoadState === "idle") {
+    // The creation view names the CEO; after a refresh straight into it the agents were never listed.
+    const needsAgents = (view === "onboarding" && onboardingStep === "agents") || view === "creating";
+    if (needsAgents && agentLoadState === "idle") {
       void detectAgents();
     }
   }, [agentLoadState, onboardingStep, view]);
@@ -878,18 +880,20 @@ export default function App({ apiClient }: AppProps) {
   }
 
   if (view === "creating") {
-    const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
+    // After a refresh the setup form is empty; the company being created knows its own choices.
+    const creatingAgentId = blueprint?.company.selectedCeoAgentId ?? selectedAgentId;
+    const selectedAgent = agents.find((agent) => agent.id === creatingAgentId) ?? null;
 
-    return renderAppFrame(
+    return renderModernAppFrame(
       <CompanyCreationLoading
         companyName={blueprint?.company.name ?? companyName.trim()}
         events={creationEvents}
         isFailed={blueprint?.company.status === "creation_failed"}
         isRetrying={isCreating}
-        menuBar={menuBar}
         onRetry={handleRetryCompanyCreation}
-        permissionMode={permissionMode}
+        permissionMode={blueprint?.company.permissionMode ?? permissionMode}
         selectedAgent={selectedAgent}
+        selectedAgentId={creatingAgentId || undefined}
       />,
     );
   }

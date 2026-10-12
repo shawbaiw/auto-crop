@@ -33,6 +33,7 @@ export type CompanySummary = {
   /** The canonical language the company's generated founder-facing content is authored in. */
   locale?: Locale;
   selectedCeoAgentId?: string;
+  permissionMode?: string;
 };
 
 export type CompanyListItem = CompanySummary & {

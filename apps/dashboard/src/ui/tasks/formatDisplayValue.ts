@@ -112,6 +112,19 @@ export function formatCompanyStatus(status: string, t: Translate): string {
   }
 }
 
+export function formatPermissionMode(mode: string, t: Translate): string {
+  switch (mode) {
+    case "safe":
+      return t("onboarding.safe");
+    case "balanced":
+      return t("onboarding.balanced");
+    case "autonomous":
+      return t("onboarding.autonomous");
+    default:
+      return formatCodeLabel(mode);
+  }
+}
+
 export function formatReplanProposalStatus(status: string, t: Translate): string {
   switch (status) {
     case "proposed":

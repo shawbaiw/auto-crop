@@ -354,64 +354,9 @@ h3 {
   background: var(--surface-alt);
 }
 
-.app-modal-card--creation {
-  max-width: min(980px, 100%);
-  width: min(980px, 100%);
-}
-
 .app-modal-card > .retro-status {
   border: var(--border-px) solid var(--retro-border);
   width: fit-content;
-}
-
-.creation-progress {
-  background: var(--surface-alt);
-  border: var(--border-px) solid var(--retro-border);
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-}
-
-.creation-progress__track {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--ink) 24%, transparent) 0 1px, transparent 1px 12px),
-    var(--surface);
-  border: var(--border-px) solid var(--retro-border);
-  height: 28px;
-  overflow: hidden;
-  position: relative;
-}
-
-.creation-progress__bar {
-  animation: creation-progress-sweep 1.6s steps(8, end) infinite;
-  background:
-    linear-gradient(45deg, color-mix(in srgb, var(--selected-fg) 24%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--selected-fg) 24%, transparent) 75%),
-    linear-gradient(45deg, color-mix(in srgb, var(--selected-fg) 24%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--selected-fg) 24%, transparent) 75%),
-    var(--selected-bg);
-  background-position: 0 0, 4px 4px, 0 0;
-  background-size: 8px 8px, 8px 8px, auto;
-  display: block;
-  height: 100%;
-  min-width: 38%;
-}
-
-@keyframes creation-progress-sweep {
-  from {
-    transform: translateX(-40%);
-  }
-
-  to {
-    transform: translateX(260%);
-  }
-}
-
-.creation-loading {
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-}
-
-.creation-loading__stage {
-  display: grid;
-  gap: 8px;
 }
 
 .department-workspace {
@@ -1751,7 +1696,6 @@ h3 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .creation-progress__bar,
   .retro-button:active,
   .retro-list-row:active {
     animation: none;
@@ -1808,7 +1752,6 @@ h3 {
   }
 
   .page-header,
-  .creation-loading,
   .department-workspace,
   .operations-grid,
   .control-grid,

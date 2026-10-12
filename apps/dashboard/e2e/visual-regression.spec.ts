@@ -52,6 +52,30 @@ for (const viewport of viewports) {
     await page.screenshot({ fullPage: true, path: testInfo.outputPath(`modern-onboarding-vision-${viewport.name}.png`) });
   });
 
+  test(`captures modern creation loading screenshots on ${viewport.name}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ height: viewport.height, width: viewport.width });
+
+    for (const outcome of ["creating", "creation_failed"] as const) {
+      await page.addInitScript((companyId) => window.localStorage.setItem("auto-crop.currentCompanyId", companyId), company.id);
+      await mockApi(page, {
+        companies: [company],
+        company: { ...company, status: outcome, permissionMode: "balanced" },
+        creationEvents: [
+          creationEvent("company_creation_accepted", "Company Creation accepted.", "creating"),
+          creationEvent("company_creation_agent_started", "CEO agent started drafting the blueprint.", "creating"),
+          ...(outcome === "creation_failed"
+            ? [creationEvent("company_creation_failed", "Company Creation failed: temporary model failure", outcome)]
+            : []),
+        ],
+      });
+      await page.goto("/");
+
+      await expect(page.getByRole("region", { name: "Creation Stages" })).toBeVisible();
+      await expectModernPage(page);
+      await page.screenshot({ fullPage: true, path: testInfo.outputPath(`modern-${outcome}-${viewport.name}.png`) });
+    }
+  });
+
   // Company flow pages are modern; the Department Workspace is still legacy, so CRT coverage enters there.
   test(`captures CRT visual regression screenshots for every skin on ${viewport.name}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ height: viewport.height, width: viewport.width });
@@ -115,9 +139,21 @@ async function openLegacyWorkspace(page: Page, url: string) {
 }
 
 /** Serves just enough of the API for a page to render, without a server or a live event stream. */
-async function mockApi(page: Page, { companies }: { companies: (typeof company)[] }) {
+function creationEvent(type: string, message: string, status: string) {
+  return { type, companyId: company.id, message, status };
+}
+
+async function mockApi(
+  page: Page,
+  {
+    companies,
+    company: stateCompany = company,
+    creationEvents = [],
+  }: { companies: (typeof company)[]; company?: typeof company & { permissionMode?: string }; creationEvents?: unknown[] },
+) {
   const state = {
-    company,
+    company: stateCompany,
+    creationEvents,
     departments: [{ id: "dept_product", name: "Product", responsibility: "Define the first wedge.", leadAgentId: "codex" }],
     objectives: [],
     keyResults: [],

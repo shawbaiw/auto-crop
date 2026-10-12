@@ -6,10 +6,12 @@ import { ComposerInput } from "../components/composer";
 import { Alert, Button, Card, Input, Label, RadioGroup, RadioGroupItem } from "../components/ui";
 import { cn } from "../lib/utils";
 import { useLanguage } from "../ui/language";
+import { formatPermissionMode } from "../ui/tasks/formatDisplayValue";
 
 export type OnboardingStep = "company" | "agents" | "vision";
 
 const onboardingSteps: OnboardingStep[] = ["company", "agents", "vision"];
+const permissionModes = ["safe", "balanced", "autonomous"];
 
 export type OnboardingProps = {
   step: OnboardingStep;
@@ -40,13 +42,8 @@ export function Onboarding(props: OnboardingProps) {
   const { t } = useLanguage();
   const selectedAgent = props.agents.find((agent) => agent.id === props.selectedAgentId);
   const displayCompanyName = props.companyName.trim();
-  const permissionOptions = [
-    { value: "safe", label: t("onboarding.safe") },
-    { value: "balanced", label: t("onboarding.balanced") },
-    { value: "autonomous", label: t("onboarding.autonomous") },
-  ];
-  const permissionLabel =
-    permissionOptions.find((option) => option.value === props.permissionMode)?.label ?? props.permissionMode;
+  const permissionOptions = permissionModes.map((value) => ({ value, label: formatPermissionMode(value, t) }));
+  const permissionLabel = formatPermissionMode(props.permissionMode, t);
 
   return (
     <CompanyFlowPage
