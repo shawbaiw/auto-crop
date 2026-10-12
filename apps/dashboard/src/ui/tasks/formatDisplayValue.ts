@@ -120,6 +120,10 @@ export function formatReplanProposalStatus(status: string, t: Translate): string
       return t("display.replanStatusConfirmed");
     case "dismissed":
       return t("display.replanStatusDismissed");
+    case "rejected":
+      return t("display.replanStatusRejected");
+    case "failed":
+      return t("display.replanStatusFailed");
     default:
       return formatCodeLabel(status);
   }

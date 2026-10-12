@@ -401,11 +401,37 @@ export type ReplanReplacementTaskSummary = {
   riskLevel: string;
 };
 
+export type ReplanMode = "split" | "revision";
+
+/** The parts of a task a Revision may rewrite. */
+export type ReplanTaskDefinitionSummary = {
+  title: string;
+  description: string;
+  proofSchemaId: string;
+  requiredCapabilities: string[];
+};
+
+export type ReplanRequirementSummary = { id: string; description: string };
+
 export type ReplanProposalSummary = {
   id: string;
   companyId: string;
   sourceTaskId: string;
+  /** `proposed`, `confirmed`, `rejected`, `dismissed` (replaced by a newer request) or `failed` (nothing applicable). */
   status: string;
+  /** Null for a `failed` proposal. Absent on proposals from servers before ADR 0043, which were all Splits. */
+  mode?: ReplanMode | null;
+  requestedMode?: ReplanMode | null;
+  founderNote?: string | null;
+  taskBefore?: ReplanTaskDefinitionSummary | null;
+  taskAfter?: ReplanTaskDefinitionSummary | null;
+  capabilitiesChanged?: boolean;
+  requirementChanges?: Array<{ verifierTaskId: string; before: ReplanRequirementSummary[]; after: ReplanRequirementSummary[] }>;
+  requirementSourceNotes?: Array<{ verifierTaskId: string; producerTaskId: string }>;
+  rejectionNote?: string | null;
+  rejectedAt?: string;
+  /** Derived by the server: the task has moved since the proposal was made, so confirming it is refused. */
+  stale?: boolean;
   proposalSource?: "planner_agent" | "deterministic_template";
   plannerAgentId?: string;
   plannerPromptPath?: string;
@@ -580,7 +606,8 @@ export type ApiClient = {
   /** The founder attests the process holding this task's workspace is gone, releasing its isolation. */
   confirmTaskTermination(taskId: string): Promise<{ task: TaskSummary; releasedWorkspaces: string[] }>;
   decideFounderApproval(approvalId: string, input: { decision: "approved" | "denied"; note?: string }): Promise<FounderApprovalResponse>;
-  createReplanProposal(taskId: string): Promise<{ proposal: ReplanProposalSummary }>;
+  createReplanProposal(taskId: string, request?: { mode?: ReplanMode | null; note?: string | null }): Promise<{ proposal: ReplanProposalSummary }>;
+  rejectReplanProposal(proposalId: string, note?: string | null): Promise<{ proposal: ReplanProposalSummary }>;
   confirmReplanProposal(proposalId: string): Promise<{
     proposal: ReplanProposalSummary;
     sourceTask: TaskSummary;
@@ -648,8 +675,11 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     async decideFounderApproval(approvalId, input) {
       return postJson(`${baseUrl}/api/approvals/${approvalId}`, input, requestTimeoutMs);
     },
-    async createReplanProposal(taskId) {
-      return postJson(`${baseUrl}/api/tasks/${taskId}/replan-proposals`, {}, requestTimeoutMs);
+    async createReplanProposal(taskId, request) {
+      return postJson(`${baseUrl}/api/tasks/${taskId}/replan-proposals`, { mode: request?.mode ?? null, note: request?.note ?? null }, requestTimeoutMs);
+    },
+    async rejectReplanProposal(proposalId, note) {
+      return postJson(`${baseUrl}/api/replan-proposals/${proposalId}/reject`, { note: note ?? null }, requestTimeoutMs);
     },
     async confirmReplanProposal(proposalId) {
       return postJson(`${baseUrl}/api/replan-proposals/${proposalId}/confirm`, {}, requestTimeoutMs);

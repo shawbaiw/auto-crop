@@ -13,6 +13,7 @@ import {
   type FounderDecisionSummary,
   type HumanActionSummary,
   type ProofSummary,
+  type ReplanMode,
   type ReplanProposalSummary,
   type ReviewSummary,
   type ServerEvent,
@@ -239,6 +240,8 @@ export default function App({ apiClient }: AppProps) {
               setHumanActions(response.humanActions ?? []);
               setWaitStates(response.waitStates ?? []);
               setVisionGaps(response.visionGaps ?? []);
+              // A task that moved makes its pending proposal stale; the server says so on every read.
+              setReplanProposals(response.replanProposals ?? []);
             }
           })
           .catch(() => undefined);
@@ -517,16 +520,41 @@ export default function App({ apiClient }: AppProps) {
     });
   }
 
-  async function handleCreateReplanProposal(taskId: string) {
-    const response = await client.createReplanProposal(taskId);
+  /**
+   * Re-read proposals (and the task affordances that offer them) from the server after a replan action.
+   * A new request dismisses the proposal it replaces, and whether a proposal is stale is derived from
+   * the task's current state; both are the server's to say, never re-derived here (ADR 0043).
+   */
+  async function reloadReplanState() {
+    const companyId = blueprint?.company.id;
+    if (!companyId) return;
+    const response = await client.getCompanyState(companyId);
+    setReplanProposals(response.replanProposals ?? []);
+    setBlueprint((current) => current ? { ...current, tasks: adoptSettledTasks(current.tasks, response.tasks) } : current);
+  }
+
+  async function handleCreateReplanProposal(taskId: string, request?: { mode: ReplanMode | null; note: string | null }) {
+    const response = request ? await client.createReplanProposal(taskId, request) : await client.createReplanProposal(taskId);
     setReplanProposals((current) => upsertReplanProposal(current, response.proposal));
+    await reloadReplanState().catch(() => undefined);
   }
 
   async function handleConfirmReplanProposal(proposalId: string) {
-    const response = await client.confirmReplanProposal(proposalId);
+    try {
+      const response = await client.confirmReplanProposal(proposalId);
+      setReplanProposals((current) => upsertReplanProposal(current, response.proposal));
+      setBlueprint((current) => updateBlueprintTasksAfterReplan(current, response.sourceTask, response.createdTasks));
+      applyTaskUpdateBatchResponse(response.dependencyCascade, "Dependency cascade warning");
+    } finally {
+      // A refusal (the proposal went stale) is shown as stale once re-read; a success refreshes the rest.
+      await reloadReplanState().catch(() => undefined);
+    }
+  }
+
+  async function handleRejectReplanProposal(proposalId: string, note: string | null) {
+    const response = await client.rejectReplanProposal(proposalId, note);
     setReplanProposals((current) => upsertReplanProposal(current, response.proposal));
-    setBlueprint((current) => updateBlueprintTasksAfterReplan(current, response.sourceTask, response.createdTasks));
-    applyTaskUpdateBatchResponse(response.dependencyCascade, "Dependency cascade warning");
+    await reloadReplanState().catch(() => undefined);
   }
 
   async function handleConfirmHumanAction(humanActionId: string, evidence: Record<string, string>) {
@@ -883,6 +911,7 @@ export default function App({ apiClient }: AppProps) {
         onConfirmHumanAction={handleConfirmHumanAction}
         onConfirmReplanProposal={handleConfirmReplanProposal}
         onCreateReplanProposal={handleCreateReplanProposal}
+        onRejectReplanProposal={handleRejectReplanProposal}
         replanProposals={replanProposals}
         tasks={blueprint.tasks}
       />,
