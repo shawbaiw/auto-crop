@@ -1,16 +1,14 @@
 import { Building2, FolderOpen, Plus, RefreshCw } from "lucide-react";
-import type { ReactNode } from "react";
 import type { CompanyListItem } from "../api/client";
-import { ModalFrame, PageHeader, Workspace } from "../ui/layout";
+import { ModernAppShell } from "../components/workbench";
+import { Button } from "../components/ui";
 import { useLanguage } from "../ui/language";
-import { RetroButton, RetroListRow, RetroPanel, RetroStatus } from "../ui/retro";
 import { formatCompanyStatus } from "../ui/tasks/formatDisplayValue";
 
 export type CompanyPickerProps = {
   companies: CompanyListItem[];
   loadError?: string | null;
   loadState: "loading" | "ready" | "failed";
-  menuBar?: ReactNode;
   onCreateNew(): void;
   onOpenCompany(companyId: string): void;
   onRetry(): void;
@@ -20,7 +18,6 @@ export function CompanyPicker({
   companies,
   loadError,
   loadState,
-  menuBar,
   onCreateNew,
   onOpenCompany,
   onRetry,
@@ -29,61 +26,83 @@ export function CompanyPicker({
   const titleId = "company-picker-title";
 
   return (
-    <ModalFrame labelledBy={titleId} menuBar={menuBar}>
-      <PageHeader
-        eyebrow={t("companyPicker.eyebrow")}
-        status={t("app.localAgentCompany")}
-        statusIcon={<Building2 size={16} aria-hidden="true" />}
-        title={t("companyPicker.title")}
-        titleId={titleId}
-      />
+    <ModernAppShell
+      className="mx-auto grid w-full max-w-3xl content-start gap-5"
+      surface="plain"
+    >
+      <section aria-labelledby={titleId} className="grid gap-5">
+        <header className="grid gap-4 rounded-lg border border-border/80 bg-card p-5 text-card-foreground shadow-workbench sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-6">
+          <div className="grid gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t("companyPicker.eyebrow")}
+            </span>
+            <h1 className="text-2xl font-semibold leading-tight tracking-normal text-foreground sm:text-3xl" id={titleId}>
+              {t("companyPicker.title")}
+            </h1>
+          </div>
+          <div className="inline-flex w-fit items-center gap-2 rounded-md border border-border bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground">
+            <Building2 size={16} aria-hidden="true" />
+            <span>{t("app.localAgentCompany")}</span>
+          </div>
+        </header>
 
-      <Workspace className="company-picker">
-        <RetroPanel title={t("companyPicker.recentCompanies")}>
+        <section className="grid gap-4 rounded-lg border border-border/80 bg-card p-4 text-card-foreground shadow-workbench sm:p-5">
+          <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              {t("companyPicker.recentCompanies")}
+            </h2>
+          </div>
           {loadState === "loading" ? (
-            <div className="system-message" role="status">
+            <div className="rounded-md border border-border bg-muted px-3 py-3 text-sm text-muted-foreground" role="status">
               {t("companyPicker.loading")}
             </div>
           ) : null}
           {loadState === "failed" ? (
-            <div className="system-message system-message--danger" role="status">
-              <div>{t("companyPicker.failed")}</div>
-              {loadError ? <div className="system-message__detail">{loadError}</div> : null}
+            <div className="grid gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive" role="status">
+              <div className="font-medium">{t("companyPicker.failed")}</div>
+              {loadError ? <div className="break-words text-destructive/80">{loadError}</div> : null}
             </div>
           ) : null}
           {loadState === "ready" && companies.length === 0 ? (
-            <div className="system-message" role="status">
+            <div className="rounded-md border border-border bg-muted px-3 py-3 text-sm text-muted-foreground" role="status">
               {t("companyPicker.empty")}
             </div>
           ) : null}
           {companies.length > 0 ? (
-            <div className="company-picker__list">
+            <div className="grid gap-2">
               {companies.map((company) => (
-                <RetroListRow
+                <button
+                  className="grid gap-1 rounded-md border border-border bg-background px-3 py-3 text-left text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   key={company.id}
-                  meta={`${formatCompanyStatus(company.status, t)} / ${company.taskCount} ${t("companyPicker.tasks")}`}
                   onClick={() => onOpenCompany(company.id)}
-                  title={company.name}
-                />
+                  type="button"
+                >
+                  <span className="font-medium">{company.name}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {formatCompanyStatus(company.status, t)} / {company.taskCount} {t("companyPicker.tasks")}
+                  </span>
+                </button>
               ))}
             </div>
           ) : null}
-          <div className="company-picker__actions">
+          <div className="flex flex-wrap justify-end gap-2">
             {loadState === "failed" ? (
-              <RetroButton icon={<RefreshCw size={16} aria-hidden="true" />} onClick={() => onRetry()}>
+              <Button onClick={() => onRetry()} variant="outline">
+                <RefreshCw aria-hidden="true" />
                 {t("onboarding.retry")}
-              </RetroButton>
+              </Button>
             ) : null}
-            <RetroButton icon={<Plus size={16} aria-hidden="true" />} onClick={onCreateNew} variant="primary">
+            <Button onClick={onCreateNew}>
+              <Plus aria-hidden="true" />
               {t("companyPicker.createNew")}
-            </RetroButton>
+            </Button>
           </div>
-        </RetroPanel>
-      </Workspace>
-
-      <RetroStatus icon={<FolderOpen size={16} aria-hidden="true" />}>
-        {t("companyPicker.status")}
-      </RetroStatus>
-    </ModalFrame>
+        </section>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <FolderOpen size={16} aria-hidden="true" />
+          <span>{t("companyPicker.status")}</span>
+        </div>
+      </section>
+    </ModernAppShell>
   );
 }

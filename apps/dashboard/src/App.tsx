@@ -829,13 +829,20 @@ export default function App({ apiClient }: AppProps) {
     );
   }
 
+  function renderModernAppFrame(children: ReactNode) {
+    return (
+      <LanguageProvider defaultLanguage={defaultLanguage} syncLocale={blueprint?.company.locale ?? null}>
+        {children}
+      </LanguageProvider>
+    );
+  }
+
   if (view === "company-picker") {
-    return renderAppFrame(
+    return renderModernAppFrame(
       <CompanyPicker
         companies={companies}
         loadError={companyListLoadError}
         loadState={companyListLoadState}
-        menuBar={menuBar}
         onCreateNew={handleCreateNewCompany}
         onOpenCompany={openCompany}
         onRetry={loadCompanies}

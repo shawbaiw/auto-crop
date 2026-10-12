@@ -50,6 +50,31 @@ describe("Dashboard App", () => {
     expect(screen.getByText("Expected JSON from /api/companies but received text/html.")).toBeInTheDocument();
   });
 
+  it("renders the company picker without legacy CRT or Retro UI", async () => {
+    const api = createMockApiClient();
+    api.listCompanies = vi.fn(async () => ({
+      companies: [
+        {
+          id: "company_2",
+          name: "Ops Lab",
+          status: "active",
+          playbookId: "ai-saas",
+          selectedCeoAgentId: "codex",
+          createdAt: "2026-08-17T00:00:00.000Z",
+          updatedAt: "2026-08-18T00:00:00.000Z",
+          taskCount: 2,
+        },
+      ],
+    }));
+
+    render(<App apiClient={api} />);
+
+    expect(await screen.findByRole("heading", { name: "Recent Companies" })).toBeInTheDocument();
+    expect(document.querySelector(".crt-viewport")).not.toBeInTheDocument();
+    expect(document.querySelector(".app-shell")).not.toBeInTheDocument();
+    expect(document.querySelector("[class*='retro-']")).not.toBeInTheDocument();
+  });
+
   it("retries company loading without passing the click event as load options", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
