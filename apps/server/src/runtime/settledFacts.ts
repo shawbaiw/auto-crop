@@ -1,6 +1,7 @@
 import type { Task } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { collectFounderDecisions, collectHumanActions } from "./ceoAttention";
+import { isVerdictStandardCurrent } from "./verificationContract";
 
 type Repositories = ReturnType<typeof createRepositories>;
 
@@ -49,7 +50,7 @@ export type SettledFact =
  *   chose nothing and is not a fact.
  * - Confirmed Human Actions on this task (an Unblock Request) or gating it (a delivery's next step
  *   naming it as blocked).
- * - Verification Rework feedback not yet answered by a redelivery.
+ * - Verification Rework feedback not yet answered by a redelivery, against the verifier's current standard.
  */
 export function resolveSettledFacts(repositories: Repositories, task: Task): SettledFact[] {
   const completionEvents = repositories.listTaskCompletionEventsForCompany(task.companyId);
@@ -90,7 +91,13 @@ export function resolveSettledFacts(repositories: Repositories, task: Task): Set
         }]
       : []);
 
-  const reworks: SettledFact[] = repositories.listPendingReworksForProducer(task.id).map((rework) => ({
+  const reworks: SettledFact[] = repositories.listPendingReworksForProducer(task.id).filter((rework) => {
+    // A finding against a standard a Revision has since amended is not settled: the producer would be
+    // told to meet the very requirement the founder replaced. Derived from the verdict's fingerprint,
+    // like every other "is this verdict current" question (ADR 0043).
+    const verdict = repositories.getBusinessArtifact(rework.failedArtifactId)?.verification;
+    return !verdict || isVerdictStandardCurrent(repositories, rework.verifierTaskId, verdict);
+  }).map((rework) => ({
     kind: "verification_rework" as const,
     sourceId: rework.id,
     settledAt: rework.createdAt,

@@ -510,7 +510,7 @@ describe("API routes", () => {
 
     const proposed = await postJson<{
       proposal: { id: string; sourceTaskId: string; status: string; replacementTasks: Array<{ title: string }> };
-    }>(`${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`, {});
+    }>(`${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`, { mode: "split" });
 
     expect(proposed.proposal).toMatchObject({
       id: "replan_proposal_1",
@@ -591,7 +591,7 @@ describe("API routes", () => {
 
     const proposed = await postJson<{ proposal: { id: string } }>(
       `${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`,
-      {},
+      { mode: "split" },
     );
     const confirmed = await postJson<{
       createdTasks: Array<{ id: string }>;
@@ -642,7 +642,7 @@ describe("API routes", () => {
 
     const proposed = await postJson<{ proposal: { id: string } }>(
       `${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`,
-      {},
+      { mode: "split" },
     );
     const originalUpdateTaskStatus = fixture.repositories.writeTaskStatusUnchecked;
     fixture.repositories.writeTaskStatusUnchecked = (taskId, status) => {
@@ -3671,7 +3671,7 @@ describe("API routes", () => {
         plannerPromptPath?: string;
         replacementTasks: Array<{ title: string }>;
       };
-    }>(`${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`, {});
+    }>(`${fixture.baseUrl}/api/tasks/${sourceTask.id}/replan-proposals`, { mode: "split" });
 
     expect(proposed.proposal.rationale).toBe("API planner split the task into a handoff and implementation.");
     expect(proposed.proposal.proposalSource).toBe("planner_agent");

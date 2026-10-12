@@ -114,6 +114,13 @@ export type ArtifactVerification = {
   checks: VerificationCheck[];
   /** Why the outcome is not `passed` when no check failed — a stale target, a missing requirement source. */
   issues: string[];
+  /**
+   * A fingerprint of `requirements`, the set this verdict judged against. Whether the verdict is current
+   * is derived by comparing it with the verifier's present requirements; nothing marks a verdict stale
+   * (ADR 0043). Absent on verdicts recorded before it existed, which are fingerprinted from
+   * `requirements` instead.
+   */
+  requirementsFingerprint?: string;
 };
 
 /**

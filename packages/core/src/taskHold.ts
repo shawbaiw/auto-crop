@@ -265,6 +265,11 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
     if (!isAffordanceApplicable(kind, input.status)) {
       return;
     }
+    // A proposal waiting on the founder is confirmed wherever replanning was offered, ahead of asking
+    // for another: the exit that requested it answers it, whichever Hold that was (ADR 0043).
+    if (kind === "request_replan" && input.hasProposedReplan) {
+      offer(hold, "confirm_replan", actor);
+    }
 
     const key = `${kind}:${hold?.id ?? ""}`;
     if (seen.has(key)) {
@@ -311,10 +316,10 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
         offer(hold, "refresh_task", "runtime");
         break;
       case "awaiting_dependency_artifact":
-        // Re-derive readiness against current facts; if the upstream path is genuinely dead, the
-        // founder replans rather than waiting on a task that will never deliver.
+        // Re-derive readiness against current facts. Deliberately no `request_replan`: a replan always
+        // changes the task that is stuck, and this task is not — its upstream is. The Hold's subject
+        // names that upstream, which is where the founder deals with a dead path (ADR 0043).
         offer(hold, "refresh_task", "runtime");
-        offer(hold, "request_replan", "founder");
         break;
       case "awaiting_external_wait":
         // Nobody owns the wait, but the founder may force the check instead of waiting for the tick.
@@ -333,9 +338,6 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
         offer(hold, "request_replan", "founder");
         break;
       case "needs_replan":
-        if (input.hasProposedReplan) {
-          offer(hold, "confirm_replan", "founder");
-        }
         offer(hold, "request_replan", "founder");
         break;
       case "verification_failed":

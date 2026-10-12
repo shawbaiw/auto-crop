@@ -38,7 +38,15 @@ export type CompanyEventType =
   | "company_creation_completed"
   | "company_creation_failed";
 export type ApprovalStatus = "pending" | "approved" | "denied";
-export type ReplanProposalStatus = "proposed" | "confirmed" | "dismissed";
+/**
+ * - `proposed`: awaiting the founder.
+ * - `confirmed` / `rejected`: the founder decided.
+ * - `dismissed`: replaced by a newer request before anyone decided.
+ * - `failed`: the planner produced nothing applicable; it cannot be confirmed, only requested again.
+ */
+export type ReplanProposalStatus = "proposed" | "confirmed" | "rejected" | "dismissed" | "failed";
+/** What a Replan Proposal changes: a Split replaces the task, a Revision rewrites it in place (ADR 0043). */
+export type ReplanMode = "split" | "revision";
 export type ReplanProposalSource = "planner_agent" | "deterministic_template";
 export type BusinessArtifactKind =
   | "deliverable"
@@ -336,6 +344,11 @@ export type FinalFounderReportJob = {
 export type HumanActionStatus = "pending" | "confirmed";
 export type HumanAction = {
   id: string;
+  /**
+   * `unblock_request` when a Blocker Report asked for it on its own task (ADR 0042); `next_step` when a
+   * delivery proposed it. An Unblock Request is answerable only while its Hold is open.
+   */
+  origin?: "next_step" | "unblock_request";
   companyId: string;
   sourceTaskCompletionEventId: string;
   taskId: string;
@@ -719,6 +732,47 @@ export type ReplanReplacementTask = {
   riskLevel: RiskLevel;
 };
 
+/** The parts of a task a Revision may rewrite. Dependencies, department and assignee are never among them. */
+export type ReplanTaskDefinition = {
+  title: string;
+  /** Carries the task's acceptance criteria; there is no separate field for them. */
+  description: string;
+  proofSchemaId: string;
+  requiredCapabilities: string[];
+};
+
+/** An amendment to the planned Verification Requirements on one verifier, shown before and after. */
+export type ReplanRequirementChange = {
+  verifierTaskId: string;
+  before: VerificationRequirement[];
+  after: VerificationRequirement[];
+};
+
+/**
+ * A verifier judging the task whose requirements come from a `verification_requirements` producer. A
+ * Revision cannot edit that producer's delivery; the proposal points at revising the producer instead.
+ */
+export type ReplanRequirementSourceNote = {
+  verifierTaskId: string;
+  producerTaskId: string;
+};
+
+/**
+ * The task state a proposal was written against. Confirming compares it with the present, and refuses
+ * when they differ: a Human Action confirmed, a recovery run or an upstream redelivery since the
+ * proposal was made means the planner reasoned about a task that no longer exists (ADR 0043).
+ */
+export type ReplanBasis = {
+  taskStatus: TaskStatus;
+  openHoldIds: string[];
+  currentArtifactId: string | null;
+  /** Every Agent Run of the task, whatever its outcome: a recovery run since the proposal changes it. */
+  runCount: number;
+  upstreamArtifactIds: Record<string, string | null>;
+  verdictArtifactIds: Record<string, string | null>;
+  requirementFingerprints: Record<string, string | null>;
+};
+
 export type ReplanProposal = {
   id: string;
   companyId: string;
@@ -730,9 +784,27 @@ export type ReplanProposal = {
   plannerFailureReason: string | null;
   plannerFailureMessage: string | null;
   rationale: string;
+  /** Null only for a `failed` proposal, which changes nothing. */
+  mode: ReplanMode | null;
+  /** What the founder asked for; null lets the planner choose. */
+  requestedMode: ReplanMode | null;
+  /** Read by the planner only. It reaches the task's agent by being written into what the founder confirms. */
+  founderNote: string | null;
+  /** Split: the tasks replacing the source. Empty for a Revision. */
   replacementTasks: ReplanReplacementTask[];
+  /** Revision: the task as it was when proposed, and as it would become. */
+  taskBefore: ReplanTaskDefinition | null;
+  taskAfter: ReplanTaskDefinition | null;
+  /** True when a Revision changes the task's required capabilities. */
+  capabilitiesChanged: boolean;
+  /** Revision only: never on a Split, which divides the work toward the same standard. */
+  requirementChanges: ReplanRequirementChange[];
+  requirementSourceNotes: ReplanRequirementSourceNote[];
+  basis: ReplanBasis | null;
+  rejectionNote: string | null;
   createdAt: string;
   confirmedAt: string | null;
+  rejectedAt: string | null;
 };
 
 export type TaskEvent = {

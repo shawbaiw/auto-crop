@@ -377,6 +377,17 @@ describe("repositories", () => {
       ],
       createdAt: "2026-08-17T00:00:00.000Z",
       confirmedAt: null,
+      mode: "split",
+      requestedMode: null,
+      founderNote: null,
+      taskBefore: null,
+      taskAfter: null,
+      capabilitiesChanged: false,
+      requirementChanges: [],
+      requirementSourceNotes: [],
+      rejectionNote: null,
+      rejectedAt: null,
+      basis: null,
     };
 
     repos.createCompany(records.company);

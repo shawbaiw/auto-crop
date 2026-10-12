@@ -1,14 +1,16 @@
 import { writeFileSync } from "node:fs";
-import type { ReplanProposal, Task, TaskEvent } from "@auto-crop/core";
+import { taskHoldKinds, type ReplanMode, type ReplanProposal, type ReplanTaskDefinition, type Task, type TaskEvent, type TaskHoldKind } from "@auto-crop/core";
 import type { AgentAdapter } from "../adapters/types";
 import type { createRepositories } from "../db/repositories";
 import type { Playbook } from "../playbooks/types";
-import { planningCapabilityNeeds, resolveAgentCapabilityGrant } from "../policies/capabilityGrant";
+import { planningCapabilityNeeds, resolveAgentCapabilityGrant, resolveTaskCapabilityNeeds } from "../policies/capabilityGrant";
 import { resolvePolicyForPermissionMode } from "../policies/defaults";
 import { defaultAgentSessionManager, type AgentSessionManager, type AgentSessionRunEvent } from "./agentSessions";
 import { resetTaskAttempts } from "./boundedRecovery";
 import { applyTaskTransition } from "./taskTransition";
-import { buildReplanPlannerPrompt, parseReplanPlannerOutput } from "./replanPlanner";
+import { buildReplanPlannerPrompt, parseReplanPlannerOutput, type ReplanPlannerResponse } from "./replanPlanner";
+import { isReplanProposalCurrent, resolveReplanBasis, resolveStuckContext, revisableRequirements, verifiersJudging } from "./replanContext";
+import { checkTaskAffordance } from "./taskAffordances";
 import { resolveAgentSessionPolicy } from "./sessionPolicy";
 import { createCompanyWorkspace, createTaskWorkspace } from "./workspace";
 
@@ -17,8 +19,7 @@ type PlannerAttempt =
       kind: "success";
       agentId: string;
       promptPath: string;
-      rationale: string;
-      replacementTasks: ReplanProposal["replacementTasks"];
+      response: ReplanPlannerResponse;
     }
   | {
       kind: "failed";
@@ -34,6 +35,10 @@ type PlannerAttempt =
 export type CreateReplanProposalInput = {
   repositories: ReturnType<typeof createRepositories>;
   taskId: string;
+  /** What the founder asked for. Null lets the planner pick. */
+  mode?: ReplanMode | null;
+  /** The founder's note, for the planner only. */
+  note?: string | null;
   projectRoot?: string;
   plannerAgent?: AgentAdapter;
   playbook?: Playbook;
@@ -58,6 +63,19 @@ export type ConfirmReplanProposalResult = {
   affectedConsumers: Task[];
 };
 
+/**
+ * Confirming refused because the task moved after the proposal was made. The founder requests a new
+ * proposal; the planner reasoned about a task that no longer exists (ADR 0043).
+ */
+export class StaleReplanProposalError extends Error {
+  constructor(readonly proposal: ReplanProposal) {
+    super(`Replan proposal ${proposal.id} was made for a task state that has since changed; request a new proposal.`);
+  }
+}
+
+/** Replanning asked of a task that does not offer it. The Hold policy is the one place that decides. */
+export class ReplanNotOfferedError extends Error {}
+
 export async function createReplanProposalForTask(input: CreateReplanProposalInput): Promise<ReplanProposal> {
   const task = input.repositories.getTask(input.taskId);
 
@@ -65,46 +83,155 @@ export async function createReplanProposalForTask(input: CreateReplanProposalInp
     throw new Error(`Task not found: ${input.taskId}`);
   }
 
-  if (task.status !== "needs_replan") {
-    throw new Error(`Task ${task.id} does not need replanning.`);
+  // The precondition is the affordance, not a status: the Hold policy that offers the exit is the one
+  // place that decides whether it exists. A status check here once made every replan offered outside
+  // `needs_replan` fail with "does not need replanning" (ADR 0043).
+  if (!checkTaskAffordance(input.repositories, task, "request_replan").ok) {
+    throw new ReplanNotOfferedError(`Task ${task.id} does not offer replanning in its current state.`);
   }
 
+  const requestedMode = input.mode ?? null;
+  const founderNote = input.note?.trim() ? input.note.trim() : null;
+  const now = (input.now ?? (() => new Date()))().toISOString();
+  const createId = input.createId ?? defaultCreateId;
   const existing = input.repositories
     .listReplanProposalsForTask(task.id)
     .find((proposal) => proposal.status === "proposed");
 
   if (existing) {
-    return existing;
+    // Asking twice for the same thing is answered by the proposal already waiting. Anything else — a
+    // different mode or note, or a task that has moved since — replaces it.
+    if (existing.requestedMode === requestedMode && existing.founderNote === founderNote && isReplanProposalCurrent(input.repositories, existing)) {
+      return existing;
+    }
+    input.repositories.updateReplanProposalStatus(existing.id, "dismissed", null);
   }
 
-  const now = (input.now ?? (() => new Date()))().toISOString();
-  const createId = input.createId ?? defaultCreateId;
-  const plannerAttempt = await tryCreatePlannerResponse(input, task);
-  const plannerSucceeded = plannerAttempt.kind === "success";
-  const proposal: ReplanProposal = {
+  // Recorded before the planner runs: the proposal is bound to the state the planner was shown.
+  const basis = resolveReplanBasis(input.repositories, task);
+  const revisable = revisableRequirements(input.repositories, task);
+  const plannerAttempt = await tryCreatePlannerResponse(input, task, { requestedMode, founderNote, revisable });
+  const base = {
     id: createId("replan_proposal"),
     companyId: task.companyId,
     sourceTaskId: task.id,
-    status: "proposed",
-    proposalSource: plannerSucceeded ? "planner_agent" : "deterministic_template",
     plannerAgentId: plannerAttempt.kind === "not_configured" ? null : plannerAttempt.agentId,
     plannerPromptPath: plannerAttempt.kind === "not_configured" ? null : plannerAttempt.promptPath,
-    plannerFailureReason: plannerAttempt.kind === "failed" ? plannerAttempt.reason : null,
-    plannerFailureMessage: plannerAttempt.kind === "failed" ? plannerAttempt.message : null,
-    rationale:
-      (plannerSucceeded ? plannerAttempt.rationale : null) ??
-      `${task.title} exceeded the long execution budget and should be split into smaller proof-backed tasks.`,
-    replacementTasks: (plannerSucceeded ? plannerAttempt.replacementTasks : null) ?? buildReplacementTasks(task),
+    requestedMode,
+    founderNote,
+    basis,
+    rejectionNote: null,
     createdAt: now,
     confirmedAt: null,
+    rejectedAt: null,
   };
+  const empty = {
+    replacementTasks: [],
+    taskBefore: null,
+    taskAfter: null,
+    capabilitiesChanged: false,
+    requirementChanges: [],
+    requirementSourceNotes: [],
+  };
+  const response = plannerAttempt.kind === "success" ? plannerAttempt.response : null;
+  const revisionRefusal = response?.mode === "revision" ? permissionModeRefusal(input.repositories, task, response.revisedTask) : null;
+
+  let proposal: ReplanProposal;
+  if (response && !revisionRefusal) {
+    proposal = response.mode === "split"
+      ? {
+          ...base, ...empty, status: "proposed", proposalSource: "planner_agent", mode: "split",
+          plannerFailureReason: null, plannerFailureMessage: null, rationale: response.rationale,
+          replacementTasks: response.replacementTasks,
+        }
+      : {
+          ...base, ...empty, status: "proposed", proposalSource: "planner_agent", mode: "revision",
+          plannerFailureReason: null, plannerFailureMessage: null, rationale: response.rationale,
+          taskBefore: taskDefinition(task),
+          taskAfter: response.revisedTask,
+          capabilitiesChanged: !sameMembers(task.requiredCapabilities, response.revisedTask.requiredCapabilities),
+          requirementChanges: response.requirementChanges.map((change) => ({
+            verifierTaskId: change.verifierTaskId,
+            before: revisable.editable.find((entry) => entry.verifier.id === change.verifierTaskId)?.requirements ?? [],
+            after: change.requirements,
+          })),
+          requirementSourceNotes: revisable.sourced.map(({ verifier, producer }) => ({ verifierTaskId: verifier.id, producerTaskId: producer.id })),
+        };
+  } else if (requestedMode === "split") {
+    // Only an explicit Split falls back to the runtime's own template. A Revision is a judgement about
+    // what the task should be asked instead, and there is no template for that.
+    proposal = {
+      ...base, ...empty, status: "proposed", proposalSource: "deterministic_template", mode: "split",
+      plannerFailureReason: plannerAttempt.kind === "failed" ? plannerAttempt.reason : revisionRefusal ? "parse_failed" : null,
+      plannerFailureMessage: plannerAttempt.kind === "failed" ? plannerAttempt.message : revisionRefusal,
+      rationale: `${task.title} should be split into smaller proof-backed tasks.`,
+      replacementTasks: buildReplacementTasks(task),
+    };
+  } else {
+    const message = revisionRefusal
+      ?? (plannerAttempt.kind === "failed" ? plannerAttempt.message : "No planner agent is configured for this company.");
+    proposal = {
+      ...base, ...empty, status: "failed", proposalSource: plannerAttempt.kind === "not_configured" ? "deterministic_template" : "planner_agent", mode: null,
+      plannerFailureReason: plannerAttempt.kind === "failed" ? plannerAttempt.reason : revisionRefusal ? "parse_failed" : null,
+      plannerFailureMessage: message,
+      rationale: `No applicable proposal: ${message}`,
+    };
+  }
 
   input.repositories.createReplanProposal(proposal);
 
   return proposal;
 }
 
-async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: Task): Promise<PlannerAttempt> {
+/**
+ * A Revision's capabilities stay bounded by the company's Permission Mode: one that needs a capability
+ * the mode refuses, which the task did not already need, would be confirmed into a run that cannot use it.
+ */
+function permissionModeRefusal(
+  repositories: ReturnType<typeof createRepositories>,
+  task: Task,
+  revised: ReplanTaskDefinition,
+): string | null {
+  const company = repositories.getCompany(task.companyId);
+  const refused = company ? capabilitiesNewlyRefused(task, revised, resolvePolicyForPermissionMode(company.permissionMode)) : [];
+  return refused.length > 0
+    ? `The revision needs ${refused.join(", ")}, which this company's Permission Mode refuses.`
+    : null;
+}
+
+/** Runtime capabilities the revised task needs that `policy` refuses and the current task did not need. */
+export function capabilitiesNewlyRefused(
+  current: Pick<Task, "proofSchemaId" | "requiredCapabilities">,
+  revised: Pick<ReplanTaskDefinition, "proofSchemaId" | "requiredCapabilities">,
+  policy: ReturnType<typeof resolvePolicyForPermissionMode>,
+): string[] {
+  const before = resolveAgentCapabilityGrant({ needs: resolveTaskCapabilityNeeds(current), policy }).withheld;
+  const after = resolveAgentCapabilityGrant({ needs: resolveTaskCapabilityNeeds(revised), policy }).withheld;
+  return after.filter((capability) => !before.includes(capability));
+}
+
+function taskDefinition(task: Task): ReplanTaskDefinition {
+  return {
+    title: task.title,
+    description: task.description,
+    proofSchemaId: task.proofSchemaId,
+    requiredCapabilities: [...task.requiredCapabilities],
+  };
+}
+
+function sameMembers(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((item) => right.includes(item));
+}
+
+async function tryCreatePlannerResponse(
+  input: CreateReplanProposalInput,
+  task: Task,
+  request: {
+    requestedMode: ReplanMode | null;
+    founderNote: string | null;
+    revisable: ReturnType<typeof revisableRequirements>;
+  },
+): Promise<PlannerAttempt> {
   if (!input.projectRoot || !input.plannerAgent || !input.playbook) {
     return { kind: "not_configured" };
   }
@@ -125,6 +252,10 @@ async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: 
     sourceTask: task,
     downstreamTasks,
     proofSchemas: input.playbook.proofSchemas,
+    stuck: resolveStuckContext(input.repositories, task),
+    requestedMode: request.requestedMode,
+    founderNote: request.founderNote,
+    revisable: request.revisable,
   });
   const companyWorkspace = createCompanyWorkspace(input.projectRoot, task.companyId);
   const promptPath = `${companyWorkspace.companyRoot}/replan-${task.id}-prompt.md`;
@@ -177,7 +308,10 @@ async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: 
       kind: "success",
       agentId: input.plannerAgent.id,
       promptPath,
-      ...parseReplanPlannerOutput(result.stdout, input.playbook),
+      response: parseReplanPlannerOutput(result.stdout, input.playbook, {
+        requestedMode: request.requestedMode,
+        editableVerifierIds: request.revisable.editable.map((entry) => entry.verifier.id),
+      }),
     };
   } catch (error) {
     return {
@@ -191,21 +325,153 @@ async function tryCreatePlannerResponse(input: CreateReplanProposalInput, task: 
 }
 
 export function confirmReplanProposal(input: ConfirmReplanProposalInput): ConfirmReplanProposalResult {
-  const proposal = input.repositories.getReplanProposal(input.proposalId);
+  return input.repositories.transaction(() => {
+    const proposal = input.repositories.getReplanProposal(input.proposalId);
 
+    if (!proposal) {
+      throw new Error(`Replan proposal not found: ${input.proposalId}`);
+    }
+
+    if (proposal.status !== "proposed") {
+      throw new Error(`Replan proposal ${proposal.id} is not proposed.`);
+    }
+
+    const sourceTask = input.repositories.getTask(proposal.sourceTaskId);
+
+    if (!sourceTask) {
+      throw new Error(`Source task not found: ${proposal.sourceTaskId}`);
+    }
+
+    // Bound to the state it was made from: a Human Action confirmed, a recovery run or an upstream
+    // redelivered since means the planner reasoned about a task that no longer exists.
+    if (!isReplanProposalCurrent(input.repositories, proposal)) {
+      throw new StaleReplanProposalError(proposal);
+    }
+
+    return proposal.mode === "revision"
+      ? confirmRevision(input, proposal, sourceTask)
+      : confirmSplit(input, proposal, sourceTask);
+  });
+}
+
+/**
+ * Reject a proposal, with the founder's reason. The reason reaches the planner on the next request,
+ * never the task's agent (ADR 0043).
+ */
+export function rejectReplanProposal(input: {
+  repositories: ReturnType<typeof createRepositories>;
+  proposalId: string;
+  note?: string | null;
+  now?: () => Date;
+}): ReplanProposal {
+  const proposal = input.repositories.getReplanProposal(input.proposalId);
   if (!proposal) {
     throw new Error(`Replan proposal not found: ${input.proposalId}`);
   }
-
   if (proposal.status !== "proposed") {
     throw new Error(`Replan proposal ${proposal.id} is not proposed.`);
   }
+  input.repositories.rejectReplanProposal(proposal.id, input.note?.trim() || null, (input.now ?? (() => new Date()))().toISOString());
+  return input.repositories.getReplanProposal(proposal.id)!;
+}
 
-  const sourceTask = input.repositories.getTask(proposal.sourceTaskId);
+/**
+ * Hold kinds a verifier is released from when the work it judges is revised: they all say its last
+ * verdict, or its last attempt at one, was the problem. A Hold on anything else — an approval, a
+ * person, an exhausted recovery budget — is not answered by a revision and stays.
+ */
+const VERDICT_HOLDS: readonly TaskHoldKind[] = ["verification_failed", "invalid_business_artifact", "runtime_interrupted", "awaiting_dependency_artifact"];
 
-  if (!sourceTask) {
-    throw new Error(`Source task not found: ${proposal.sourceTaskId}`);
+/**
+ * Apply a confirmed Revision: the task keeps its identity, dependencies, department and assignee, and
+ * is asked to do something else (ADR 0043).
+ *
+ * - The task always runs again, and every open Hold on it is superseded: it usually holds a blocker or
+ *   a failed delivery, and judging whether old output meets the new standard would itself take an agent.
+ * - Its Bounded Recovery attempts restart, and an amended verifier's round budget restarts. Only this
+ *   confirmation resets either; the ceilings still apply from here.
+ * - Every verifier judging it waits for its new delivery. A verdict's currency is derived from its
+ *   requirement fingerprint and targets, so the amended verifier's whole verdict — for every target —
+ *   is no longer current without anything marking it; its next run judges all of them again.
+ */
+function confirmRevision(input: ConfirmReplanProposalInput, proposal: ReplanProposal, task: Task): ConfirmReplanProposalResult {
+  const now = (input.now ?? (() => new Date()))().toISOString();
+  const createId = input.createId ?? defaultCreateId;
+  const at = () => new Date(now);
+  const after = proposal.taskAfter!;
+  const locale = input.repositories.getCompany(task.companyId)?.locale ?? "en";
+
+  input.repositories.updateTaskDefinition(task.id, {
+    title: after.title,
+    titleText: { [locale]: after.title },
+    description: after.description,
+    descriptionText: { [locale]: after.description },
+    proofSchemaId: after.proofSchemaId,
+    requiredCapabilities: after.requiredCapabilities,
+  });
+  for (const change of proposal.requirementChanges) {
+    input.repositories.updateTaskVerificationRequirements(change.verifierTaskId, change.after);
+    input.repositories.markVerificationRoundsReset(change.verifierTaskId);
   }
+  resetTaskAttempts(input.repositories, task.id, now);
+
+  const revised = applyTaskTransition({
+    repositories: input.repositories,
+    task: task.id,
+    status: "queued",
+    executionSummary: { latestFailureReason: null, latestFailureMessage: null, dependencyNote: null },
+    resolvesHoldKinds: taskHoldKinds,
+    resolution: "superseded",
+    now: at,
+    createId,
+  }).task;
+
+  const note = `Re-verifying after ${after.title} was revised by replan proposal ${proposal.id}.`;
+  for (const verifier of verifiersJudging(input.repositories, revised)) {
+    const current = input.repositories.getTask(verifier.id);
+    if (!current || current.id === revised.id || !["complete", "blocked", "failed", "review"].includes(current.status)) {
+      continue;
+    }
+    applyTaskTransition({
+      repositories: input.repositories,
+      task: current,
+      status: "waiting_dependency",
+      executionSummary: { latestFailureReason: null, latestFailureMessage: null, dependencyNote: note },
+      hold: { kind: "awaiting_dependency_artifact", resolver: "upstream_task", subjectKind: "task", subjectId: revised.id, reason: note },
+      resolvesHoldKinds: VERDICT_HOLDS,
+      resolution: "superseded",
+      now: at,
+      createId,
+    });
+  }
+
+  input.repositories.updateReplanProposalStatus(proposal.id, "confirmed", now);
+  input.repositories.appendTaskEvent({
+    id: createId("task_event"),
+    companyId: revised.companyId,
+    taskId: revised.id,
+    type: "task_replanned",
+    message: `Task revised by replan proposal ${proposal.id}: ${proposal.rationale}`,
+    createdAt: now,
+    status: revised.status,
+    failureReason: null,
+    failureMessage: null,
+    executionProfileName: null,
+    requestedTimeoutMs: null,
+    effectiveTimeoutMs: null,
+    dependencyNote: null,
+    artifactWorkspacePath: revised.artifactWorkspacePath ?? null,
+  } satisfies TaskEvent);
+
+  return {
+    proposal: input.repositories.getReplanProposal(proposal.id) ?? proposal,
+    sourceTask: input.repositories.getTask(revised.id) ?? revised,
+    createdTasks: [],
+    affectedConsumers: input.repositories.listDependencyConsumers(revised.id),
+  };
+}
+
+function confirmSplit(input: ConfirmReplanProposalInput, proposal: ReplanProposal, sourceTask: Task): ConfirmReplanProposalResult {
 
   const affectedConsumers = input.repositories.listDependencyConsumers(sourceTask.id);
   const now = (input.now ?? (() => new Date()))().toISOString();

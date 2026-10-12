@@ -160,6 +160,16 @@ describe("resolveTaskAffordances", () => {
     expect(withProposal.indexOf("confirm_replan")).toBeLessThan(withProposal.indexOf("request_replan"));
   });
 
+  it("offers confirming a pending proposal on whichever Hold offered replanning", () => {
+    for (const kind of ["awaiting_human_action", "invalid_business_artifact", "verification_failed", "recovery_exhausted"] as const) {
+      const affordances = resolveTaskAffordances({ status: "blocked", holds: [hold(kind)], hasProposedReplan: true })
+        .map((affordance) => affordance.kind);
+      expect(affordances, kind).toContain("confirm_replan");
+    }
+    expect(resolveTaskAffordances({ status: "waiting_dependency", holds: [hold("awaiting_dependency_artifact")], hasProposedReplan: true })
+      .map((affordance) => affordance.kind)).toEqual(["refresh_task", "cancel_task"]);
+  });
+
   it("does not offer blind re-runs once Bounded Recovery is exhausted", () => {
     const affordances = resolveTaskAffordances({
       status: "blocked",
@@ -184,9 +194,9 @@ describe("resolveTaskAffordances", () => {
       "confirm_human_action",
       "request_replan",
     ]);
+    // A dependency wait does not offer replanning: the upstream is what is stuck (ADR 0043).
     expect(affordances.filter((item) => item.holdId === "hold_b").map((item) => item.kind)).toEqual([
       "refresh_task",
-      "request_replan",
     ]);
   });
 });

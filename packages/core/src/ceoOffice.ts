@@ -310,12 +310,18 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     });
   }
 
+  // An Unblock Request is answerable only while the Hold waiting on it is open. A Revision supersedes
+  // that Hold, and the question it asked is then no longer anyone's to answer (ADR 0042, ADR 0043).
+  const awaitedHumanActionIds = new Set((input.taskHolds ?? [])
+    .filter((hold) => !hold.resolvedAt && hold.kind === "awaiting_human_action" && hold.subjectId)
+    .map((hold) => hold.subjectId!));
   for (const action of input.humanActions ?? []) {
     if (action.companyId !== input.company.id) continue;
     items.push({
       ...context(action.taskId), departmentId: action.departmentId,
       id: `human_action:${action.id}`, type: "human_action", sourceId: action.id,
-      occurredAt: action.createdAt, actionBearing: action.status === "pending",
+      occurredAt: action.createdAt,
+      actionBearing: action.status === "pending" && (action.origin !== "unblock_request" || awaitedHumanActionIds.has(action.id)),
       data: {
         label: companyLocaleText(action.label, input.company.locale),
         status: action.status,

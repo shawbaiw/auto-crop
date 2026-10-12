@@ -501,6 +501,7 @@ export function collectHumanActions(
     return [
       {
         id,
+        origin: isRecord(item.dependencyImpact) && isRecord(item.dependencyImpact.unblockRequest) ? "unblock_request" as const : "next_step" as const,
         companyId: event.companyId,
         sourceTaskCompletionEventId: event.id,
         taskId: event.taskId,

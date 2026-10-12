@@ -181,6 +181,73 @@ describe("a blocker that asks a person for input", () => {
   });
 });
 
+describe("replanning a task that asked for input (ADR 0043)", () => {
+  const planner: AgentAdapter = {
+    id: "codex",
+    name: "Codex",
+    capabilities: ["research"],
+    detect: async () => true,
+    run: async () => ({
+      status: "complete", exitCode: 0, stderr: "",
+      stdout: ["```json", JSON.stringify({
+        mode: "revision",
+        rationale: "KD is out of reach; rank by a stated SERP-based estimate.",
+        revisedTask: { title: "Pick a low-difficulty keyword", description: "Rank by a SERP-based estimate and state the method.", proofSchemaId: "test-output", requiredCapabilities: ["code"] },
+        requirementChanges: [],
+      }), "```"].join("\n"),
+    }),
+  };
+
+  it("lets the founder revise instead of answering, after which the question is no longer theirs to answer", async () => {
+    const harness = await createHarness([askForKd], {}, { planner });
+    await harness.tick();
+    const humanActionId = harness.repositories.listOpenTaskHolds("task_1")[0]!.subjectId!;
+
+    const requested = await harness.post("/api/tasks/task_1/replan-proposals", { mode: "revision", note: "Use an estimate." });
+    expect(requested.status).toBe(201);
+    const { proposal } = await requested.json();
+    expect(proposal).toMatchObject({ mode: "revision", requestedMode: "revision", founderNote: "Use an estimate.", stale: false });
+    const offered = (await harness.state()).tasks.find((task: { id: string }) => task.id === "task_1").affordances.map((item: { kind: string }) => item.kind);
+    expect(offered).toEqual(expect.arrayContaining(["confirm_human_action", "confirm_replan", "request_replan"]));
+
+    expect((await harness.post(`/api/replan-proposals/${proposal.id}/confirm`, {})).status).toBe(200);
+    expect(harness.task()).toMatchObject({ status: "queued", title: "Pick a low-difficulty keyword" });
+
+    // The revision superseded the Hold that asked: a late answer would hand the revised task a Settled
+    // Fact for a question it no longer asks, and CEO Office stops offering it.
+    const late = await harness.confirm(humanActionId, { "KD keyword-a": "12", "KD keyword-b": "31" });
+    expect(late.status).toBe(409);
+    const office = (await harness.state()).ceoOfficeItems.find((item: { sourceId: string }) => item.sourceId === humanActionId);
+    expect(office).toMatchObject({ type: "human_action", actionBearing: false });
+    await harness.close();
+  });
+
+  it("marks a proposal stale once its task moves, refuses to confirm it, and still lets the founder reject it", async () => {
+    const harness = await createHarness([askForKd, askForKd], {}, { planner });
+    await harness.tick();
+    const first = harness.repositories.listOpenTaskHolds("task_1")[0]!.subjectId!;
+    const { proposal } = await (await harness.post("/api/tasks/task_1/replan-proposals", { mode: "revision" })).json();
+
+    // The founder answers after all; the task re-runs and asks again. It still offers confirming the
+    // proposal — from its new Hold — but the proposal was written about the task as it was.
+    await harness.confirm(first, { "KD keyword-a": "12", "KD keyword-b": "31" });
+    await harness.tick();
+    expect(harness.repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["awaiting_human_action"]);
+    const listed = (await harness.state()).replanProposals.find((item: { id: string }) => item.id === proposal.id);
+    expect(listed.stale).toBe(true);
+
+    const refused = await harness.post(`/api/replan-proposals/${proposal.id}/confirm`, {});
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).error).toMatch(/request a new proposal/);
+    expect(harness.task().title).toBe("Pick a low-KD keyword");
+
+    const rejected = await harness.post(`/api/replan-proposals/${proposal.id}/reject`, { note: "Out of date." });
+    expect(rejected.status).toBe(200);
+    expect((await rejected.json()).proposal).toMatchObject({ status: "rejected", rejectionNote: "Out of date." });
+    await harness.close();
+  });
+});
+
 type Script = (request: AgentRunRequest) => Record<string, unknown>;
 
 function askForKd(_request: AgentRunRequest): Record<string, unknown> {
@@ -227,7 +294,7 @@ function grantedRefutableCapability(request: AgentRunRequest): string {
   return capability;
 }
 
-async function createHarness(scripts: Script[], taskOverrides: Partial<Task> = {}, options: { blockersLeaveProof?: boolean } = {}) {
+async function createHarness(scripts: Script[], taskOverrides: Partial<Task> = {}, options: { blockersLeaveProof?: boolean; planner?: AgentAdapter } = {}) {
   const projectRoot = mkdtempSync(join(tmpdir(), "auto-crop-unblock-"));
   createdDirs.push(projectRoot);
   const client = createDatabaseClient(":memory:");
@@ -273,7 +340,7 @@ async function createHarness(scripts: Script[], taskOverrides: Partial<Task> = {
     },
   };
 
-  const server = createApiServer({ projectRoot, repositories, agents: [], now, createId, requestSchedulerWake: (reason) => wakes.push(reason) });
+  const server = createApiServer({ projectRoot, repositories, agents: options.planner ? [options.planner] : [], now, createId, requestSchedulerWake: (reason) => wakes.push(reason) });
   await new Promise<void>((resolve) => server.httpServer.listen(0, resolve));
   const address = server.httpServer.address();
   if (!address || typeof address === "string") throw new Error("Expected TCP server address.");
@@ -293,6 +360,9 @@ async function createHarness(scripts: Script[], taskOverrides: Partial<Task> = {
     }),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     state: async (): Promise<any> => (await fetch(`${baseUrl}/api/companies/company_1/state`)).json(),
+    post: (path: string, body: unknown) => fetch(`${baseUrl}${path}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    }),
     confirm: (humanActionId: string, evidence: Record<string, string>) => fetch(
       `${baseUrl}/api/companies/company_1/human-actions/${humanActionId}/confirm`,
       { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ evidence }) },

@@ -56,3 +56,11 @@ The glossary already said a Replan Required task "should be split or rewritten".
 - **A separate "edit requirements" action.** Splits one decision — "this is what we now accept" — across two confirmations that can disagree.
 - **Per-check staleness.** Only the checks an amendment touches would go stale. It needs a version per requirement and makes "is this verdict current" a partial answer; one fingerprint per verdict keeps it a yes or no.
 - **Skip the re-run when the old output may already pass.** Saves a run in a minority of cases at the cost of an extra judgement step on every revision.
+
+## Clarifications (2026-10-12, during implementation)
+
+- **Acceptance criteria are the description.** Tasks have no separate acceptance-criteria field; a Revision rewrites the description, which carries them.
+- **No template Revision.** When the planner fails or replies unusably, only a request that named `split` falls back to the runtime's Split template. Otherwise the proposal is recorded as `failed` and cannot be confirmed; the founder requests again.
+- **A verifier may revise its own standard.** A Revision of a verifier may amend that verifier's own planned requirements, as well as those of verifiers judging it.
+- **"Only a confirmed revision resets" is scoped to replanning.** Requesting or rejecting a proposal resets nothing. The existing resets — a new accepted upstream artifact (ADR 0002) and a confirmed Split — stay.
+- **Rejected and dismissed.** A founder-rejected proposal is `rejected`, with its note; a proposal replaced by a newer request before anyone decided is `dismissed`.

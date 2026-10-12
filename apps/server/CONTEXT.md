@@ -135,6 +135,19 @@ A Blocker Report's `payload.unblock_request` (`{ needed, why, evidence_requireme
 
 Do not add a second channel for one of these, such as a section only the rework path fills or a file in the workspace: a fact kept by the path that caused the re-run is forgotten by the next kind of re-run, and a revised keyword task re-asks the founder for the keyword (ADR 0043). A new kind of settled input is a new case in this function.
 
+## A Replan Is Bound To The Task It Was Made For
+
+`createReplanProposalForTask` asks one question before anything else: does the task offer `request_replan` (`checkTaskAffordance`)? Never its status — that check made every replan offered outside `needs_replan` fail (ADR 0043). `confirm_replan` is offered wherever `request_replan` is, while a proposal waits.
+
+A proposal is a **Split** (2–5 replacement tasks, never a requirement change) or a **Revision** (the same task asked something else: title, description — which carries its acceptance criteria — Proof Schema and required capabilities, plus amendments to *planned* Verification Requirements on a verifier judging it, itself included). The planner is told why the task is stuck (`resolveStuckContext`: open Holds, Blocker Report with any Unblock Request, failed checks, the last rejection's note) and the founder's mode and note. Only an explicit Split falls back to the runtime template; any other planner failure records a `failed` proposal, which cannot be confirmed.
+
+Rules that hold it together:
+
+- **Bound to its basis.** `resolveReplanBasis` records the task's status, open Holds, run count, delivery, upstream deliveries, and the verdicts and requirement fingerprints judging it. `confirmReplanProposal` refuses (`StaleReplanProposalError`) when the present differs, and the API derives `stale` the same way. Nothing writes a stale mark.
+- **Verdict currency is derived.** A verdict records `requirementsFingerprint`; `isVerificationCurrent` compares it with `resolveVerificationRequirementSource` — the one answer to "what is this verifier held to", shared with the handoff. Amending a requirement therefore makes the whole verdict non-current, for every target.
+- **Only a confirmed Revision resets.** It supersedes every open Hold on the task, re-queues it, resets its Bounded Recovery attempts, and resets an amended verifier's round budget (`markVerificationRoundsReset`, a count rather than a timestamp). Requesting or rejecting changes nothing. Verifiers judging the task are parked to re-verify its next delivery.
+- **What it replaced stops speaking.** Verification Rework against an amended standard drops out of Settled Facts, and a superseded Unblock Request can no longer be confirmed or offered.
+
 ## A Delivery Is Finalized In One Place
 
 `finalizeDelivery` (`src/runtime/deliveryFinalization.ts`) decides where a valid delivered artifact leaves its task: held, verification failed, CEO review, Founder Decision, internal delivery, or accepted. The scheduler and proof recovery both call it. A path that delivers an artifact and then chooses a status or Hold itself is a second copy of this policy — the shape of the bug where a recovered subtask skipped its Founder Decision (ADR 0024). Acceptance and completion recording are idempotent, so reaching the same delivery twice writes nothing twice.

@@ -185,7 +185,12 @@ describe("resolveDependencyReadiness", () => {
   describe("a producer the plan has someone verify", () => {
     const verifiedFixture = (verdictOverrides?: Partial<BusinessArtifact>, tasks?: Task[]) => {
       const fixture = createFixture(
-        tasks ?? [createTaskRecord("task_1", "complete"), createTaskRecord("task_verifier", "queued"), createTaskRecord("task_consumer", "queued")],
+        tasks ?? [
+          createTaskRecord("task_1", "complete"),
+          // The standard the verdicts below judged against, planned onto the verifier (ADR 0025).
+          { ...createTaskRecord("task_verifier", "queued"), verificationRequirements: [{ id: "r1", description: "The brief names one wedge." }] },
+          createTaskRecord("task_consumer", "queued"),
+        ],
       );
       const { repositories } = fixture;
       repositories.createTaskDependency({ taskId: "task_verifier", dependsOnTaskId: "task_1", inputRole: "verification_target" });

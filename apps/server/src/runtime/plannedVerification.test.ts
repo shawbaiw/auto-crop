@@ -10,6 +10,7 @@ import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { aiSaasPlaybook } from "../playbooks/aiSaas";
 import { createCompany } from "./createCompany";
+import { resolveReplanBasis } from "./replanContext";
 import { confirmReplanProposal } from "./replan";
 import { runSchedulerOnce } from "./scheduler";
 import { prepareVerificationInputs } from "./verificationContract";
@@ -251,6 +252,17 @@ describe("verification planned by the CEO blueprint", () => {
       ],
       createdAt: "2026-09-17T00:00:00.000Z",
       confirmedAt: null,
+      mode: "split",
+      requestedMode: null,
+      founderNote: null,
+      taskBefore: null,
+      taskAfter: null,
+      capabilitiesChanged: false,
+      requirementChanges: [],
+      requirementSourceNotes: [],
+      rejectionNote: null,
+      rejectedAt: null,
+      basis: resolveReplanBasis(repositories, verifier),
     });
 
     const confirmed = confirmReplanProposal({ projectRoot, repositories, proposalId: "replan_1" });

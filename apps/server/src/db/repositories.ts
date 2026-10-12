@@ -1256,6 +1256,11 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapBusinessArtifact(row as BusinessArtifactRow));
     },
 
+    getBusinessArtifact(id: string): BusinessArtifact | null {
+      const row = database.prepare("SELECT * FROM business_artifacts WHERE id = ?").get(id);
+      return row ? mapBusinessArtifact(row as BusinessArtifactRow) : null;
+    },
+
     getCurrentBusinessArtifactForTask(taskId: string): BusinessArtifact | null {
       const row = database
         .prepare(
@@ -1831,6 +1836,11 @@ export function createRepositories(database: DatabaseClient) {
       }));
     },
 
+    /** Every run the task has had, uncounted by outcome or reset marker. */
+    countAllAgentRunsForTask(taskId: string): number {
+      return (database.prepare("SELECT COUNT(*) AS count FROM agent_runs WHERE task_id = ?").get(taskId) as { count: number }).count;
+    },
+
     countAgentRunsForTask(taskId: string): number {
       // Counts attempts since the last reset marker (if any) so agent-run history is preserved
       // for diagnosis (ADR 0002) rather than deleted when the count is reset. A run that stopped
@@ -1859,6 +1869,34 @@ export function createRepositories(database: DatabaseClient) {
               .get(taskId)
       ) as { count: number };
       return row.count;
+    },
+
+    /**
+     * Start a verifier's verification round budget again, by recording how many rounds it has already
+     * used. A count, not a timestamp: a reset and a rework recorded in the same millisecond must still
+     * order. Only a confirmed Revision that amends the verifier's requirements calls this (ADR 0043).
+     */
+    markVerificationRoundsReset(verifierTaskId: string): void {
+      const used = (database
+        .prepare("SELECT COUNT(*) AS count FROM verification_reworks WHERE verifier_task_id = ?")
+        .get(verifierTaskId) as { count: number }).count;
+      database
+        .prepare(
+          `INSERT INTO runtime_state (key, value) VALUES (?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        )
+        .run(`verification_rounds_reset:${verifierTaskId}`, String(used));
+    },
+
+    /** Verification rounds a verifier has used since its budget last started. */
+    countVerificationRounds(verifierTaskId: string): number {
+      const used = (database
+        .prepare("SELECT COUNT(*) AS count FROM verification_reworks WHERE verifier_task_id = ?")
+        .get(verifierTaskId) as { count: number }).count;
+      const marker = database
+        .prepare("SELECT value FROM runtime_state WHERE key = ?")
+        .get(`verification_rounds_reset:${verifierTaskId}`) as { value: string } | undefined;
+      return used - (marker ? Number(marker.value) : 0);
     },
 
     markTaskAttemptsReset(taskId: string, at: string): void {
@@ -2019,8 +2057,10 @@ export function createRepositories(database: DatabaseClient) {
         .prepare(
           `INSERT INTO replan_proposals (
             id, company_id, source_task_id, status, proposal_source, planner_agent_id, planner_prompt_path,
-            planner_failure_reason, planner_failure_message, rationale, replacement_tasks, created_at, confirmed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            planner_failure_reason, planner_failure_message, rationale, replacement_tasks, created_at, confirmed_at,
+            mode, requested_mode, founder_note, task_before, task_after, capabilities_changed, requirement_changes,
+            requirement_source_notes, basis, rejection_note, rejected_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           proposal.id,
@@ -2036,6 +2076,17 @@ export function createRepositories(database: DatabaseClient) {
           JSON.stringify(proposal.replacementTasks),
           proposal.createdAt,
           proposal.confirmedAt,
+          proposal.mode,
+          proposal.requestedMode,
+          proposal.founderNote,
+          proposal.taskBefore ? JSON.stringify(proposal.taskBefore) : null,
+          proposal.taskAfter ? JSON.stringify(proposal.taskAfter) : null,
+          proposal.capabilitiesChanged ? 1 : 0,
+          JSON.stringify(proposal.requirementChanges),
+          JSON.stringify(proposal.requirementSourceNotes),
+          proposal.basis ? JSON.stringify(proposal.basis) : null,
+          proposal.rejectionNote,
+          proposal.rejectedAt,
         );
     },
 
@@ -2062,6 +2113,37 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare("UPDATE replan_proposals SET status = ?, confirmed_at = ? WHERE id = ?")
         .run(status, confirmedAt, id);
+    },
+
+    rejectReplanProposal(id: string, note: string | null, rejectedAt: string): void {
+      database
+        .prepare("UPDATE replan_proposals SET status = 'rejected', rejection_note = ?, rejected_at = ? WHERE id = ?")
+        .run(note, rejectedAt, id);
+    },
+
+    /** Rewrite what a task is asked to do. Only a confirmed Revision calls this (ADR 0043). */
+    updateTaskDefinition(id: string, definition: {
+      title: string;
+      titleText: LocalizedText | null;
+      description: string;
+      descriptionText: LocalizedText | null;
+      proofSchemaId: string;
+      requiredCapabilities: string[];
+    }): void {
+      database
+        .prepare(
+          `UPDATE tasks SET title = ?, title_text = ?, description = ?, description_text = ?, proof_schema_id = ?, required_capabilities = ?
+           WHERE id = ?`,
+        )
+        .run(
+          definition.title,
+          definition.titleText ? JSON.stringify(definition.titleText) : null,
+          definition.description,
+          definition.descriptionText ? JSON.stringify(definition.descriptionText) : null,
+          definition.proofSchemaId,
+          JSON.stringify(definition.requiredCapabilities),
+          id,
+        );
     },
 
     appendTaskEvent(event: TaskEvent): void {
@@ -2387,6 +2469,17 @@ type ReplanProposalRow = {
   replacement_tasks: string;
   created_at: string;
   confirmed_at: string | null;
+  mode: ReplanProposal["mode"] | null;
+  requested_mode: ReplanProposal["requestedMode"] | null;
+  founder_note: string | null;
+  task_before: string | null;
+  task_after: string | null;
+  capabilities_changed: number | null;
+  requirement_changes: string | null;
+  requirement_source_notes: string | null;
+  basis: string | null;
+  rejection_note: string | null;
+  rejected_at: string | null;
 };
 
 type TaskDependencyRow = {
@@ -2807,6 +2900,17 @@ function mapReview(row: ReviewRow): ReviewRecord {
 
 function mapReplanProposal(row: ReplanProposalRow): ReplanProposal {
   return {
+    mode: row.mode ?? (row.status === "failed" ? null : "split"),
+    requestedMode: row.requested_mode ?? null,
+    founderNote: row.founder_note ?? null,
+    taskBefore: row.task_before ? JSON.parse(row.task_before) as ReplanProposal["taskBefore"] : null,
+    taskAfter: row.task_after ? JSON.parse(row.task_after) as ReplanProposal["taskAfter"] : null,
+    capabilitiesChanged: row.capabilities_changed === 1,
+    requirementChanges: row.requirement_changes ? JSON.parse(row.requirement_changes) as ReplanProposal["requirementChanges"] : [],
+    requirementSourceNotes: row.requirement_source_notes ? JSON.parse(row.requirement_source_notes) as ReplanProposal["requirementSourceNotes"] : [],
+    basis: row.basis ? JSON.parse(row.basis) as ReplanProposal["basis"] : null,
+    rejectionNote: row.rejection_note ?? null,
+    rejectedAt: row.rejected_at ?? null,
     id: row.id,
     companyId: row.company_id,
     sourceTaskId: row.source_task_id,

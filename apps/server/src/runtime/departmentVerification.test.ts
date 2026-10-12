@@ -569,7 +569,8 @@ describe("verification contract", () => {
     const { repositories } = harness;
     const faulted = { ...baseTask("producer_a", "complete", "landing-page-file") };
     const sound = { ...baseTask("producer_b", "complete", "landing-page-file") };
-    const verifier = { ...baseTask("verifier_1", "running", "test-output") };
+    // The verifier's standard is planned onto it; a verdict is current only against its verifier's present requirements.
+    const verifier = { ...baseTask("verifier_1", "running", "test-output"), verificationRequirements: [{ id: "r1", description: "works" }, { id: "r2", description: "styled" }] };
     for (const task of [faulted, sound, verifier]) {
       repositories.createTask(task);
     }
@@ -749,7 +750,7 @@ describe("verification contract", () => {
     repositories.appendProof({ id: "proof_parent_rw", taskId: parent.id, type: "file", uri: "summary.md", summary: "summary", verifiedAt: null });
     repositories.createBusinessArtifact(artifactRecord("artifact_parent_rw", parent.id, {}));
 
-    const outerVerifier = { ...baseTask("outer_verifier", "running", "test-output"), position: 98 };
+    const outerVerifier = { ...baseTask("outer_verifier", "running", "test-output"), position: 98, verificationRequirements: [{ id: "accessible", description: "The page is reachable." }] };
     repositories.createTask(outerVerifier);
     repositories.createTaskDependency({ taskId: outerVerifier.id, dependsOnTaskId: parent.id, inputRole: "verification_target" });
     const report = {
