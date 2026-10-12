@@ -26,11 +26,14 @@ test("CEO Office keeps a fixed viewport, follows new cards, and preserves histor
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  const history = page.locator(".ceo-intake-report__history");
-  const input = page.locator(".ceo-intake-report__footer textarea");
+  const history = page.getByRole("region", { name: "CEO Office history" });
+  const input = page.getByRole("textbox", { name: "New vision, material, or task" });
   await expect(history).toBeVisible();
   await expect(input).toBeVisible();
-  const metrics = () => page.evaluate(() => ({ documentHeight: document.documentElement.scrollHeight, viewport: innerHeight, historyHeight: document.querySelector(".ceo-intake-report__history")!.clientHeight }));
+  const metrics = async () => ({
+    ...(await page.evaluate(() => ({ documentHeight: document.documentElement.scrollHeight, viewport: innerHeight }))),
+    historyHeight: await history.evaluate(node => node.clientHeight),
+  });
   await expect.poll(async () => (await metrics()).historyHeight).toBeGreaterThan(150);
   expect((await metrics()).documentHeight).toBeLessThanOrEqual(901);
   await expect.poll(() => history.evaluate(node => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(2);
