@@ -179,8 +179,10 @@ describe("resolveTaskAffordances", () => {
       ],
     });
 
+    // A founder who will not supply what was asked for may replan instead (ADR 0042).
     expect(affordances.filter((item) => item.holdId === "hold_a").map((item) => item.kind)).toEqual([
       "confirm_human_action",
+      "request_replan",
     ]);
     expect(affordances.filter((item) => item.holdId === "hold_b").map((item) => item.kind)).toEqual([
       "refresh_task",
@@ -194,6 +196,11 @@ describe("deriveTaskHold", () => {
     for (const status of heldTaskStatuses) {
       expect(deriveTaskHold({ status }), `status ${status} must derive a Hold`).not.toBeNull();
     }
+  });
+
+  it("derives a Human Action Hold for a task parked on its own Unblock Request", () => {
+    expect(deriveTaskHold({ status: "blocked", failureReason: "awaiting_human_action" }))
+      .toEqual({ kind: "awaiting_human_action", resolver: "founder" });
   });
 
   it("derives no Hold for statuses that carry their own motion", () => {

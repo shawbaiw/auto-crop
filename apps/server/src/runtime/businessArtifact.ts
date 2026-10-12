@@ -16,6 +16,7 @@ import type { AgentCapabilityGrant, RuntimeCapability } from "../policies/capabi
 import { parseActionIntents } from "./actionIntent";
 import type { ArtifactEnvelope, ProofReference } from "./artifactEnvelope";
 import { parseOpenDecisions } from "./founderDecision";
+import { parseUnblockRequest } from "./unblockRequest";
 import {
   evaluateVerificationReport,
   parseVerificationRequirements,
@@ -199,7 +200,7 @@ export function proofRefTypeErrors(refs: ProofReference[] | undefined, policy: P
 /**
  * The delivery contract an envelope must meet beyond its shape: a `deliverable` or `final_report`
  * carries an Outcome Summary, an Execution Report and well-formed Founder Decisions, and any envelope's
- * Proof References are of types its task accepts.
+ * Proof References are of types its task accepts, and a `blocker`'s Unblock Request is well formed.
  *
  * One function for both moments it is checked — when the agent submits, so it can correct the
  * envelope in the same run, and at settlement, which is the authority. Two copies of these rules is
@@ -210,6 +211,11 @@ export function artifactEnvelopeContractErrors(
   options: ArtifactEnvelopeContractOptions,
 ): string[] {
   const refErrors = options.proofRefs ? proofRefTypeErrors(envelope.proofRefs, options.proofRefs) : [];
+  if (envelope.artifactKind === "blocker") {
+    // A blocker asking a person for input must ask in a shape settlement can turn into a Human Action,
+    // and never for credentials (ADR 0042).
+    return [...refErrors, ...parseUnblockRequest(envelope.payload).errors];
+  }
   if (envelope.artifactKind !== "deliverable" && envelope.artifactKind !== "final_report") {
     return refErrors;
   }

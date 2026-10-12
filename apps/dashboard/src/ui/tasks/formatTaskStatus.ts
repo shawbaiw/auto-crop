@@ -88,6 +88,8 @@ export function formatTaskFailureReason(reason: string, t: (key: TranslationKey)
       return t("taskStatus.failureRateLimited");
     case "verification_failed":
       return t("taskStatus.failureVerificationFailed");
+    case "awaiting_human_action":
+      return t("taskStatus.failureAwaitingHumanAction");
     default:
       return reason;
   }

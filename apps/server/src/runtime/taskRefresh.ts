@@ -11,6 +11,7 @@ import type {
 import { isAffordanceApplicable } from "@auto-crop/core";
 import type { createRepositories } from "../db/repositories";
 import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhausted } from "./boundedRecovery";
+import { parkOnUnblockRequest, unblockRequestOf } from "./unblockRequest";
 import { captureBusinessArtifact, isReviewableBusinessArtifact } from "./businessArtifact";
 import { finalizeDelivery, type DeliveryOutcome } from "./deliveryFinalization";
 import { resolveCaptureVerificationContext } from "./verificationContract";
@@ -169,7 +170,10 @@ export function recoverProofIfPossible(
   // unreviewable artifact that recaptures an unreviewable one has recovered nothing: its Hold already
   // says so. Reporting that as recovered — re-blocking, opening a second Hold on the new capture —
   // made `recover_task` loop without ever re-running the work (ADR 0020: a Hold's exits must lead out).
-  if (unreviewable && input.repositories.listOpenTaskHolds(task.id).some((hold) => hold.kind === "invalid_business_artifact")) {
+  // A recaptured Unblock Request is not "still unreviewable": it is the task asking for input, and
+  // parking it on that request is real progress out of the invalid-delivery Hold (ADR 0042).
+  const unblockRequest = unblockRequestOf(businessArtifact);
+  if (unreviewable && !unblockRequest && input.repositories.listOpenTaskHolds(task.id).some((hold) => hold.kind === "invalid_business_artifact")) {
     return { kind: "still_unreviewable", validationErrors: businessArtifact.validationErrors };
   }
 
@@ -179,6 +183,28 @@ export function recoverProofIfPossible(
   input.repositories.createBusinessArtifact(businessArtifact);
   // Captured: the candidate is now a Business Artifact and must not be recaptured as a second one.
   input.runtimeActionChannel.discardTask(taskContext);
+
+  if (unblockRequest) {
+    const parked = parkOnUnblockRequest({ repositories: input.repositories, task, artifact: businessArtifact, now: input.now, createId: input.createId });
+    const refreshedTask = input.repositories.getTask(task.id);
+    if (!refreshedTask) {
+      throw new Error(`Task disappeared after parking on its Unblock Request: ${task.id}`);
+    }
+    return {
+      kind: "recovered",
+      result: {
+        task: refreshedTask,
+        event: parked.taskEvent,
+        progressEvent: parked.progressEvent,
+        proof,
+        businessArtifacts: [businessArtifact],
+        recovery: {
+          status: "recovered",
+          message: "Found a Blocker Report asking a person for input; the task now waits on that Human Action.",
+        },
+      },
+    };
+  }
 
   if (unreviewable) {
     const now = input.now ?? (() => new Date());

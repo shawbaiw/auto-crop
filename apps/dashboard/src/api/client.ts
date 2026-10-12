@@ -197,7 +197,7 @@ export type TaskCompletionEventSummary = {
   departmentId: string;
   keyResultId: string | null;
   businessArtifactId: string | null;
-  outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan" | "awaiting_founder_decision";
+  outcome: "accepted" | "blocked" | "failed_to_review" | "needs_replan" | "awaiting_founder_decision" | "awaiting_human_action";
   acceptanceProvenance: "manual_ceo_review" | "automatic_acceptance" | null;
   outcomeSummaryText?: LocalizedText | null;
   executionReport?: {

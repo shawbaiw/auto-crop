@@ -69,7 +69,7 @@ export function artifactEnvelopeInputSchema(acceptedProofTypes: readonly ProofTy
       artifact_role: { type: "string", enum: ARTIFACT_ROLE_VALUES },
       artifact_subtype: { type: "string", minLength: 1 },
       task_type: { type: "string", minLength: 1 },
-      payload: { type: "object", description: "The delivery itself, including execution_report and outcome_summary for a deliverable or final_report. Cite sources you read here." },
+      payload: { type: "object", description: "The delivery itself, including execution_report and outcome_summary for a deliverable or final_report, or unblock_request for a blocker that asks a person for input. Cite sources you read here." },
       lineage: { type: "object" },
       proof_refs: acceptedProofTypes.length > 0
         ? {

@@ -61,6 +61,7 @@ import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
 import { resolveSettledFacts } from "./settledFacts";
+import { parkOnUnblockRequest, unblockRequestOf } from "./unblockRequest";
 import { applyTaskTransition } from "./taskTransition";
 import type { ProofReference } from "./artifactEnvelope";
 import {
@@ -970,6 +971,42 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                 emitParentTaskAggregationEvents(settled, task);
               },
             );
+            return;
+          }
+
+          // A Blocker Report carrying an Unblock Request is the task asking a person for input, not a
+          // broken delivery: it parks on a Human Action instead of an `invalid_business_artifact` Hold.
+          // Checked before Proof, because a request for input is not a deliverable and owes none, and
+          // after Grant Refutation, because a run that claims a capability it held asks nobody for
+          // anything. The ceiling still applies: an agent that keeps asking cannot loop (ADR 0042).
+          const unblockRequestArtifact = agentResult.status === "complete" && !refutedCapability && unblockRequestOf(businessArtifact)
+            ? businessArtifact
+            : null;
+          if (unblockRequestArtifact) {
+            const ceiling = atRetryCeiling(input, task);
+            if (
+              settleRun(
+                input,
+                agentRunId,
+                // Recorded as an attempt that did not deliver, not as `complete`: the Bounded Recovery
+                // counter skips completed runs, and an asking run must count or asking never ends.
+                { ...(ceiling ? retryCeilingOutcome(task) : { status: "failed" as const, failureReason: "awaiting_human_action" as const, failureMessage: `Task asked for input: ${task.title}.` }), terminationConfirmed: agentResult.terminationConfirmed },
+                now,
+                (settled) => {
+                  if (ceiling) {
+                    terminateAtRetryCeiling(settled, result, task, timeoutResolution, now, createId);
+                    return;
+                  }
+                  recordRunOutput(settled);
+                  const parked = parkOnUnblockRequest({ repositories: settled.repositories, task, artifact: unblockRequestArtifact, now, createId });
+                  emitTaskEvent(settled, parked.taskEvent);
+                  result.blocked.push(task.id, ...blockDirectDependencyConsumers(settled, task));
+                  emitParentTaskAggregationEvents(settled, task);
+                },
+              )
+            ) {
+              publishHandoff();
+            }
             return;
           }
 

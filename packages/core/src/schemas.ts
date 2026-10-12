@@ -99,6 +99,7 @@ export const agentFailureReasonSchema = z.enum([
   "needs_replan",
   "rate_limited",
   "verification_failed",
+  "awaiting_human_action",
 ]);
 
 export const taskEventTypeSchema = z.enum([
@@ -143,6 +144,7 @@ export const taskCompletionOutcomeSchema = z.enum([
   "failed_to_review",
   "needs_replan",
   "awaiting_founder_decision",
+  "awaiting_human_action",
 ]);
 export const taskAcceptanceProvenanceSchema = z.enum([
   "manual_ceo_review",

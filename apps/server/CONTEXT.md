@@ -91,7 +91,7 @@ Any path where an actor answers one specific Hold uses it rather than assuming t
 | Answered | Where | Hold it closes |
 | -------- | ----- | -------------- |
 | Founder Approval | `runtime/founderApproval.ts` | `awaiting_founder_approval` |
-| Human Action confirmed | `confirmHumanAction` in `api/routes.ts` | `awaiting_human_action` |
+| Human Action confirmed | `confirmHumanAction` in `api/routes.ts` | `awaiting_human_action` — every open one naming that Human Action |
 | Wait State elapsed | `applyWaitStateRouting` in `api/routes.ts` | `awaiting_external_wait` |
 | CEO review returned | `createCeoReviewDecision` in `api/routes.ts` | `awaiting_ceo_review` |
 
@@ -116,6 +116,18 @@ A department subtask never goes through acceptance. Its delivery parks in `revie
 ## A Failed Verdict Is Reworked, Not Retried
 
 `applyVerificationRework` decides what follows a verdict that did not pass and records it in `verification_reworks`, one row per failed report. The round budget (`MAX_VERIFICATION_ROUNDS`) counts those rows, not Agent Runs — every run in a rework loop succeeds, so the Bounded Recovery counter never sees it. Rework reaches a producer as prompt feedback read at dispatch, never as a dependency on its verifier (ADR 0026).
+
+## A Blocker May Ask A Person For Input
+
+A Blocker Report's `payload.unblock_request` (`{ needed, why, evidence_requirements }`) is part of the Artifact Envelope contract, checked by `artifactEnvelopeContractErrors` like every other delivery rule, so a malformed request is rejected while the agent can still fix it (ADR 0041, ADR 0042). It may not ask for credentials; `parseUnblockRequest` refuses them.
+
+`parkOnUnblockRequest` (`src/runtime/unblockRequest.ts`) is the only thing that turns one into state. Both settlement paths call it inside their transaction — the run's own settlement and Proof recovery — and it records an `awaiting_human_action` completion event whose Human Action sits on the blocked task, then parks the task on an `awaiting_human_action` Hold naming that Human Action. Rules that follow:
+
+- **A request for input is not a broken delivery.** It never opens `invalid_business_artifact`, and CEO Office shows a task held only on Human Actions by its Human Action, not as a blocked issue.
+- **It owes no Proof, and it cannot outrun refutation.** The scheduler checks for it before the Proof check, and after Grant Refutation: a run that claims a capability it held asks nobody for anything.
+- **Asking counts.** The asking run settles `failed` / `awaiting_human_action`, because `countAgentRunsForTask` skips completed runs; settled `complete`, an agent could ask forever. Confirming never resets the count.
+- **A Human Action exists only with its Hold.** `recordTaskCompletionEvent` builds the Unblock Request item only for the `awaiting_human_action` outcome, so no other path recording the same artifact projects a Human Action nobody waits on.
+- **Confirmation releases by Hold.** Confirming releases every open `awaiting_human_action` Hold naming the Human Action, so the blocked task itself — which gates no other task — re-queues and gets the confirmation as a Settled Fact. An incomplete confirmation, or one whose value looks like a credential, is refused whole.
 
 ## A Run Is Told What Was Settled By One Function
 

@@ -141,7 +141,12 @@ export type AgentFailureReason =
    * target did not pass — a failed, inconclusive or stale verification. The process succeeded; the
    * work being verified did not.
    */
-  | "verification_failed";
+  | "verification_failed"
+  /**
+   * Not a failure of the run: it delivered a Blocker Report with an Unblock Request, and the task
+   * waits on a person to bring back what it asked for (ADR 0042).
+   */
+  | "awaiting_human_action";
 export type TaskEventType =
   | "task_started"
   | "task_review"
@@ -181,7 +186,9 @@ export type TaskCompletionOutcome =
   | "blocked"
   | "failed_to_review"
   | "needs_replan"
-  | "awaiting_founder_decision";
+  | "awaiting_founder_decision"
+  /** The delivery was a Blocker Report carrying an Unblock Request: the task waits on a person (ADR 0042). */
+  | "awaiting_human_action";
 export type TaskAcceptanceProvenance = "manual_ceo_review" | "automatic_acceptance" | "founder_decision";
 export type ExecutionBrief = {
   purpose: LocalizedText;

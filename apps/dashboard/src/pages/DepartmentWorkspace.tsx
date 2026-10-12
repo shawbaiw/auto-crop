@@ -1341,6 +1341,7 @@ const TIMELINE_OUTCOME_KEY: Record<string, TranslationKey> = {
   failed_to_review: "department.timelineOutcomeFailedToReview",
   needs_replan: "department.timelineOutcomeNeedsReplan",
   awaiting_founder_decision: "department.timelineOutcomeAwaitingFounderDecision",
+  awaiting_human_action: "department.timelineOutcomeAwaitingHumanAction",
   resolved: "department.timelineOutcomeResolved",
   approved: "department.timelineOutcomeApproved",
   returned: "department.timelineOutcomeReturned",

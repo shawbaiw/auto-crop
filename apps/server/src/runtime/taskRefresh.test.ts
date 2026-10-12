@@ -8,6 +8,7 @@ import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
 import { refreshTaskDependencyState } from "./taskRefresh";
 import { recoverTask } from "./taskRecovery";
+import { applyTaskTransition } from "./taskTransition";
 import { createRuntimeActionChannel, type RuntimeActionChannel } from "./runtimeActionChannel";
 
 const createdDirs: string[] = [];
@@ -399,6 +400,58 @@ describe("refreshTaskDependencyState proof recovery", () => {
     // the blocker stands and the task stays blocked instead of reaching CEO review.
     expect(result.task.status).toBe("blocked");
     expect(result.businessArtifacts?.[0]?.artifactKind).toBe("blocker");
+  });
+
+  it("parks a recovered Blocker Report with an Unblock Request on its Human Action, closing the invalid-delivery Hold", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "auto-crop-refresh-proof-"));
+    createdDirs.push(workspacePath);
+    writeFileSync(join(workspacePath, "index.html"), "<main>notes</main>", "utf8");
+    leaveDelivery({
+      artifact_kind: "blocker",
+      artifact_role: "none",
+      artifact_subtype: "keyword_data_unavailable",
+      task_type: "research.keyword",
+      payload: {
+        reason: "No KD source is reachable without a login.",
+        unblock_request: { needed: "Ahrefs KD for keyword-a", why: "Every KD source needs a login.", evidence_requirements: ["KD keyword-a"] },
+      },
+      lineage: {},
+    });
+    const fixture = createFixture([
+      {
+        ...createTaskRecord(),
+        workspacePath,
+        status: "blocked",
+        proofSchemaId: "landing-page-file",
+        latestFailureReason: "non_reviewable_artifact",
+        latestFailureMessage: "Task blocked: an earlier delivery was not reviewable.",
+      },
+    ]);
+    applyTaskTransition({
+      repositories: fixture.repositories,
+      task: "task_1",
+      status: "blocked",
+      hold: { kind: "invalid_business_artifact", subjectKind: "agent_run", subjectId: "run_unfinished", reason: "Not reviewable." },
+    });
+    expect(fixture.repositories.listOpenTaskHolds("task_1").map((hold) => hold.kind)).toEqual(["invalid_business_artifact"]);
+
+    const result = refreshTaskDependencyState({
+      runtimeActionChannel,
+      repositories: fixture.repositories,
+      taskId: "task_1",
+      proofSchemas: [{ id: "landing-page-file", description: "landing page file proof", acceptedTypes: ["file"] }],
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    // The same rule the run's own settlement applies (ADR 0042): Proof recovery does not get to call
+    // an honest request for input "still unreviewable".
+    expect(result.task).toMatchObject({ status: "blocked", latestFailureReason: "awaiting_human_action" });
+    const holds = fixture.repositories.listOpenTaskHolds("task_1");
+    expect(holds.map((hold) => hold.kind)).toEqual(["awaiting_human_action"]);
+    const [event] = fixture.repositories.listTaskCompletionEventsForTask("task_1");
+    expect(event?.outcome).toBe("awaiting_human_action");
+    expect(holds[0]!.subjectId).toBe(`${event!.id}_human_action_1`);
   });
 
   it("does not recover unrelated failed tasks", () => {

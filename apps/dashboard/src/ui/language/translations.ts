@@ -378,6 +378,7 @@ export const englishTranslations = {
   "department.timelineOutcomeFailedToReview": "Could not be reviewed",
   "department.timelineOutcomeNeedsReplan": "Needs replanning",
   "department.timelineOutcomeAwaitingFounderDecision": "Waiting on your decision",
+  "department.timelineOutcomeAwaitingHumanAction": "Waiting on your input",
   "department.timelineOutcomeResolved": "Resolved",
   "department.timelineOutcomeApproved": "Approved",
   "department.timelineOutcomeReturned": "Returned to the department",
@@ -411,6 +412,7 @@ export const englishTranslations = {
   "taskStatus.failureRetryExhausted": "retry exhausted",
   "taskStatus.failureRateLimited": "rate limited",
   "taskStatus.failureVerificationFailed": "verification did not pass",
+  "taskStatus.failureAwaitingHumanAction": "waiting on your input",
 
   "display.proofTypeFile": "File",
   "display.proofTypeDiff": "Diff",
@@ -918,6 +920,7 @@ export const chineseTranslations: Record<TranslationKey, string> = {
   "department.timelineOutcomeFailedToReview": "无法评审",
   "department.timelineOutcomeNeedsReplan": "需要重新规划",
   "department.timelineOutcomeAwaitingFounderDecision": "等待你的决定",
+  "department.timelineOutcomeAwaitingHumanAction": "等待你提供信息",
   "department.timelineOutcomeResolved": "已解决",
   "department.timelineOutcomeApproved": "已批准",
   "department.timelineOutcomeReturned": "已退回部门",
@@ -951,6 +954,7 @@ export const chineseTranslations: Record<TranslationKey, string> = {
   "taskStatus.failureRetryExhausted": "重试已耗尽",
   "taskStatus.failureRateLimited": "触发限流",
   "taskStatus.failureVerificationFailed": "验证未通过",
+  "taskStatus.failureAwaitingHumanAction": "等待你提供信息",
 
   "display.proofTypeFile": "文件",
   "display.proofTypeDiff": "代码差异",

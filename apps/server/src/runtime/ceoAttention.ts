@@ -476,6 +476,14 @@ function collectVisionGaps(event: TaskCompletionEvent): VisionGap[] {
   return [...fromNextSteps, ...fromEventPayload];
 }
 
+/**
+ * The projected id of the Human Action at `index` among a Task Completion Event's Next Step Items. The
+ * single authored form: a Hold naming a Human Action names it by this id.
+ */
+export function humanActionIdFor(sourceTaskCompletionEventId: string, index: number): string {
+  return `${sourceTaskCompletionEventId}_human_action_${index + 1}`;
+}
+
 export function collectHumanActions(
   event: TaskCompletionEvent,
   confirmationsByActionId: Map<string, HumanActionConfirmation>,
@@ -485,7 +493,7 @@ export function collectHumanActions(
       return [];
     }
 
-    const id = `${event.id}_human_action_${index + 1}`;
+    const id = humanActionIdFor(event.id, index);
     const confirmation = confirmationsByActionId.get(id);
     const impactedTaskIds = extractImpactedTaskIds(item.dependencyImpact);
     const fallbackTaskIds = item.relatedTaskId && item.relatedTaskId !== event.taskId ? [item.relatedTaskId] : [];

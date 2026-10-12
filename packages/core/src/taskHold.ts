@@ -300,6 +300,9 @@ export function resolveTaskAffordances(input: ResolveTaskAffordancesInput): Task
         break;
       case "awaiting_human_action":
         offer(hold, "confirm_human_action", "founder");
+        // A founder who will not or cannot bring back what was asked for is not stuck with the
+        // question: the task can be revised instead (ADR 0042).
+        offer(hold, "request_replan", "founder");
         break;
       case "awaiting_founder_decision":
         offer(hold, "resolve_founder_decision", "founder");
@@ -455,6 +458,8 @@ export function deriveTaskHold(input: {
       return { kind: "agent_quota_exhausted", resolver: "runtime" };
     case "verification_failed":
       return { kind: "verification_failed", resolver: "runtime" };
+    case "awaiting_human_action":
+      return { kind: "awaiting_human_action", resolver: "founder" };
     default:
       return { kind: "runtime_interrupted", resolver: "runtime" };
   }

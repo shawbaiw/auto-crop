@@ -59,6 +59,7 @@ import {
 } from "../runtime/taskAffordances";
 import { reconcileTaskHolds } from "../runtime/taskHoldReconciliation";
 import { applyTaskTransition, findOpenTaskHold, releaseTaskHold } from "../runtime/taskTransition";
+import { credentialLikeValue } from "../runtime/unblockRequest";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
 import { refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
 import { propagateParentTaskAggregation, type ParentTaskAggregationResult } from "../runtime/parentTaskAggregation";
@@ -1557,11 +1558,6 @@ async function confirmHumanAction(input: {
   const createId = input.createId ?? defaultCreateId;
 
   for (const task of tasks) {
-    const dependencies = input.repositories.listTaskDependencies(task.id);
-    if (!taskIdsToUnblock.has(task.id) || !isHumanActionBlockedTask(task) || !taskDependenciesRequireHumanAction(dependencies, humanAction)) {
-      continue;
-    }
-
     // Confirming the Human Action answers that Hold and says nothing about any other. A task gated
     // on a Human Action may also still owe an upstream deliverable — `isHumanActionBlockedTask`
     // accepts `waiting_dependency` tasks, which already carry a dependency Hold — so releasing runs
@@ -1572,6 +1568,14 @@ async function confirmHumanAction(input: {
       "awaiting_human_action",
       humanAction.id,
     );
+    // The Hold naming this Human Action is what says a task waits on it — including the blocked task
+    // of an Unblock Request, which gates no other task and so is in no `blockedTaskIds` (ADR 0042).
+    // A gated downstream task is still found the way it always was.
+    const gated = taskIdsToUnblock.has(task.id) && isHumanActionBlockedTask(task) &&
+      taskDependenciesRequireHumanAction(input.repositories.listTaskDependencies(task.id), humanAction);
+    if (!answeredHold && !gated) {
+      continue;
+    }
     releaseTaskHold({
       repositories: input.repositories,
       task,
@@ -1838,6 +1842,14 @@ async function verifyHumanActionEvidence(
     }
 
     const trimmed = value.trim();
+    // Confirmations become Settled Facts that every later run of the task is given in its prompt, so
+    // a secret typed into one would be handed to an agent. Capabilities are an Agent Capability
+    // Grant, never a confirmation value (ADR 0042).
+    const credential = credentialLikeValue(trimmed);
+    if (credential) {
+      errors.push(`evidence.${requirement}: Looks like ${credential}. Do not submit credentials; supply the data itself.`);
+      continue;
+    }
     if (requirement === "url" && !(await isReachableHttpUrl(trimmed))) {
       errors.push("evidence.url: Expected a reachable http(s) URL.");
       continue;
