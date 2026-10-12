@@ -1,66 +1,39 @@
 import { useMemo } from "react";
 import type { AgentSummary } from "../../api/client";
-import { languageOrder, useLanguage } from "../language";
+import {
+  operatingCommand,
+  type WorkbenchCommand,
+  type WorkbenchCommands,
+} from "../../components/workbench/workbenchCommands";
+import { languageOrder, useLanguage, type TranslationKey } from "../language";
 import { isPaletteId, paletteOrder, palettes, useTheme } from "../theme";
 import { RetroMenuBar } from "./RetroMenuBar";
-import type { RetroMenuGroup } from "./RetroMenu";
-
-export type DashboardMenuView = "onboarding" | "creating" | "department-workspace" | "dashboard" | "operations";
+import type { RetroMenuCommand, RetroMenuGroup } from "./RetroMenu";
 
 export type DashboardMenuBarProps = {
   agents: AgentSummary[];
-  canCreateCompany: boolean;
-  hasBlueprint: boolean;
-  isCreating: boolean;
+  /** The founder commands; the menu only lays them out and never decides when one is available. */
+  commands: WorkbenchCommands;
   isPaused: boolean;
-  /** Only an operating company can be paused; the server says which companies are (ADR 0044). */
-  canPauseOperating: boolean;
-  onCreateCompany(): void;
-  onPauseOperating(): void;
-  onResumeOperating(): void;
-  onLoadProof(): void;
-  onLoadReviews(): void;
-  onOpenEvidence(): void;
   onSelectAgent(agentId: string): void;
-  onToggleFullscreen(): void;
-  onViewDepartments(): void;
-  onViewOperations(): void;
-  onViewTasks(): void;
-  hasProof: boolean;
-  isFullscreen: boolean;
-  fullscreenAvailable: boolean;
   selectedAgentId: string;
-  view: DashboardMenuView;
 };
 
-export function DashboardMenuBar({
-  agents,
-  canCreateCompany,
-  hasBlueprint,
-  isCreating,
-  isPaused,
-  canPauseOperating,
-  onCreateCompany,
-  onPauseOperating,
-  onResumeOperating,
-  onLoadProof,
-  onLoadReviews,
-  onOpenEvidence,
-  onSelectAgent,
-  onToggleFullscreen,
-  onViewDepartments,
-  onViewOperations,
-  onViewTasks,
-  hasProof,
-  isFullscreen,
-  fullscreenAvailable,
-  selectedAgentId,
-  view,
-}: DashboardMenuBarProps) {
+function menuCommand(command: WorkbenchCommand, t: (key: TranslationKey) => string): RetroMenuCommand {
+  return {
+    checked: command.checked,
+    disabled: !command.enabled,
+    id: command.id,
+    label: t(command.labelKey),
+    onSelect: command.run,
+    shortcut: command.shortcut,
+  };
+}
+
+export function DashboardMenuBar({ agents, commands, isPaused, onSelectAgent, selectedAgentId }: DashboardMenuBarProps) {
   const { setSkin, skin } = useTheme();
   const { language, setLanguage, t } = useLanguage();
   const detectedAgents = agents.filter((agent) => agent.detected);
-  const canViewCompanyWork = (view === "dashboard" || view === "department-workspace" || view === "operations") && hasBlueprint;
 
   const groups = useMemo<RetroMenuGroup[]>(
     () => [
@@ -77,23 +50,9 @@ export function DashboardMenuBar({
         id: "company",
         label: t("menu.company"),
         items: [
-          {
-            disabled: !canCreateCompany || isCreating,
-            id: "create-company",
-            label: isCreating ? t("menu.creatingCompany") : t("menu.createCompany"),
-            onSelect: onCreateCompany,
-            shortcut: "Cmd+Enter",
-          },
+          menuCommand(commands["create-company"], t),
           { id: "company-separator", type: "separator" },
-          isPaused
-            ? { id: "resume-operating", label: t("menu.resumeOperating"), onSelect: onResumeOperating, shortcut: "Shift+Cmd+K" }
-            : {
-                disabled: !canPauseOperating,
-                id: "pause-operating",
-                label: t("menu.pauseOperating"),
-                onSelect: onPauseOperating,
-                shortcut: "Shift+Cmd+K",
-              },
+          menuCommand(operatingCommand(commands), t),
         ],
       },
       {
@@ -113,26 +72,9 @@ export function DashboardMenuBar({
         id: "work",
         label: t("menu.work"),
         items: [
-          {
-            disabled: !canViewCompanyWork,
-            id: "view-tasks",
-            label: t("menu.viewTasks"),
-            onSelect: onViewTasks,
-            shortcut: "Cmd+1",
-          },
-          {
-            disabled: !canViewCompanyWork,
-            id: "view-departments",
-            label: t("menu.viewDepartments"),
-            onSelect: onViewDepartments,
-            shortcut: "Cmd+2",
-          },
-          {
-            disabled: !canViewCompanyWork,
-            id: "view-operations",
-            label: t("menu.viewOperations"),
-            onSelect: onViewOperations,
-          },
+          menuCommand(commands["view-tasks"], t),
+          menuCommand(commands["view-departments"], t),
+          menuCommand(commands["view-operations"], t),
           { checked: isPaused, disabled: true, id: "pause-status", label: t("menu.pauseStatus") },
         ],
       },
@@ -140,27 +82,9 @@ export function DashboardMenuBar({
         id: "proof",
         label: t("menu.proof"),
         items: [
-          {
-            disabled: view !== "dashboard" || !hasBlueprint,
-            id: "load-proof",
-            label: t("menu.loadProof"),
-            onSelect: onLoadProof,
-            shortcut: "Cmd+3",
-          },
-          {
-            disabled: view !== "dashboard" || !hasBlueprint,
-            id: "load-review",
-            label: t("menu.loadReview"),
-            onSelect: onLoadReviews,
-            shortcut: "Cmd+4",
-          },
-          {
-            disabled: view !== "dashboard" || !hasBlueprint || !hasProof,
-            id: "open-evidence",
-            label: t("menu.openEvidence"),
-            onSelect: onOpenEvidence,
-            shortcut: "Cmd+5",
-          },
+          menuCommand(commands["load-proof"], t),
+          menuCommand(commands["load-review"], t),
+          menuCommand(commands["open-evidence"], t),
         ],
       },
       {
@@ -193,14 +117,7 @@ export function DashboardMenuBar({
           },
           { id: "view-separator", type: "separator" as const },
           { checked: true, disabled: true, id: "crt-effect", label: t("menu.crtEffect") },
-          {
-            checked: isFullscreen,
-            disabled: !fullscreenAvailable,
-            id: "fullscreen",
-            label: isFullscreen ? t("menu.exitFullscreen") : t("menu.fullscreen"),
-            onSelect: onToggleFullscreen,
-            shortcut: "Ctrl+Cmd+F",
-          },
+          menuCommand(commands.fullscreen, t),
         ],
       },
       {
@@ -213,35 +130,7 @@ export function DashboardMenuBar({
         ],
       },
     ],
-    [
-      detectedAgents,
-      language,
-      canCreateCompany,
-      hasBlueprint,
-      isCreating,
-      isPaused,
-      canPauseOperating,
-      onCreateCompany,
-      onPauseOperating,
-      onResumeOperating,
-      onLoadProof,
-      onLoadReviews,
-      onOpenEvidence,
-      onSelectAgent,
-      onToggleFullscreen,
-      onViewDepartments,
-      onViewOperations,
-      onViewTasks,
-      fullscreenAvailable,
-      hasProof,
-      isFullscreen,
-      selectedAgentId,
-      setLanguage,
-      setSkin,
-      skin,
-      t,
-      view,
-    ],
+    [commands, detectedAgents, isPaused, language, onSelectAgent, selectedAgentId, setLanguage, setSkin, skin, t],
   );
 
   return <RetroMenuBar groups={groups} />;
