@@ -1,6 +1,7 @@
 import type { EffectiveTimeoutResolution } from "./executionProfile";
 
 export const BUDGET_POLICY_VERSION = "budget-v1";
+/** `repairing_artifact` and `repairMs` stay for pinned `budget-v1` snapshots and history; no run enters it since ADR 0041. */
 export type BudgetPhase = "starting" | "preparing_brief" | "executing" | "repairing_artifact" | "finalizing";
 export type BudgetPolicy = {
   runHardMs: number;

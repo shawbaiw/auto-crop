@@ -470,6 +470,41 @@ describe("createHandoffPackage", () => {
     expect(manifest.artifacts).toEqual([]);
   });
 
+  it("packages runtime file references separately from proof artifacts", () => {
+    const { task, workspacePath } = createFixture("test-output", ["command_output"]);
+    const reportPath = join(workspacePath, "reports", "summary.md");
+    mkdirSync(join(workspacePath, "reports"), { recursive: true });
+    writeFileSync(reportPath, "# Summary\n\nSettled output.\n", "utf8");
+
+    const handoffPackage = createHandoffPackage({
+      task: { ...task, workspacePath },
+      proofs: [
+        {
+          id: "proof_1",
+          taskId: task.id,
+          type: "command_output",
+          uri: join(workspacePath, "agent.log"),
+          summary: "Command output proof captured.",
+          verifiedAt: null,
+        },
+      ],
+      fileRefs: [{ path: "reports/summary.md", description: "Primary report" }],
+      workspacePath,
+      logPath: join(workspacePath, "agent.log"),
+    });
+
+    const manifest = JSON.parse(readFileSync(handoffPackage?.manifestPath ?? "", "utf8")) as {
+      fileRefs: Array<{ sourcePath: string; packagePath: string; description?: string }>;
+    };
+    expect(manifest.fileRefs).toEqual([
+      expect.objectContaining({
+        sourcePath: "reports/summary.md",
+        description: "Primary report",
+      }),
+    ]);
+    expect(readProofFile(manifest.fileRefs[0]?.packagePath ?? "")).toContain("Settled output.");
+  });
+
   it("records local proof outside the workspace without copying it into the package", () => {
     const { task, workspacePath } = createFixture("test-output", ["command_output"]);
     const outsideDir = mkdtempSync(join(tmpdir(), "auto-crop-log-"));

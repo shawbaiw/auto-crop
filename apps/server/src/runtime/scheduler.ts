@@ -2,8 +2,8 @@ import { parkExhaustedTask } from "./budgetAuthorization";
 import { isBudgetExhaustion, resolveBudgetSnapshot, systemExecutionClock, type BudgetPolicy, type ExecutionClock } from "./budgetPolicy";
 import { BudgetInterrupted, RunBudget } from "./runBudget";
 import { EXECUTION_BRIEF_TIMEOUT_MS, prepareExecutionBrief } from "./executionBrief";
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveLaunchableAdapter } from "../adapters/registry";
 import type { AdapterLaunchSupport } from "../adapters/launchPolicy";
 import type { AgentAdapter, AgentRunResult, RunObservationSink } from "../adapters/types";
@@ -21,6 +21,7 @@ import {
   type Company,
   type DependencyInputRole,
   type Proof,
+  type ProofSchema,
   type Task,
   type TaskEvent,
   type TaskProgressEvent,
@@ -34,12 +35,13 @@ import {
 } from "./boundedRecovery";
 import {
   captureBusinessArtifact,
+  proofRefTypeErrors,
+  type ProofRefPolicy,
   isReviewableBusinessArtifact,
   readEnvironmentBlockerClaim,
   verifyEnvironmentBlockerClaim,
 } from "./businessArtifact";
 import type { AgentSessionManager } from "./agentSessions";
-import { repairBusinessArtifactSyntax, type ArtifactSyntaxRepair } from "./artifactSyntaxRepair";
 import { projectCeoAttention } from "./ceoAttention";
 import { classifyFinalFounderReport, isCompanyQuiescent } from "./companyQuiescence";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
@@ -49,6 +51,7 @@ import { finalizeDelivery } from "./deliveryFinalization";
 import { RunObserver } from "./executionObservation";
 import { settleAgentRun, type RunOutcome } from "./executionSettlement";
 export type { RunOutcome } from "./executionSettlement";
+import { createProjectRuntimeActionChannel, runtimeActionCandidateDir, type RuntimeActionChannel } from "./runtimeActionChannel";
 import { defaultExecutionRegistry, type ExecutionRegistry } from "./executionControl";
 import { propagateParentTaskAggregation } from "./parentTaskAggregation";
 import { createHandoffPackage } from "./proof";
@@ -57,8 +60,10 @@ import { reconcileReviewTasksForAutomaticAcceptance } from "./reviewReconciliati
 import { reconcileStaleRunningTasks } from "./taskRecovery";
 import { recordTaskCompletionEvent } from "./taskCompletion";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
+import { resolveSettledFacts } from "./settledFacts";
+import { parkOnUnblockRequest, unblockRequestOf } from "./unblockRequest";
 import { applyTaskTransition } from "./taskTransition";
-import { pendingReworkFeedback } from "./verificationRework";
+import type { ProofReference } from "./artifactEnvelope";
 import {
   isVerifyingTask,
   prepareVerificationInputs,
@@ -103,6 +108,7 @@ export type RunSchedulerOnceInput = {
    */
   approvalRequired?: (task: Task) => boolean;
   proofCollector: (input: { task: Task; stdout: string; stderr: string; logPath: string }) => Proof[];
+  proofSchemas?: ProofSchema[];
   /** Injectable fetch used to independently verify Environment-Blocked Blocker claims. Defaults to global fetch. */
   environmentBlockerFetch?: typeof fetch;
   /** Injectable session manager for the CEO Agent run that authors a Final Founder Report. */
@@ -131,6 +137,7 @@ export type RunSchedulerOnceInput = {
    * Defaults to the process-wide registry; tests pass their own.
    */
   executionRegistry?: ExecutionRegistry;
+  runtimeActionChannel?: RuntimeActionChannel;
   emit: (event: SchedulerEvent) => void;
 };
 
@@ -145,6 +152,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
   const now = input.now ?? (() => new Date());
   const createId = input.createId ?? defaultCreateId;
   const registry = input.executionRegistry ?? defaultExecutionRegistry;
+  const candidateDir = runtimeActionCandidateDir(input.projectRoot);
+  const runtimeActionChannel = input.runtimeActionChannel ?? createProjectRuntimeActionChannel(input.projectRoot);
   const approvalRequired = input.approvalRequired
     ?? ((task: Task) => requiresFounderApproval(input.repositories, task));
   const result: RunSchedulerOnceResult = {
@@ -363,6 +372,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           const adapter = launch.adapter;
           const launchWarnings = launch.support?.warnings ?? [];
 
+          // One answer to "which proof_refs may this run submit", for the tool, the prompt, the submit
+          // check and settlement alike.
+          const proofRefPolicy: ProofRefPolicy = {
+            proofSchemaId: task.proofSchemaId,
+            acceptedTypes: input.proofSchemas?.find((schema) => schema.id === task.proofSchemaId)?.acceptedTypes ?? [],
+          };
           const initialTimeoutResolution = resolveEffectiveTimeout(task, process.env, grant);
           const budgetSnapshot = input.executionBudget === undefined ? null
             : resolveBudgetSnapshot(input.executionBudget, initialTimeoutResolution);
@@ -515,6 +530,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               return;
             }
             if (budgetSnapshot) result.started.push(task.id);
+            // This run supersedes whatever an earlier run of the task left as a candidate: recovery
+            // must never recapture a delivery from a run that is not the task's latest.
+            runtimeActionChannel.discardTask({ companyId: task.companyId, taskId: task.id });
             heldForRunId = agentRunId;
             ownerEpoch = claimed;
             heldWorkspacePath = runWorkspacePath;
@@ -599,7 +617,9 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             budget?.enter("preparing_brief");
             observer.enterPhase("preparing_brief");
             beat();
-            const preparation = await prepareExecutionBrief({ adapter: controlledAdapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs });
+            // Read once per dispatch, so the brief and the work are told the same facts.
+            const settledFacts = resolveSettledFacts(input.repositories, task);
+            const preparation = await prepareExecutionBrief({ adapter: controlledAdapter, request: { ...request, timeoutMs: preparationTimeoutMs }, company, task, handoffs, settledFacts });
             const remainingMs = budget ? (budget.reason ? 0 : budget.remainingMs())
               : request.timeoutMs - Math.max(0, now().getTime() - preparationStartedAt);
             const willDispatchSubstantiveWork = preparation.kind !== "failed" && remainingMs > 0;
@@ -629,14 +649,32 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               agentResult = await controlledAdapter.run({
                 ...request,
                 signal: stopper.signal,
+                runtimeActions: {
+                  submitArtifactEnvelope: (envelope: unknown) => runtimeActionChannel.submitArtifactEnvelope({
+                    companyId: task.companyId,
+                    taskId: task.id,
+                    runId: agentRunId,
+                  }, envelope, { locale: company.locale, requireDetails: true, proofRefs: proofRefPolicy }),
+                  mcp: {
+                    candidateDir,
+                    companyId: task.companyId,
+                    taskId: task.id,
+                    runId: agentRunId,
+                    locale: company.locale,
+                    requireExecutionDetails: true,
+                    proofSchemaId: proofRefPolicy.proofSchemaId,
+                    acceptedProofTypes: proofRefPolicy.acceptedTypes,
+                  },
+                },
                 timeoutMs: remainingMs,
                 prompt: buildTaskExecutionPrompt({
                   task,
                   company,
                   handoffs,
                   grant,
+                  acceptedProofTypes: proofRefPolicy.acceptedTypes,
                   verification: verificationPromptContext,
-                  rework: pendingReworkFeedback(input.repositories, task),
+                  settledFacts,
                 }) +
                   executionBriefPrompt(preparation),
               });
@@ -728,44 +766,6 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             throw new Error(`No agent result produced for task ${task.id}`);
           }
 
-          // A delivery whose artifact file does not parse gets one narrow syntax repair before capture,
-          // so everything downstream — proof, validation, finalization — reads the file it leaves.
-          if (agentResult.status === "complete") {
-            budget?.enter("repairing_artifact");
-            observer?.enterPhase("repairing_artifact", "work_returned");
-            observer?.beat();
-            const repairAdapter: AgentAdapter = budget ? { ...adapter, run: async (request) => {
-              const timeoutMs = budget!.beginInvocation();
-              const returned = await adapter.run({ ...request, timeoutMs, signal: stopper!.signal });
-              return budget!.returned(returned, stopHandle?.stopReason !== null);
-            } } : adapter;
-            const repair = await repairBusinessArtifactSyntax({
-              adapter: repairAdapter,
-              request: {
-                taskId: task.id,
-                promptPath: "",
-                workspacePath: runWorkspacePath,
-                metadata: { departmentId: task.departmentId, proofSchemaId: task.proofSchemaId },
-                observe: { output: (channel, bytes) => observer?.recordOutput(channel, bytes) },
-              },
-              grant,
-            });
-            if (budget?.reason) throw new BudgetInterrupted(`Execution stopped: ${budget.reason}`);
-            if (repair) {
-              appendFileSync(
-                logPath,
-                ["## Artifact syntax repair", `outcome: ${repair.outcome}`, `syntaxError: ${repair.syntaxError}`, "", repair.result.stdout, repair.result.stderr, ""].join("\n"),
-                "utf8",
-              );
-              appendAndEmitTaskEvent(input, {
-                task,
-                type: "task_warning",
-                message: artifactSyntaxRepairMessage(task, repair),
-                status: "running",
-              });
-            }
-          }
-
           if (budget && !budget.reason) {
             budget.enter("finalizing");
             observer?.enterPhase("finalizing", agentResult.status === "complete" ? "work_complete" : "work_failed");
@@ -827,6 +827,27 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               return;
             }
           }
+          const submission = agentResult.status === "complete"
+            ? runtimeActionChannel.consumeRunSubmission({
+                companyId: task.companyId,
+                taskId: task.id,
+                runId: agentRunId,
+              })
+            : { envelope: null, rejection: null };
+          const actionEnvelope = submission.envelope;
+          // A run that did not complete keeps its candidate: it is the delivery Proof recovery recaptures.
+          const proofRefValidation = actionEnvelope?.proofRefs
+            ? proofRefsToProof({
+                refs: actionEnvelope.proofRefs,
+                task: { ...task, workspacePath: runWorkspacePath },
+                proofSchema: input.proofSchemas?.find((schema) => schema.id === task.proofSchemaId),
+                logPath,
+                createId,
+              })
+            : { proofs: [], errors: [] };
+          if (proofRefValidation.proofs.length > 0) {
+            proof = [...proof, ...proofRefValidation.proofs];
+          }
 
           // Everything from here is the runtime's own work on the run's output. It is still the run's
           // time, and it is the phase a settlement is interrupted in, so it is observed like the rest.
@@ -838,15 +859,12 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
           let businessArtifact: BusinessArtifact | null = null;
           let environmentBlockerDegraded = false;
           let refutedCapability: string | null = null;
-          const hasBusinessArtifactFile = existsSync(
-            join(runWorkspacePath, ".auto-crop", "business-artifact.json"),
-          );
-          if (proof.length > 0 || hasBusinessArtifactFile) {
+          if (proof.length > 0 || actionEnvelope || submission.rejection) {
             // An Environment-Blocked Blocker with a runtime-checkable claim is verified independently
             // (never on the agent's word). A passing check degrades the blocker to a deliverable.
             const environmentBlockerClaim =
               agentResult.status === "complete"
-                ? readEnvironmentBlockerClaim(runWorkspacePath, proof)
+                ? readEnvironmentBlockerClaim(actionEnvelope, proof)
                 : null;
             const environmentBlockerVerification = environmentBlockerClaim
               ? await verifyEnvironmentBlockerClaim({
@@ -859,6 +877,8 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
               refutedCapability = environmentBlockerVerification.capability;
             }
             businessArtifact = captureBusinessArtifact({
+              envelope: actionEnvelope,
+              rejectedSubmission: submission.rejection,
               requireExecutionDetails: true,
               task: { ...task, workspacePath: runWorkspacePath },
               proofs: proof,
@@ -899,10 +919,96 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
             createHandoffPackage({
               task: { ...task, workspacePath: runWorkspacePath },
               proofs: proof,
+              fileRefs: actionEnvelope?.fileRefs,
               workspacePath: runWorkspacePath,
               logPath,
             });
           };
+
+          if (proofRefValidation.errors.length > 0) {
+            const failureReason = "invalid_business_artifact";
+            const failure = `Task blocked: ${task.title} / invalid proof_refs / ${proofRefValidation.errors.join("; ")}.`;
+            const ceiling = atRetryCeiling(input, task);
+            settleRun(
+              input,
+              agentRunId,
+              { ...(ceiling ? retryCeilingOutcome(task) : { status: "failed" as const, failureReason, failureMessage: failure }), terminationConfirmed: agentResult.terminationConfirmed },
+              now,
+              (settled) => {
+                if (ceiling) {
+                  terminateAtRetryCeiling(settled, result, task, timeoutResolution, now, createId);
+                  return;
+                }
+                applyTaskTransition({
+                  repositories: settled.repositories,
+                  task,
+                  status: "blocked",
+                  executionSummary: {
+                    latestFailureReason: failureReason,
+                    latestFailureMessage: failure,
+                  },
+                  hold: {
+                    kind: "invalid_business_artifact",
+                    subjectKind: "agent_run",
+                    subjectId: agentRunId,
+                    reason: failure,
+                  },
+                  now,
+                  createId,
+                });
+                appendAndEmitTaskEvent(settled, {
+                  task,
+                  type: "task_blocked",
+                  failureReason,
+                  failureMessage: failure,
+                  message: failure,
+                  status: "blocked",
+                  executionProfileName: timeoutResolution.executionProfile.name,
+                  requestedTimeoutMs: timeoutResolution.requestedTimeoutMs,
+                  effectiveTimeoutMs: timeoutResolution.effectiveTimeoutMs,
+                });
+                result.blocked.push(...blockDirectDependencyConsumers(settled, task));
+                emitParentTaskAggregationEvents(settled, task);
+              },
+            );
+            return;
+          }
+
+          // A Blocker Report carrying an Unblock Request is the task asking a person for input, not a
+          // broken delivery: it parks on a Human Action instead of an `invalid_business_artifact` Hold.
+          // Checked before Proof, because a request for input is not a deliverable and owes none, and
+          // after Grant Refutation, because a run that claims a capability it held asks nobody for
+          // anything. The ceiling still applies: an agent that keeps asking cannot loop (ADR 0042).
+          const unblockRequestArtifact = agentResult.status === "complete" && !refutedCapability && unblockRequestOf(businessArtifact)
+            ? businessArtifact
+            : null;
+          if (unblockRequestArtifact) {
+            const ceiling = atRetryCeiling(input, task);
+            if (
+              settleRun(
+                input,
+                agentRunId,
+                // Recorded as an attempt that did not deliver, not as `complete`: the Bounded Recovery
+                // counter skips completed runs, and an asking run must count or asking never ends.
+                { ...(ceiling ? retryCeilingOutcome(task) : { status: "failed" as const, failureReason: "awaiting_human_action" as const, failureMessage: `Task asked for input: ${task.title}.` }), terminationConfirmed: agentResult.terminationConfirmed },
+                now,
+                (settled) => {
+                  if (ceiling) {
+                    terminateAtRetryCeiling(settled, result, task, timeoutResolution, now, createId);
+                    return;
+                  }
+                  recordRunOutput(settled);
+                  const parked = parkOnUnblockRequest({ repositories: settled.repositories, task, artifact: unblockRequestArtifact, now, createId });
+                  emitTaskEvent(settled, parked.taskEvent);
+                  result.blocked.push(task.id, ...blockDirectDependencyConsumers(settled, task));
+                  emitParentTaskAggregationEvents(settled, task);
+                },
+              )
+            ) {
+              publishHandoff();
+            }
+            return;
+          }
 
           if ((agentResult.status !== "complete" || proof.length === 0) && !environmentBlockerDegraded) {
             const failureReason = agentResult.status !== "complete" ? (agentResult.failureReason ?? "agent_failed") : "no_proof";
@@ -2215,20 +2321,6 @@ function terminateAsRetryExhausted(
   return blockedConsumerIds;
 }
 
-function artifactSyntaxRepairMessage(task: Task, repair: ArtifactSyntaxRepair): string {
-  const prefix = `Business artifact of ${task.title} was not valid JSON (${repair.syntaxError})`;
-  switch (repair.outcome) {
-    case "repaired":
-      return `${prefix}; its syntax was repaired without changing content.`;
-    case "still_invalid":
-      return `${prefix}; a syntax repair did not make it parse.`;
-    case "content_changed":
-      return `${prefix}; a syntax repair changed its content and was discarded.`;
-    case "run_failed":
-      return `${prefix}; the syntax repair run did not complete.`;
-  }
-}
-
 function appendAndEmitTaskEvent(
   input: RunSchedulerOnceInput,
   event: {
@@ -2378,7 +2470,7 @@ function businessArtifactFailureReason(artifact: BusinessArtifact | null): Sched
     return "stale_business_artifact";
   }
   if (artifact.validationStatus !== "valid") {
-    return hasArtifactReason(artifact, "missing_business_artifact_file")
+    return hasArtifactReason(artifact, "missing_artifact_envelope")
       ? "missing_business_artifact"
       : "invalid_business_artifact";
   }
@@ -2425,7 +2517,7 @@ function failureMessage(
 
   if (failureReason === "no_proof") {
     if (task.proofSchemaId === "repo-diff") {
-      return `Task failed: ${task.title} / no_proof / repo-diff proof missing: expected .auto-crop-proof/*.diff or a top-level workspace *.diff/*.patch file; .auto-crop/business-artifact.json is not diff proof.`;
+      return `Task failed: ${task.title} / no_proof / repo-diff proof missing: expected .auto-crop-proof/*.diff or a top-level workspace *.diff/*.patch file; an Artifact Envelope is not diff proof.`;
     }
     return `Task failed: ${task.title} / no_proof.`;
   }
@@ -2443,6 +2535,91 @@ function failureMessage(
   }
 
   return `Task failed: ${task.title} / agent_failed.`;
+}
+
+function proofRefsToProof(input: {
+  refs: ProofReference[];
+  task: Task;
+  proofSchema?: ProofSchema;
+  logPath: string;
+  createId: (prefix: string) => string;
+}): { proofs: Proof[]; errors: string[] } {
+  if (!input.proofSchema) {
+    return { proofs: [], errors: [`no proof schema configured for ${input.task.proofSchemaId}`] };
+  }
+
+  const proofs: Proof[] = [];
+  const policy = { proofSchemaId: input.proofSchema.id, acceptedTypes: input.proofSchema.acceptedTypes };
+  const errors = proofRefTypeErrors(input.refs, policy);
+  input.refs.forEach((ref, index) => {
+    if (!policy.acceptedTypes.includes(ref.type)) {
+      return;
+    }
+
+    const uri = resolveProofRefUri({
+      ref,
+      index,
+      workspacePath: input.task.workspacePath,
+      logPath: input.logPath,
+      errors,
+    });
+    if (!uri) {
+      return;
+    }
+
+    proofs.push({
+      id: input.createId("proof"),
+      taskId: input.task.id,
+      type: ref.type,
+      uri,
+      summary: ref.summary ?? `Proof reference: ${uri}`,
+      verifiedAt: null,
+    });
+  });
+
+  return { proofs, errors };
+}
+
+function resolveProofRefUri(input: {
+  ref: ProofReference;
+  index: number;
+  workspacePath: string | null;
+  logPath: string;
+  errors: string[];
+}): string | null {
+  if (input.ref.type === "command_output") {
+    return input.logPath;
+  }
+
+  if (input.ref.type === "url" || input.ref.type === "deployment") {
+    try {
+      const url = new URL(input.ref.uri);
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        return input.ref.uri;
+      }
+    } catch {
+      // fall through to the structured error below
+    }
+    input.errors.push(`proof_refs[${input.index}].uri must be an http(s) URL for ${input.ref.type}`);
+    return null;
+  }
+
+  if (!input.workspacePath) {
+    input.errors.push(`proof_refs[${input.index}].uri cannot be resolved because the task has no workspace`);
+    return null;
+  }
+
+  const absolute = resolve(input.workspacePath, input.ref.uri);
+  const relativePath = relative(input.workspacePath, absolute);
+  if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    input.errors.push(`proof_refs[${input.index}].uri resolves outside the task workspace`);
+    return null;
+  }
+  if (!existsSync(absolute)) {
+    input.errors.push(`proof_refs[${input.index}].uri does not exist in the task workspace`);
+    return null;
+  }
+  return absolute;
 }
 
 function defaultCreateId(prefix: string): string {

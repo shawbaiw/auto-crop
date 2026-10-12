@@ -10,6 +10,10 @@ describe("replan planner prompt", () => {
       sourceTask: createTaskRecord("source_task", "Build full prototype"),
       downstreamTasks: [createTaskRecord("consumer_task", "Validate full prototype")],
       proofSchemas: aiSaasPlaybook.proofSchemas,
+      stuck: { holds: [], blocker: null, failedVerdicts: [], lastRejection: null },
+      requestedMode: null,
+      founderNote: null,
+      revisable: { editable: [], sourced: [] },
     });
 
     expect(prompt).toContain("## Source Task");
@@ -20,6 +24,45 @@ describe("replan planner prompt", () => {
     expect(prompt).toContain("Strict JSON");
     expect(prompt).toContain("replacementTasks");
     expect(prompt).toContain("```json");
+  });
+
+  // ADR 0043: the planner is told why the task is stuck, not only that it is, because a task asked for
+  // what its environment cannot provide needs a Revision, and no Split helps it.
+  it("tells the planner why the task is stuck, what the founder asked, and which standards it may amend", () => {
+    const verifier = { ...createTaskRecord("verifier_task", "Check the keyword"), verificationRequirements: [{ id: "meets-thresholds", description: "Ahrefs KD <= 15" }] };
+    const prompt = buildReplanPlannerPrompt({
+      company: createCompanyRecord(),
+      sourceTask: createTaskRecord("source_task", "Pick a low-KD keyword"),
+      downstreamTasks: [],
+      proofSchemas: aiSaasPlaybook.proofSchemas,
+      stuck: {
+        holds: [{ kind: "awaiting_human_action", reason: "Human Action required: Ahrefs KD for five keywords" }],
+        blocker: {
+          subtype: "keyword_data_unavailable",
+          payload: { reason: "Every KD source needs a login." },
+          unblockRequest: { needed: "Ahrefs KD for five keywords", why: "Every KD source needs a login.", evidenceRequirements: ["KD keyword-a"] },
+        },
+        failedVerdicts: [{ verifierTitle: "Check the keyword", outcome: "failed", issues: [], checks: [{ requirementId: "meets-thresholds", description: "Ahrefs KD <= 15", outcome: "failed", evidence: "No KD value." }] }],
+        lastRejection: { rationale: "Split into five lookups.", note: "Splitting does not help; every piece needs KD." },
+      },
+      requestedMode: "revision",
+      founderNote: "Accept a SERP-based difficulty estimate instead of KD.",
+      revisable: {
+        editable: [{ verifier, requirements: verifier.verificationRequirements }],
+        sourced: [{ verifier: createTaskRecord("other_verifier", "Audit"), producer: createTaskRecord("define_task", "Define checks") }],
+      },
+    });
+
+    expect(prompt).toContain("Hold `awaiting_human_action`: Human Action required: Ahrefs KD for five keywords");
+    expect(prompt).toContain("Every KD source needs a login.");
+    expect(prompt).toContain("- Needed: Ahrefs KD for five keywords");
+    expect(prompt).toContain("`meets-thresholds` (failed): Ahrefs KD <= 15 — evidence: No KD value.");
+    expect(prompt).toContain("Founder's reason: Splitting does not help; every piece needs KD.");
+    expect(prompt).toContain("Mode: revision");
+    expect(prompt).toContain("Note: Accept a SERP-based difficulty estimate instead of KD.");
+    expect(prompt).toContain("Verifier verifier_task (Check the keyword) — planned, a Revision may amend:");
+    expect(prompt).toContain("takes its requirements from task define_task (Define checks); they cannot be amended here — revise that task instead.");
+    expect(prompt).toContain("A split never changes a requirement");
   });
 });
 
@@ -54,7 +97,8 @@ describe("parseReplanPlannerOutput", () => {
     );
 
     expect(parsed.rationale).toMatch(/oversized prototype/i);
-    expect(parsed.replacementTasks.map((task) => task.title)).toEqual([
+    expect(parsed.mode).toBe("split");
+    expect(parsed.mode === "split" && parsed.replacementTasks.map((task) => task.title)).toEqual([
       "Define the smallest playable prototype slice",
       "Build the smaller playable prototype",
     ]);
@@ -67,21 +111,55 @@ describe("parseReplanPlannerOutput", () => {
           "```json",
           JSON.stringify({
             rationale: "Bad proof schema.",
-            replacementTasks: [
-              {
-                title: "Do unbounded work",
-                description: "This should not parse.",
-                requiredCapabilities: ["code"],
-                proofSchemaId: "made-up-proof",
-                riskLevel: "medium",
-              },
-            ],
+            replacementTasks: [1, 2].map(() => ({
+              title: "Do unbounded work",
+              description: "This should not parse.",
+              requiredCapabilities: ["code"],
+              proofSchemaId: "made-up-proof",
+              riskLevel: "medium",
+            })),
           }),
           "```",
         ].join("\n"),
         aiSaasPlaybook,
       ),
     ).toThrow(/unsupported proof schema/i);
+  });
+
+  const revision = {
+    mode: "revision",
+    rationale: "KD is unobtainable without a login; accept a SERP-based estimate.",
+    revisedTask: {
+      title: "Pick a low-difficulty keyword",
+      description: "Rank candidates by a SERP-based difficulty estimate, stating the method.",
+      proofSchemaId: "research-report",
+      requiredCapabilities: ["research"],
+    },
+    requirementChanges: [{ verifierTaskId: "verifier_task", requirements: [{ id: "meets-thresholds", description: "Estimated difficulty is low, with the method stated." }] }],
+  };
+  const fence = (value: unknown) => ["```json", JSON.stringify(value), "```"].join("\n");
+  const context = { requestedMode: null, editableVerifierIds: ["verifier_task"] };
+
+  it("parses a Revision with an amendment to a verifier's planned requirements", () => {
+    const parsed = parseReplanPlannerOutput(fence(revision), aiSaasPlaybook, context);
+    expect(parsed).toMatchObject({ mode: "revision", revisedTask: revision.revisedTask, requirementChanges: revision.requirementChanges });
+  });
+
+  it("holds a Revision to what it may change", () => {
+    expect(() => parseReplanPlannerOutput(fence({ ...revision, requirementChanges: [{ ...revision.requirementChanges[0], verifierTaskId: "elsewhere" }] }), aiSaasPlaybook, context))
+      .toThrow(/not a verifier with planned requirements/);
+    expect(() => parseReplanPlannerOutput(fence({ ...revision, revisedTask: { ...revision.revisedTask, dependsOnTaskIds: ["x"] } }), aiSaasPlaybook, context))
+      .toThrow(/cannot change dependsOnTaskIds/);
+    expect(() => parseReplanPlannerOutput(fence(revision), aiSaasPlaybook, { ...context, requestedMode: "split" }))
+      .toThrow(/asked for a split/);
+  });
+
+  it("never lets a Split change the standard, and keeps it to 2 to 5 tasks", () => {
+    const task = { title: "t", description: "d", requiredCapabilities: ["research"], proofSchemaId: "research-report", riskLevel: "low" };
+    expect(() => parseReplanPlannerOutput(fence({ mode: "split", rationale: "r", replacementTasks: [task, task], requirementChanges: revision.requirementChanges }), aiSaasPlaybook, context))
+      .toThrow(/split cannot change verification requirements/);
+    expect(() => parseReplanPlannerOutput(fence({ mode: "split", rationale: "r", replacementTasks: [task] }), aiSaasPlaybook, context))
+      .toThrow(/2 to 5/);
   });
 });
 

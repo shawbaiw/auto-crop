@@ -1269,6 +1269,61 @@ h3 {
   gap: 8px;
 }
 
+.replan-card--stale {
+  border-left-color: var(--danger);
+}
+
+.replan-request,
+.replan-card__actions {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.replan-request .retro-field,
+.replan-card__actions .retro-field {
+  width: 100%;
+}
+
+/* A Revision's before and after, side by side (ADR 0043). Wide content wraps instead of scrolling. */
+.replan-diff {
+  border: var(--border-px) solid var(--border);
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.replan-diff caption {
+  font-weight: 700;
+  padding: 4px 0;
+  text-align: left;
+}
+
+.replan-diff th,
+.replan-diff td {
+  border: var(--border-px) solid var(--border);
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.replan-diff thead th {
+  background: var(--surface-alt);
+}
+
+.replan-diff__changed td:last-child {
+  background: color-mix(in srgb, var(--surface) 82%, var(--accent-primary));
+}
+
+.replan-diff__requirements {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 16px;
+}
+
 .replan-review-section h3 {
   background:
     linear-gradient(90deg, var(--muted-pattern-b) 0 1px, transparent 1px 4px),

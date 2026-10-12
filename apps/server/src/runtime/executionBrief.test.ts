@@ -159,7 +159,7 @@ function adapterReturning(
       id: "fake",
       name: "Fake",
       capabilities: ["research"],
-      contractCapabilities: options.structuredExecutionBrief === false ? [] : ["structured_execution_brief"],
+      contractCapabilities: options.structuredExecutionBrief === false ? ["artifact_envelope"] : ["structured_execution_brief", "artifact_envelope"],
       detect: async () => true,
       run: async (received) => {
         state.lastRequest = received;
@@ -177,7 +177,7 @@ function adapterFailing(): { agent: AgentAdapter } {
       id: "fake",
       name: "Fake",
       capabilities: ["research"],
-      contractCapabilities: ["structured_execution_brief"],
+      contractCapabilities: ["structured_execution_brief", "artifact_envelope"],
       detect: async () => true,
       run: async () => ({ status: "failed", exitCode: 1, stdout: "", stderr: "launch failed", failureReason: "agent_failed" }),
     },

@@ -5,8 +5,8 @@ import type { createRepositories } from "../db/repositories";
 import { isRetryExhausted, retryExhaustedRefusalMessage, terminateAsRetryExhausted } from "./boundedRecovery";
 import { formatExecutionBudget } from "./executionProfile";
 import { buildProofContractInstructions } from "./proofContract";
+import type { RuntimeActionChannel } from "./runtimeActionChannel";
 import { recoverProofIfPossible } from "./taskRefresh";
-import { ARTIFACT_SYNTAX_REPAIR_TIMEOUT_MS } from "./artifactSyntaxRepair";
 import { settleAgentRun, settleExecution } from "./executionSettlement";
 import { recordExecutionEvent } from "./executionEvents";
 import { applyTaskTransition } from "./taskTransition";
@@ -28,6 +28,7 @@ export type ReconcileStaleRunningTasksResult = {
 export type RecoverTaskInput = {
   repositories: ReturnType<typeof createRepositories>;
   taskId: string;
+  runtimeActionChannel: RuntimeActionChannel;
   proofSchemas?: ProofSchema[];
   now?: () => Date;
   createId?: (prefix: string) => string;
@@ -268,15 +269,16 @@ function leaseHasExpired(leaseExpiresAt: string | null, at: Date): boolean {
 /**
  * How long past its budget a run may still be finishing.
  *
- * A run's budget covers the agent's work; capture and the Artifact Syntax Repair (ADR 0028) happen
- * after it, while the run row is still `running`. Without this, a delivery that was still being
- * written could be declared timed out by anyone reading company state, and both writers would then
- * record their own outcome over the other's (ADR 0034).
+ * A run's budget covers the agent's work; capture and settlement happen after it, while the run row
+ * is still `running`. Without this, a delivery that was still being settled could be declared timed
+ * out by anyone reading company state, and both writers would then record their own outcome over the
+ * other's (ADR 0034).
  *
- * Derived from the repair's own cap rather than picked, so the two move together; the margin covers
- * proof capture and artifact validation around it.
+ * It was derived from the Artifact Syntax Repair's 120s cap, which ADR 0041 removed with the file
+ * delivery it repaired. The value is kept rather than shortened, so no timeout declaration moves
+ * earlier as a side effect of that change.
  */
-export const FINALIZATION_GRACE_MS = ARTIFACT_SYNTAX_REPAIR_TIMEOUT_MS + 30_000;
+export const FINALIZATION_GRACE_MS = 150_000;
 
 export function recoverTask(input: RecoverTaskInput): RecoverTaskResult {
   const now = input.now ?? (() => new Date());

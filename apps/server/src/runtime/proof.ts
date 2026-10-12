@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { Proof, ProofSchema, ProofType, Task } from "@auto-crop/core";
+import type { FileReference } from "./artifactEnvelope";
 import { fileProofSummaryText, runtimeText } from "./localizedRuntimeText";
 
 /**
@@ -50,6 +51,7 @@ export type HandoffPackage = {
 export type CreateHandoffPackageInput = {
   task: Task;
   proofs: Proof[];
+  fileRefs?: FileReference[];
   workspacePath: string;
   logPath: string;
 };
@@ -227,14 +229,17 @@ export function createProofCollector(input: CreateProofCollectorInput) {
 }
 
 export function createHandoffPackage(input: CreateHandoffPackageInput): HandoffPackage | null {
-  if (input.proofs.length === 0) {
+  const fileRefs = input.fileRefs ?? [];
+  if (input.proofs.length === 0 && fileRefs.length === 0) {
     return null;
   }
 
   const packageDir = join(input.workspacePath, ".auto-crop-handoff");
   const artifactsDir = join(packageDir, "artifacts");
+  const fileRefsDir = join(packageDir, "file-refs");
   rmSync(packageDir, { force: true, recursive: true });
   mkdirSync(artifactsDir, { recursive: true });
+  mkdirSync(fileRefsDir, { recursive: true });
 
   const artifacts = input.proofs.flatMap((proof, index) => {
     if (!isCopyableLocalArtifact(proof.uri)) {
@@ -260,6 +265,25 @@ export function createHandoffPackage(input: CreateHandoffPackageInput): HandoffP
       },
     ];
   });
+  const packagedFileRefs = fileRefs.flatMap((fileRef, index) => {
+    const sourcePath = resolveCopyableArtifactPath(input.workspacePath, fileRef.path);
+    if (!sourcePath || !existsSync(sourcePath) || !statSync(sourcePath).isFile()) {
+      return [];
+    }
+
+    const sourceRelativePath = relative(input.workspacePath, sourcePath).split(/[/\\]+/u).join("/");
+    const packageName = `${String(index + 1).padStart(2, "0")}-${sanitizeArtifactName(sourceRelativePath)}`;
+    const packagePath = join(fileRefsDir, packageName);
+    copyFileSync(sourcePath, packagePath);
+
+    return [
+      {
+        sourcePath: sourceRelativePath,
+        packagePath,
+        ...(fileRef.description ? { description: fileRef.description } : {}),
+      },
+    ];
+  });
 
   const manifestPath = join(packageDir, "package.json");
   writeFileSync(
@@ -278,6 +302,7 @@ export function createHandoffPackage(input: CreateHandoffPackageInput): HandoffP
           summary: proof.summary,
         })),
         artifacts,
+        fileRefs: packagedFileRefs,
         logPath: input.logPath,
       },
       null,

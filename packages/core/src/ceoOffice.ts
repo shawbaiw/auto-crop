@@ -310,12 +310,18 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     });
   }
 
+  // An Unblock Request is answerable only while the Hold waiting on it is open. A Revision supersedes
+  // that Hold, and the question it asked is then no longer anyone's to answer (ADR 0042, ADR 0043).
+  const awaitedHumanActionIds = new Set((input.taskHolds ?? [])
+    .filter((hold) => !hold.resolvedAt && hold.kind === "awaiting_human_action" && hold.subjectId)
+    .map((hold) => hold.subjectId!));
   for (const action of input.humanActions ?? []) {
     if (action.companyId !== input.company.id) continue;
     items.push({
       ...context(action.taskId), departmentId: action.departmentId,
       id: `human_action:${action.id}`, type: "human_action", sourceId: action.id,
-      occurredAt: action.createdAt, actionBearing: action.status === "pending",
+      occurredAt: action.createdAt,
+      actionBearing: action.status === "pending" && (action.origin !== "unblock_request" || awaitedHumanActionIds.has(action.id)),
       data: {
         label: companyLocaleText(action.label, input.company.locale),
         status: action.status,
@@ -349,6 +355,7 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     completions,
     businessArtifacts: [...businessArtifactsById.values()],
     taskDependencies: input.taskDependencies ?? [],
+    taskHolds: input.taskHolds ?? [],
   })) {
     items.push(issue);
   }
@@ -437,9 +444,23 @@ function projectBlockedIssues(input: {
   completions: readonly TaskCompletionEvent[];
   businessArtifacts: readonly BusinessArtifact[];
   taskDependencies: readonly TaskDependency[];
+  taskHolds: readonly TaskHold[];
 }): CEOOfficeItem[] {
   const locale = input.company.locale;
   const tasksById = new Map(input.tasks.map(task => [task.id, task]));
+  // A task held only because a person must act is a thing the founder can do, and CEO Office shows it
+  // as its Human Action. Listing it as a blocked issue too reads an honest request for input as a
+  // broken delivery (ADR 0042). Read from Holds, the one record of why a task is parked (ADR 0020).
+  const openHoldKinds = new Map<string, TaskHold["kind"][]>();
+  for (const hold of input.taskHolds) {
+    if (hold.resolvedAt) continue;
+    openHoldKinds.set(hold.taskId, [...(openHoldKinds.get(hold.taskId) ?? []), hold.kind]);
+  }
+  const isBlockedIssue = (task: Task): boolean => {
+    const kinds = openHoldKinds.get(task.id) ?? [];
+    const awaitingPersonOnly = kinds.length > 0 && kinds.every((kind) => kind === "awaiting_human_action");
+    return !awaitingPersonOnly && isBlockedIssueTask(task);
+  };
   type Episode = { id: string; taskId: string; occurredAt: string; reason: string | LocalizedText | null; resolved: boolean; resolvedAt?: string; order?: number; resolvedOrder?: number; cause?: string };
   const episodes: Episode[] = [];
   const causalTargets = new Set(input.taskEvents.map(event => event.blockedByTaskId).filter(Boolean));
@@ -471,12 +492,12 @@ function projectBlockedIssues(input: {
   }
   for (const task of input.tasks) {
     const ownEpisodes = episodes.filter(item => item.taskId === task.id);
-    if (!isBlockedIssueTask(task) && !(task.status === "failed" && causalTargets.has(task.id))) {
+    if (!isBlockedIssue(task) && !(task.status === "failed" && causalTargets.has(task.id))) {
       for (const episode of ownEpisodes) episode.resolved = true;
     }
     const replannedAt = ordered.filter(event => event.taskId === task.id && event.type === "task_replanned").at(-1)?.createdAt;
     // Support pre-event snapshots without guessing causality from graph topology or prose.
-    if (ownEpisodes.length === 0 && isBlockedIssueTask(task)) {
+    if (ownEpisodes.length === 0 && isBlockedIssue(task)) {
       const source = latestBlockedTaskSource(task, [], input.progressEvents, input.completions);
       if (source) episodes.push({ id: source.sourceId, taskId: task.id, occurredAt: source.occurredAt, reason: source.reason, resolved: Boolean(replannedAt && Date.parse(replannedAt) >= Date.parse(source.occurredAt)) });
     }
@@ -488,7 +509,7 @@ function projectBlockedIssues(input: {
     if (matching) continue; // task state and artifact describe the same blocking episode
     const task = tasksById.get(artifact.taskId);
     episodes.push({ id: artifact.id, taskId: artifact.taskId, occurredAt: artifact.createdAt,
-      reason: readBlockerReason(artifact.payload), resolved: !artifact.isCurrent || !task || !isBlockedIssueTask(task) });
+      reason: readBlockerReason(artifact.payload), resolved: !artifact.isCurrent || !task || !isBlockedIssue(task) });
   }
   const affected = new Map<Episode, Set<string>>();
   function roots(episode: Episode, visited = new Set<string>()): Episode[] {

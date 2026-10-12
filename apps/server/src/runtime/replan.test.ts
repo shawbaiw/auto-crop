@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("replan proposals", () => {
-  it("creates a deterministic proposal for a task that needs replanning", async () => {
+  it("creates a deterministic Split when the founder asks for one and no planner is configured", async () => {
     const { repositories, client } = createFixture([
       createTaskRecord("source_task", "needs_replan", 0),
     ]);
@@ -27,6 +27,7 @@ describe("replan proposals", () => {
     const proposal = await createReplanProposalForTask({
       repositories,
       taskId: "source_task",
+      mode: "split",
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: createSequentialIdFactory(),
     });
@@ -38,7 +39,8 @@ describe("replan proposals", () => {
       proposalSource: "deterministic_template",
       plannerAgentId: null,
       plannerPromptPath: null,
-      rationale: "Task source_task exceeded the long execution budget and should be split into smaller proof-backed tasks.",
+      mode: "split",
+      rationale: "Task source_task should be split into smaller proof-backed tasks.",
     });
     expect(proposal.replacementTasks.map((task) => task.title)).toEqual([
       "Plan smaller slice for Task source_task",
@@ -131,6 +133,13 @@ describe("replan proposals", () => {
             proofSchemaId: "product-brief",
             riskLevel: "low",
           },
+          {
+            title: "Build the reduced scope",
+            description: "Build it.",
+            requiredCapabilities: ["code"],
+            proofSchemaId: "landing-page-file",
+            riskLevel: "low",
+          },
         ],
       }),
       "```",
@@ -194,7 +203,7 @@ describe("replan proposals", () => {
       grantId: "workspace_read+workspace_write+web_research",
     });
     expect(sessionRuns).toEqual(["source_task_replan_planner"]);
-    expect(proposal.proposalSource).toBe("planner_agent");
+    expect(proposal).toMatchObject({ proposalSource: "planner_agent", status: "proposed", mode: "split" });
     expect(repositories.listTaskEventsForCompany("company_1")).toEqual([
       expect.objectContaining({
         type: "task_warning",
@@ -219,6 +228,13 @@ describe("replan proposals", () => {
             description: "Define the reduced scope.",
             requiredCapabilities: ["writing"],
             proofSchemaId: "product-brief",
+            riskLevel: "low",
+          },
+          {
+            title: "Build the reduced scope",
+            description: "Build it.",
+            requiredCapabilities: ["code"],
+            proofSchemaId: "landing-page-file",
             riskLevel: "low",
           },
         ],
@@ -264,7 +280,7 @@ describe("replan proposals", () => {
     });
 
     expect(oneShotRuns).toEqual(["source_task_replan_planner"]);
-    expect(proposal.proposalSource).toBe("planner_agent");
+    expect(proposal).toMatchObject({ proposalSource: "planner_agent", status: "proposed", mode: "split" });
     expect(repositories.listTaskEventsForCompany("company_1")).toEqual([
       expect.objectContaining({
         type: "task_warning",
@@ -276,7 +292,7 @@ describe("replan proposals", () => {
     client.close();
   });
 
-  it("falls back to the deterministic template when planner output cannot be parsed", async () => {
+  it("falls back to the deterministic template when a requested Split's planner output cannot be parsed", async () => {
     const { repositories, client } = createFixture([
       createTaskRecord("source_task", "needs_replan", 0),
     ]);
@@ -284,6 +300,7 @@ describe("replan proposals", () => {
     const proposal = await createReplanProposalForTask({
       repositories,
       taskId: "source_task",
+      mode: "split",
       projectRoot: mkdtempTracked(),
       plannerAgent: createPlannerAgent({ output: "not json" }),
       playbook: aiSaasPlaybook,
@@ -291,7 +308,7 @@ describe("replan proposals", () => {
       createId: createSequentialIdFactory(),
     });
 
-    expect(proposal.rationale).toContain("Task source_task exceeded the long execution budget");
+    expect(proposal.rationale).toContain("Task source_task should be split");
     expect(proposal).toMatchObject({
       proposalSource: "deterministic_template",
       plannerAgentId: "codex",
@@ -308,7 +325,29 @@ describe("replan proposals", () => {
     client.close();
   });
 
-  it("refuses to create a proposal for a task that does not need replanning", async () => {
+  it("records an unconfirmable failed proposal when the planner fails and no Split was asked for", async () => {
+    const { repositories, client } = createFixture([
+      createTaskRecord("source_task", "needs_replan", 0),
+    ]);
+
+    const proposal = await createReplanProposalForTask({
+      repositories,
+      taskId: "source_task",
+      projectRoot: mkdtempTracked(),
+      plannerAgent: createPlannerAgent({ output: "not json" }),
+      playbook: aiSaasPlaybook,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      createId: createSequentialIdFactory(),
+    });
+
+    // There is no template for what a task should be asked instead: nothing applicable, nothing to confirm.
+    expect(proposal).toMatchObject({ status: "failed", mode: null, plannerFailureReason: "parse_failed", replacementTasks: [] });
+    expect(() => confirmReplanProposal({ projectRoot: mkdtempTracked(), repositories, proposalId: proposal.id })).toThrow(/is not proposed/);
+
+    client.close();
+  });
+
+  it("refuses to create a proposal for a task that does not offer replanning", async () => {
     const { repositories, client } = createFixture([
       createTaskRecord("source_task", "queued", 0),
     ]);
@@ -320,7 +359,7 @@ describe("replan proposals", () => {
         now: () => new Date("2026-08-17T00:00:00.000Z"),
         createId: createSequentialIdFactory(),
       }),
-    ).rejects.toThrow(/does not need replanning/i);
+    ).rejects.toThrow(/does not offer replanning/i);
 
     client.close();
   });
@@ -334,6 +373,7 @@ describe("replan proposals", () => {
     const proposal = await createReplanProposalForTask({
       repositories,
       taskId: source.id,
+      mode: "split",
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId,
     });

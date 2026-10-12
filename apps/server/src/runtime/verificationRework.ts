@@ -32,8 +32,8 @@ export type VerificationReworkResult = {
  * Decide and apply what happens after a verdict that did not pass (ADR 0026).
  *
  * The budget belongs to the verifying task: every failed report is one round, recorded once however
- * often it is finalized, and nothing but a replan — which makes a new verifying task — starts a new
- * budget. Rework goes to the producers the failed checks fault, as a record they read on their next
+ * often it is finalized, and nothing but a replan starts a new budget — a Split makes a new verifying
+ * task, and a Revision that amends the verifier's requirements resets its count (ADR 0043). Rework goes to the producers the failed checks fault, as a record they read on their next
  * dispatch, never as a dependency back onto the verifier (which would be a cycle).
  *
  * Only `rework_producers` and `reverify` move anything. `escalated` and `exhausted` leave the verifier for
@@ -67,7 +67,9 @@ function applyVerificationReworkWithinTransaction(input: {
     return { rework: existing, verifier: repositories.getTask(input.verifier.id) ?? input.verifier, events: [] };
   }
 
-  const round = repositories.listVerificationReworksForVerifier(input.verifier.id).length + 1;
+  // Rounds since the budget last started: a confirmed Revision that amends this verifier's requirements
+  // starts a new one (ADR 0043). Nothing else does.
+  const round = repositories.countVerificationRounds(input.verifier.id) + 1;
   const verification = artifact.verification;
   const failedChecks = verification.checks
     .filter((check) => check.outcome !== "passed")
@@ -275,19 +277,6 @@ function isReworkable(repositories: Repositories, producer: Task): boolean {
     return false;
   }
   return repositories.listOpenTaskHolds(producer.id).every((hold) => REWORKABLE_PRODUCER_HOLDS.includes(hold.kind));
-}
-
-/** Feedback for a producer's next run: every pending rework that faults it, oldest first. */
-export function pendingReworkFeedback(repositories: Repositories, producer: Task): Array<{
-  round: number;
-  verifierTitle: string;
-  failedChecks: VerificationRework["failedChecks"];
-}> {
-  return repositories.listPendingReworksForProducer(producer.id).map((rework) => ({
-    round: rework.round,
-    verifierTitle: repositories.getTask(rework.verifierTaskId)?.title ?? rework.verifierTaskId,
-    failedChecks: rework.failedChecks.filter((check) => !check.targetTaskId || check.targetTaskId === producer.id),
-  }));
 }
 
 /** A producer delivered again: the reworks it owed are answered. */

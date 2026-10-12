@@ -2702,6 +2702,49 @@ describe("Dashboard App", () => {
     expect(api.createReplanProposal).toHaveBeenCalledWith("task_1");
   });
 
+  it("requests a Revision with a note, rejects it with a reason, and re-reads proposals from the server after each", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    const created = createCompanyResponse();
+    const blockedTask = { ...created.tasks[0]!, status: "blocked", affordances: offered("request_replan") };
+    let serverProposals: ReplanProposalSummary[] = [];
+    api.createCompany = vi.fn(async () => ({ ...created, tasks: [blockedTask] }));
+    api.createReplanProposal = vi.fn(async () => {
+      serverProposals = [{ ...createReplanProposalSummary(), mode: "revision", replacementTasks: [] }];
+      return { proposal: serverProposals[0]! };
+    });
+    api.rejectReplanProposal = vi.fn(async () => {
+      serverProposals = [{ ...serverProposals[0]!, status: "rejected", rejectionNote: "Too broad." }];
+      return { proposal: serverProposals[0]! };
+    });
+    api.getCompanyState = vi.fn(async () => ({
+      ...created, tasks: [blockedTask], proof: [], businessArtifacts: [], reviews: [], activity: [], creationEvents: [],
+      creationAttempts: [], replanProposals: serverProposals, taskProgressEvents: [], ceoIntakes: [],
+    }));
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+    await user.click(screen.getByRole("menuitem", { name: "View Operations" }));
+
+    await user.click(await screen.findByRole("button", { name: "Replan mode for Create landing page" }));
+    await user.click(screen.getByRole("option", { name: "Revision — rewrite this task" }));
+    await user.type(screen.getByLabelText("Note for the planner"), "Accept an estimate.");
+    const readsBefore = vi.mocked(api.getCompanyState).mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Create Replan Proposal" }));
+    expect(api.createReplanProposal).toHaveBeenCalledWith("task_1", { mode: "revision", note: "Accept an estimate." });
+    await waitFor(() => expect(vi.mocked(api.getCompanyState).mock.calls.length).toBeGreaterThan(readsBefore));
+
+    await user.type(await screen.findByLabelText("Reason for rejecting (read by the planner)"), "Too broad.");
+    const readsBeforeReject = vi.mocked(api.getCompanyState).mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Reject Proposal" }));
+    expect(api.rejectReplanProposal).toHaveBeenCalledWith("replan_proposal_1", "Too broad.");
+    await waitFor(() => expect(vi.mocked(api.getCompanyState).mock.calls.length).toBeGreaterThan(readsBeforeReject));
+    expect(await screen.findByText("Rejected. Too broad.")).toBeInTheDocument();
+    // Rejected, so the task can be asked about again.
+    expect(screen.getByRole("button", { name: "Create Replan Proposal" })).toBeInTheDocument();
+  });
+
   it("shows and confirms replan proposals on the Company Operations page", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
@@ -2719,11 +2762,14 @@ describe("Dashboard App", () => {
         },
       ],
     }));
-    api.createReplanProposal = vi.fn(async () => ({
-      proposal: createReplanProposalSummary(),
-    }));
+    // The server's proposals, which the client re-reads after every replan action.
+    let serverProposals: ReplanProposalSummary[] = [];
+    api.createReplanProposal = vi.fn(async () => {
+      serverProposals = [createReplanProposalSummary()];
+      return { proposal: createReplanProposalSummary() };
+    });
     api.confirmReplanProposal = vi.fn(async () => ({
-      proposal: { ...createReplanProposalSummary(), status: "confirmed", confirmedAt: "2026-08-17T00:01:00.000Z" },
+      proposal: (serverProposals = [{ ...createReplanProposalSummary(), status: "confirmed", confirmedAt: "2026-08-17T00:01:00.000Z" }])[0]!,
       sourceTask: { ...createCompanyResponse().tasks[0], status: "blocked", failureReason: "needs_replan" },
       createdTasks: [
         { ...createCompanyResponse().tasks[0], id: "task_3", title: "Plan smaller slice for Create landing page", status: "queued" },
@@ -2784,7 +2830,7 @@ describe("Dashboard App", () => {
       activity: [],
       creationEvents: [],
       creationAttempts: [],
-      replanProposals: [],
+      replanProposals: serverProposals,
       taskProgressEvents: [],
       ceoIntakes: [],
     }));
@@ -4649,6 +4695,9 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
           message: "Founder answered the approval request.",
         },
       };
+    },
+    async rejectReplanProposal() {
+      return { proposal: { ...createReplanProposalSummary(), status: "rejected" } };
     },
     async createReplanProposal() {
       return { proposal: createReplanProposalSummary() };

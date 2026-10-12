@@ -71,6 +71,46 @@ describe("buildTaskExecutionPrompt", () => {
     expect(prompt).not.toContain("## Granted Capabilities");
   });
 
+  it("asks for the delivery through submit_artifact_envelope and never through a workspace file", () => {
+    const prompt = buildTaskExecutionPrompt({
+      company: createCompanyRecord({}),
+      task: createTaskRecord({}),
+      handoffs: [],
+    });
+
+    expect(prompt).toContain("Submit exactly one task delivery by calling `submit_artifact_envelope`");
+    expect(prompt).toContain("The tool accepts only the Artifact Envelope payload");
+    expect(prompt).toContain("correct the envelope and call it again");
+    expect(prompt).not.toContain(".auto-crop/business-artifact.json");
+  });
+
+  it("states which proof_refs the task accepts and that read sources belong in the payload", () => {
+    const prompt = (acceptedProofTypes: Array<"file" | "url">) => buildTaskExecutionPrompt({
+      company: createCompanyRecord({}),
+      task: createTaskRecord({ proofSchemaId: "product-brief" }),
+      handoffs: [],
+      acceptedProofTypes,
+    });
+
+    expect(prompt(["file"])).toContain("Proof Schema (`product-brief`) accepts only these types: file. Any other type is rejected.");
+    expect(prompt(["file"])).toContain("Sources you read, such as web pages, are not proof_refs");
+    expect(prompt([])).toContain("Do not submit `proof_refs`");
+  });
+
+  it("names the Artifact Envelope, not a file, in proof contracts that mention the delivery", () => {
+    for (const proofSchemaId of ["repo-diff", "screenshot"]) {
+      const prompt = buildTaskExecutionPrompt({
+        company: createCompanyRecord({}),
+        task: createTaskRecord({ proofSchemaId }),
+        handoffs: [],
+      });
+
+      expect(prompt).toContain("submit_artifact_envelope");
+      expect(prompt).not.toContain(".auto-crop/business-artifact.json");
+      expect(prompt).not.toContain("Instead write");
+    }
+  });
+
   it("tells the agent to author founder-facing prose in the company language, exempting machine text", () => {
     const zhPrompt = buildTaskExecutionPrompt({
       company: createCompanyRecord({ locale: "zh" }),

@@ -1,6 +1,6 @@
 # A Business Artifact That Does Not Parse Gets One Checked Syntax Repair
 
-Status: accepted
+Status: superseded by ADR 0041 (the file delivery it repaired is removed; envelope errors are returned to the agent at submit time)
 
 ## Context
 

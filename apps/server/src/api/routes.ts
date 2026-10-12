@@ -49,7 +49,8 @@ import {
   ceoReviewDecisionMessageText,
 } from "../runtime/localizedRuntimeText";
 import { triggerKillSwitch } from "../runtime/killSwitch";
-import { confirmReplanProposal, createReplanProposalForTask } from "../runtime/replan";
+import { confirmReplanProposal, createReplanProposalForTask, rejectReplanProposal, ReplanNotOfferedError, StaleReplanProposalError } from "../runtime/replan";
+import { isReplanProposalCurrent } from "../runtime/replanContext";
 import { reconcileReviewTasksForAutomaticAcceptance } from "../runtime/reviewReconciliation";
 import { recoverTask } from "../runtime/taskRecovery";
 import {
@@ -59,6 +60,7 @@ import {
 } from "../runtime/taskAffordances";
 import { reconcileTaskHolds } from "../runtime/taskHoldReconciliation";
 import { applyTaskTransition, findOpenTaskHold, releaseTaskHold } from "../runtime/taskTransition";
+import { credentialLikeValue } from "../runtime/unblockRequest";
 import { refreshTaskDependencyState } from "../runtime/taskRefresh";
 import { refreshDependencyTasks, type DependencyCascadeResult } from "../runtime/dependencyCascade";
 import { propagateParentTaskAggregation, type ParentTaskAggregationResult } from "../runtime/parentTaskAggregation";
@@ -68,6 +70,7 @@ import {
   groupTaskDependenciesByTaskId,
   summarizeFounderReport,
 } from "../runtime/founderReportProjection";
+import { createProjectRuntimeActionChannel } from "../runtime/runtimeActionChannel";
 
 export type ApiServerOptions = {
   projectRoot: string;
@@ -775,6 +778,7 @@ async function routeRequest(
 
     const result = refreshTaskDependencyState({
       repositories: options.repositories,
+      runtimeActionChannel: createProjectRuntimeActionChannel(options.projectRoot),
       taskId: refreshTaskMatch[1],
       proofSchemas: aiSaasPlaybook.proofSchemas,
       now: options.now,
@@ -852,6 +856,7 @@ async function routeRequest(
 
     const result = recoverTask({
       repositories: options.repositories,
+      runtimeActionChannel: createProjectRuntimeActionChannel(options.projectRoot),
       taskId: recoverTaskMatch[1],
       proofSchemas: aiSaasPlaybook.proofSchemas,
       now: options.now,
@@ -907,30 +912,97 @@ async function routeRequest(
       return;
     }
 
+    const body = await readJson<{ mode?: unknown; note?: unknown }>(request);
+    if (body.mode !== undefined && body.mode !== null && body.mode !== "split" && body.mode !== "revision") {
+      sendJson(response, 400, { error: "mode must be split, revision, or omitted." });
+      return;
+    }
+    if (body.note !== undefined && body.note !== null && typeof body.note !== "string") {
+      sendJson(response, 400, { error: "note must be a string." });
+      return;
+    }
     const company = options.repositories.getCompany(task.companyId);
     const plannerAgent = company ? options.agents.find((agent) => agent.id === company.selectedCeoAgentId) : undefined;
-    const proposal = await createReplanProposalForTask({
-      repositories: options.repositories,
-      taskId: replanTaskMatch[1],
-      projectRoot: options.projectRoot,
-      plannerAgent,
-      playbook: company ? selectPlaybook(company.founderVision) : undefined,
-      now: options.now,
-      createId: options.createId,
-    });
-    sendJson(response, 201, { proposal: summarizeReplanProposal(proposal) });
+    try {
+      const proposal = await createReplanProposalForTask({
+        repositories: options.repositories,
+        taskId: replanTaskMatch[1],
+        mode: body.mode ?? null,
+        note: body.note ?? null,
+        projectRoot: options.projectRoot,
+        plannerAgent,
+        playbook: company ? selectPlaybook(company.founderVision) : undefined,
+        now: options.now,
+        createId: options.createId,
+      });
+      sendJson(response, 201, { proposal: summarizeReplanProposal(proposal, options.repositories) });
+    } catch (error) {
+      if (!(error instanceof ReplanNotOfferedError)) throw error;
+      // The task moved while the planner ran: answer like any stale affordance.
+      const current = options.repositories.getTask(task.id) ?? task;
+      sendJson(response, 409, {
+        error: error.message,
+        ...staleAffordanceBody(current, resolveTaskAffordanceState(options.repositories, current), options.repositories),
+      });
+    }
+    return;
+  }
+
+  const rejectReplanMatch = url.pathname.match(/^\/api\/replan-proposals\/([^/]+)\/reject$/);
+  if (method === "POST" && rejectReplanMatch) {
+    const proposal = options.repositories.getReplanProposal(rejectReplanMatch[1]);
+    if (!proposal) {
+      sendJson(response, 404, { error: `Replan proposal not found: ${rejectReplanMatch[1]}` });
+      return;
+    }
+    const body = await readJson<{ note?: unknown }>(request);
+    if (body.note !== undefined && body.note !== null && typeof body.note !== "string") {
+      sendJson(response, 400, { error: "note must be a string." });
+      return;
+    }
+    if (proposal.status !== "proposed") {
+      sendJson(response, 409, { error: `Replan proposal ${proposal.id} is ${proposal.status}, not awaiting a decision.` });
+      return;
+    }
+    const rejected = rejectReplanProposal({ repositories: options.repositories, proposalId: proposal.id, note: body.note ?? null, now: options.now });
+    sendJson(response, 200, { proposal: summarizeReplanProposal(rejected, options.repositories) });
     return;
   }
 
   const confirmReplanMatch = url.pathname.match(/^\/api\/replan-proposals\/([^/]+)\/confirm$/);
   if (method === "POST" && confirmReplanMatch) {
-    const result = confirmReplanProposal({
-      projectRoot: options.projectRoot,
-      repositories: options.repositories,
-      proposalId: confirmReplanMatch[1],
-      now: options.now,
-      createId: options.createId,
-    });
+    const pending = options.repositories.getReplanProposal(confirmReplanMatch[1]);
+    const sourceTask = pending ? options.repositories.getTask(pending.sourceTaskId) : null;
+    if (!pending || !sourceTask) {
+      sendJson(response, 404, { error: `Replan proposal not found: ${confirmReplanMatch[1]}` });
+      return;
+    }
+    const confirmable = checkTaskAffordance(options.repositories, sourceTask, "confirm_replan");
+    if (!confirmable.ok || pending.status !== "proposed") {
+      sendJson(response, 409, {
+        error: `Replan proposal ${pending.id} cannot be confirmed from its task's current state.`,
+        ...staleAffordanceBody(sourceTask, confirmable.state, options.repositories),
+      });
+      return;
+    }
+    let result: ReturnType<typeof confirmReplanProposal>;
+    try {
+      result = confirmReplanProposal({
+        projectRoot: options.projectRoot,
+        repositories: options.repositories,
+        proposalId: pending.id,
+        now: options.now,
+        createId: options.createId,
+      });
+    } catch (error) {
+      if (!(error instanceof StaleReplanProposalError)) throw error;
+      sendJson(response, 409, {
+        error: error.message,
+        proposal: summarizeReplanProposal(error.proposal, options.repositories),
+        ...staleAffordanceBody(sourceTask, confirmable.state, options.repositories),
+      });
+      return;
+    }
     const affectedConsumers = result.affectedConsumers
       .map((consumer) => options.repositories.getTask(consumer.id))
       .filter((consumer): consumer is Task => Boolean(consumer));
@@ -948,7 +1020,7 @@ async function routeRequest(
       }
     }
     sendJson(response, 200, {
-      proposal: summarizeReplanProposal(result.proposal),
+      proposal: summarizeReplanProposal(result.proposal, options.repositories),
       sourceTask: summarizeTask(result.sourceTask, [], options.repositories),
       createdTasks: summarizeTasks(result.createdTasks, [], options.repositories),
       dependencyCascade: summarizeDependencyCascade(dependencyCascade, options.repositories),
@@ -974,6 +1046,10 @@ async function routeRequest(
     }
     if (result.kind === "invalid_evidence") {
       sendJson(response, 400, { error: "Human Action evidence is invalid.", verificationErrors: result.verificationErrors });
+      return;
+    }
+    if (result.kind === "stale") {
+      sendJson(response, 409, { error: "This Human Action is no longer awaited: its task has moved on." });
       return;
     }
 
@@ -1238,7 +1314,7 @@ function buildCompanyState(
     ),
     reviews: repositories.listReviews(currentCompany.id).map(summarizeReview),
     ceoReviewDecisions: repositories.listCeoReviewDecisionsForCompany(currentCompany.id).map(summarizeCeoReviewDecision),
-    replanProposals: repositories.listReplanProposalsForCompany(currentCompany.id).map(summarizeReplanProposal),
+    replanProposals: repositories.listReplanProposalsForCompany(currentCompany.id).map((proposal) => summarizeReplanProposal(proposal, repositories)),
     activity: repositories.listTaskEventsForCompany(currentCompany.id).map(summarizeTaskEvent),
     creationEvents: repositories.listCompanyEventsForCompany(currentCompany.id).map(summarizeCompanyEvent),
     creationAttempts: repositories.listCreationAttemptsForCompany(currentCompany.id),
@@ -1501,6 +1577,7 @@ function isPolicyMode(value: unknown): value is PolicyMode {
 type ConfirmHumanActionResult =
   | { kind: "confirmed"; humanAction: HumanAction; updatedTasks: Task[]; events: TaskEvent[] }
   | { kind: "invalid_evidence"; verificationErrors: string[] }
+  | { kind: "stale" }
   | { kind: "not_found" };
 
 async function confirmHumanAction(input: {
@@ -1533,6 +1610,12 @@ async function confirmHumanAction(input: {
     return { kind: "not_found" };
   }
 
+  // An Unblock Request is answered only while its task waits on it. Once a Revision has superseded that
+  // Hold, a late confirmation would hand the revised task a Settled Fact for a question it no longer asks.
+  if (humanAction.origin === "unblock_request" && !findOpenTaskHold(input.repositories, humanAction.taskId, "awaiting_human_action", humanAction.id)) {
+    return { kind: "stale" };
+  }
+
   const verification = await verifyHumanActionEvidence(humanAction, input.evidence);
   if (verification.kind === "invalid") {
     return { kind: "invalid_evidence", verificationErrors: verification.errors };
@@ -1554,11 +1637,6 @@ async function confirmHumanAction(input: {
   const createId = input.createId ?? defaultCreateId;
 
   for (const task of tasks) {
-    const dependencies = input.repositories.listTaskDependencies(task.id);
-    if (!taskIdsToUnblock.has(task.id) || !isHumanActionBlockedTask(task) || !taskDependenciesRequireHumanAction(dependencies, humanAction)) {
-      continue;
-    }
-
     // Confirming the Human Action answers that Hold and says nothing about any other. A task gated
     // on a Human Action may also still owe an upstream deliverable — `isHumanActionBlockedTask`
     // accepts `waiting_dependency` tasks, which already carry a dependency Hold — so releasing runs
@@ -1569,6 +1647,14 @@ async function confirmHumanAction(input: {
       "awaiting_human_action",
       humanAction.id,
     );
+    // The Hold naming this Human Action is what says a task waits on it — including the blocked task
+    // of an Unblock Request, which gates no other task and so is in no `blockedTaskIds` (ADR 0042).
+    // A gated downstream task is still found the way it always was.
+    const gated = taskIdsToUnblock.has(task.id) && isHumanActionBlockedTask(task) &&
+      taskDependenciesRequireHumanAction(input.repositories.listTaskDependencies(task.id), humanAction);
+    if (!answeredHold && !gated) {
+      continue;
+    }
     releaseTaskHold({
       repositories: input.repositories,
       task,
@@ -1835,6 +1921,14 @@ async function verifyHumanActionEvidence(
     }
 
     const trimmed = value.trim();
+    // Confirmations become Settled Facts that every later run of the task is given in its prompt, so
+    // a secret typed into one would be handed to an agent. Capabilities are an Agent Capability
+    // Grant, never a confirmation value (ADR 0042).
+    const credential = credentialLikeValue(trimmed);
+    if (credential) {
+      errors.push(`evidence.${requirement}: Looks like ${credential}. Do not submit credentials; supply the data itself.`);
+      continue;
+    }
     if (requirement === "url" && !(await isReachableHttpUrl(trimmed))) {
       errors.push("evidence.url: Expected a reachable http(s) URL.");
       continue;
@@ -2768,8 +2862,24 @@ function summarizeReview(review: ReviewRecord) {
   return review;
 }
 
-function summarizeReplanProposal(proposal: ReplanProposal) {
+/**
+ * A proposal as surfaces show it. `stale` is derived the same way confirmation decides it — the
+ * proposal's recorded basis against the present — so the view says a proposal has gone stale exactly
+ * when confirming it would be refused (ADR 0043).
+ */
+function summarizeReplanProposal(proposal: ReplanProposal, repositories: ReturnType<typeof createRepositories>) {
   return {
+    mode: proposal.mode,
+    requestedMode: proposal.requestedMode,
+    founderNote: proposal.founderNote,
+    taskBefore: proposal.taskBefore,
+    taskAfter: proposal.taskAfter,
+    capabilitiesChanged: proposal.capabilitiesChanged,
+    requirementChanges: proposal.requirementChanges,
+    requirementSourceNotes: proposal.requirementSourceNotes,
+    rejectionNote: proposal.rejectionNote,
+    rejectedAt: proposal.rejectedAt ?? undefined,
+    stale: proposal.status === "proposed" && !isReplanProposalCurrent(repositories, proposal),
     id: proposal.id,
     companyId: proposal.companyId,
     sourceTaskId: proposal.sourceTaskId,

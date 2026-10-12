@@ -160,6 +160,16 @@ describe("resolveTaskAffordances", () => {
     expect(withProposal.indexOf("confirm_replan")).toBeLessThan(withProposal.indexOf("request_replan"));
   });
 
+  it("offers confirming a pending proposal on whichever Hold offered replanning", () => {
+    for (const kind of ["awaiting_human_action", "invalid_business_artifact", "verification_failed", "recovery_exhausted"] as const) {
+      const affordances = resolveTaskAffordances({ status: "blocked", holds: [hold(kind)], hasProposedReplan: true })
+        .map((affordance) => affordance.kind);
+      expect(affordances, kind).toContain("confirm_replan");
+    }
+    expect(resolveTaskAffordances({ status: "waiting_dependency", holds: [hold("awaiting_dependency_artifact")], hasProposedReplan: true })
+      .map((affordance) => affordance.kind)).toEqual(["refresh_task", "cancel_task"]);
+  });
+
   it("does not offer blind re-runs once Bounded Recovery is exhausted", () => {
     const affordances = resolveTaskAffordances({
       status: "blocked",
@@ -179,12 +189,14 @@ describe("resolveTaskAffordances", () => {
       ],
     });
 
+    // A founder who will not supply what was asked for may replan instead (ADR 0042).
     expect(affordances.filter((item) => item.holdId === "hold_a").map((item) => item.kind)).toEqual([
       "confirm_human_action",
+      "request_replan",
     ]);
+    // A dependency wait does not offer replanning: the upstream is what is stuck (ADR 0043).
     expect(affordances.filter((item) => item.holdId === "hold_b").map((item) => item.kind)).toEqual([
       "refresh_task",
-      "request_replan",
     ]);
   });
 });
@@ -194,6 +206,11 @@ describe("deriveTaskHold", () => {
     for (const status of heldTaskStatuses) {
       expect(deriveTaskHold({ status }), `status ${status} must derive a Hold`).not.toBeNull();
     }
+  });
+
+  it("derives a Human Action Hold for a task parked on its own Unblock Request", () => {
+    expect(deriveTaskHold({ status: "blocked", failureReason: "awaiting_human_action" }))
+      .toEqual({ kind: "awaiting_human_action", resolver: "founder" });
   });
 
   it("derives no Hold for statuses that carry their own motion", () => {

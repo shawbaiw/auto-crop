@@ -2,6 +2,7 @@ import type { Company, ExecutionBrief, Task } from "@auto-crop/core";
 import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "../adapters/types";
 import { noToolGrant } from "../policies/capabilityGrant";
 import type { TaskHandoff } from "./dependencyReadiness";
+import { renderSettledFacts, type SettledFact } from "./settledFacts";
 
 const EXECUTION_BRIEF_FIELDS = ["purpose", "approach", "expectedOutcome"] as const;
 const KNOWN_NON_JSON_STATUS_STDOUT = new Set([
@@ -58,6 +59,8 @@ export async function prepareExecutionBrief(input: {
   company: Company;
   task: Task;
   handoffs: TaskHandoff[];
+  /** The same Settled Facts the work prompt states, so the brief does not plan to re-ask one. */
+  settledFacts?: SettledFact[];
 }): Promise<ExecutionBriefPreparation> {
   if (!input.adapter.contractCapabilities?.includes("structured_execution_brief")) {
     return {
@@ -93,6 +96,7 @@ export async function prepareExecutionBrief(input: {
       `Founder vision: ${input.company.founderVision}`,
       `Task: ${input.task.title}\n${input.task.description}`,
       `Accepted upstream handoffs: ${JSON.stringify(input.handoffs)}`,
+      ...(input.settledFacts?.length ? [renderSettledFacts(input.settledFacts).join("\n")] : []),
     ].join("\n\n"),
   });
   if (result.status !== "complete") return { kind: "failed", result, brief: null };

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import {
   deriveVerificationOutcome,
   type ArtifactVerification,
@@ -107,11 +107,17 @@ export function resolveCaptureVerificationContext(
 }
 
 /**
- * Whether the producer outputs a verdict was bound to are still the current ones. A verdict about a
- * superseded output says nothing about the output downstream would now consume, so acceptance and
- * readiness ask this alongside the verdict itself.
+ * Whether a verdict still describes the present: the producer outputs it was bound to are still the
+ * current ones, and the requirements it judged against are still the verifier's requirements. A verdict
+ * about a superseded output, or against a superseded standard, says nothing about what downstream would
+ * now consume, so acceptance and readiness ask this alongside the verdict itself.
+ *
+ * Derived every time from the verdict's recorded targets and requirement fingerprint against present
+ * facts — never from a "stale" mark written when something changed. That is what makes amending a
+ * planned requirement in a Revision enough on its own: the verifier's whole verdict stops being current,
+ * for every target it covers, and nothing has to remember to say so (ADR 0043).
  */
-export function isVerificationCurrent(repositories: Repositories, artifact: Pick<BusinessArtifact, "verification">): boolean {
+export function isVerificationCurrent(repositories: Repositories, artifact: Pick<BusinessArtifact, "taskId" | "verification">): boolean {
   const verification = artifact.verification;
   if (!verification) {
     return true;
@@ -121,7 +127,84 @@ export function isVerificationCurrent(repositories: Repositories, artifact: Pick
   );
   const requirementsCurrent = !verification.requirementsTaskId ||
     repositories.getCurrentBusinessArtifactForTask(verification.requirementsTaskId)?.id === verification.requirementsArtifactId;
-  return targetsCurrent && requirementsCurrent;
+  return targetsCurrent && requirementsCurrent && isVerdictStandardCurrent(repositories, artifact.taskId, verification);
+}
+
+/** Whether the requirement set a verdict judged against is still its verifier's. */
+export function isVerdictStandardCurrent(repositories: Repositories, verifierTaskId: string, verification: ArtifactVerification): boolean {
+  const verifier = repositories.getTask(verifierTaskId);
+  if (!verifier) {
+    return true;
+  }
+  const source = resolveVerificationRequirementSource(repositories, verifier);
+  return source.kind === "resolved" && fingerprintRequirements(source.requirements) === verdictRequirementsFingerprint(verification);
+}
+
+/** A stable fingerprint of a requirement set. Order-insensitive: the set is what is judged against. */
+export function fingerprintRequirements(requirements: readonly VerificationRequirement[]): string {
+  const canonical = [...requirements]
+    .map((requirement) => [requirement.id, requirement.description] as const)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+/** The fingerprint a verdict recorded, or — for a verdict recorded before fingerprints — of the set it stored. */
+export function verdictRequirementsFingerprint(verification: ArtifactVerification): string {
+  return verification.requirementsFingerprint ?? fingerprintRequirements(verification.requirements);
+}
+
+/**
+ * Where a verifier's requirements come from right now, and what they are: planned onto the verifier
+ * itself (ADR 0025), or delivered by its one `verification_requirements` producer (ADR 0023). The one
+ * answer the handoff, verdict currency and a Revision all read, so they cannot disagree about which
+ * standard a verifier is held to.
+ */
+export function resolveVerificationRequirementSource(
+  repositories: Repositories,
+  verifier: Task,
+):
+  | { kind: "resolved"; requirements: VerificationRequirement[]; requirementsTaskId: string | null; requirementsArtifactId: string | null }
+  | { kind: "failed"; producer: Task; message: string } {
+  const requirementDependencies = dependenciesWithRole(repositories, verifier.id, "verification_requirements");
+  const plannedRequirements = verifier.verificationRequirements ?? [];
+  if (plannedRequirements.length > 0 && requirementDependencies.length > 0) {
+    return {
+      kind: "failed",
+      producer: verifier,
+      message: `Handoff failed: ${verifier.title} has both planned verification requirements and an upstream requirements source.`,
+    };
+  }
+  if (requirementDependencies.length > 1) {
+    return {
+      kind: "failed",
+      producer: verifier,
+      message: `Handoff failed: ${verifier.title} declares more than one verification requirements source.`,
+    };
+  }
+  const [dependency] = requirementDependencies;
+  const producer = dependency ? repositories.getTask(dependency.dependsOnTaskId) : null;
+  if (!producer) {
+    if (plannedRequirements.length === 0) {
+      const target = dependenciesWithRole(repositories, verifier.id, "verification_target")[0];
+      const targetTask = target ? repositories.getTask(target.dependsOnTaskId) : null;
+      return {
+        kind: "failed",
+        producer: targetTask ?? verifier,
+        message: `Handoff failed: ${verifier.title} verifies ${targetTask?.title ?? "its targets"} but no upstream declares its verification requirements.`,
+      };
+    }
+    return { kind: "resolved", requirements: [...plannedRequirements], requirementsTaskId: null, requirementsArtifactId: null };
+  }
+  const artifact = repositories.getCurrentBusinessArtifactForTask(producer.id);
+  const parsed = artifact ? parseVerificationRequirements(artifact.payload) : null;
+  if (!artifact || !parsed || parsed.errors.length > 0 || parsed.requirements.length === 0) {
+    return {
+      kind: "failed",
+      producer,
+      message: `Handoff failed: ${producer.title} has no current verification requirements for ${verifier.title}.`,
+    };
+  }
+  return { kind: "resolved", requirements: parsed.requirements, requirementsTaskId: producer.id, requirementsArtifactId: artifact.id };
 }
 
 /**
@@ -154,51 +237,11 @@ export function prepareVerificationInputs(input: {
   // Requirements have exactly one source: an upstream artifact (a department's Define stage), or the
   // plan itself (a verification task the CEO blueprint planned). Two would leave it undecided which
   // the verifier is judged against.
-  const requirementDependencies = dependenciesWithRole(input.repositories, input.task.id, "verification_requirements");
-  const plannedRequirements = input.task.verificationRequirements ?? [];
-  let requirementsTaskId: string | null = null;
-  let requirementsArtifactId: string | null = null;
-  const requirements: VerificationRequirement[] = [...plannedRequirements];
-  if (plannedRequirements.length > 0 && requirementDependencies.length > 0) {
-    return {
-      kind: "handoff_failed",
-      producer: input.task,
-      message: `Handoff failed: ${input.task.title} has both planned verification requirements and an upstream requirements source.`,
-    };
+  const source = resolveVerificationRequirementSource(input.repositories, input.task);
+  if (source.kind === "failed") {
+    return { kind: "handoff_failed", producer: source.producer, message: source.message };
   }
-  if (requirementDependencies.length > 1) {
-    return {
-      kind: "handoff_failed",
-      producer: input.task,
-      message: `Handoff failed: ${input.task.title} declares more than one verification requirements source.`,
-    };
-  }
-  for (const dependency of requirementDependencies) {
-    const producer = input.repositories.getTask(dependency.dependsOnTaskId);
-    if (!producer) {
-      continue;
-    }
-    const artifact = input.repositories.getCurrentBusinessArtifactForTask(producer.id);
-    const parsed = artifact ? parseVerificationRequirements(artifact.payload) : null;
-    if (!artifact || !parsed || parsed.errors.length > 0 || parsed.requirements.length === 0) {
-      return {
-        kind: "handoff_failed",
-        producer,
-        message: `Handoff failed: ${producer.title} has no current verification requirements for ${input.task.title}.`,
-      };
-    }
-    requirementsTaskId = producer.id;
-    requirementsArtifactId = artifact.id;
-    requirements.push(...parsed.requirements);
-  }
-  if (requirements.length === 0) {
-    const producer = input.repositories.getTask(targetDependencies[0]!.dependsOnTaskId)!;
-    return {
-      kind: "handoff_failed",
-      producer,
-      message: `Handoff failed: ${input.task.title} verifies ${producer.title} but no upstream declares its verification requirements.`,
-    };
-  }
+  const { requirements, requirementsTaskId, requirementsArtifactId } = source;
 
   const targets: VerificationSnapshotTarget[] = [];
   for (const dependency of targetDependencies) {
@@ -303,6 +346,15 @@ function snapshotProducerOutput(input: {
 
   const filesDirectory = join(directory, "files");
   const files: string[] = [];
+  const packagedFileRefs = copyPackagedFileRefs({
+    sourceRoot,
+    filesDirectory,
+    byteLimit: MAX_SNAPSHOT_BYTES,
+  });
+  if (packagedFileRefs.kind === "failed") {
+    return packagedFileRefs;
+  }
+  const alreadySnapshotted = packagedFileRefs.relativePaths;
   const walk = (current: string): string | null => {
     for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const absolute = join(current, entry.name);
@@ -322,6 +374,9 @@ function snapshotProducerOutput(input: {
       if (!entry.isFile() || entry.name === ".env" || entry.name.startsWith(".env.")) {
         continue;
       }
+      if (alreadySnapshotted.has(relative(sourceRoot, absolute).split(sep).join("/"))) {
+        continue;
+      }
       files.push(absolute);
     }
     return null;
@@ -334,7 +389,7 @@ function snapshotProducerOutput(input: {
     return { kind: "failed", message: `artifact workspace has ${files.length} files, above the ${MAX_SNAPSHOT_FILES} handoff limit.` };
   }
 
-  let totalBytes = 0;
+  let totalBytes = packagedFileRefs.bytes;
   for (const absolute of files) {
     const relativePath = relative(sourceRoot, absolute).split(sep).join("/");
     let content: Buffer;
@@ -353,6 +408,59 @@ function snapshotProducerOutput(input: {
   }
 
   return { kind: "ready", directory };
+}
+
+function copyPackagedFileRefs(input: {
+  sourceRoot: string;
+  filesDirectory: string;
+  byteLimit: number;
+}): { kind: "ready"; relativePaths: Set<string>; bytes: number } | { kind: "failed"; message: string } {
+  const manifestPath = join(input.sourceRoot, ".auto-crop-handoff", "package.json");
+  const relativePaths = new Set<string>();
+  if (!existsSync(manifestPath)) {
+    return { kind: "ready", relativePaths, bytes: 0 };
+  }
+
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
+  } catch (error) {
+    return { kind: "failed", message: `handoff package manifest is not readable: ${(error as Error).message}` };
+  }
+
+  const fileRefs = isRecord(manifest) && Array.isArray(manifest.fileRefs) ? manifest.fileRefs : [];
+  let bytes = 0;
+  for (const [index, entry] of fileRefs.entries()) {
+    const sourcePath = isRecord(entry) && typeof entry.sourcePath === "string"
+      ? normalizeManifestRelativePath(entry.sourcePath)
+      : null;
+    const packagePath = isRecord(entry) && typeof entry.packagePath === "string" ? entry.packagePath : "";
+    if (!sourcePath) {
+      return { kind: "failed", message: `handoff package fileRefs[${index}].sourcePath is invalid.` };
+    }
+    if (!packagePath || !existsSync(packagePath) || !statSync(packagePath).isFile()) {
+      return { kind: "failed", message: `handoff package fileRefs[${index}] is missing its packaged file.` };
+    }
+    const content = readFileSync(packagePath);
+    bytes += content.byteLength;
+    if (bytes > input.byteLimit) {
+      return { kind: "failed", message: `artifact workspace exceeds the ${input.byteLimit} byte handoff limit.` };
+    }
+    const destination = join(input.filesDirectory, sourcePath);
+    mkdirSync(join(destination, ".."), { recursive: true });
+    copyFileSync(packagePath, destination);
+    relativePaths.add(sourcePath);
+  }
+
+  return { kind: "ready", relativePaths, bytes };
+}
+
+function normalizeManifestRelativePath(value: string): string | null {
+  const normalized = normalize(value).split(sep).join("/");
+  if (!normalized || normalized === "." || isAbsolute(normalized) || normalized.startsWith("../") || normalized === "..") {
+    return null;
+  }
+  return normalized;
 }
 
 /** Read `payload.verification_requirements`. Ids must be unique, non-empty and carry a description. */
@@ -491,6 +599,7 @@ export function evaluateVerificationReport(input: {
       requirementsTaskId: inputs.requirementsTaskId,
       requirementsArtifactId: inputs.requirementsArtifactId,
       requirements: inputs.requirements,
+      requirementsFingerprint: fingerprintRequirements(inputs.requirements),
       targets: inputs.targets.map(({ taskId, artifactId, revision }) => ({ taskId, artifactId, revision })),
       checks,
       issues,

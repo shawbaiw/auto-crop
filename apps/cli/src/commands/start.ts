@@ -174,6 +174,7 @@ export function startSchedulerLoop(input: {
         // No `approvalRequired` override: the scheduler resolves each task's own company Permission
         // Mode. Passing one here is what pinned every company to the `balanced` default.
         proofCollector,
+        proofSchemas: aiSaasPlaybook.proofSchemas,
         createId: input.createId,
         // The owner runner reports in on its own clock while a run is in flight. Observation only:
         // nothing reads a heartbeat to end a run (execution-health P1).

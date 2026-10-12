@@ -9,6 +9,7 @@ import { migrate } from "../db/schema";
 import { Supervisor } from "./supervisor";
 import { runSchedulerOnce } from "./scheduler";
 import { reconcileStaleRunningTasks, recoverTask } from "./taskRecovery";
+import { createRuntimeActionChannel } from "./runtimeActionChannel";
 
 describe("task recovery", () => {
   it.each(["run", "orphan"])("rolls back %s reconciliation when outbox writing fails, then recovers after reopen", (kind) => {
@@ -62,7 +63,7 @@ describe("task recovery", () => {
       } else if (entry === "supervisor") {
         await new Supervisor({ repositories, supervisorId: "supervisor", now }).scanOnce();
       } else if (entry === "recover") {
-        recoverTask({ repositories, taskId: "task_1", now });
+        recoverTask({ runtimeActionChannel: createRuntimeActionChannel(), repositories, taskId: "task_1", now });
       } else {
         reconcileStaleRunningTasks({ repositories, companyId: "company_1", now });
       }
@@ -234,6 +235,7 @@ describe("task recovery", () => {
 
     expect(() =>
       recoverTask({
+        runtimeActionChannel: createRuntimeActionChannel(),
         repositories: fixture.repositories,
         taskId: "task_1",
         now: () => new Date("2026-08-25T00:03:01.000Z"),
@@ -261,6 +263,7 @@ describe("task recovery", () => {
 
     expect(() =>
       recoverTask({
+        runtimeActionChannel: createRuntimeActionChannel(),
         repositories: fixture.repositories,
         taskId: "task_1",
         now: () => new Date("2026-08-25T00:03:01.000Z"),
@@ -290,6 +293,7 @@ describe("task recovery", () => {
     ]);
 
     const result = recoverTask({
+        runtimeActionChannel: createRuntimeActionChannel(),
       repositories: fixture.repositories,
       taskId: "task_1",
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
@@ -333,6 +337,7 @@ describe("task recovery", () => {
     });
 
     const result = recoverTask({
+        runtimeActionChannel: createRuntimeActionChannel(),
       repositories: fixture.repositories,
       taskId: "task_1",
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],

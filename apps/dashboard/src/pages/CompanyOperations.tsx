@@ -10,6 +10,8 @@ import { RetroButton, RetroPanel } from "../ui/retro";
 import { formatCodeLabel, formatCompanyStatus, formatReplanProposalStatus } from "../ui/tasks/formatDisplayValue";
 import { formatTaskFailureReason, formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 import { WaitStatePanel } from "../ui/waitStates/WaitStatePanel";
+import { ReplanProposalCard } from "../ui/replan/ReplanProposalCard";
+import { ReplanRequestForm, type ReplanRequest } from "../ui/replan/ReplanRequestForm";
 
 export type CompanyOperationsProps = {
   company: CompanySummary;
@@ -19,8 +21,9 @@ export type CompanyOperationsProps = {
   isPaused: boolean;
   menuBar?: ReactNode;
   onConfirmHumanAction(humanActionId: string, evidence: Record<string, string>): Promise<void> | void;
-  onConfirmReplanProposal(proposalId: string): void;
-  onCreateReplanProposal(taskId: string): void;
+  onConfirmReplanProposal(proposalId: string): Promise<void> | void;
+  onCreateReplanProposal(taskId: string, request: ReplanRequest): Promise<void> | void;
+  onRejectReplanProposal(proposalId: string, note: string | null): Promise<void> | void;
   replanProposals: ReplanProposalSummary[];
   tasks: TaskSummary[];
   waitStates: WaitStateSummary[];
@@ -36,6 +39,7 @@ export function CompanyOperations({
   onConfirmHumanAction,
   onConfirmReplanProposal,
   onCreateReplanProposal,
+  onRejectReplanProposal,
   replanProposals,
   tasks,
   waitStates,
@@ -46,15 +50,23 @@ export function CompanyOperations({
     () => events.map((event) => formatAgentActivityEvent(event, event.taskId ? tasksById.get(event.taskId) : undefined, language, t)),
     [events, tasksById, language, t],
   );
-  const replanSourceTaskIds = useMemo(() => new Set(replanProposals.map((proposal) => proposal.sourceTaskId)), [replanProposals]);
+  // A task with a proposal still awaiting a decision is decided from that proposal. One whose proposal
+  // was rejected, failed or went stale is asked again — the server dismisses what a new request replaces.
+  const pendingProposalTaskIds = useMemo(
+    () => new Set(replanProposals.filter((proposal) => proposal.status === "proposed" && !proposal.stale).map((proposal) => proposal.sourceTaskId)),
+    [replanProposals],
+  );
   // Read from the server's Resume Affordances, not from a status rule of our own. The old rule —
   // `status === "needs_replan"` — missed every task whose only way forward is a replan without ever
   // reaching that status, most importantly one at the Bounded Recovery ceiling (ADR 0020).
   const tasksAwaitingReplanProposal = tasks.filter(
     (task) =>
       (task.affordances ?? []).some((affordance) => affordance.kind === "request_replan")
-      && !replanSourceTaskIds.has(task.id),
+      && !pendingProposalTaskIds.has(task.id),
   );
+  // Proposals awaiting a decision first; the rest is history.
+  const orderedProposals = [...replanProposals].sort((left, right) =>
+    Number(right.status === "proposed") - Number(left.status === "proposed") || right.createdAt.localeCompare(left.createdAt));
   const taskCounts = countTaskStates(tasks);
 
   return (
@@ -113,12 +125,7 @@ export function CompanyOperations({
           <div className="replan-proposals">
             {tasksAwaitingReplanProposal.map((task) => (
               <div className="replan-card" key={task.id}>
-                <p>
-                  {taskTitle(task, language)} — {t("operations.replanAwaitingProposal")}
-                </p>
-                <RetroButton onClick={() => onCreateReplanProposal(task.id)} variant="primary">
-                  {t("operations.createReplanProposal")}
-                </RetroButton>
+                <ReplanRequestForm onSubmit={(request) => onCreateReplanProposal(task.id, request)} taskTitle={taskTitle(task, language)} />
               </div>
             ))}
 
@@ -126,82 +133,15 @@ export function CompanyOperations({
               <p className="muted">{t("operations.noReplanProposals")}</p>
             ) : null}
 
-            {replanProposals.map((proposal) => {
-              const sourceTask = tasksById.get(proposal.sourceTaskId);
-              const affectedDownstreamTasks = tasks.filter((task) => task.dependsOnTaskIds?.includes(proposal.sourceTaskId));
-              const finalReplacementTask = proposal.replacementTasks.at(-1);
-              return (
-                <div className="replan-card" key={proposal.id}>
-                  <div className="replan-card__header">
-                    <p>
-                      {sourceTask ? taskTitle(sourceTask, language) : t("operations.unknownTask")} —{" "}
-                      {resolveLocalizedValue(proposal.rationaleText, language, proposal.rationale)}
-                    </p>
-                    <span>{formatReplanProposalStatus(proposal.status, t)}</span>
-                  </div>
-                  <VideotexKeyValue
-                    items={[
-                      { label: t("operations.proposalSource"), value: formatProposalSource(proposal.proposalSource, t) },
-                      {
-                        label: t("operations.plannerAgent"),
-                        value: proposal.plannerAgentId ?? t("operations.notAvailable"),
-                      },
-                      {
-                        label: t("operations.plannerPrompt"),
-                        value: proposal.plannerPromptPath ?? t("operations.notAvailable"),
-                      },
-                      ...(proposal.plannerFailureReason
-                        ? [
-                            {
-                              label: t("operations.fallbackReason"),
-                              value: `${formatTaskFailureReason(proposal.plannerFailureReason, t)}: ${proposal.plannerFailureMessage ?? t("operations.notAvailable")}`,
-                            },
-                          ]
-                        : []),
-                    ]}
-                  />
-                  <section className="replan-review-section">
-                    <h3>{t("operations.originalTask")}</h3>
-                    <VideotexLog
-                      emptyMessage={t("operations.unknownTask")}
-                      rows={sourceTask ? [`${taskTitle(sourceTask, language)} / ${formatTaskStatus(sourceTask, t)}`] : []}
-                    />
-                  </section>
-                  <section className="replan-review-section">
-                    <h3>{t("operations.replacementChain")}</h3>
-                    <VideotexLog
-                      emptyMessage={t("operations.noReplacementTasks")}
-                      rows={proposal.replacementTasks.map((task) => resolveLocalizedValue(task.titleText, language, task.title))}
-                    />
-                  </section>
-                  <section className="replan-review-section">
-                    <h3>{t("operations.affectedDownstream")}</h3>
-                    <VideotexLog
-                      emptyMessage={t("operations.noAffectedDownstream")}
-                      rows={affectedDownstreamTasks.map((task) => taskTitle(task, language))}
-                    />
-                  </section>
-                  <section className="replan-review-section">
-                    <h3>{t("operations.rewirePreview")}</h3>
-                    <VideotexLog
-                      emptyMessage={t("operations.noRewirePreview")}
-                      rows={affectedDownstreamTasks.map((task) =>
-                        finalReplacementTask
-                          ? `${taskTitle(task, language)} ${t("operations.rewirePreviewConnector")} ${resolveLocalizedValue(finalReplacementTask.titleText, language, finalReplacementTask.title)}.`
-                          : `${taskTitle(task, language)} ${t("operations.rewirePreviewMissingFinalTask")}`,
-                      )}
-                    />
-                  </section>
-                  {proposal.status === "proposed" ? (
-                    <RetroButton onClick={() => onConfirmReplanProposal(proposal.id)} variant="primary">
-                      {t("operations.confirmReplan")}
-                    </RetroButton>
-                  ) : (
-                    <p className="muted">{t("operations.replanConfirmed")}</p>
-                  )}
-                </div>
-              );
-            })}
+            {orderedProposals.map((proposal) => (
+              <ReplanProposalCard
+                key={proposal.id}
+                onConfirm={onConfirmReplanProposal}
+                onReject={onRejectReplanProposal}
+                proposal={proposal}
+                tasks={tasks}
+              />
+            ))}
           </div>
         </RetroPanel>
       </Workspace>
@@ -227,14 +167,6 @@ export function CompanyOperations({
       </Workspace>
     </AppShell>
   );
-}
-
-function formatProposalSource(source: ReplanProposalSummary["proposalSource"], t: (key: TranslationKey) => string): string {
-  if (source === "planner_agent") {
-    return t("operations.generatedByPlanner");
-  }
-
-  return t("operations.generatedByTemplate");
 }
 
 function countTaskStates(tasks: TaskSummary[]) {

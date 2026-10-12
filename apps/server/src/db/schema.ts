@@ -611,6 +611,20 @@ function migrateLocalizedBusinessContentFields(database: DatabaseClient): void {
   addColumnIfMissing(database, taskColumns, "tasks", "verification_requirements TEXT");
   addColumnIfMissing(database, taskColumns, "tasks", "decomposition TEXT");
 
+  // ADR 0043: a proposal's mode, the founder's request, a Revision's before/after, and the state it was made from.
+  const replanColumns = getColumnNames(database, "replan_proposals");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "mode TEXT");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "requested_mode TEXT");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "founder_note TEXT");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "task_before TEXT");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "task_after TEXT");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "capabilities_changed INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "requirement_changes TEXT");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "requirement_source_notes TEXT");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "basis TEXT");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "rejection_note TEXT");
+  addColumnIfMissing(database, replanColumns, "replan_proposals", "rejected_at TEXT");
+
   const dependencyColumns = getColumnNames(database, "task_dependencies");
   addColumnIfMissing(database, dependencyColumns, "task_dependencies", "handoff_contract_text TEXT");
   addColumnIfMissing(database, dependencyColumns, "task_dependencies", "input_role TEXT NOT NULL DEFAULT 'context'");

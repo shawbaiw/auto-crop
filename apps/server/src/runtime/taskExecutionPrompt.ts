@@ -1,8 +1,9 @@
-import { actionIntentCategories, type Company, type Locale, type Task, type VerificationInputs } from "@auto-crop/core";
+import { actionIntentCategories, type Company, type Locale, type ProofType, type Task, type VerificationInputs } from "@auto-crop/core";
 import { describeRuntimeCapability, type AgentCapabilityGrant } from "../policies/capabilityGrant";
 import type { TaskHandoff } from "./dependencyReadiness";
 import { LOCALE_LANGUAGE_NAME } from "./localePromptText";
 import { buildProofContractInstructions } from "./proofContract";
+import { renderSettledFacts, type SettledFact } from "./settledFacts";
 
 export type BuildTaskExecutionPromptInput = {
   company: Company;
@@ -10,40 +11,22 @@ export type BuildTaskExecutionPromptInput = {
   handoffs: TaskHandoff[];
   /** What this run may actually do. Omitted only by callers that do not launch an agent. */
   grant?: AgentCapabilityGrant;
-  /** Failed checks a verifier sent back to this task, to fix in this run. */
-  rework?: Array<{
-    round: number;
-    verifierTitle: string;
-    failedChecks: Array<{ requirementId: string; description: string; outcome: string; evidence: string }>;
-  }>;
+  /**
+   * The Proof Reference types this task's Proof Schema accepts, the same list the runtime checks a
+   * submitted envelope against. Omitted only by callers that do not launch an agent.
+   */
+  acceptedProofTypes?: ProofType[];
+  /**
+   * What has already been decided or supplied for this task, from {@link resolveSettledFacts}. The
+   * dispatch always passes it; there is no other channel by which a re-run learns what was settled.
+   */
+  settledFacts?: SettledFact[];
   /** This task's Verification Contract obligations, resolved by the runtime before dispatch. */
   verification?: {
     producesRequirements: boolean;
     inputs: VerificationInputs | null;
   };
 };
-
-/**
- * Tell a producer what its verifier found. The previous delivery was judged and failed; this run exists
- * to fix exactly those checks, so they lead the prompt's task-specific instructions.
- */
-function buildReworkInstructions(rework: BuildTaskExecutionPromptInput["rework"]): string[] {
-  if (!rework || rework.length === 0) {
-    return [];
-  }
-  return [
-    "## Rework Requested",
-    "",
-    "Your previous delivery was verified and did not pass. Fix every check below in the existing work, then deliver again;",
-    "the verifier will check a fresh snapshot of your new output against the same requirements.",
-    ...rework.flatMap((entry) => [
-      "",
-      `${entry.verifierTitle}, verification round ${entry.round}:`,
-      ...entry.failedChecks.map((check) => `- \`${check.requirementId}\` (${check.outcome}): ${check.description} — evidence: ${check.evidence}`),
-    ]),
-    "",
-  ];
-}
 
 /**
  * State the Verification Contract a run is under. A requirements producer declares the checks its
@@ -110,7 +93,27 @@ function buildVerificationInstructions(
  * front is what makes "file a blocker instead" an instruction the agent can actually follow, and what
  * makes runtime refutation of a false capability claim fair (ADR 0021).
  */
-function buildCapabilityGrantInstructions(grant: AgentCapabilityGrant | undefined): string[] {
+/**
+ * `proof_refs` and `file_refs`, explained with the run's own limits. Left unexplained, an agent read
+ * `proof_refs` off the tool schema and cited every page it researched as a `url` ref its task could
+ * not accept.
+ */
+function proofRefInstructions(acceptedProofTypes: ProofType[] | undefined, proofSchemaId: string): string[] {
+  if (!acceptedProofTypes) {
+    return [];
+  }
+  return [
+    "Optional `file_refs`: `[{ \"path\": \"workspace/relative/path\", \"description\": \"...\" }]` for files the next task should receive.",
+    acceptedProofTypes.length > 0
+      ? `Optional \`proof_refs\`: \`[{ "type": "...", "uri": "...", "summary": "..." }]\` for evidence this run produced that the runtime should record as Proof. This task's Proof Schema (\`${proofSchemaId}\`) accepts only these types: ${acceptedProofTypes.join(", ")}. Any other type is rejected.`
+      : `Do not submit \`proof_refs\`: this task's Proof Schema (\`${proofSchemaId}\`) accepts none.`,
+    "Sources you read, such as web pages, are not proof_refs: cite them inside `payload` and `execution_report.evidence`.",
+  ];
+}
+
+function buildCapabilityGrantInstructions(
+  grant: AgentCapabilityGrant | undefined,
+): string[] {
   if (!grant) {
     return [];
   }
@@ -129,7 +132,7 @@ function buildCapabilityGrantInstructions(grant: AgentCapabilityGrant | undefine
       : []),
     "",
     "This list is authoritative. It is not a sandbox limitation to work around, and the runtime knows what it granted.",
-    "If the task cannot be done with what is listed, write `.auto-crop/business-artifact.json` as a `blocker` with",
+    "If the task cannot be done with what is listed, submit an Artifact Envelope as a `blocker` with",
     "`payload.blocker_class: \"environment_blocked\"` and `payload.capability` naming the missing capability.",
     "Do not substitute estimates, priors, or recalled figures for data a capability would have retrieved and then",
     "submit the result as a `deliverable`. Claiming a capability you were granted was unavailable fails the task.",
@@ -221,8 +224,10 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
   const artifactInstructions = [
     "## Business Artifact",
     "",
-    "Write a structured business artifact to `.auto-crop/business-artifact.json` before finishing.",
-    "Use this JSON shape:",
+    "Submit exactly one task delivery by calling `submit_artifact_envelope` before finishing.",
+    "The tool accepts only the Artifact Envelope payload; do not include task id, company id, run id, runtime URLs, database access, or filesystem authority.",
+    "If the tool returns errors, correct the envelope and call it again; the last accepted call is your delivery.",
+    "Use this envelope shape:",
     JSON.stringify(
       {
         artifact_kind: "deliverable",
@@ -243,6 +248,14 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
     "Choose artifact_role from: findings, plan, spec, implementation, validation, launch, report, none.",
     "Put use-case-specific names such as keyword_research, mvp_brief, or seo_launch_plan in artifact_subtype, not in artifact_kind or artifact_role.",
     "Use payload for the task-specific structured result and lineage for the upstream objective chain you used.",
+    "",
+    "A `blocker` says this run cannot produce the deliverable. When one thing a person could bring back from outside the runtime",
+    "— data they can look up, a fact only they know — would let this same task continue, add `payload.unblock_request`:",
+    JSON.stringify({ needed: "...", why: "...", evidence_requirements: ["..."] }),
+    "Each `evidence_requirements` entry is one value the person must fill in, and they must fill in every one, so name each value you need.",
+    "Never ask for credentials, logins, API keys, tokens or cookies: a capability this run lacks is not something a person hands back.",
+    "What the person supplies reaches the next run of this task under Settled Facts.",
+    ...proofRefInstructions(input.acceptedProofTypes, task.proofSchemaId),
     "",
     "## Structured Execution Report",
     "",
@@ -298,12 +311,12 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
   const proofInstructions = buildProofContractInstructions(task);
   const grantInstructions = buildCapabilityGrantInstructions(grant);
   const verificationInstructions = buildVerificationInstructions(input.verification, languageName);
-  const reworkInstructions = buildReworkInstructions(input.rework);
+  const settledFacts = renderSettledFacts(input.settledFacts ?? []);
   const basePrompt = [
     ...companyContext,
     task.description,
     "",
-    ...reworkInstructions,
+    ...settledFacts,
     ...(grantInstructions.length > 0 ? [...grantInstructions, ""] : []),
     ...artifactInstructions,
     "",

@@ -11,12 +11,15 @@ import { migrate } from "../db/schema";
 import { acceptTaskBusinessArtifact } from "./businessAcceptance";
 import { isReviewableBusinessArtifact } from "./businessArtifact";
 import { resolveDependencyReadiness } from "./dependencyReadiness";
+import { createHandoffPackage } from "./proof";
 import { runSchedulerOnce } from "./scheduler";
 import { resolveTaskAffordanceState } from "./taskAffordances";
 import { reconcileTaskHolds } from "./taskHoldReconciliation";
 import { refreshTaskDependencyState } from "./taskRefresh";
 import { evaluateVerificationReport, prepareVerificationInputs } from "./verificationContract";
-import { applyVerificationRework, pendingReworkFeedback } from "./verificationRework";
+import { applyVerificationRework } from "./verificationRework";
+import { resolveSettledFacts } from "./settledFacts";
+import { channelWithUnfinishedDelivery } from "./fixtures/stagedDelivery";
 
 /**
  * A department split runs as a declared chain: Define declares verification requirements, Execute
@@ -399,8 +402,8 @@ describe("department subtask verification", () => {
     const { execute, validate } = harness.subtasks();
     expect(harness.runOrder).toEqual(["define", "execute", "validate", "execute", "validate"]);
     const executePrompts = harness.promptHistory.filter((entry) => entry.stage === "execute").map((entry) => entry.prompt);
-    expect(executePrompts[0]).not.toContain("## Rework Requested");
-    expect(executePrompts[1]).toContain("## Rework Requested");
+    expect(executePrompts[0]).not.toContain("## Settled Facts");
+    expect(executePrompts[1]).toContain("## Settled Facts");
     expect(executePrompts[1]).toContain("`app-script` (failed)");
     expect(executePrompts[1]).toContain("app.js throws on load.");
     expect(executePrompts[1]).not.toContain("`home-page`");
@@ -538,12 +541,13 @@ describe("verification contract", () => {
     expect(prepareVerificationInputs({ repositories, task: verifier, workspacePath: verifierWorkspace }).kind).toBe("ready");
     repositories.updateTaskExecutionSummary(verifier.id, { latestFailureReason: "no_proof", latestFailureMessage: "no proof" });
     writeFileSync(join(verifierWorkspace, "validation.patch"), "diff --git a/index.html b/index.html\n", "utf8");
-    writeArtifact(verifierWorkspace, "validation", {
+    const runtimeActionChannel = channelWithUnfinishedDelivery(verifier, deliveryEnvelope("validation", {
       verification: { checks: [{ requirement_id: "r1", outcome: "failed", evidence: "index.html does not render." }] },
-    });
+    }));
 
     const result = refreshTaskDependencyState({
       repositories,
+      runtimeActionChannel,
       taskId: verifier.id,
       proofSchemas: [{ id: "repo-diff", description: "diff proof", acceptedTypes: ["diff"] }],
     });
@@ -565,7 +569,8 @@ describe("verification contract", () => {
     const { repositories } = harness;
     const faulted = { ...baseTask("producer_a", "complete", "landing-page-file") };
     const sound = { ...baseTask("producer_b", "complete", "landing-page-file") };
-    const verifier = { ...baseTask("verifier_1", "running", "test-output") };
+    // The verifier's standard is planned onto it; a verdict is current only against its verifier's present requirements.
+    const verifier = { ...baseTask("verifier_1", "running", "test-output"), verificationRequirements: [{ id: "r1", description: "works" }, { id: "r2", description: "styled" }] };
     for (const task of [faulted, sound, verifier]) {
       repositories.createTask(task);
     }
@@ -609,7 +614,7 @@ describe("verification contract", () => {
     ]);
     expect(repositories.getTask(faulted.id)?.status).toBe("queued");
     expect(repositories.getTask(sound.id)?.status).toBe("complete");
-    expect(pendingReworkFeedback(repositories, repositories.getTask(faulted.id)!)[0]?.failedChecks.map((check) => check.requirementId)).toEqual(["r1"]);
+    expect(reworkChecks(repositories, faulted.id).map((check: { requirementId: string }) => check.requirementId)).toEqual(["r1"]);
 
     // A producer parked on a Founder Decision is not the verifier's to send back.
     const decided = { ...baseTask("producer_c", "review", "landing-page-file") };
@@ -745,7 +750,7 @@ describe("verification contract", () => {
     repositories.appendProof({ id: "proof_parent_rw", taskId: parent.id, type: "file", uri: "summary.md", summary: "summary", verifiedAt: null });
     repositories.createBusinessArtifact(artifactRecord("artifact_parent_rw", parent.id, {}));
 
-    const outerVerifier = { ...baseTask("outer_verifier", "running", "test-output"), position: 98 };
+    const outerVerifier = { ...baseTask("outer_verifier", "running", "test-output"), position: 98, verificationRequirements: [{ id: "accessible", description: "The page is reachable." }] };
     repositories.createTask(outerVerifier);
     repositories.createTaskDependency({ taskId: outerVerifier.id, dependsOnTaskId: parent.id, inputRole: "verification_target" });
     const report = {
@@ -777,7 +782,7 @@ describe("verification contract", () => {
     expect(repositories.getTask(validate.id)?.status).toBe("waiting_dependency");
     expect(repositories.getTask(parent.id)).toMatchObject({ status: "waiting_dependency" });
     expect(repositories.getCurrentBusinessArtifactForTask(parent.id)?.reviewStatus).toBe("returned");
-    expect(pendingReworkFeedback(repositories, repositories.getTask(execute.id)!)[0]?.failedChecks.map((check) => check.requirementId)).toEqual(["accessible"]);
+    expect(reworkChecks(repositories, execute.id).map((check: { requirementId: string }) => check.requirementId)).toEqual(["accessible"]);
   });
 
   /**
@@ -841,6 +846,41 @@ describe("verification contract", () => {
 
     expect(prepareVerificationInputs({ repositories, task: verifier, workspacePath: verifierWorkspace }).kind).toBe("ready");
     expect(readFileSync(join(verifierWorkspace, ".auto-crop-inputs", producer.id, "files", "report.md"), "utf8")).toBe("reworked");
+  });
+
+  it("snapshots runtime-packaged fileRefs instead of later live workspace mutations", () => {
+    const harness = createHarness({ validate: () => [] });
+    const producerWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-producer-"));
+    const verifierWorkspace = mkdtempSync(join(tmpdir(), "auto-crop-verifier-"));
+    createdDirs.push(producerWorkspace, verifierWorkspace);
+
+    const { repositories } = harness;
+    const define = baseTask("define_file_refs", "complete", "product-brief");
+    const producer = baseTask("producer_file_refs", "complete", "landing-page-file");
+    const verifier = { ...baseTask("verify_file_refs", "queued", "test-output"), workspacePath: verifierWorkspace };
+    for (const task of [define, producer, verifier]) {
+      repositories.createTask(task);
+    }
+    repositories.createBusinessArtifact(artifactRecord("artifact_define_file_refs", define.id, {
+      verification_requirements: [{ id: "report", description: "The report is snapshotted." }],
+    }));
+    writeFileSync(join(producerWorkspace, "report.md"), "settled\n", "utf8");
+    createHandoffPackage({
+      task: { ...producer, workspacePath: producerWorkspace },
+      proofs: [{ id: "proof_1", taskId: producer.id, type: "command_output", uri: "agent.log", summary: "ran", verifiedAt: null }],
+      fileRefs: [{ path: "report.md", description: "Submitted report" }],
+      workspacePath: producerWorkspace,
+      logPath: join(producerWorkspace, "agent.log"),
+    });
+    writeFileSync(join(producerWorkspace, "report.md"), "mutated\n", "utf8");
+    repositories.createBusinessArtifact(artifactRecord("artifact_producer_file_refs", producer.id, {}, producerWorkspace));
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: define.id, inputRole: "verification_requirements" });
+    repositories.createTaskDependency({ taskId: verifier.id, dependsOnTaskId: producer.id, inputRole: "verification_target" });
+
+    const result = prepareVerificationInputs({ repositories, task: verifier, workspacePath: verifierWorkspace });
+
+    expect(result.kind).toBe("ready");
+    expect(readFileSync(join(verifierWorkspace, ".auto-crop-inputs", producer.id, "files", "report.md"), "utf8")).toBe("settled\n");
   });
 
   it("refuses to dispatch a verifier when the delivery records no workspace to hand over", () => {
@@ -934,6 +974,7 @@ function createHarness(behaviour: StageBehaviour) {
     id: "mock-worker",
     name: "Mock Worker",
     capabilities: ["code"],
+    contractCapabilities: ["artifact_envelope"],
     detect: async () => true,
     run: async (request: AgentRunRequest) => {
       if (request.metadata.phase === "execution_brief") {
@@ -949,29 +990,29 @@ function createHarness(behaviour: StageBehaviour) {
       prompts.set(stage, request.prompt);
       promptHistory.push({ stage, prompt: request.prompt });
       const workspace = request.workspacePath;
+      const submit = (envelope: unknown) => request.runtimeActions!.submitArtifactEnvelope(envelope);
       if (stage === "define") {
-        writeArtifact(workspace, "plan", behaviour.requirements === null ? {} : {
+        submit(deliveryEnvelope("plan", behaviour.requirements === null ? {} : {
           ...behaviour.defineExtra,
           verification_requirements: behaviour.requirements ?? [
             { id: "home-page", description: "The prototype has an index.html entry page." },
             { id: "app-script", description: "The prototype ships its app.js behaviour." },
           ],
-        });
+        }));
       } else if (stage === "execute") {
         writeFileSync(join(workspace, "index.html"), "<h1>Prototype</h1>");
         writeFileSync(join(workspace, "app.js"), "console.log('prototype');");
         writeFileSync(join(workspace, ".env"), "SECRET=1");
         mkdirSync(join(workspace, "node_modules"), { recursive: true });
         writeFileSync(join(workspace, "node_modules", "dep.js"), "");
-        writeArtifact(workspace, "implementation", {});
+        submit(deliveryEnvelope("implementation", {}));
       } else {
         const checks = behaviour.validate?.(workspace, request.prompt) ?? [];
-        writeArtifact(
-          workspace,
+        submit(deliveryEnvelope(
           "validation",
           behaviour.validateWithoutVerification ? {} : { verification: { checks } },
           behaviour.validateKind,
-        );
+        ));
       }
       return { status: "complete", exitCode: 0, stdout: `ran ${stage}`, stderr: "" };
     },
@@ -1034,32 +1075,28 @@ function snapshotFilesFor(workspacePath: string, prompt: string): string {
   return join(workspacePath, snapshotPath ?? ".auto-crop-inputs/missing", "files");
 }
 
-function writeArtifact(workspacePath: string, role: string, payload: Record<string, unknown>, kind = "deliverable"): void {
-  mkdirSync(join(workspacePath, ".auto-crop"), { recursive: true });
-  writeFileSync(
-    join(workspacePath, ".auto-crop", "business-artifact.json"),
-    JSON.stringify({
-      artifact_kind: kind,
-      artifact_role: role,
-      artifact_subtype: `prototype_${role}`,
-      task_type: `engineering.prototype_${role}`,
-      payload: {
-        ...payload,
-        report_version: 2,
-        execution_report: {
-          work_summary: "Performed the stage.",
-          evidence: "Recorded the stage output.",
-          conclusion: "The stage finished.",
-          vision_impact: "It moves the prototype forward.",
-          remaining_gap: "Later stages remain.",
-          recommendation: "Continue.",
-        },
-        outcome_summary: "The stage finished and later stages remain.",
+/** The Artifact Envelope a stage's agent submits. */
+function deliveryEnvelope(role: string, payload: Record<string, unknown>, kind = "deliverable"): unknown {
+  return {
+    artifact_kind: kind,
+    artifact_role: role,
+    artifact_subtype: `prototype_${role}`,
+    task_type: `engineering.prototype_${role}`,
+    payload: {
+      ...payload,
+      report_version: 2,
+      execution_report: {
+        work_summary: "Performed the stage.",
+        evidence: "Recorded the stage output.",
+        conclusion: "The stage finished.",
+        vision_impact: "It moves the prototype forward.",
+        remaining_gap: "Later stages remain.",
+        recommendation: "Continue.",
       },
-      lineage: {},
-    }),
-    "utf8",
-  );
+      outcome_summary: "The stage finished and later stages remain.",
+    },
+    lineage: {},
+  };
 }
 
 function artifactRecord(id: string, taskId: string, payload: Record<string, unknown>, deliveryWorkspacePath: string | null = null) {
@@ -1145,3 +1182,8 @@ function keyResultRecord(): KeyResult {
   };
 }
 
+/** The failed checks the Settled Facts send back to one producer. */
+function reworkChecks(repositories: ReturnType<typeof createRepositories>, producerTaskId: string) {
+  const fact = resolveSettledFacts(repositories, repositories.getTask(producerTaskId)!).find((entry) => entry.kind === "verification_rework");
+  return fact?.kind === "verification_rework" ? fact.failedChecks : [];
+}

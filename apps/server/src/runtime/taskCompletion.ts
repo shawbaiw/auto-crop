@@ -2,6 +2,7 @@ import { localizedTextFromString, localizedTextSchema, nextStepItemSeveritySchem
 import type { createRepositories } from "../db/repositories";
 import { parseOpenDecisions, type FounderDecisionDeclaration } from "./founderDecision";
 import { createDefaultId } from "./ids";
+import { unblockRequestNextStepItem } from "./unblockRequest";
 
 export function recordTaskCompletionEvent(input: {
   repositories: ReturnType<typeof createRepositories>;
@@ -39,7 +40,12 @@ export function recordTaskCompletionEvent(input: {
     input.task,
     input.founderDecisionBlockedTaskIds ?? [],
   );
-  const proposedNextSteps = [...proposal.items, ...founderDecisionItems];
+  // An Unblock Request becomes a Human Action only on the outcome that parks the task on it, so a
+  // projected Human Action always has the Hold it answers behind it (ADR 0042).
+  const unblockRequestItem = input.outcome === "awaiting_human_action" && input.businessArtifact
+    ? unblockRequestNextStepItem(input.businessArtifact, input.task)
+    : null;
+  const proposedNextSteps = [...proposal.items, ...founderDecisionItems, ...(unblockRequestItem ? [unblockRequestItem] : [])];
   const validatedNextSteps = validateNextStepItems(proposedNextSteps);
   const outcomeSummaryText =
     input.outcomeSummaryText !== undefined

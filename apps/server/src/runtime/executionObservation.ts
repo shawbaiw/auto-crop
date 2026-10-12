@@ -7,6 +7,7 @@ type Repositories = ReturnType<typeof createRepositories>;
  * substantive work, may repair its artifact's syntax (ADR 0028), and then settles. Attributing a
  * budget or a silence to "the run" loses which of those was actually slow.
  */
+/** `repairing_artifact` is historical: runs recorded before ADR 0041 removed the Artifact Syntax Repair. */
 export type ExecutionPhase = "preparing_brief" | "executing" | "repairing_artifact" | "finalizing";
 
 /** Where observed bytes came from. An agent that only writes to stderr is still working. */
