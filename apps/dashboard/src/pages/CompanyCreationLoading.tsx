@@ -1,8 +1,10 @@
-import { CircleAlert, LoaderCircle, RefreshCw } from "lucide-react";
+import { ArrowLeft, CircleAlert, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AgentSummary, CompanyEventSummary } from "../api/client";
 import { CompanyFlowPage, CreationTimeline } from "../components/company-flow";
 import { Alert, AlertTitle, Button, Card } from "../components/ui";
+import { StopOperatingConfirm } from "../components/workbench/StopOperatingConfirm";
+import type { WorkbenchCommand } from "../components/workbench/workbenchCommands";
 import { useLanguage } from "../ui/language";
 import { resolveLocalizedValue } from "../ui/language/localizedText";
 import { formatPermissionMode } from "../ui/tasks/formatDisplayValue";
@@ -17,6 +19,14 @@ export type CompanyCreationLoadingProps = {
   selectedAgent: AgentSummary | null;
   /** Shown when the agent list has not loaded, so the CEO is never blank. */
   selectedAgentId?: string;
+  /**
+   * A failed creation can also be stopped (ADR 0044) or left for another company, so this page is
+   * never a dead end. Both appear only when creation failed.
+   */
+  stopCommand?: WorkbenchCommand;
+  onStopped?(): void;
+  /** "other" returns to another company; "new" opens the Onboarding Wizard when there is none. */
+  leave?: { kind: "other" | "new"; run(): void };
 };
 
 export function CompanyCreationLoading({
@@ -28,11 +38,15 @@ export function CompanyCreationLoading({
   permissionMode,
   selectedAgent,
   selectedAgentId,
+  stopCommand,
+  onStopped,
+  leave,
 }: CompanyCreationLoadingProps) {
   const { language, t } = useLanguage();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const summaryId = "company-creation-summary";
   const stagesId = "company-creation-stages";
+  const nextStepsId = "company-creation-next-steps";
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -103,6 +117,31 @@ export function CompanyCreationLoading({
             {isRetrying ? t("creating.retrying") : t("creating.retry")}
           </Button>
         </Alert>
+      ) : null}
+
+      {isFailed && (stopCommand || leave) ? (
+        <Card aria-labelledby={nextStepsId} className="grid gap-3 p-4 sm:p-6" role="region">
+          <h2 className="text-base font-semibold text-foreground" id={nextStepsId}>
+            {t("creating.nextSteps")}
+          </h2>
+          {leave ? (
+            <div>
+              <Button onClick={leave.run} variant="outline">
+                {leave.kind === "other" ? <ArrowLeft aria-hidden="true" /> : <Plus aria-hidden="true" />}
+                {t(leave.kind === "other" ? "creating.backToOtherCompany" : "creating.createNewCompany")}
+              </Button>
+            </div>
+          ) : null}
+          {stopCommand ? (
+            <StopOperatingConfirm
+              command={stopCommand}
+              companyName={companyName}
+              explanation={t("creating.abandonExplanation")}
+              label={t("creating.abandon")}
+              onStopped={onStopped}
+            />
+          ) : null}
+        </Card>
       ) : null}
     </CompanyFlowPage>
   );

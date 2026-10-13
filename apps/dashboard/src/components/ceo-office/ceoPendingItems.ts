@@ -1,7 +1,6 @@
 import { deriveCeoPendingItems } from "@auto-crop/core";
 import type { CeoOfficeItemSummary, TaskSummary } from "../../api/client";
 import { useLanguage } from "../../ui/language";
-import { departmentName } from "../../ui/language/localizedNames";
 
 export type CeoPendingItem = {
   departmentName: string;

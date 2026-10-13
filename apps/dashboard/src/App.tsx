@@ -24,17 +24,22 @@ import {
   type VisionGapSummary,
   type WaitStateSummary,
 } from "./api/client";
-import { workbenchCommands } from "./components/workbench/workbenchCommands";
-import { CompanyDashboard, type DashboardFocusSection, type DashboardFocusTarget } from "./pages/CompanyDashboard";
+import { StartupScreen } from "./components/company-flow";
+import { operatingCommand, workbenchCommands } from "./components/workbench/workbenchCommands";
+import { WorkbenchFrame } from "./components/workbench/WorkbenchFrame";
+import {
+  ceoOfficeLocation,
+  parseLocation,
+  serializeLocation,
+  type WorkbenchLocation,
+} from "./components/workbench/workbenchLocation";
 import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
-import { CompanyOperations } from "./pages/CompanyOperations";
-import { CompanyPicker } from "./pages/CompanyPicker";
+import { Deliverables } from "./pages/Deliverables";
 import { DepartmentWorkspace } from "./pages/DepartmentWorkspace";
 import { Onboarding, type OnboardingStep } from "./pages/Onboarding";
-import { CRTViewport } from "./ui/crt";
+import { OperationsDiagnostics } from "./pages/OperationsDiagnostics";
+import { Settings } from "./pages/Settings";
 import { isLanguageId, LanguageProvider, readCurrentLanguage, type LanguageId } from "./ui/language";
-import { DashboardMenuBar } from "./ui/menu/DashboardMenuBar";
-import { isPaletteId, readCurrentSkin, ThemeProvider, type PaletteId } from "./ui/theme";
 import "./styles.css";
 
 export type AppProps = {
@@ -43,14 +48,14 @@ export type AppProps = {
 
 type AgentLoadState = "idle" | "loading" | "ready" | "failed";
 type CompanyListLoadState = "loading" | "ready" | "failed";
-type AppView = "company-picker" | "onboarding" | "creating" | "department-workspace" | "dashboard" | "operations";
+/** `starting` finds the company to open; `workbench` is every page of an open company. */
+type AppView = "starting" | "onboarding" | "creating" | "workbench";
 const currentCompanyStorageKey = "auto-crop.currentCompanyId";
 const currentViewStorageKey = "auto-crop.currentView";
 const creationIdempotencyKeyStorageKey = "auto-crop.creationIdempotencyKey";
 
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
-  const defaultSkin = useMemo(() => getInitialSkin(), []);
   const defaultLanguage = useMemo(() => getInitialLanguage(), []);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentLoadState, setAgentLoadState] = useState<AgentLoadState>("idle");
@@ -65,7 +70,6 @@ export default function App({ apiClient }: AppProps) {
   // Read by the event-stream callbacks, which outlive the render that subscribed them: the stream
   // stays open across view changes, because events published while it reconnects are lost.
   const companyStatusRef = useRef<string | null>(null);
-  const isPaused = blueprint?.company.status === "paused";
   companyStatusRef.current = blueprint?.company.status ?? null;
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -85,12 +89,16 @@ export default function App({ apiClient }: AppProps) {
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [companyListLoadState, setCompanyListLoadState] = useState<CompanyListLoadState>("loading");
   const [companyListLoadError, setCompanyListLoadError] = useState<string | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [view, setView] = useState<AppView>("company-picker");
+  const [startupError, setStartupError] = useState<string | null>(null);
+  const [view, setView] = useState<AppView>("starting");
   const viewRef = useRef(view);
   viewRef.current = view;
+  const [location, setLocation] = useState<WorkbenchLocation>(ceoOfficeLocation);
+  const locationRef = useRef(location);
+  locationRef.current = location;
+  // The company the founder left to create a new one, so the Onboarding Wizard can go back to it.
+  const [returnCompanyId, setReturnCompanyId] = useState<string | null>(null);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("company");
-  const [dashboardFocusTarget, setDashboardFocusTarget] = useState<DashboardFocusTarget | null>(null);
 
   useEffect(() => {
     const companyId = readCurrentCompanyId();
@@ -103,17 +111,17 @@ export default function App({ apiClient }: AppProps) {
           if (cancelled) {
             return;
           }
-          applyCompanyState(response, readCurrentView() ?? defaultCompanyView(response.company.status));
+          applyCompanyState(response, readCurrentLocation() ?? ceoOfficeLocation);
         })
         .catch(() => {
           if (cancelled) {
             return;
           }
           clearCurrentCompanyId();
-          void loadCompanies({ isCancelled: () => cancelled });
+          void openStartupCompany({ isCancelled: () => cancelled });
         });
     } else {
-      void loadCompanies({ isCancelled: () => cancelled });
+      void openStartupCompany({ isCancelled: () => cancelled });
     }
 
     return () => {
@@ -121,43 +129,63 @@ export default function App({ apiClient }: AppProps) {
     };
   }, [client]);
 
-  async function loadCompanies(options?: { isCancelled(): boolean }) {
+  /**
+   * With no remembered company, open the most recently updated `active` company, else the most
+   * recently updated one, else the Onboarding Wizard (dashboard ADR 0002). There is no picker page.
+   */
+  async function openStartupCompany(options?: { isCancelled(): boolean }) {
+    setView("starting");
+    setStartupError(null);
+    const list = await loadCompanies(options);
+    if (options?.isCancelled?.() || !list) {
+      return;
+    }
+    const companyToOpen = pickStartupCompany(list);
+    if (companyToOpen) {
+      await openCompany(companyToOpen.id);
+    } else {
+      setView("onboarding");
+    }
+  }
+
+  async function loadCompanies(options?: { isCancelled(): boolean }): Promise<CompanyListItem[] | null> {
     setCompanyListLoadState("loading");
     setCompanyListLoadError(null);
     try {
       const response = await client.listCompanies();
       if (options?.isCancelled?.()) {
-        return;
+        return null;
       }
       setCompanies(response.companies);
       setCompanyListLoadState("ready");
-      setView(response.companies.length > 0 ? "company-picker" : "onboarding");
+      return response.companies;
     } catch (error) {
       if (options?.isCancelled?.()) {
-        return;
+        return null;
       }
+      const message = formatErrorMessage(error);
       setCompanies([]);
-      setCompanyListLoadError(formatErrorMessage(error));
+      setCompanyListLoadError(message);
       setCompanyListLoadState("failed");
-      setView("company-picker");
+      setStartupError(message);
+      return null;
     }
   }
 
   async function openCompany(companyId: string) {
-    setCompanyListLoadState("loading");
-    setCompanyListLoadError(null);
     try {
       const response = await client.getCompanyState(companyId);
       writeCurrentCompanyId(companyId);
-      applyCompanyState(response, defaultCompanyView(response.company.status));
+      setReturnCompanyId(null);
+      applyCompanyState(response, ceoOfficeLocation);
     } catch (error) {
-      setCompanyListLoadError(formatErrorMessage(error));
-      setCompanyListLoadState("failed");
-      setView("company-picker");
+      setStartupError(formatErrorMessage(error));
+      setView("starting");
     }
   }
 
-  function applyCompanyState(response: CreateCompanyResponse, nextView: AppView) {
+  /** Adopts a company snapshot. Creation shows its own page; a created company opens its Workbench. */
+  function applyCompanyState(response: CreateCompanyResponse, nextLocation: WorkbenchLocation = locationRef.current) {
     setBlueprint(response);
     setProof(response.proof ?? []);
     setBusinessArtifacts(response.businessArtifacts ?? []);
@@ -176,23 +204,56 @@ export default function App({ apiClient }: AppProps) {
     if (response.company.status !== "creating") {
       clearCreationIdempotencyKey();
     }
-    setView(nextView);
-    if (nextView === "onboarding") {
-      setOnboardingStep("vision");
-    }
+    const isCreationStatus = response.company.status === "creating" || response.company.status === "creation_failed";
+    setLocation(
+      nextLocation.page === "department" && !response.departments.some((department) => department.id === nextLocation.departmentId)
+        ? ceoOfficeLocation
+        : nextLocation,
+    );
+    setView(isCreationStatus ? "creating" : "workbench");
   }
 
   useEffect(() => {
-    if (!blueprint || view === "creating") {
+    if (!blueprint || view !== "workbench") {
       return;
     }
 
-    writeCurrentView(view);
-  }, [blueprint, view]);
+    writeCurrentLocation(location);
+  }, [blueprint, view, location]);
+
+  // A failed creation offers a way back to another company, so it needs to know which exist.
+  const creationFailed = view === "creating" && blueprint?.company.status === "creation_failed";
+  useEffect(() => {
+    if (creationFailed) void loadCompanies();
+  }, [creationFailed]);
+
+  // Deliverables loads by itself (dashboard ADR 0002). Some of what it shows, such as a company
+  // review written from the CLI, arrives with no event, so opening the page reads it fresh.
+  const companyId = blueprint?.company.id;
+  useEffect(() => {
+    if (!companyId || view !== "workbench" || location.page !== "deliverables") {
+      return;
+    }
+
+    let cancelled = false;
+    void client
+      .getCompanyState(companyId)
+      .then((response) => {
+        if (cancelled) return;
+        setProof(response.proof ?? []);
+        setBusinessArtifacts(response.businessArtifacts ?? []);
+        setReviews(response.reviews ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [client, companyId, view, location.page]);
 
   useEffect(() => {
     // The creation view names the CEO; after a refresh straight into it the agents were never listed.
-    const needsAgents = (view === "onboarding" && onboardingStep === "agents") || view === "creating";
+    // The Workbench names each department's agent.
+    const needsAgents = (view === "onboarding" && onboardingStep === "agents") || view === "creating" || view === "workbench";
     if (needsAgents && agentLoadState === "idle") {
       void detectAgents();
     }
@@ -237,7 +298,7 @@ export default function App({ apiClient }: AppProps) {
           .then((response) => {
             if (cancelled || requestRevision !== revision) return;
             if (["task_review", "company_creation_completed", "company_creation_failed", "company_report_ready"].includes(event.type)) {
-              applyCompanyState(response, viewAfterReloadEvent(event, viewRef.current, response.company.status));
+              applyCompanyState(response, event.type.startsWith("company_creation_") ? ceoOfficeLocation : locationRef.current);
             } else {
               // Keep the live activity stream and task status just received over SSE. Refresh the
               // authoritative business projection without replacing them with a snapshot in flight.
@@ -251,6 +312,10 @@ export default function App({ apiClient }: AppProps) {
               setVisionGaps(response.visionGaps ?? []);
               // A task that moved makes its pending proposal stale; the server says so on every read.
               setReplanProposals(response.replanProposals ?? []);
+              // Deliverables reads these with nothing to load by hand, so they follow each snapshot.
+              setProof(response.proof ?? []);
+              setBusinessArtifacts(response.businessArtifacts ?? []);
+              setReviews(response.reviews ?? []);
             }
           })
           .catch(() => undefined);
@@ -269,26 +334,28 @@ export default function App({ apiClient }: AppProps) {
           if (cancelled || requestRevision !== revision) return;
           if (companyStatusRef.current === "creating") {
             if (response.company.status !== "creating") {
-              applyCompanyState(response, defaultCompanyView(response.company.status));
+              applyCompanyState(response, ceoOfficeLocation);
             }
             return;
           }
-          applyCompanyState(response, viewRef.current);
+          applyCompanyState(response);
         })
         .catch(() => undefined);
     });
     return () => { cancelled = true; unsubscribe(); };
   }, [blueprint?.company.id, client]);
 
-  useEffect(() => {
-    function handleFullscreenChange() {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-    }
+  const commands = workbenchCommands({
+    canCreateCompany: view === "onboarding" && onboardingStep === "vision",
+    isCreating,
+    companyStatus: blueprint?.company.status ?? null,
+    onCreateCompany: handleCreateCompany,
+    onPauseOperating: handlePauseOperating,
+    onResumeOperating: handleResumeOperating,
+    onStopOperating: handleStopOperating,
+  });
 
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, []);
-
+  // Two shortcuts remain, and both ask the command model whether they can run.
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (!isCommandShortcut(event) || isEditingText(event.target)) {
@@ -298,45 +365,18 @@ export default function App({ apiClient }: AppProps) {
       if (event.key === "Enter" && view === "onboarding" && !isCreating) {
         event.preventDefault();
         if (onboardingStep === "vision") {
-          void handleCreateCompany();
+          const createCommand = commands["create-company"];
+          if (createCommand.enabled) void createCommand.run();
         } else {
           goToNextStep();
         }
         return;
       }
 
-      const key = event.key.toLowerCase();
-      if (key === "k" && event.shiftKey && blueprint && (isPaused || blueprint.company.status === "active")) {
+      const command = operatingCommand(commands);
+      if (event.key.toLowerCase() === "k" && event.shiftKey && command.enabled) {
         event.preventDefault();
-        void (isPaused ? handleResumeOperating() : handlePauseOperating());
-        return;
-      }
-
-      if (key === "f" && event.ctrlKey) {
-        event.preventDefault();
-        void handleToggleFullscreen();
-        return;
-      }
-
-      if (view !== "dashboard" || !blueprint) {
-        return;
-      }
-
-      if (event.key === "1") {
-        event.preventDefault();
-        focusDashboardSection("tasks");
-      } else if (event.key === "2") {
-        event.preventDefault();
-        viewDepartmentWorkspace();
-      } else if (event.key === "3") {
-        event.preventDefault();
-        void handleMenuLoadProof();
-      } else if (event.key === "4") {
-        event.preventDefault();
-        void handleMenuLoadReviews();
-      } else if (event.key === "5") {
-        event.preventDefault();
-        void handleOpenEvidence();
+        void command.run();
       }
     }
 
@@ -366,7 +406,6 @@ export default function App({ apiClient }: AppProps) {
     setTaskCompletionEvents([]);
     setFounderDecisions([]);
     setCeoIntakes([]);
-    setDashboardFocusTarget(null);
     try {
       const response = await client.createCompany({
         companyName: companyName.trim(),
@@ -378,7 +417,8 @@ export default function App({ apiClient }: AppProps) {
         creationIdempotencyKey: getOrCreateCreationIdempotencyKey(),
       });
       writeCurrentCompanyId(response.company.id);
-      applyCompanyState(response, defaultCompanyView(response.company.status));
+      setReturnCompanyId(null);
+      applyCompanyState(response, ceoOfficeLocation);
     } catch (error) {
       setView("onboarding");
       setOnboardingStep("vision");
@@ -397,7 +437,7 @@ export default function App({ apiClient }: AppProps) {
     setIsCreating(true);
     try {
       const response = await client.retryCompanyCreation(companyId);
-      applyCompanyState(response, defaultCompanyView(response.company.status));
+      applyCompanyState(response, ceoOfficeLocation);
     } catch (error) {
       setCreateError((error as Error).message);
     } finally {
@@ -491,27 +531,7 @@ export default function App({ apiClient }: AppProps) {
     }
   }
 
-  async function handleLoadProof() {
-    const firstTask = blueprint?.tasks[0];
-
-    if (!firstTask) {
-      return;
-    }
-
-    const response = await client.getTaskProof(firstTask.id);
-    setProof(response.proof);
-  }
-
-  async function handleLoadReviews() {
-    if (!blueprint) {
-      return;
-    }
-
-    const response = await client.getCompanyReviews(blueprint.company.id);
-    setReviews(response.reviews);
-  }
-
-  // Pause Operating and Resume Operating (ADR 0044). The company's own status is what says it is paused.
+  // Pause, Resume and Stop Operating (ADR 0044). The company's own status is what says it is paused.
   async function handlePauseOperating() {
     if (!blueprint) return;
     const response = await client.pauseCompany(blueprint.company.id);
@@ -521,6 +541,13 @@ export default function App({ apiClient }: AppProps) {
   async function handleResumeOperating() {
     if (!blueprint) return;
     const response = await client.resumeCompany(blueprint.company.id);
+    setBlueprint((current) => (current ? { ...current, company: response.company } : current));
+  }
+
+  /** Final. Settings confirms it by the company name first; a refusal reaches the founder there. */
+  async function handleStopOperating() {
+    if (!blueprint) return;
+    const response = await client.stopCompany(blueprint.company.id);
     setBlueprint((current) => (current ? { ...current, company: response.company } : current));
   }
 
@@ -710,7 +737,22 @@ export default function App({ apiClient }: AppProps) {
     }
   }
 
-  function handleCreateNewCompany() {
+  /**
+   * Leaves a failed creation, whether or not the founder stopped it first: for the best other company,
+   * else the Onboarding Wizard. There is nothing to cancel back to, so the wizard offers no way back.
+   */
+  function leaveFailedCreation() {
+    const failedCompanyId = blueprint?.company.id;
+    const otherCompany = pickStartupCompany(companies.filter((company) => company.id !== failedCompanyId));
+    if (otherCompany) {
+      void openCompany(otherCompany.id);
+    } else {
+      handleCreateNewCompany({ returnable: false });
+    }
+  }
+
+  function handleCreateNewCompany({ returnable = true }: { returnable?: boolean } = {}) {
+    setReturnCompanyId(returnable ? (blueprint?.company.id ?? null) : null);
     clearCurrentCompanyId();
     setBlueprint(null);
     setProof([]);
@@ -725,7 +767,6 @@ export default function App({ apiClient }: AppProps) {
     setHumanActions([]);
     setVisionGaps([]);
     setWaitStates([]);
-    setDashboardFocusTarget(null);
     setCompanyName("");
     setCompanyNameError(null);
     setFounderVision("");
@@ -734,95 +775,6 @@ export default function App({ apiClient }: AppProps) {
     setOnboardingStep("company");
     setView("onboarding");
   }
-
-  function focusDashboardSection(section: DashboardFocusSection) {
-    if (blueprint && view === "department-workspace") {
-      setView("dashboard");
-    }
-    setDashboardFocusTarget((current) => ({
-      section,
-      version: (current?.version ?? 0) + 1,
-    }));
-  }
-
-  function viewDepartmentWorkspace() {
-    if (!blueprint) {
-      return;
-    }
-
-    setDashboardFocusTarget(null);
-    setView("department-workspace");
-  }
-
-  function viewCompanyOperations() {
-    if (!blueprint) {
-      return;
-    }
-
-    setDashboardFocusTarget(null);
-    setView("operations");
-  }
-
-  async function handleMenuLoadProof() {
-    focusDashboardSection("proof");
-    await handleLoadProof();
-  }
-
-  async function handleMenuLoadReviews() {
-    focusDashboardSection("review");
-    await handleLoadReviews();
-  }
-
-  async function handleOpenEvidence() {
-    if (proof.length === 0) {
-      await handleLoadProof();
-    }
-    focusDashboardSection("evidence");
-  }
-
-  async function handleToggleFullscreen() {
-    if (!isFullscreenAvailable()) {
-      return;
-    }
-
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-    } else {
-      await document.documentElement.requestFullscreen();
-    }
-  }
-
-  const commands = workbenchCommands({
-    view: view === "company-picker" ? "onboarding" : view,
-    canCreateCompany: view === "onboarding" && onboardingStep === "vision",
-    hasBlueprint: Boolean(blueprint),
-    hasProof: proof.length > 0,
-    isCreating,
-    isPaused,
-    canPauseOperating: blueprint?.company.status === "active",
-    isFullscreen,
-    fullscreenAvailable: isFullscreenAvailable(),
-    onCreateCompany: handleCreateCompany,
-    onPauseOperating: handlePauseOperating,
-    onResumeOperating: handleResumeOperating,
-    onViewTasks: () => focusDashboardSection("tasks"),
-    onViewDepartments: viewDepartmentWorkspace,
-    onViewOperations: viewCompanyOperations,
-    onLoadProof: handleMenuLoadProof,
-    onLoadReviews: handleMenuLoadReviews,
-    onOpenEvidence: handleOpenEvidence,
-    onToggleFullscreen: handleToggleFullscreen,
-  });
-
-  const menuBar = (
-    <DashboardMenuBar
-      agents={agents}
-      commands={commands}
-      isPaused={isPaused}
-      onSelectAgent={handleSelectAgent}
-      selectedAgentId={selectedAgentId}
-    />
-  );
 
   // LanguageProvider stays the root element of every view, modern or legacy, so React keeps one
   // instance across navigation and a language chosen on one view survives the move to the next.
@@ -834,30 +786,16 @@ export default function App({ apiClient }: AppProps) {
     );
   }
 
-  function renderAppFrame(children: ReactNode) {
+  if (view === "starting") {
     return renderModernAppFrame(
-      <ThemeProvider defaultSkin={defaultSkin}>
-        <CRTViewport>{children}</CRTViewport>
-      </ThemeProvider>,
-    );
-  }
-
-  if (view === "company-picker") {
-    return renderModernAppFrame(
-      <CompanyPicker
-        companies={companies}
-        loadError={companyListLoadError}
-        loadState={companyListLoadState}
-        onCreateNew={handleCreateNewCompany}
-        onOpenCompany={openCompany}
-        onRetry={loadCompanies}
-      />,
+      <StartupScreen error={startupError} failed={startupError !== null} onRetry={() => void openStartupCompany()} />,
     );
   }
 
   if (view === "creating") {
     // After a refresh the setup form is empty; the company being created knows its own choices.
     const creatingAgentId = blueprint?.company.selectedCeoAgentId ?? selectedAgentId;
+    const otherCompany = pickStartupCompany(companies.filter((company) => company.id !== blueprint?.company.id));
     const selectedAgent = agents.find((agent) => agent.id === creatingAgentId) ?? null;
 
     return renderModernAppFrame(
@@ -870,87 +808,101 @@ export default function App({ apiClient }: AppProps) {
         permissionMode={blueprint?.company.permissionMode ?? permissionMode}
         selectedAgent={selectedAgent}
         selectedAgentId={creatingAgentId || undefined}
+        stopCommand={blueprint ? commands["stop-operating"] : undefined}
+        onStopped={leaveFailedCreation}
+        leave={blueprint ? { kind: otherCompany ? "other" : "new", run: leaveFailedCreation } : undefined}
       />,
     );
   }
 
-  if (view === "department-workspace" && blueprint) {
-    return renderAppFrame(
-      <ExecutionActionsContext.Provider value={{ client, update: task => setBlueprint(current => updateBlueprintTask(current, task)) }}>
-      <DepartmentWorkspace
+  if (view === "workbench" && blueprint) {
+    return renderModernAppFrame(
+      <WorkbenchFrame
         agents={agents}
-        company={blueprint.company}
-        departments={blueprint.departments}
-        menuBar={menuBar}
-        objectives={blueprint.objectives}
-        onRefreshTask={handleRefreshTask}
-        onRecoverTask={handleRecoverTask}
-        onConfirmTaskTermination={handleConfirmTaskTermination}
-        onDecideFounderApproval={handleDecideFounderApproval}
-        onCreateReplanProposal={handleCreateReplanProposal}
-        onCreateCeoIntake={handleCreateCeoIntake}
-        onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
-        onResolveFounderDecision={handleResolveFounderDecision}
-        onConfirmHumanAction={handleConfirmHumanAction}
-        proof={proof}
-        businessArtifacts={businessArtifacts}
         ceoOfficeItems={(blueprint.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
-        finalFounderReport={blueprint.finalFounderReport ?? null}
-        finalFounderReportPreparing={blueprint.finalFounderReportPreparing ?? false}
-        founderDecisions={founderDecisions}
-        humanActions={humanActions}
-        keyResults={blueprint.keyResults ?? []}
-        taskCompletionEvents={taskCompletionEvents}
-        visionGaps={visionGaps}
-        waitStates={waitStates}
-        selectedCeoAgentId={selectedAgentId}
+        commands={commands}
+        company={blueprint.company}
+        departments={blueprint.departments}
+        location={location}
+        onNavigate={setLocation}
         tasks={blueprint.tasks}
-        taskProgressEvents={taskProgressEvents}
-        ceoIntakes={ceoIntakes}
-      />
-      </ExecutionActionsContext.Provider>,
+      >
+        {renderWorkbenchPage(blueprint)}
+      </WorkbenchFrame>,
     );
   }
 
-  if (view === "operations" && blueprint) {
-    return renderAppFrame(
-      <CompanyOperations
-        company={blueprint.company}
-        departments={blueprint.departments}
-        events={events}
-        isPaused={isPaused}
-        menuBar={menuBar}
-        humanActions={humanActions}
-        waitStates={waitStates}
-        onConfirmHumanAction={handleConfirmHumanAction}
-        onConfirmReplanProposal={handleConfirmReplanProposal}
-        onCreateReplanProposal={handleCreateReplanProposal}
-        onRejectReplanProposal={handleRejectReplanProposal}
-        replanProposals={replanProposals}
-        tasks={blueprint.tasks}
-      />,
-    );
-  }
+  function renderWorkbenchPage(company: CreateCompanyResponse) {
+    if (location.page === "operations") {
+      return (
+        <OperationsDiagnostics
+          events={events}
+          humanActions={humanActions}
+          onConfirmReplanProposal={handleConfirmReplanProposal}
+          onCreateReplanProposal={handleCreateReplanProposal}
+          onRejectReplanProposal={handleRejectReplanProposal}
+          replanProposals={replanProposals}
+          tasks={company.tasks}
+          waitStates={waitStates}
+        />
+      );
+    }
 
-  if (view === "dashboard" && blueprint) {
-    return renderAppFrame(
-      <CompanyDashboard
-        company={blueprint.company}
-        departments={blueprint.departments}
-        events={events}
-        focusTarget={dashboardFocusTarget}
-        founderReport={blueprint.founderReport}
-        isPaused={isPaused}
-        menuBar={menuBar}
-        onPauseOperating={handlePauseOperating}
-        onLoadProof={handleLoadProof}
-        onLoadReviews={handleLoadReviews}
-        objectives={blueprint.objectives}
-        proof={proof}
-        businessArtifacts={businessArtifacts}
-        reviews={reviews}
-        tasks={blueprint.tasks}
-      />,
+    if (location.page === "deliverables") {
+      return <Deliverables businessArtifacts={businessArtifacts} proof={proof} reviews={reviews} tasks={company.tasks} />;
+    }
+
+    if (location.page === "settings") {
+      return (
+        <Settings
+          companies={companies}
+          companiesLoadError={companyListLoadError}
+          companiesLoadState={companyListLoadState}
+          company={company.company}
+          onCreateNewCompany={() => handleCreateNewCompany()}
+          onLoadCompanies={() => void loadCompanies()}
+          onOpenCompany={(companyId) => void openCompany(companyId)}
+          stopCommand={commands["stop-operating"]}
+        />
+      );
+    }
+
+    // CEO Office and the department pages share one legacy component, so drafts survive moving between them.
+    return (
+      <ExecutionActionsContext.Provider value={{ client, update: task => setBlueprint(current => updateBlueprintTask(current, task)) }}>
+        <DepartmentWorkspace
+          agents={agents}
+          company={company.company}
+          departments={company.departments}
+          objectives={company.objectives}
+          onRefreshTask={handleRefreshTask}
+          onRecoverTask={handleRecoverTask}
+          onConfirmTaskTermination={handleConfirmTaskTermination}
+          onDecideFounderApproval={handleDecideFounderApproval}
+          onCreateReplanProposal={handleCreateReplanProposal}
+          onCreateCeoIntake={handleCreateCeoIntake}
+          onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
+          onResolveFounderDecision={handleResolveFounderDecision}
+          onConfirmHumanAction={handleConfirmHumanAction}
+          onSelectDepartment={(departmentId) => setLocation(departmentId ? { page: "department", departmentId } : ceoOfficeLocation)}
+          proof={proof}
+          businessArtifacts={businessArtifacts}
+          ceoOfficeItems={(company.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
+          finalFounderReport={company.finalFounderReport ?? null}
+          finalFounderReportPreparing={company.finalFounderReportPreparing ?? false}
+          founderDecisions={founderDecisions}
+          humanActions={humanActions}
+          keyResults={company.keyResults ?? []}
+          selectedDepartmentId={location.page === "department" ? location.departmentId : null}
+          taskCompletionEvents={taskCompletionEvents}
+          visionGaps={visionGaps}
+          waitStates={waitStates}
+          selectedCeoAgentId={selectedAgentId}
+          tasks={company.tasks}
+          taskProgressEvents={taskProgressEvents}
+          ceoIntakes={ceoIntakes}
+        />
+      </ExecutionActionsContext.Provider>
     );
   }
 
@@ -966,6 +918,7 @@ export default function App({ apiClient }: AppProps) {
       founderVisionError={founderVisionError}
       isCreating={isCreating}
       onBack={goToPreviousStep}
+      onCancel={returnCompanyId ? () => void openCompany(returnCompanyId) : undefined}
       onCompanyNameChange={handleCompanyNameChange}
       onCreateCompany={handleCreateCompany}
       onNext={goToNextStep}
@@ -1189,19 +1142,6 @@ function updateBlueprintTasksAfterReplan(
   return { ...blueprint, tasks };
 }
 
-function getInitialSkin(): PaletteId {
-  if (typeof window === "undefined") {
-    return "mono";
-  }
-
-  const requestedSkin = new URLSearchParams(window.location.search).get("skin");
-  if (requestedSkin && isPaletteId(requestedSkin)) {
-    return requestedSkin;
-  }
-
-  return readCurrentSkin() ?? "mono";
-}
-
 function getInitialLanguage(): LanguageId {
   if (typeof window === "undefined") {
     return "en";
@@ -1226,10 +1166,6 @@ function isEditingText(target: EventTarget | null) {
 
   const tagName = target.tagName.toLowerCase();
   return tagName === "input" || tagName === "textarea" || target.isContentEditable;
-}
-
-function isFullscreenAvailable() {
-  return typeof document !== "undefined" && typeof document.documentElement.requestFullscreen === "function";
 }
 
 function updateBlueprintTaskStatus(blueprint: CreateCompanyResponse | null, event: ServerEvent) {
@@ -1334,19 +1270,19 @@ function shouldReloadCompanyStateAfterEvent(event: ServerEvent) {
   );
 }
 
-function viewAfterReloadEvent(event: ServerEvent, currentView: AppView, companyStatus: string): AppView {
-  if (event.type.startsWith("company_creation_")) {
-    return defaultCompanyView(companyStatus);
-  }
-  return currentView;
-}
+/**
+ * Which company to open when none is remembered: operating first, then paused (the founder most
+ * likely means to come back to it), then one still being created, then stopped, and a failed creation
+ * last. Within a status, the most recently updated.
+ */
+const startupStatusOrder = ["active", "paused", "creating", "stopped", "creation_failed"];
 
-function defaultCompanyView(companyStatus: string): AppView {
-  if (companyStatus === "creating" || companyStatus === "creation_failed") {
-    return "creating";
-  }
-  // A created company opens on CEO Office, whatever its status (dashboard ADR 0002).
-  return "department-workspace";
+function pickStartupCompany(companies: CompanyListItem[]): CompanyListItem | null {
+  const rank = (status: string) => {
+    const index = startupStatusOrder.indexOf(status);
+    return index === -1 ? startupStatusOrder.length : index;
+  };
+  return [...companies].sort((a, b) => rank(a.status) - rank(b.status) || b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
 }
 
 function readCurrentCompanyId(): string | null {
@@ -1400,23 +1336,18 @@ function getOrCreateCreationIdempotencyKey(): string {
   return key;
 }
 
-function readCurrentView(): AppView | null {
+function readCurrentLocation(): WorkbenchLocation | null {
   if (typeof window === "undefined" || !window.localStorage) {
     return null;
   }
 
-  const storedView = window.localStorage.getItem(currentViewStorageKey);
-  return isRestorableView(storedView) ? storedView : null;
+  return parseLocation(window.localStorage.getItem(currentViewStorageKey));
 }
 
-function writeCurrentView(view: AppView): void {
-  if (typeof window === "undefined" || !window.localStorage || !isRestorableView(view)) {
+function writeCurrentLocation(location: WorkbenchLocation): void {
+  if (typeof window === "undefined" || !window.localStorage) {
     return;
   }
 
-  window.localStorage.setItem(currentViewStorageKey, view);
-}
-
-function isRestorableView(view: string | null): view is AppView {
-  return view === "onboarding" || view === "department-workspace" || view === "dashboard" || view === "operations";
+  window.localStorage.setItem(currentViewStorageKey, serializeLocation(location));
 }

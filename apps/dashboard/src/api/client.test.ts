@@ -115,4 +115,22 @@ describe("createApiClient", () => {
 
     await expect(client.listCompanies()).rejects.toThrow("Expected JSON from /api/companies but received text/html");
   });
+
+  it("rejects a response without the fields its caller reads, instead of handing it on", async () => {
+    // Another JSON service answering on the API port, or a server of another version.
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ companies: [] })));
+    const client = createApiClient("", { requestTimeoutMs: 25 });
+
+    await expect(client.getTaskExecution("task_1")).rejects.toThrow('Unexpected response from /api/tasks/task_1/execution: missing "task".');
+    await expect(client.getCompanyState("company_1")).rejects.toThrow('Unexpected response from /api/companies/company_1/state: missing "company".');
+    await expect(client.stopCompany("company_1")).rejects.toThrow('missing "company"');
+  });
+
+  it("passes a well-formed response through, fields it does not check included", async () => {
+    const body = { task: { id: "task_1", status: "running", addedByANewerServer: true } };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(body)));
+    const client = createApiClient("", { requestTimeoutMs: 25 });
+
+    await expect(client.getTaskExecution("task_1")).resolves.toEqual(body);
+  });
 });

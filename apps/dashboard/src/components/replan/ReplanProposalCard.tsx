@@ -1,11 +1,12 @@
 import { useId, useState } from "react";
 import type { ReplanProposalSummary, ReplanRequirementSummary, ReplanTaskDefinitionSummary, TaskSummary } from "../../api/client";
-import { VideotexKeyValue, VideotexLog } from "../data";
-import { useLanguage, type TranslationKey } from "../language";
-import { resolveLocalizedValue } from "../language/localizedText";
-import { RetroBadge, RetroButton, RetroField, RetroTextarea } from "../retro";
-import { formatReplanProposalStatus } from "../tasks/formatDisplayValue";
-import { formatTaskFailureReason, formatTaskStatus } from "../tasks/formatTaskStatus";
+import { cn } from "@/lib/utils";
+import { Alert, Button, Card, Label, Textarea } from "../ui";
+import { KeyValueList, LineList } from "../workbench/KeyValueList";
+import { useLanguage, type TranslationKey } from "../../ui/language";
+import { resolveLocalizedValue } from "../../ui/language/localizedText";
+import { formatReplanProposalStatus } from "../../ui/tasks/formatDisplayValue";
+import { formatTaskFailureReason, formatTaskStatus } from "../../ui/tasks/formatTaskStatus";
 
 type Translate = (key: TranslationKey) => string;
 
@@ -54,17 +55,21 @@ export function ReplanProposalCard({
   }
 
   return (
-    <div className={stale ? "replan-card replan-card--stale" : "replan-card"}>
-      <div className="replan-card__header">
-        <p>
+    <Card className={cn("grid gap-4 p-4", stale && "border-amber-300")}>
+      <div className="flex flex-wrap items-start gap-2">
+        <p className="min-w-0 flex-1 text-sm font-medium">
           {sourceTask ? title(sourceTask.id) : t("operations.unknownTask")} —{" "}
           {resolveLocalizedValue(proposal.rationaleText, language, proposal.rationale)}
         </p>
-        <span>{formatReplanProposalStatus(proposal.status, t)}</span>
-        {mode ? <RetroBadge tone="signal">{t(mode === "revision" ? "operations.replanModeLabelRevision" : "operations.replanModeLabelSplit")}</RetroBadge> : null}
+        <span className="text-xs text-muted-foreground">{formatReplanProposalStatus(proposal.status, t)}</span>
+        {mode ? (
+          <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
+            {t(mode === "revision" ? "operations.replanModeLabelRevision" : "operations.replanModeLabelSplit")}
+          </span>
+        ) : null}
       </div>
-      {stale ? <p className="system-message system-message--danger">{t("operations.replanStale")}</p> : null}
-      <VideotexKeyValue
+      {stale ? <Alert className="border-amber-300 bg-amber-50 text-amber-900">{t("operations.replanStale")}</Alert> : null}
+      <KeyValueList
         items={[
           { label: t("operations.proposalSource"), value: t(proposal.proposalSource === "planner_agent" ? "operations.generatedByPlanner" : "operations.generatedByTemplate") },
           { label: t("operations.plannerAgent"), value: proposal.plannerAgentId ?? t("operations.notAvailable") },
@@ -86,23 +91,28 @@ export function ReplanProposalCard({
       ) : mode === "split" ? (
         <SplitChanges proposal={proposal} sourceTask={sourceTask} tasks={tasks} language={language} t={t} />
       ) : null}
-      {error ? <p className="system-message system-message--danger">{error}</p> : null}
+      {error ? <Alert variant="destructive">{error}</Alert> : null}
       {pending ? (
-        <div className="replan-card__actions">
-          <RetroButton disabled={busy || stale} onClick={() => void act(() => onConfirm(proposal.id))} variant="primary">
-            {t("operations.confirmReplan")}
-          </RetroButton>
-          <RetroField htmlFor={rejectionId} label={t("operations.replanRejectionNote")}>
-            <RetroTextarea id={rejectionId} onChange={(event) => setRejectionNote(event.target.value)} rows={2} value={rejectionNote} />
-          </RetroField>
-          <RetroButton disabled={busy} onClick={() => void act(() => onReject(proposal.id, rejectionNote.trim() || null))}>
-            {t("operations.rejectReplan")}
-          </RetroButton>
+        <div className="grid gap-3 border-t border-border/70 pt-3">
+          <div>
+            <Button disabled={busy || stale} onClick={() => void act(() => onConfirm(proposal.id))}>
+              {t("operations.confirmReplan")}
+            </Button>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={rejectionId}>{t("operations.replanRejectionNote")}</Label>
+            <Textarea id={rejectionId} onChange={(event) => setRejectionNote(event.target.value)} rows={2} value={rejectionNote} />
+          </div>
+          <div>
+            <Button disabled={busy} onClick={() => void act(() => onReject(proposal.id, rejectionNote.trim() || null))} variant="outline">
+              {t("operations.rejectReplan")}
+            </Button>
+          </div>
         </div>
       ) : (
-        <p className="muted">{closedMessage(proposal, t)}</p>
+        <p className="text-sm text-muted-foreground">{closedMessage(proposal, t)}</p>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -133,10 +143,10 @@ function RevisionChanges({ proposal, title, t }: { proposal: ReplanProposalSumma
   ];
   return (
     <>
-      <section className="replan-review-section">
-        <h3>{t("operations.replanTaskChanges")}</h3>
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">{t("operations.replanTaskChanges")}</h3>
         {before && after ? (
-          <table className="replan-diff" aria-label={t("operations.replanTaskChanges")}>
+          <table className="w-full border-collapse text-left text-sm [&_td]:border-t [&_td]:border-border/70 [&_td]:p-2 [&_td]:align-top [&_th]:p-2 [&_th]:align-top [&_th]:font-medium" aria-label={t("operations.replanTaskChanges")}>
             <thead>
               <tr>
                 <th scope="col">{t("operations.replanField")}</th>
@@ -149,7 +159,7 @@ function RevisionChanges({ proposal, title, t }: { proposal: ReplanProposalSumma
                 const was = field.read(before);
                 const will = field.read(after);
                 return (
-                  <tr className={was === will ? undefined : "replan-diff__changed"} key={field.key}>
+                  <tr className={was === will ? undefined : "replan-diff__changed bg-amber-50"} key={field.key}>
                     <th scope="row">{t(field.key)}</th>
                     <td>{was}</td>
                     <td>{will}</td>
@@ -159,16 +169,16 @@ function RevisionChanges({ proposal, title, t }: { proposal: ReplanProposalSumma
             </tbody>
           </table>
         ) : (
-          <p className="muted">{t("operations.notAvailable")}</p>
+          <p className="text-sm text-muted-foreground">{t("operations.notAvailable")}</p>
         )}
-        {proposal.capabilitiesChanged ? <p className="system-message">{t("operations.replanCapabilitiesChanged")}</p> : null}
+        {proposal.capabilitiesChanged ? <p className="text-sm text-amber-800">{t("operations.replanCapabilitiesChanged")}</p> : null}
       </section>
-      <section className="replan-review-section">
-        <h3>{t("operations.replanRequirementChanges")}</h3>
-        {(proposal.requirementChanges ?? []).length === 0 ? <p className="muted">{t("operations.replanNoRequirementChanges")}</p> : null}
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">{t("operations.replanRequirementChanges")}</h3>
+        {(proposal.requirementChanges ?? []).length === 0 ? <p className="text-sm text-muted-foreground">{t("operations.replanNoRequirementChanges")}</p> : null}
         {(proposal.requirementChanges ?? []).map((change) => (
-          <table className="replan-diff" aria-label={`${t("operations.replanRequirementChanges")} ${title(change.verifierTaskId)}`} key={change.verifierTaskId}>
-            <caption>{title(change.verifierTaskId)}</caption>
+          <table className="w-full border-collapse text-left text-sm [&_td]:border-t [&_td]:border-border/70 [&_td]:p-2 [&_td]:align-top [&_th]:p-2 [&_th]:align-top [&_th]:font-medium" aria-label={`${t("operations.replanRequirementChanges")} ${title(change.verifierTaskId)}`} key={change.verifierTaskId}>
+            <caption className="pb-1 text-left text-muted-foreground">{title(change.verifierTaskId)}</caption>
             <thead>
               <tr>
                 <th scope="col">{t("operations.replanCurrent")}</th>
@@ -176,7 +186,7 @@ function RevisionChanges({ proposal, title, t }: { proposal: ReplanProposalSumma
               </tr>
             </thead>
             <tbody>
-              <tr className="replan-diff__changed">
+              <tr className="replan-diff__changed bg-amber-50">
                 <td><RequirementList requirements={change.before} /></td>
                 <td><RequirementList requirements={change.after} /></td>
               </tr>
@@ -195,10 +205,10 @@ function RevisionChanges({ proposal, title, t }: { proposal: ReplanProposalSumma
 
 function RequirementList({ requirements }: { requirements: ReplanRequirementSummary[] }) {
   return (
-    <ul className="replan-diff__requirements">
+    <ul className="grid gap-1">
       {requirements.map((requirement) => (
         <li key={requirement.id}>
-          <code>{requirement.id}</code> {requirement.description}
+          <code className="rounded bg-muted px-1 text-xs">{requirement.id}</code> {requirement.description}
         </li>
       ))}
     </ul>
@@ -223,29 +233,29 @@ function SplitChanges({
   const taskTitle = (task: TaskSummary) => resolveLocalizedValue(task.titleText, language, task.title);
   return (
     <>
-      <section className="replan-review-section">
-        <h3>{t("operations.originalTask")}</h3>
-        <VideotexLog
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">{t("operations.originalTask")}</h3>
+        <LineList
           emptyMessage={t("operations.unknownTask")}
-          rows={sourceTask ? [`${taskTitle(sourceTask)} / ${formatTaskStatus(sourceTask, t)}`] : []}
+          lines={sourceTask ? [`${taskTitle(sourceTask)} / ${formatTaskStatus(sourceTask, t)}`] : []}
         />
       </section>
-      <section className="replan-review-section">
-        <h3>{t("operations.replacementChain")}</h3>
-        <VideotexLog
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">{t("operations.replacementChain")}</h3>
+        <LineList
           emptyMessage={t("operations.noReplacementTasks")}
-          rows={proposal.replacementTasks.map((task) => resolveLocalizedValue(task.titleText, language, task.title))}
+          lines={proposal.replacementTasks.map((task) => resolveLocalizedValue(task.titleText, language, task.title))}
         />
       </section>
-      <section className="replan-review-section">
-        <h3>{t("operations.affectedDownstream")}</h3>
-        <VideotexLog emptyMessage={t("operations.noAffectedDownstream")} rows={affectedDownstreamTasks.map(taskTitle)} />
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">{t("operations.affectedDownstream")}</h3>
+        <LineList emptyMessage={t("operations.noAffectedDownstream")} lines={affectedDownstreamTasks.map(taskTitle)} />
       </section>
-      <section className="replan-review-section">
-        <h3>{t("operations.rewirePreview")}</h3>
-        <VideotexLog
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">{t("operations.rewirePreview")}</h3>
+        <LineList
           emptyMessage={t("operations.noRewirePreview")}
-          rows={affectedDownstreamTasks.map((task) =>
+          lines={affectedDownstreamTasks.map((task) =>
             finalReplacementTask
               ? `${taskTitle(task)} ${t("operations.rewirePreviewConnector")} ${resolveLocalizedValue(finalReplacementTask.titleText, language, finalReplacementTask.title)}.`
               : `${taskTitle(task)} ${t("operations.rewirePreviewMissingFinalTask")}`,

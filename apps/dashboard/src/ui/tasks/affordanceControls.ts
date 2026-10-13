@@ -55,7 +55,7 @@ export const taskAffordanceControls: Record<TaskAffordanceKind, TaskAffordanceCo
       { labelKey: "department.denyFounderApproval", decision: "denied", tone: "danger" },
     ],
   },
-  // Inline on the task itself, not only on the Operations page: a task at the Bounded Recovery
+  // Inline on the task itself, not only on Operations Diagnostics: a task at the Bounded Recovery
   // ceiling has replanning as its *only* way forward, and it never reaches `needs_replan` status.
   request_replan: {
     render: "inline",
@@ -65,7 +65,7 @@ export const taskAffordanceControls: Record<TaskAffordanceKind, TaskAffordanceCo
   ceo_review_decision: { render: "surface", surface: "CEO Office review detail, gated by the affordance" },
   resolve_founder_decision: { render: "surface", surface: "CEO Office decision card" },
   confirm_human_action: { render: "surface", surface: "Human Action panel" },
-  confirm_replan: { render: "surface", surface: "Company Operations replan proposals" },
+  confirm_replan: { render: "surface", surface: "Operations Diagnostics new plans, until P4 moves them to the department page" },
   authorize_execution_budget: { render: "surface", surface: "Task execution panel: explicit budget authorization form" },
   cancel_task: { render: "surface", surface: "Task execution panel: cancellation confirmation" },
 };

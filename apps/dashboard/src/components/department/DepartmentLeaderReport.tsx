@@ -2,7 +2,6 @@ import type { HumanActionSummary, TaskProgressEventSummary, TaskSummary, WaitSta
 import type { WorkspaceHandlers } from "../workbench/workspaceHandlers";
 import { HumanActionPanel } from "../../ui/humanActions/HumanActionPanel";
 import { useLanguage } from "../../ui/language";
-import { departmentName } from "../../ui/language/localizedNames";
 import { WaitStatePanel } from "../../ui/waitStates/WaitStatePanel";
 import type { CeoPendingItem } from "../ceo-office/ceoPendingItems";
 import { DepartmentMessageBox } from "./DepartmentMessageBox";

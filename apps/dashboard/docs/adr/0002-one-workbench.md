@@ -99,6 +99,14 @@ The three legacy pages overlapped. Counts of blocked work, Human Actions and Wai
   4. P4 department pages, together with Department Intake;
   5. P5, which removes CRT, skins, Retro UI and legacy CSS, together with root ADR 0047.
 - Root ADR 0045 can land at any point.
+- P2 delivered, as the founder decided on 2026-10-12:
+  - The modern shell frames CEO Office and the department pages, whose content stays Retro UI until P4. Each page is either all legacy or all modern; the shell is a frame around them, and it has no CRT.
+  - CRT, skins and fullscreen were removed in P2, ahead of P5. One fixed palette remains for the Retro components that P4 replaces.
+  - Two keyboard shortcuts remain, Cmd+Enter in the Onboarding Wizard and Shift+Cmd+K for Pause and Resume, and both read the shared command model. The menu shortcuts went with the menu.
+  - The Operating Dashboard was removed in P2. Its proof and reviews moved to Deliverables, and its task states moved to Operations Diagnostics.
+  - New plans are requested and confirmed on Operations Diagnostics until P4 moves them to the department page.
+  - At startup, with no remembered company, companies are ranked by status (`active`, `paused`, `creating`, `stopped`, then `creation_failed`) and then by most recent update. The Onboarding Wizard opens only when there is no company.
+  - A failed creation is never a dead end. Its page offers Stop and abandon, confirmed by the company name, and a way back to another company, or Create New Company when there is none.
 - The P4 steps run on a short-lived branch that is rebased often and merged once, so no page is delivered half legacy and half modern (ADR 0001).
 
 ## Considered Options
