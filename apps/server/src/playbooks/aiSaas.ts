@@ -8,6 +8,7 @@ function text(en: string, zh: string): CompleteLocalizedText {
 const taskTemplates: TaskTemplate[] = [
   {
     key: "product_brief",
+    keyResultKey: "revenue_path_documented",
     departmentKey: "product",
     departmentName: "Product",
     title: "Write the first product brief",
@@ -32,6 +33,7 @@ const taskTemplates: TaskTemplate[] = [
   },
   {
     key: "market_research",
+    keyResultKey: "revenue_path_documented",
     departmentKey: "research",
     departmentName: "Research",
     title: "Create competitor and customer pain research",
@@ -56,6 +58,7 @@ const taskTemplates: TaskTemplate[] = [
   },
   {
     key: "growth_assets",
+    keyResultKey: "revenue_path_documented",
     departmentKey: "growth",
     departmentName: "Growth",
     title: "Draft early acquisition assets",
@@ -80,6 +83,7 @@ const taskTemplates: TaskTemplate[] = [
   },
   {
     key: "landing_page_prototype",
+    keyResultKey: "prototype_shipped",
     departmentKey: "engineering",
     departmentName: "Engineering",
     title: "Create the first landing page prototype",
@@ -105,6 +109,7 @@ const taskTemplates: TaskTemplate[] = [
   },
   {
     key: "prototype_validation",
+    keyResultKey: "prototype_shipped",
     departmentKey: "engineering",
     departmentName: "Engineering",
     title: "Run local validation for the prototype",
@@ -192,6 +197,7 @@ export const aiSaasPlaybook = {
       priority: 1,
       keyResults: [
         {
+          key: "prototype_shipped",
           title: "Ship a proof-backed landing page prototype",
           titleText: text("Ship a proof-backed landing page prototype", "交付带证明的落地页原型"),
           metricName: "prototype_status",
@@ -201,6 +207,7 @@ export const aiSaasPlaybook = {
           currentValueText: text("not_started", "未开始"),
         },
         {
+          key: "revenue_path_documented",
           title: "Document the first revenue path",
           titleText: text("Document the first revenue path", "记录第一条收入路径"),
           metricName: "revenue_path_status",
@@ -323,6 +330,7 @@ export const aiSaasPlaybook = {
         requiredCapabilities: template.requiredCapabilities,
         proofSchemaId: template.proofSchemaId,
         riskLevel: template.riskLevel,
+        keyResultKey: template.keyResultKey,
         dependsOnTaskKeys: template.dependsOnTaskKeys,
         handoffContract: template.handoffContract,
         handoffContractText: template.handoffContractText,

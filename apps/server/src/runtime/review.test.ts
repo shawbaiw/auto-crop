@@ -91,8 +91,10 @@ describe("runCompanyReview", () => {
     expect(result.completedTasks).toEqual(["task_1"]);
     expect(result.missingProofTasks).toEqual([]);
     expect(repositories.getTask("task_1")?.status).toBe("complete");
-    expect(repositories.listKeyResults("company_1")[0]?.currentValue).toBe("proof_received");
+    // task_1 is the key result's only task, so completing it meets the key result. The plan's
+    // current value is not rewritten by a review (ADR 0048).
     expect(repositories.listKeyResults("company_1")[0]?.status).toBe("met");
+    expect(repositories.listKeyResults("company_1")[0]?.currentValue).not.toBe("proof_received");
     expect(existsSync(result.reviewPath)).toBe(true);
     expect(readFileSync(result.reviewPath, "utf8")).toContain("Tests passed.");
     expect(repositories.listReviews("company_1")).toHaveLength(1);

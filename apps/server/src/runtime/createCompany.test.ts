@@ -357,6 +357,7 @@ describe("createCompany", () => {
     blueprint.tasks = [
       {
         key: "build_from_brief",
+        keyResultKey: "prototype_shipped",
         departmentName: "Engineering",
         title: "Build the runnable MVP prototype",
         description:

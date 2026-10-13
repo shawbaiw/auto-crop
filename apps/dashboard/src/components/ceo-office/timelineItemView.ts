@@ -92,7 +92,10 @@ export function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRender
   switch (item.type) {
     case "plan_brief":
       return {
-        keyLine: t("ceoOffice.planBriefLine").replace("{count}", String(item.data.taskCount)),
+        keyLine: t("ceoOffice.planBriefLine")
+          .replace("{objectives}", String(item.data.objectives.length))
+          .replace("{keyResults}", String(item.data.objectives.reduce((sum, objective) => sum + objective.keyResults.length, 0)))
+          .replace("{count}", String(item.data.taskCount)),
         rows: item.data.tasks.map((task) => ({
           label: line(task.title),
           value: [
@@ -197,6 +200,15 @@ export function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRender
           { label: t("ceoOffice.report.nextStep"), value: line(item.data.sections.recommendedNextStep) },
         ],
       };
+    case "key_result_met":
+      return {
+        keyLine: t("ceoOffice.keyResultMetLine").replace("{target}", line(item.data.targetValue)),
+        rows: [
+          { label: t("ceoOffice.row.objective"), value: line(item.data.objectiveTitle) || none },
+          { label: t("ceoOffice.row.target"), value: line(item.data.targetValue) },
+          { label: t("ceoOffice.row.tasks"), value: tasks(item.data.taskIds) },
+        ],
+      };
     case "founder_intake":
       // The founder's own words are raw source content, shown as written (CONTEXT: Interface Locale).
       return { keyLine: item.data.body, rows: [] };
@@ -236,6 +248,7 @@ const ceoOfficeTimelineOrder: Record<CeoOfficeItemSummary["type"], number> = {
   final_report: 9,
   founder_intake: 10,
   intake_outcome: 11,
+  key_result_met: 7.5,
 };
 
 export function compareCeoOfficeTimelineItems(a: CeoOfficeItemSummary, b: CeoOfficeItemSummary): number {

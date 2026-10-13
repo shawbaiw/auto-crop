@@ -27,7 +27,16 @@ type OfficeItem<Type extends string, Data, ActionBearing extends boolean = boole
 export type CEOOfficeItem =
   | OfficeItem<"plan_brief", {
       taskCount: number;
+      objectives: CompanyPlanSnapshot["objectives"];
       tasks: PlanBriefTaskSummary[];
+    }, false>
+  /** Every task serving a key result is complete (ADR 0048). */
+  | OfficeItem<"key_result_met", {
+      keyResultId: string;
+      objectiveTitle: LocalizedText | null;
+      targetValue: LocalizedText;
+      metricName: string;
+      taskIds: string[];
     }, false>
   | OfficeItem<"task_brief", {
       purpose: LocalizedText;
@@ -148,7 +157,7 @@ export type CeoOfficeProjectionInput = {
 const timelineOrder: Record<CEOOfficeItem["type"], number> = {
   plan_brief: -1, task_brief: 0, execution_report: 1, decision_request: 2, approval_request: 3,
   human_action: 4, wait_state: 5, blocked_issue: 6, decision_resolution: 7,
-  stage_change: 8, final_report: 9, founder_intake: 10, intake_outcome: 11,
+  stage_change: 8, final_report: 9, founder_intake: 10, intake_outcome: 11, key_result_met: 7.5,
 };
 
 /**
@@ -189,24 +198,9 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     items.push({
       ...companyContext(input.company, event.id, "Company plan", event.createdAt),
       id: `plan_brief:${event.id}`, type: "plan_brief",
-      data: { taskCount: event.planSnapshot!.tasks.length, tasks: event.planSnapshot!.tasks },
+      data: { taskCount: event.planSnapshot!.tasks.length, objectives: event.planSnapshot!.objectives, tasks: event.planSnapshot!.tasks },
     });
   }
-  // Legacy companies have no plan snapshot. This is explicitly a compatibility view, never
-  // used for newly created companies whose original decomposition is a durable company event.
-  const foundingTasks = tasks.filter(task => task.source === "ceo");
-  if (plans.length === 0 && foundingTasks.length > 0) {
-    items.push({
-      ...companyContext(input.company, input.company.id, "Company plan", input.company.createdAt),
-      id: `plan_brief:${input.company.id}`, type: "plan_brief",
-      data: { taskCount: foundingTasks.length, tasks: [...foundingTasks].sort((a, b) => a.position - b.position).map(task => ({
-        taskId: task.id, title: task.titleText ?? localizedTextFromString(task.title),
-        purpose: task.descriptionText ?? localizedTextFromString(task.description), departmentId: task.departmentId,
-        dependsOnTaskIds: (input.taskDependencies ?? []).filter(dep => dep.taskId === task.id).map(dep => dep.dependsOnTaskId),
-      })) },
-    });
-  }
-
   // Progress markers are also emitted for queueing and dependency bookkeeping. Only a durable
   // task_started fact can announce execution. A completion is never a fabricated pre-work brief.
   const starts = taskEvents.filter(event => event.type === "task_started")
@@ -378,6 +372,37 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     items.push(issue);
   }
 
+  // A key result is met when every task serving it is complete, and the card is dated by the last
+  // of those completions — the same rule the runtime records on the key result itself (ADR 0048).
+  const objectivesById = new Map((input.objectives ?? []).map((objective) => [objective.id, objective]));
+  for (const keyResult of input.keyResults ?? []) {
+    const serving = servingTasks(tasks, keyResult.id);
+    if (serving.length === 0 || serving.some((task) => task.status !== "complete")) continue;
+    const servingIds = new Set(serving.map((task) => task.id));
+    const metAt = completions
+      .filter((event) => servingIds.has(event.taskId) && event.outcome === "accepted")
+      .map((event) => event.createdAt)
+      .sort()
+      .at(-1);
+    if (!metAt) continue;
+    const objective = objectivesById.get(keyResult.objectiveId) ?? null;
+    items.push({
+      ...companyContext(input.company, keyResult.id, keyResult.title, metAt),
+      id: `key_result_met:${keyResult.id}`,
+      type: "key_result_met",
+      objectiveId: keyResult.objectiveId,
+      keyResultId: keyResult.id,
+      titleText: keyResult.titleText ?? localizedTextFromString(keyResult.title),
+      data: {
+        keyResultId: keyResult.id,
+        objectiveTitle: objective ? objective.titleText ?? localizedTextFromString(objective.title) : null,
+        targetValue: keyResult.targetValueText ?? localizedTextFromString(keyResult.targetValue),
+        metricName: keyResult.metricName,
+        taskIds: serving.map((task) => task.id),
+      },
+    });
+  }
+
   for (const rollup of input.ceoAttentionRollups ?? []) {
     if (rollup.companyId !== input.company.id || rollup.group.type !== "objective" || !rollup.reasons.includes("goal_stage_change")) {
       continue;
@@ -444,6 +469,20 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     timelineOrder[a.type] - timelineOrder[b.type] ||
     (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
+}
+
+/**
+ * The tasks a key result is measured by: the planned tasks that serve it, without a cancelled one —
+ * a Split cancels its source and its replacements serve the same key result (ADR 0048).
+ */
+export function servingTasks(tasks: readonly Task[], keyResultId: string): Task[] {
+  return tasks.filter((task) => task.keyResultId === keyResultId && (task.taskKind ?? "parent") !== "department_subtask" && task.status !== "cancelled");
+}
+
+/** Met once every task serving it is complete; active while any is not, or before any exists. */
+export function deriveKeyResultStatus(tasks: readonly Task[], keyResultId: string): "met" | "active" {
+  const serving = servingTasks(tasks, keyResultId);
+  return serving.length > 0 && serving.every((task) => task.status === "complete") ? "met" : "active";
 }
 
 function companyContext(company: Company, sourceId: string, title: string, occurredAt: string) {

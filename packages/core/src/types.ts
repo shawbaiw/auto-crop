@@ -205,7 +205,20 @@ export type ExecutionBrief = {
 };
 
 export type CompanyPlanSnapshot = {
-  tasks: Array<{ taskId: string; title: LocalizedText; purpose: LocalizedText; departmentId: string; dependsOnTaskIds: string[] }>;
+  /** The goals the plan serves, each with its key results (ADR 0048). */
+  objectives: Array<{
+    objectiveId: string;
+    title: LocalizedText;
+    keyResults: Array<{ keyResultId: string; title: LocalizedText; targetValue: LocalizedText }>;
+  }>;
+  tasks: Array<{
+    taskId: string;
+    title: LocalizedText;
+    purpose: LocalizedText;
+    departmentId: string;
+    keyResultId: string | null;
+    dependsOnTaskIds: string[];
+  }>;
 };
 
 export type ExecutionReport = {
@@ -889,6 +902,8 @@ export type BlueprintTask = {
   requiredCapabilities: string[];
   proofSchemaId: string;
   riskLevel: RiskLevel;
+  /** The key result this task serves (ADR 0048). */
+  keyResultKey: string;
   dependsOnTaskKeys: string[];
   handoffContract: string;
   handoffContractText?: LocalizedText;
@@ -922,6 +937,7 @@ export type CompanyBlueprint = {
     titleText?: LocalizedText;
     priority: number;
     keyResults: Array<{
+      key: string;
       title: string;
       titleText?: LocalizedText;
       metricName: string;

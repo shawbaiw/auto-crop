@@ -3,6 +3,7 @@ import type {
   BlueprintTask,
   Company,
   CompanyBlueprint,
+  CompanyPlanSnapshot,
   Department,
   KeyResult,
   Locale,
@@ -252,7 +253,10 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
     }
   }
 
-  const firstKeyResultId = keyResults[0]?.id ?? null;
+  // Every planned task serves one key result, which the parser has checked exists (ADR 0048).
+  const keyResultIdsByKey = new Map(
+    input.blueprint.objectives.flatMap((objective) => objective.keyResults).map((keyResult, index) => [keyResult.key, keyResults[index]!.id]),
+  );
   const taskWarnings: TaskEvent[] = [];
   const normalizationsByKey = new Map(
     (input.proofSchemaNormalizations ?? []).map((normalization) => [normalization.taskKey, normalization]),
@@ -277,7 +281,7 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
       createId,
       position,
       departmentId,
-      keyResultId: firstKeyResultId,
+      keyResultId: keyResultIdsByKey.get(taskBlueprint.keyResultKey)!,
       planned: taskBlueprint,
       proofSchemaNormalization: normalizationsByKey.get(taskBlueprint.key) ?? null,
     });
@@ -298,11 +302,7 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
   repositories.appendCompanyEvent({
     id: createId("company_event"), companyId: company.id, type: "company_plan_created",
     message: "Initial task decomposition", createdAt: input.createdAt,
-    planSnapshot: { tasks: tasks.map(task => ({
-      taskId: task.id, title: task.titleText ?? { [company.locale]: task.title },
-      purpose: task.descriptionText ?? { [company.locale]: task.description }, departmentId: task.departmentId,
-      dependsOnTaskIds: repositories.listTaskDependencies(task.id).map(dependency => dependency.dependsOnTaskId),
-    })) },
+    planSnapshot: planSnapshot(repositories, company, tasks),
   });
 
   return {
@@ -311,6 +311,43 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
     objectives,
     keyResults,
     tasks,
+  };
+}
+
+/**
+ * The plan as CEO Office announces it: the tasks just planned, and the goals and key results they
+ * serve (ADR 0048). The founding plan names every goal; a later plan names only those it serves.
+ */
+export function planSnapshot(repositories: ReturnType<typeof createRepositories>, company: Company, tasks: Task[]): CompanyPlanSnapshot {
+  const localized = (text: Task["titleText"], value: string) => text ?? { [company.locale]: value };
+  const servedKeyResultIds = new Set(tasks.map((task) => task.keyResultId));
+  const keyResults = repositories.listKeyResults(company.id);
+  const founding = tasks.length > 0 && tasks.every((task) => task.source === "ceo") && repositories.listCompanyEventsForCompany(company.id).every((event) => !event.planSnapshot);
+  const objectives = repositories
+    .listObjectives(company.id)
+    .sort((a, b) => a.priority - b.priority)
+    .map((objective) => ({
+      objectiveId: objective.id,
+      title: localized(objective.titleText, objective.title),
+      keyResults: keyResults
+        .filter((keyResult) => keyResult.objectiveId === objective.id && (founding || servedKeyResultIds.has(keyResult.id)))
+        .map((keyResult) => ({
+          keyResultId: keyResult.id,
+          title: localized(keyResult.titleText, keyResult.title),
+          targetValue: localized(keyResult.targetValueText, keyResult.targetValue),
+        })),
+    }))
+    .filter((objective) => objective.keyResults.length > 0);
+  return {
+    objectives,
+    tasks: tasks.map((task) => ({
+      taskId: task.id,
+      title: localized(task.titleText, task.title),
+      purpose: localized(task.descriptionText, task.description),
+      departmentId: task.departmentId,
+      keyResultId: task.keyResultId ?? null,
+      dependsOnTaskIds: repositories.listTaskDependencies(task.id).map((dependency) => dependency.dependsOnTaskId),
+    })),
   };
 }
 

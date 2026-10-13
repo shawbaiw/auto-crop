@@ -7,7 +7,7 @@ import { isUnseenSince } from "../../ui/ceoOutcomes/lastSeen";
 import { useLanguage, type TranslationKey } from "../../ui/language";
 import { CeoOfficeCard, type CeoOfficeView } from "./CeoOfficeCard";
 
-const OUTCOME_TYPES = new Set<CeoOfficeItemSummary["type"]>(["execution_report", "stage_change"]);
+const OUTCOME_TYPES = new Set<CeoOfficeItemSummary["type"]>(["execution_report", "key_result_met", "stage_change"]);
 
 const CLASSIFICATION_TONE = {
   achieved: "bg-emerald-50 text-emerald-700",

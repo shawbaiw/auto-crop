@@ -101,6 +101,7 @@ describe("projectCeoOfficeItems", () => {
 
     const items = projectCeoOfficeItems({
       company, tasks: foundingTasks, taskProgressEvents: receivedEvents, taskCompletionEvents: [],
+      companyEvents: [planCreated(foundingTasks)],
     });
 
     expect(items.map((item) => item.type)).toEqual(["plan_brief"]);
@@ -108,6 +109,7 @@ describe("projectCeoOfficeItems", () => {
     if (planBrief.type !== "plan_brief") throw new Error("expected plan_brief");
     expect(planBrief.occurredAt).toBe(company.createdAt);
     expect(planBrief.data.taskCount).toBe(3);
+    expect(planBrief.data.objectives.map((objective) => objective.objectiveId)).toEqual(["objective"]);
     expect(planBrief.data.tasks.map((task) => task.taskId)).toEqual(["research_task", "product_task", "growth_task"]);
   });
 
@@ -126,9 +128,38 @@ describe("projectCeoOfficeItems", () => {
 
     const items = projectCeoOfficeItems({
       company, tasks: [foundingTask], taskProgressEvents: [executing], taskEvents: [{ ...scenario("Found the plan", "").taskEvents[0]!, createdAt: company.createdAt }], taskCompletionEvents: [],
+      companyEvents: [planCreated([foundingTask])],
     });
 
-    expect(items.map((item) => item.id)).toEqual([`plan_brief:${company.id}`, "task_brief:task"]);
+    expect(items.map((item) => item.id)).toEqual(["plan_brief:plan", "task_brief:task"]);
+  });
+
+  it("posts a key result as met when the last task serving it completes, and not before", () => {
+    const keyResult = { id: "kr", objectiveId: "objective", title: "Pick a segment", metricName: "segment", targetValue: "1", currentValue: "0", status: "active" as const };
+    const objective = { id: "objective", companyId: company.id, title: "Validate the wedge", status: "active" as const, priority: 1 };
+    const serving = (id: string, status: Task["status"], extra: Partial<Task> = {}): Task => ({
+      id, companyId: company.id, departmentId: "research", keyResultId: "kr", position: 0, title: id, description: "",
+      assigneeAgentId: "agent", requiredCapabilities: [], proofSchemaId: "custom-proof", workspacePath: null, status, riskLevel: "low", ...extra,
+    });
+    const accepted = (taskId: string, createdAt: string) => ({
+      id: `done_${taskId}`, companyId: company.id, taskId, departmentId: "research", keyResultId: "kr", businessArtifactId: null,
+      outcome: "accepted" as const, dependencyImpact: {}, nextStepItems: [], visionGaps: [], createdAt,
+    });
+    const project = (tasks: Task[]) => projectCeoOfficeItems({
+      company, tasks, objectives: [objective], keyResults: [keyResult],
+      taskCompletionEvents: [accepted("a", "2026-09-02T00:00:00.000Z"), accepted("b", "2026-09-03T00:00:00.000Z")],
+    }).filter((item) => item.type === "key_result_met");
+
+    expect(project([serving("a", "complete"), serving("b", "running")])).toEqual([]);
+    // A cancelled task, such as the source of a Split, and a department subtask do not count.
+    const met = project([
+      serving("a", "complete"), serving("b", "complete"), serving("old", "cancelled"),
+      serving("sub", "running", { taskKind: "department_subtask" }),
+    ]);
+    expect(met).toEqual([expect.objectContaining({
+      id: "key_result_met:kr", occurredAt: "2026-09-03T00:00:00.000Z", objectiveId: "objective",
+      data: expect.objectContaining({ objectiveTitle: { en: "Validate the wedge", zh: "Validate the wedge" }, taskIds: ["a", "b"] }),
+    })]);
   });
 
   it("puts the conclusion before its pending choice and preserves the choice identity after resolution", () => {
@@ -1029,3 +1060,16 @@ describe("projectCeoOfficeItems", () => {
     ]);
   });
 });
+
+/** The company event the server writes when the blueprint becomes a plan. */
+function planCreated(planTasks: Task[]) {
+  return {
+    id: "plan", companyId: company.id, type: "company_plan_created" as const, message: "Plan", createdAt: company.createdAt,
+    planSnapshot: {
+      objectives: [{ objectiveId: "objective", title: { en: "Goal" }, keyResults: [{ keyResultId: "kr", title: { en: "Key result" }, targetValue: { en: "1" } }] }],
+      tasks: planTasks.map((task) => ({
+        taskId: task.id, title: { en: task.title }, purpose: { en: task.description }, departmentId: task.departmentId, keyResultId: "kr", dependsOnTaskIds: [],
+      })),
+    },
+  };
+}

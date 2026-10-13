@@ -14,6 +14,7 @@ export type OkrTemplate = {
   objectiveTitleText: CompleteLocalizedText;
   priority: number;
   keyResults: Array<{
+    key: string;
     title: string;
     titleText: CompleteLocalizedText;
     metricName: string;
@@ -35,6 +36,8 @@ export type TaskTemplate = {
   requiredCapabilities: string[];
   proofSchemaId: string;
   riskLevel: "low" | "medium" | "high";
+  /** The key result of the playbook's OKR template this task serves (ADR 0048). */
+  keyResultKey: string;
   dependsOnTaskKeys: string[];
   handoffContract: string;
   handoffContractText: CompleteLocalizedText;

@@ -74,7 +74,9 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
     `Set blueprint.company.name to the provided company name exactly: ${input.companyName}`,
     "Provide Localized Business Content in English and Chinese for every user-facing blueprint string.",
     "For each department/objective/key result/task/proof schema/handoff contract, include the legacy string field plus its corresponding *Text object with en and zh values.",
-    "Each task must include a stable lowercase key, a dependsOnTaskKeys array, and a handoffContract.",
+    "Each key result must include a stable lowercase key, unique across the blueprint.",
+    "Each task must include a stable lowercase key, a keyResultKey, a dependsOnTaskKeys array, and a handoffContract.",
+    "keyResultKey names the one key result the task moves. A key result counts as met only when every task that serves it is complete, so give each key result the tasks that achieve it, and every key result at least one task.",
     "Use dependsOnTaskKeys only when the downstream task consumes the upstream task's proof or artifact handoff.",
     "Dependencies must reference earlier task keys so the runtime can build an acyclic task graph.",
     "Write handoffContract as the specific consumable deliverable downstream agents can rely on after Proof exists.",
@@ -117,6 +119,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
               priority: 1,
               keyResults: [
                 {
+                  key: "key_result_key",
                   title: "Key result title",
                   titleText: { en: "Key result title", zh: "关键结果标题" },
                   metricName: "metric_name",
@@ -142,6 +145,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
               requiredCapabilities: ["writing"],
               proofSchemaId: collectableProofSchemas[0]?.id ?? "proof-schema-id",
               riskLevel: "low",
+              keyResultKey: "key_result_key",
               dependsOnTaskKeys: [],
               handoffContract: "Specific consumable deliverable this task must produce for downstream work.",
               handoffContractText: {
@@ -163,6 +167,7 @@ export function buildCeoPrompt(input: BuildCeoPromptInput): string {
               requiredCapabilities: ["writing"],
               proofSchemaId: collectableProofSchemas[0]?.id ?? "proof-schema-id",
               riskLevel: "low",
+              keyResultKey: "key_result_key",
               dependsOnTaskKeys: ["task_key"],
               handoffContract: "Verification result for each requirement, with evidence.",
               handoffContractText: {

@@ -54,6 +54,7 @@ export function formatCeoPendingType(item: CeoPendingItem, t: ReturnType<typeof 
     case "final_report":
     case "founder_intake":
     case "intake_outcome":
+    case "key_result_met":
       return item.departmentName;
   }
 }

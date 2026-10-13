@@ -3307,7 +3307,7 @@ describe("Dashboard App", () => {
     await openPage(user, "交付物");
     expect(screen.getByText("已生成落地页")).toBeInTheDocument();
     // CEO Office chrome follows the switch; its business content stays in the company locale.
-    await openPage(user, "CEO Office");
+    await openPage(user, "CEO 办公室");
     expect(screen.getByRole("tab", { name: "时间线" })).toBeInTheDocument();
     expect(screen.queryByText("Build prototype.")).not.toBeInTheDocument();
   });

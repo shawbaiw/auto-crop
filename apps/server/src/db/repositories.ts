@@ -407,10 +407,8 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapKeyResult(row as KeyResultRow));
     },
 
-    updateKeyResultProgress(id: string, currentValue: string, status: KeyResult["status"]): void {
-      database
-        .prepare("UPDATE key_results SET current_value = ?, status = ? WHERE id = ?")
-        .run(currentValue, status, id);
+    updateKeyResultStatus(id: string, status: KeyResult["status"]): void {
+      database.prepare("UPDATE key_results SET status = ? WHERE id = ?").run(status, id);
     },
 
     updateObjectivePriority(id: string, priority: number): void {

@@ -5,6 +5,8 @@ import type {
   CeoIntakeOutcome,
   Company,
   Department,
+  KeyResult,
+  Objective,
   ProofSchema,
   RiskLevel,
   Task,
@@ -17,6 +19,7 @@ import { selectPlaybook } from "../playbooks/selectPlaybook";
 import type { Playbook } from "../playbooks/types";
 import { noToolGrant } from "../policies/capabilityGrant";
 import { createPlannedTask } from "./createCompany";
+import { settleKeyResultStatus } from "./keyResultStatus";
 import { resolveEffectiveTimeoutForProfileName } from "./executionProfile";
 import { FOUNDER_WRITING_RULES, LOCALE_LANGUAGE_NAME } from "./localePromptText";
 import { isCollectableSchema } from "./proof";
@@ -55,12 +58,13 @@ export const ceoIntakeOutputSchema: Record<string, unknown> = {
         type: "object",
         additionalProperties: false,
         required: [
-          "key", "departmentId", "title", "description", "proofSchemaId", "requiredCapabilities",
+          "key", "departmentId", "keyResultId", "title", "description", "proofSchemaId", "requiredCapabilities",
           "riskLevel", "dependsOnTaskIds", "dependsOnTaskKeys", "handoffContract",
         ],
         properties: {
           key: { type: "string" },
           departmentId: { type: "string" },
+          keyResultId: { type: "string" },
           title: { type: "string" },
           description: { type: "string" },
           proofSchemaId: { type: "string" },
@@ -80,6 +84,8 @@ export const ceoIntakeOutputSchema: Record<string, unknown> = {
 export type CeoIntakeAssessmentContext = {
   company: Company;
   departments: Department[];
+  objectives: Objective[];
+  keyResults: KeyResult[];
   tasks: Task[];
   /** Tasks whose Holds offer `request_replan` now. Only these can get a new plan (ADR 0043). */
   replannableTaskIds: Set<string>;
@@ -97,6 +103,8 @@ export type CeoIntakeDecision =
 export type CeoIntakePlannedTask = {
   key: string;
   departmentId: string;
+  /** The key result the task serves (ADR 0048). */
+  keyResultId: string;
   title: string;
   description: string;
   proofSchemaId: string;
@@ -112,6 +120,8 @@ export function resolveCeoIntakeAssessmentContext(repositories: Repositories, co
   return {
     company,
     departments: repositories.listDepartments(company.id),
+    objectives: repositories.listObjectives(company.id),
+    keyResults: repositories.listKeyResults(company.id),
     tasks,
     replannableTaskIds: new Set(tasks.filter((task) => checkTaskAffordance(repositories, task, "request_replan").ok).map((task) => task.id)),
     proofSchemas: playbook.proofSchemas.filter(isCollectableSchema),
@@ -155,6 +165,15 @@ export function buildCeoIntakePrompt(context: CeoIntakeAssessmentContext, intake
     "## Departments",
     ...context.departments.map((department) => `- \`${department.id}\` ${department.name}: ${department.responsibility}`),
     "",
+    "## Goals And Key Results",
+    "Every new task serves one key result. A key result counts as met only when every task serving it is complete.",
+    ...context.objectives.flatMap((objective) => [
+      `- Goal: ${objective.title}`,
+      ...context.keyResults
+        .filter((keyResult) => keyResult.objectiveId === objective.id)
+        .map((keyResult) => `  - \`${keyResult.id}\` ${keyResult.title} (target: ${keyResult.targetValue}; ${keyResult.status === "met" ? "met" : "not met yet"})`),
+    ]),
+    "",
     "## Current Tasks",
     ...(context.tasks.length > 0
       ? context.tasks.map((task) => {
@@ -175,7 +194,7 @@ export function buildCeoIntakePrompt(context: CeoIntakeAssessmentContext, intake
     "Return JSON with these fields:",
     "- `outcome`: one of `create_tasks`, `revise_plan`, `context_only`.",
     `- \`summary\`: your answer to the founder, in ${language}. Say what you decided and what happens next, in one to three short sentences. Name the tasks you create or the task you replan by their titles.`,
-    "- `tasks`: for `create_tasks`, the new tasks; otherwise an empty array. Each has a unique short `key`, a `departmentId` from the list above, a `title` and `description` in the company language, a `proofSchemaId`, `requiredCapabilities`, a `riskLevel`, `dependsOnTaskIds` (existing task ids it needs first), `dependsOnTaskKeys` (keys of earlier new tasks it needs first) and a `handoffContract` (what it hands to tasks that depend on it).",
+    "- `tasks`: for `create_tasks`, the new tasks; otherwise an empty array. Each has a unique short `key`, a `departmentId` from the list above, a `keyResultId` from the key results above, a `title` and `description` in the company language, a `proofSchemaId`, `requiredCapabilities`, a `riskLevel`, `dependsOnTaskIds` (existing task ids it needs first), `dependsOnTaskKeys` (keys of earlier new tasks it needs first) and a `handoffContract` (what it hands to tasks that depend on it).",
     "- `targetTaskId`: for `revise_plan`, the id of the stuck task; otherwise null.",
     "- `replanNote`: for `revise_plan`, what the new plan must change, for the planner; otherwise null.",
     "",
@@ -210,6 +229,7 @@ export function parseCeoIntakeOutput(stdout: string, context: CeoIntakeAssessmen
   if (value.tasks.length > CEO_INTAKE_MAX_TASKS) throw new Error(`create_tasks may add at most ${CEO_INTAKE_MAX_TASKS} tasks`);
 
   const departmentIds = new Set(context.departments.map((department) => department.id));
+  const keyResultIds = new Set(context.keyResults.map((keyResult) => keyResult.id));
   const existingTaskIds = new Set(context.tasks.filter((task) => task.status !== "cancelled").map((task) => task.id));
   const seenKeys = new Set<string>();
   const tasks = value.tasks.map((raw, index): CeoIntakePlannedTask => {
@@ -224,6 +244,8 @@ export function parseCeoIntakeOutput(stdout: string, context: CeoIntakeAssessmen
     if (seenKeys.has(key)) throw new Error(`tasks[${index}].key ${key} is repeated`);
     const departmentId = text("departmentId");
     if (!departmentIds.has(departmentId)) throw new Error(`tasks[${index}].departmentId ${departmentId} is not a department`);
+    const keyResultId = text("keyResultId");
+    if (!keyResultIds.has(keyResultId)) throw new Error(`tasks[${index}].keyResultId ${keyResultId} is not a key result`);
     const dependsOnTaskIds = strings("dependsOnTaskIds");
     for (const id of dependsOnTaskIds) {
       if (!existingTaskIds.has(id)) throw new Error(`tasks[${index}] depends on unknown task ${id}`);
@@ -240,6 +262,7 @@ export function parseCeoIntakeOutput(stdout: string, context: CeoIntakeAssessmen
     return {
       key,
       departmentId,
+      keyResultId,
       title: text("title"),
       description: text("description"),
       proofSchemaId: text("proofSchemaId"),
@@ -271,7 +294,6 @@ export function writeCeoIntakeTasks(input: {
   const departmentsById = new Map(input.context.departments.map((department) => [department.id, department]));
   const allowedSchemas = new Set(input.context.proofSchemas.map((schema) => schema.id));
   const nextPosition = input.context.tasks.reduce((max, task) => Math.max(max, task.position), -1) + 1;
-  const keyResultId = input.context.tasks.find((task) => task.keyResultId)?.keyResultId ?? null;
   const idsByKey = new Map<string, string>();
   const handoffsByKey = new Map<string, string>();
   const warnings: TaskEvent[] = [];
@@ -286,7 +308,7 @@ export function writeCeoIntakeTasks(input: {
       createId: input.createId,
       position: nextPosition + index,
       departmentId: department.id,
-      keyResultId,
+      keyResultId: planned.keyResultId,
       planned: {
         title: planned.title,
         description: planned.description,
@@ -314,6 +336,8 @@ export function writeCeoIntakeTasks(input: {
     dependencies.forEach((dependency) => repositories.createTaskDependency(dependency));
   });
   warnings.forEach((warning) => repositories.appendTaskEvent(warning));
+  // A met key result that gains a task is no longer met.
+  new Set(input.tasks.map((planned) => planned.keyResultId)).forEach((keyResultId) => settleKeyResultStatus(repositories, company.id, keyResultId));
   return created;
 }
 

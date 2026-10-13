@@ -56,6 +56,33 @@ describe("CEO Intake assessment (ADR 0046)", () => {
     expect(request.prompt).toContain("Add annual plans.");
     expect(request.prompt).toContain("`department_research` Research");
     expect(request.prompt).toContain("## Founder Writing Rules");
+    expect(request.prompt).toContain("- Goal: Validate the first offer");
+    expect(request.prompt).toContain("`key_result_1` Pick a pricing model (target: chosen; not met yet)");
+  });
+
+  it("places each new task under the key result it names, and reopens a met key result that gains a task", async () => {
+    const fixture = createFixture();
+    fixture.repositories.writeTaskStatusUnchecked("task_research", "complete");
+    fixture.repositories.updateKeyResultStatus("key_result_1", "met");
+    fixture.send("Also compare yearly pricing.");
+    const ceo = createCeo(() => reply({ outcome: "create_tasks", summary: "I added one task.", tasks: [plannedTask({ key: "yearly", title: "Compare yearly pricing" })] }));
+
+    await fixture.run(ceo);
+
+    const [taskId] = fixture.intake().createdTaskIds!;
+    expect(fixture.repositories.getTask(taskId!)?.keyResultId).toBe("key_result_1");
+    expect(fixture.repositories.listKeyResults("company_1")[0]?.status).toBe("active");
+  });
+
+  it("refuses a new task that names no key result of the company", async () => {
+    const fixture = createFixture();
+    fixture.send("Add a task.");
+    const ceo = createCeo(() => reply({ outcome: "create_tasks", summary: "Added.", tasks: [plannedTask({ keyResultId: "key_result_9" })] }));
+
+    await fixture.run(ceo);
+
+    expect(fixture.intake()).toMatchObject({ status: "received", failureReason: "invalid_agent_output" });
+    expect(fixture.intake().failureMessage).toContain("tasks[0].keyResultId key_result_9 is not a key result");
   });
 
   it("creates tasks placed like blueprint tasks, after the existing ones, and wakes the scheduler", async () => {
@@ -232,6 +259,7 @@ function plannedTask(overrides: Record<string, unknown>) {
   return {
     key: "task",
     departmentId: "department_research",
+    keyResultId: "key_result_1",
     title: "Task",
     description: "Do the work.",
     proofSchemaId: "research-report",
@@ -271,6 +299,11 @@ function createFixture(extraTasks: Task[] = []) {
     leadAgentId: "claude-code",
     memoryPath: ".auto-crop/companies/company_1/departments/research/Memory.md",
   });
+  repositories.createObjective({ id: "objective_1", companyId: company.id, title: "Validate the first offer", status: "active", priority: 1 });
+  repositories.createKeyResult({
+    id: "key_result_1", objectiveId: "objective_1", title: "Pick a pricing model", metricName: "pricing_model",
+    targetValue: "chosen", currentValue: "open", status: "active",
+  });
   repositories.createTask(taskRecord("task_research", "running", 0));
   extraTasks.forEach((task) => repositories.createTask(task));
   const events: Array<{ type: string; companyId: string }> = [];
@@ -305,7 +338,7 @@ function taskRecord(id: string, status: Task["status"], position: number): Task 
     id,
     companyId: "company_1",
     departmentId: "department_research",
-    keyResultId: null,
+    keyResultId: "key_result_1",
     title: `Task ${id}`,
     description: "Run mock work.",
     assigneeAgentId: "claude-code",
