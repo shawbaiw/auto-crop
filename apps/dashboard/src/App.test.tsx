@@ -569,8 +569,10 @@ describe("Dashboard App", () => {
     // The cards open the item; the decision is never made on the card itself.
     expect(within(column).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
 
-    await user.click(within(column).getByRole("button", { name: "Open in Operations Diagnostics" }));
-    expect(screen.getByRole("button", { name: "Operations Diagnostics" })).toHaveAttribute("aria-current", "page");
+    // New plans are reviewed on the department page of their task, which opens with that task in view.
+    await user.click(within(within(column).getByRole("region", { name: "New plans" })).getByRole("button", { name: "Open the new plan" }));
+    expect(screen.getByRole("button", { name: "Engineering" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("region", { name: "Publish the prototype" })).toBeInTheDocument();
   });
 
   it("derives Needs you from action-bearing CEO Office Items", async () => {
@@ -1258,7 +1260,7 @@ describe("Dashboard App", () => {
     // The founder's words come back from the server's projection as their own card.
     const founderCard = await within(ceoTimeline()).findByRole("article", { name: "You" });
     expect(founderCard).toHaveTextContent("Add multiplayer mode.");
-    expect(founderCard).toHaveTextContent("The CEO reads this soon.");
+    expect(founderCard).toHaveTextContent("CEO reads this soon.");
 
     // The assessment ends on the server and arrives as a company event.
     api.getCompanyState = vi.fn(async () => answered);
@@ -1268,7 +1270,7 @@ describe("Dashboard App", () => {
 
     const answer = await within(ceoTimeline()).findByRole("article", { name: "CEO: Added tasks" });
     expect(answer).toHaveTextContent("I added a task to build the multiplayer lobby.");
-    expect(within(ceoTimeline()).getByRole("article", { name: "You" })).not.toHaveTextContent("The CEO reads this soon.");
+    expect(within(ceoTimeline()).getByRole("article", { name: "You" })).not.toHaveTextContent("CEO reads this soon.");
     // The new task arrives with the snapshot, and its card links to its department page.
     await user.click(within(answer).getByRole("button", { name: "Build the multiplayer lobby" }));
     expect(screen.getByRole("button", { name: "Engineering" })).toHaveAttribute("aria-current", "page");
@@ -1290,7 +1292,7 @@ describe("Dashboard App", () => {
     await createCompany(user);
 
     const answer = within(ceoTimeline()).getByRole("article", { name: "CEO: Could not handle your message" });
-    expect(answer).toHaveTextContent("The CEO could not handle this message. Send it again.");
+    expect(answer).toHaveTextContent("The agent could not handle this message. Send it again.");
     const details = within(answer).getByText("Details").closest("details");
     expect(details).not.toHaveAttribute("open");
     expect(details).toHaveTextContent("invalid_agent_output");
@@ -1309,8 +1311,8 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
 
-    expect(screen.getByText("The company is paused. The CEO reads your message after you resume.")).toBeInTheDocument();
-    expect(within(ceoTimeline()).getByRole("article", { name: "You" })).toHaveTextContent("The CEO reads this after you resume the company.");
+    expect(screen.getByText("The company is paused. Your message is read after you resume.")).toBeInTheDocument();
+    expect(within(ceoTimeline()).getByRole("article", { name: "You" })).toHaveTextContent("CEO reads this after you resume the company.");
     expect(screen.getByRole("textbox", { name: "Message to the CEO" })).toBeEnabled();
   });
 
@@ -1328,41 +1330,143 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("tab", { name: "Outcomes" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("shows department agent, task completion, and input controls", async () => {
+  it("shows a department page: its responsibility, who works now, each task as a trace, and a text composer", async () => {
     const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({ ...created, tasks: [{ ...created.tasks[0]!, status: "running" as const }] }));
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
-
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
 
-    expect(screen.getByRole("heading", { name: "Engineering Workspace" })).toBeInTheDocument();
-    expect(screen.getByText("Current Agent")).toBeInTheDocument();
-    expect(screen.getByText("Capabilities: Code / Frontend / Test")).toBeInTheDocument();
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(leaderReport).toHaveTextContent("Current department mission: Build prototype.");
-    expect(leaderReport).toHaveTextContent("CEO Task Progress");
-    expect(screen.getByRole("heading", { name: "Task 1: Create landing page" })).toBeInTheDocument();
-    expect(leaderReport).toHaveTextContent("Received CEO task");
-    expect(leaderReport).toHaveTextContent("Assessment complete");
-    expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting");
-    expect(leaderReport).not.toHaveTextContent("Task 1 (Create landing page) waiting");
-    expect(screen.queryByText("CEO Assigned Tasks")).not.toBeInTheDocument();
-    expect(screen.queryByText("Create landing page / queued")).not.toBeInTheDocument();
-    expect(screen.getByText("Role")).toBeInTheDocument();
-    expect(screen.queryByText("Memory")).not.toBeInTheDocument();
-    await user.type(screen.getByRole("textbox", { name: "Question, material, or task" }), "Use this launch copy.");
-    expect(screen.getByRole("button", { name: /send engineering/i })).toHaveTextContent("Send");
-    expect(screen.getByRole("button", { name: /send engineering/i })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /send engineering/i }).closest(".department-message-box__composer")).toContainElement(
-      screen.getByRole("textbox", { name: "Question, material, or task" }),
-    );
-    expect(screen.queryByRole("button", { name: "Send to CEO Office" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /send engineering/i }));
-    expect(screen.getByText("Input staged for the department agent.")).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Question, material, or task" })).toHaveValue("");
-    expect(screen.getByRole("button", { name: /send engineering/i })).toBeDisabled();
+    expect(screen.getByRole("heading", { level: 1, name: "Engineering" })).toBeInTheDocument();
+    expect(screen.getByText("Build prototype.")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Working now" })).toHaveTextContent("Codex: Task 1 (Create landing page) waiting");
+    // Each task is an Execution Trace: the runtime's steps, newest run in full.
+    const trace = screen.getByRole("region", { name: "Create landing page" });
+    expect(trace).toHaveTextContent("Running");
+    expect(within(trace).getByRole("region", { name: "Steps" })).toHaveTextContent("Received CEO task");
+    expect(within(trace).getByRole("region", { name: "Steps" })).toHaveTextContent("Assessment complete");
+    expect(document.querySelector("[class*='retro-'], .theme-root, .legacy-workspace")).toBeNull();
+
+    // The composer sends a Department Intake, and its card comes back from the server's projection.
+    api.getCompanyState = vi.fn(async () => ({
+      ...created, proof: [], reviews: [], activity: [], replanProposals: [],
+      tasks: [{ ...created.tasks[0]!, status: "running" as const }],
+      ceoOfficeItems: [createFounderIntakeCeoOfficeItem("department_intake_1", "Use this launch copy.", "received", "2026-08-17T00:05:00.000Z", { departmentId: "department_1" })],
+    }));
+    await user.type(screen.getByRole("textbox", { name: "Message to Engineering" }), "Use this launch copy.");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(api.createDepartmentIntake).toHaveBeenCalledWith("company_1", "department_1", { body: "Use this launch copy." });
+    const messages = await screen.findByRole("region", { name: "Your messages to this department" });
+    expect(within(messages).getByRole("article", { name: "You" })).toHaveTextContent("Engineering reads this soon.");
+
+    // What the founder told a department stays off the CEO Office timeline.
+    await user.click(screen.getByRole("button", { name: "CEO Office" }));
+    expect(ceoTimeline()).not.toHaveTextContent("Use this launch copy.");
+  });
+
+  it("folds a settled trace to a summary with its result, keeps a founder's open across live updates, and shows earlier runs on one line", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    const progress = (id: string, step: "received" | "executing" | "blocked" | "complete", status: "complete" | "current" | "blocked", label: string, minute: number) => ({
+      id, companyId: "company_1", departmentId: "department_1", parentTaskId: "task_1", subjectTaskId: "task_1",
+      step, status, label, detail: null, createdAt: `2026-08-17T00:0${minute}:00.000Z`,
+    });
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [{ ...created.tasks[0]!, status: "complete" as const }],
+      taskProgressEvents: [
+        progress("p1", "received", "complete", "Received CEO task", 0),
+        progress("p2", "executing", "current", "First run started", 1),
+        progress("p3", "blocked", "blocked", "First run timed out", 2),
+        progress("p4", "executing", "current", "Second run started", 3),
+        progress("p5", "complete", "complete", "Delivery accepted", 4),
+      ],
+      ceoOfficeItems: [{
+        ...createExecutionReportCeoOfficeItem("done_1", "2026-08-17T00:05:00.000Z", "The landing page is live locally.", "Create landing page"),
+        departmentId: "department_1",
+      }],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+
+    // Settled: one summary line, and the result stays in view.
+    const trace = screen.getByRole("region", { name: "Create landing page" });
+    expect(trace).toHaveTextContent("Done · 5 steps");
+    expect(within(trace).getByRole("region", { name: "Result" })).toHaveTextContent("The landing page is live locally.");
+    expect(within(trace).queryByRole("region", { name: "Steps" })).not.toBeInTheDocument();
+
+    // Opened by hand, it stays open while live updates arrive.
+    await user.click(within(trace).getByRole("button", { name: "Show steps" }));
+    act(() => {
+      api.lastEventHandler?.({ type: "task_warning", taskId: "task_1", message: "Unrelated update." });
+    });
+    const steps = within(trace).getByRole("region", { name: "Steps" });
+    // Only the latest run is in full; the earlier one is a single line that opens on demand.
+    expect(steps).toHaveTextContent("Second run started");
+    expect(steps).not.toHaveTextContent("First run timed out");
+    expect(within(trace).getByRole("list", { name: "Earlier runs" })).toHaveTextContent("Run 1 · First run timed out");
+  });
+
+  it("answers a department's input with a card on its page: a note for a task, or the input passed to the CEO", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      tasks: [{ ...created.tasks[0]!, status: "running" as const }],
+      ceoOfficeItems: [
+        createFounderIntakeCeoOfficeItem("di_1", "Mention the annual discount.", "dispatched", "2026-08-17T00:05:00.000Z", { departmentId: "department_1" }),
+        createIntakeOutcomeCeoOfficeItem("di_1", {
+          status: "dispatched", outcome: "attach_to_task", departmentId: "department_1", targetTaskId: "task_1",
+          summary: { en: "I gave the note to the landing page task. It applies from its next run." },
+        }),
+        createFounderIntakeCeoOfficeItem("di_2", "Change the target market.", "dispatched", "2026-08-17T00:07:00.000Z", { departmentId: "department_1" }),
+        { ...createIntakeOutcomeCeoOfficeItem("di_2", { status: "dispatched", outcome: "route_to_ceo", departmentId: "department_1", summary: { en: "This is for the CEO." } }), occurredAt: "2026-08-17T00:08:00.000Z" },
+        createFounderIntakeCeoOfficeItem("ci_3", "Change the target market.", "received", "2026-08-17T00:09:00.000Z", { routedFromIntakeId: "di_2" }),
+      ],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    // The input the department passed on reaches CEO Office, saying where it came from.
+    expect(within(ceoTimeline()).getByRole("article", { name: "You" })).toHaveTextContent("Passed on by Engineering");
+    expect(ceoTimeline()).not.toHaveTextContent("Mention the annual discount.");
+
+    await user.click(screen.getByRole("button", { name: "Engineering" }));
+    const messages = screen.getByRole("region", { name: "Your messages to this department" });
+    const note = within(messages).getByRole("article", { name: "Engineering: Gave it to a task" });
+    expect(note).toHaveTextContent("I gave the note to the landing page task. It applies from its next run.");
+    expect(within(note).getByRole("button", { name: "Create landing page" })).toBeInTheDocument();
+    const passed = within(messages).getByRole("article", { name: "Engineering: Passed to the CEO" });
+    await user.click(within(passed).getByRole("button", { name: "Open CEO Office" }));
+    expect(screen.getByRole("button", { name: "CEO Office" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("shows the CEO sending input to one department, with a way to open it", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      ceoOfficeItems: [
+        createFounderIntakeCeoOfficeItem("ci_1", "Start a newsletter.", "dispatched", "2026-08-17T00:05:00.000Z"),
+        createIntakeOutcomeCeoOfficeItem("ci_1", { status: "dispatched", outcome: "route_department", targetDepartmentId: "department_1", summary: { en: "Engineering will handle it." } }),
+      ],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const answer = within(ceoTimeline()).getByRole("article", { name: "CEO: Sent to a department" });
+    await user.click(within(answer).getByRole("button", { name: "Open Engineering" }));
+    expect(screen.getByRole("button", { name: "Engineering" })).toHaveAttribute("aria-current", "page");
   });
 
   it("routes department review-ready tasks to Needs you without approval controls on the card", async () => {
@@ -1410,12 +1514,11 @@ describe("Dashboard App", () => {
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
 
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(leaderReport).toHaveTextContent("Task (Validate the prototype) submitted to CEO Office for review");
-    expect(within(leaderReport).getByRole("button", { name: "View CEO Pending Item" })).toBeInTheDocument();
-    expect(leaderReport).not.toHaveTextContent("awaiting review");
+    // The department page shows the delivery waiting, and lists the review in its own "Needs you".
+    expect(screen.getByRole("region", { name: "Validate the prototype" })).toHaveTextContent("The delivery waits for your review.");
+    expect(within(needsYouColumn()).getByRole("region", { name: "Needs your review" })).toHaveTextContent("Validate the prototype");
 
-    await user.click(within(leaderReport).getByRole("button", { name: "View CEO Pending Item" }));
+    await user.click(screen.getByRole("button", { name: "CEO Office" }));
 
     expect(screen.getByRole("button", { name: "CEO Office" })).toHaveAttribute("aria-current", "page");
     const reviews = within(needsYouColumn()).getByRole("region", { name: "Needs your review" });
@@ -1445,7 +1548,7 @@ describe("Dashboard App", () => {
 
     // The owning department lists it too.
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    expect(within(screen.getByRole("region", { name: "Department Leader Report" })).getByText("Publish the prototype URL.")).toBeInTheDocument();
+    expect(within(needsYouColumn()).getByRole("region", { name: "Needs your action" })).toHaveTextContent("Create landing page");
 
     await user.click(screen.getByRole("button", { name: "CEO Office" }));
     await user.click(within(needsYouColumn()).getByRole("button", { name: "Open: Create landing page" }));
@@ -1486,9 +1589,10 @@ describe("Dashboard App", () => {
 
     await user.click(screen.getByRole("button", { name: "Engineering" }));
 
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(within(leaderReport).getAllByText("Wait for search indexing signals.")).toHaveLength(2);
-    expect(within(leaderReport).getByText("2026-08-18T00:00:00.000Z")).toBeInTheDocument();
+    // The department page says what the task waits for, and when it is checked next.
+    expect(screen.getByRole("region", { name: "Create landing page" })).toHaveTextContent(
+      `Waiting: Wait for search indexing signals. Next check: ${new Date("2026-08-18T00:00:00.000Z").toLocaleString("en")}.`,
+    );
   });
 
   it("routes review-ready department subtasks to Needs you", async () => {
@@ -1630,10 +1734,10 @@ describe("Dashboard App", () => {
     });
 
     await waitFor(() => expect(api.getCompanyState).toHaveBeenCalledWith("company_1"));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(await within(leaderReport).findByRole("button", { name: "View CEO Pending Item" })).toBeInTheDocument();
+    const trace = screen.getByRole("region", { name: "Find the first overseas keyword opportunity" });
+    expect(await within(trace).findByRole("button", { name: "Review it" })).toBeInTheDocument();
 
-    await user.click(within(leaderReport).getByRole("button", { name: "View CEO Pending Item" }));
+    await user.click(screen.getByRole("button", { name: "CEO Office" }));
     expect(within(needsYouColumn()).getByRole("region", { name: "Needs your review" })).toHaveTextContent("Find the first overseas keyword opportunity");
   });
 
@@ -1675,141 +1779,6 @@ describe("Dashboard App", () => {
     // A stuck task is counted, and is acted on from its department page, not listed again here.
     expect(within(needsYouColumn()).getByLabelText("Overview")).toHaveTextContent("Stuck1");
     expect(needsYouColumn()).toHaveTextContent("Nothing needs you now.");
-  });
-
-  it("does not show department CEO pending shortcut when review task is not reviewable", async () => {
-    const api = createMockApiClient();
-    api.createCompany = vi.fn(async () => {
-      const created = createCompanyResponse();
-      return {
-        ...created,
-        tasks: [
-          {
-            ...created.tasks[0],
-            title: "Find the first SEO keyword opportunity",
-            status: "review" as const,
-          },
-        ],
-        taskProgressEvents: [
-          ...(created.taskProgressEvents ?? []).slice(0, 2),
-          {
-            id: "task_progress_3",
-            companyId: "company_1",
-            departmentId: "department_1",
-            parentTaskId: "task_1",
-            subjectTaskId: "task_1",
-            step: "awaiting_review" as const,
-            status: "current" as const,
-            label: "Awaiting review",
-            detail: null,
-            createdAt: "2026-08-17T00:02:00.000Z",
-          },
-        ],
-        businessArtifacts: [
-          {
-            ...createBusinessArtifactSummary("business_artifact_1", "task_1", "proof_1"),
-            artifactKind: "blocker",
-            artifactRole: "none",
-            artifactSubtype: "invalid_business_artifact_schema",
-            artifactType: "blocker_report",
-            validationStatus: "invalid_schema",
-            reviewStatus: "not_reviewable",
-          },
-        ],
-      };
-    });
-    const user = userEvent.setup();
-
-    render(<App apiClient={api} />);
-
-    await createCompany(user);
-    await user.click(screen.getByRole("button", { name: "Engineering" }));
-
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(leaderReport).not.toHaveTextContent("submitted to CEO Office for review");
-    expect(within(leaderReport).queryByRole("button", { name: "View CEO Pending Item" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "CEO Office" }));
-    expect(needsYouColumn()).toHaveTextContent("Nothing needs you now.");
-  });
-
-  it("derives a waiting-upstream step when department progress stops before the current task state", async () => {
-    const api = createMockApiClient();
-    const created = createCompanyResponse();
-    api.createCompany = vi.fn(async () => ({
-      ...created,
-      tasks: [
-        {
-          ...created.tasks[0],
-          title: "Prepare SEO launch and indexing assets",
-          status: "waiting_dependency",
-          dependencyNote: "Waiting for dependency deliverable: Validate the prototype locally.",
-        },
-      ],
-      taskProgressEvents: [
-        ...created.taskProgressEvents!.slice(0, 2),
-        {
-          id: "task_progress_no_split",
-          companyId: "company_1",
-          departmentId: "department_1",
-          parentTaskId: "task_1",
-          subjectTaskId: null,
-          step: "no_split_needed" as const,
-          status: "complete" as const,
-          label: "No split needed",
-          detail: null,
-          createdAt: "2026-08-17T00:02:00.000Z",
-        },
-      ],
-    }));
-    const user = userEvent.setup();
-
-    render(<App apiClient={api} />);
-    await createCompany(user);
-    await user.click(screen.getByRole("button", { name: "Engineering" }));
-
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(leaderReport).toHaveTextContent("No split needed");
-    expect(leaderReport).toHaveTextContent("Task (Prepare SEO launch and indexing assets) waiting for upstream acceptance");
-  });
-
-  it("derives a running step when department progress stops before execution", async () => {
-    const api = createMockApiClient();
-    const created = createCompanyResponse();
-    api.createCompany = vi.fn(async () => ({
-      ...created,
-      tasks: [
-        {
-          ...created.tasks[0],
-          title: "Validate the prototype locally",
-          status: "running",
-        },
-      ],
-      taskProgressEvents: [
-        ...created.taskProgressEvents!.slice(0, 2),
-        {
-          id: "task_progress_no_split",
-          companyId: "company_1",
-          departmentId: "department_1",
-          parentTaskId: "task_1",
-          subjectTaskId: null,
-          step: "no_split_needed" as const,
-          status: "complete" as const,
-          label: "No split needed",
-          detail: null,
-          createdAt: "2026-08-17T00:02:00.000Z",
-        },
-      ],
-    }));
-    const user = userEvent.setup();
-
-    render(<App apiClient={api} />);
-    await createCompany(user);
-    await user.click(screen.getByRole("button", { name: "Engineering" }));
-
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(leaderReport).toHaveTextContent("No split needed");
-    expect(leaderReport).toHaveTextContent("Task (Validate the prototype locally) in progress");
   });
 
   it("opens a review from Needs you and approves a proof-backed deliverable", async () => {
@@ -2052,10 +2021,11 @@ describe("Dashboard App", () => {
     await waitFor(() => expect(within(needsYouColumn()).getByLabelText("Overview")).toHaveTextContent("Done5/7"));
     expect(within(needsYouColumn()).getByLabelText("Overview")).toHaveTextContent("Stuck0");
     await user.click(screen.getByRole("button", { name: "Growth" }));
-    expect(screen.getByRole("region", { name: "Department Leader Report" })).toHaveTextContent("Amplify launch pipeline");
+    expect(screen.getByRole("region", { name: "Amplify launch pipeline" })).toHaveTextContent("Waiting");
+    expect(screen.getByRole("region", { name: "Prepare SEO launch and indexing assets" })).toHaveTextContent("Waiting");
   });
 
-  it("removes the CEO pending shortcut after the review request is handled", async () => {
+  it("reviews a delivery from its trace on the department page, which then shows the task done", async () => {
     const api = createMockApiClient();
     api.createCompany = vi.fn(async () => ({
       ...createReviewReadyCompanyResponse(),
@@ -2088,62 +2058,15 @@ describe("Dashboard App", () => {
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
 
-    const leaderReportBeforeReview = screen.getByRole("region", { name: "Department Leader Report" });
-    await user.click(within(leaderReportBeforeReview).getByRole("button", { name: "View CEO Pending Item" }));
-
-    await user.click(within(needsYouColumn()).getByRole("button", { name: "Open: Validate the prototype" }));
+    await user.click(within(screen.getByRole("region", { name: "Validate the prototype" })).getByRole("button", { name: "Review it" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
     await within(needsYouColumn()).findByText("You approved the task.");
-    await user.click(screen.getByRole("button", { name: "Engineering" }));
 
-    const leaderReportAfterReview = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(within(leaderReportAfterReview).queryByRole("button", { name: "View CEO Pending Item" })).not.toBeInTheDocument();
-    expect(leaderReportAfterReview).not.toHaveTextContent("Task (Validate the prototype) submitted to CEO Office for review");
-    expect(leaderReportAfterReview).toHaveTextContent("Task (Validate the prototype) complete");
-  });
-
-  it("uses the current task title when a handled review came from an older execution label", async () => {
-    const api = createMockApiClient();
-    api.createCompany = vi.fn(async () => {
-      const created = createCompanyResponse();
-      return {
-        ...created,
-        tasks: [
-          {
-            ...created.tasks[0],
-            title: "Continue from Partial Output: Record implementation changes",
-            status: "complete" as const,
-          },
-        ],
-        taskProgressEvents: [
-          ...created.taskProgressEvents!.slice(0, 2),
-          {
-            id: "task_progress_3",
-            companyId: "company_1",
-            departmentId: "department_1",
-            parentTaskId: "task_1",
-            subjectTaskId: "task_1",
-            step: "executing" as const,
-            status: "complete" as const,
-            label: "Task 1 (Record implementation changes) review",
-            detail: null,
-            createdAt: "2026-08-17T00:02:00.000Z",
-          },
-        ],
-      };
-    });
-    const user = userEvent.setup();
-
-    render(<App apiClient={api} />);
-    await createCompany(user);
-    await user.click(screen.getByRole("button", { name: "Engineering" }));
-
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(leaderReport).not.toHaveTextContent("Task (Record implementation changes) submitted to CEO Office for review");
-    expect(leaderReport).toHaveTextContent("Task (Continue from Partial Output: Record implementation changes) complete");
-    const completeLabels = within(leaderReport).getAllByText("Task (Continue from Partial Output: Record implementation changes) complete");
-    expect(completeLabels).toHaveLength(1);
-    expect(completeLabels[0].closest("li")).toHaveClass("department-progress-flow__step--complete");
+    const trace = screen.getByRole("region", { name: "Validate the prototype" });
+    expect(within(trace).queryByRole("button", { name: "Review it" })).not.toBeInTheDocument();
+    expect(trace).toHaveTextContent("Done");
+    expect(within(trace).getByRole("region", { name: "Result" })).toBeInTheDocument();
+    expect(needsYouColumn()).toHaveTextContent("Nothing needs you now.");
   });
 
   it("blocks missing-proof CEO approval and returns tasks with a reason and next step", async () => {
@@ -2203,7 +2126,8 @@ describe("Dashboard App", () => {
     });
     expect(await within(needsYouColumn()).findByText("You returned the task to the department.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    expect(screen.getByRole("region", { name: "Department Leader Report" })).toHaveTextContent(
+    // The mocked decision answers with the fixture's base task, titled "Create landing page".
+    expect(screen.getByRole("region", { name: "Create landing page" })).toHaveTextContent(
       "CEO Office returned this, waiting for the department to rework it.",
     );
   });
@@ -2280,14 +2204,14 @@ describe("Dashboard App", () => {
     expect(await screen.findByText("Warning · Create landing page — ignored invalid timeout.")).toBeInTheDocument();
   });
 
-  it("updates task status in the Department Workspace from SSE", async () => {
+  it("updates a task's trace on the department page from the event stream", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    const trace = screen.getByRole("region", { name: "Create landing page" });
 
     await waitFor(() => expect(api.lastEventHandler).toBeDefined());
     act(() => {
@@ -2298,7 +2222,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) in progress"));
+    await waitFor(() => expect(trace).toHaveTextContent("Running"));
     expect(screen.queryByRole("heading", { name: "Agent Activity" })).not.toBeInTheDocument();
     expect(screen.queryByText("Task started: Create landing page (codex).")).not.toBeInTheDocument();
   });
@@ -2332,7 +2256,7 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    const trace = () => screen.getByRole("region", { name: "Create landing page" });
 
     // task_started was published while the stream was down; only a snapshot can tell us.
     const created = createCompanyResponse();
@@ -2346,17 +2270,17 @@ describe("Dashboard App", () => {
     }));
     act(() => openStream?.());
 
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) in progress"));
+    await waitFor(() => expect(trace()).toHaveTextContent("Running"));
   });
 
-  it("shows failed task reasons in the Department Workspace from SSE", async () => {
+  it("shows a stopped task on its trace from the event stream, with its codes only under Details", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    const trace = screen.getByRole("region", { name: "Create landing page" });
 
     await waitFor(() => expect(api.lastEventHandler).toBeDefined());
     act(() => {
@@ -2368,19 +2292,20 @@ describe("Dashboard App", () => {
       });
     });
 
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) blocked"));
+    await waitFor(() => expect(trace).toHaveTextContent("Failed"));
+    expect(within(trace).getByText("Details").closest("details")).not.toHaveAttribute("open");
     expect(screen.queryByRole("heading", { name: "Agent Activity" })).not.toBeInTheDocument();
     expect(screen.queryByText("Task failed: Create landing page / timeout after 10m.")).not.toBeInTheDocument();
   });
 
-  it("shows coordination task states in the Department Workspace from SSE", async () => {
+  it("shows coordination task states on the trace from the event stream", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
 
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    const trace = screen.getByRole("region", { name: "Create landing page" });
 
     await waitFor(() => expect(api.lastEventHandler).toBeDefined());
     act(() => {
@@ -2393,7 +2318,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting for upstream acceptance"));
+    await waitFor(() => expect(trace).toHaveTextContent("Waiting"));
 
     act(() => {
       api.lastEventHandler?.({
@@ -2404,7 +2329,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) in progress"));
+    await waitFor(() => expect(trace).toHaveTextContent("Running"));
 
     act(() => {
       api.lastEventHandler?.({
@@ -2416,10 +2341,10 @@ describe("Dashboard App", () => {
       });
     });
 
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) needs replanning"));
+    await waitFor(() => expect(trace).toHaveTextContent("Needs you"));
   });
 
-  it("refreshes a blocked task from the Department Workspace", async () => {
+  it("checks a blocked task again from its trace", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();
     api.createCompany = vi.fn(async () => ({
@@ -2451,16 +2376,16 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    const trace = screen.getByRole("region", { name: "Create landing page" });
 
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) blocked"));
-    await user.click(screen.getByRole("button", { name: "Refresh Create landing page" }));
+    await waitFor(() => expect(trace).toHaveTextContent("Needs you"));
+    await user.click(within(trace).getByRole("button", { name: "Check again Create landing page" }));
 
     expect(api.refreshTask).toHaveBeenCalledWith("task_1");
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting"));
+    await waitFor(() => expect(trace).toHaveTextContent("Waiting"));
   });
 
-  it("refreshes a blocked department subtask from its parent task flow", async () => {
+  it("checks a blocked department subtask again from its parent's trace", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();
     const parentTask = {
@@ -2533,17 +2458,15 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    const steps = within(screen.getByRole("region", { name: "Provide local prototype access" })).getByRole("region", { name: "Department steps" });
 
-    expect(within(leaderReport).getByText("Blocked")).toBeInTheDocument();
+    expect(steps).toHaveTextContent("Needs you");
 
-    await user.click(screen.getByRole("button", { name: "Refresh Execute Provide local prototype access" }));
+    await user.click(within(steps).getByRole("button", { name: "Check again Execute Provide local prototype access" }));
 
     expect(api.refreshTask).toHaveBeenCalledWith(blockedSubtask.id);
-    await waitFor(() =>
-      expect(within(leaderReport).getByText("Task (Execute Provide local prototype access) awaiting review")).toBeInTheDocument(),
-    );
-    expect(within(leaderReport).queryByText("Blocked")).not.toBeInTheDocument();
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "Department steps" })).getByText("In review")).toBeInTheDocument());
+    expect(screen.getByRole("region", { name: "Department steps" })).not.toHaveTextContent("Needs you");
   });
 
   it("applies parent aggregation updates returned by task refresh", async () => {
@@ -2617,11 +2540,11 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    await user.click(screen.getByRole("button", { name: "Refresh Create landing page" }));
+    await user.click(screen.getByRole("button", { name: "Check again Create landing page" }));
 
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Build the playable prototype) waiting"));
-    expect(leaderReport).toHaveTextContent("Summarizing proof");
+    const parent = screen.getByRole("region", { name: "Build the playable prototype" });
+    await waitFor(() => expect(parent).toHaveTextContent("Waiting"));
+    expect(within(parent).getByRole("region", { name: "Steps" })).toHaveTextContent("Ready to summarize department subtask proof.");
   });
 
   it("does not show proof recovery refresh for tasks that are waiting on upstream proof", async () => {
@@ -2643,9 +2566,9 @@ describe("Dashboard App", () => {
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
 
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
-    expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting for upstream acceptance");
-    expect(within(leaderReport).queryByRole("button", { name: "Refresh Create landing page" })).not.toBeInTheDocument();
+    const trace = screen.getByRole("region", { name: "Create landing page" });
+    expect(trace).toHaveTextContent("Waiting");
+    expect(within(trace).queryByRole("button", { name: "Check again Create landing page" })).not.toBeInTheDocument();
   });
 
   it("shows proof recovery feedback after refreshing a failed no-proof task", async () => {
@@ -2709,16 +2632,13 @@ describe("Dashboard App", () => {
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
 
-    await user.click(screen.getByRole("button", { name: "Refresh Create landing page" }));
+    await user.click(screen.getByRole("button", { name: "Check again Create landing page" }));
 
-    expect(await screen.findByText("Task (Create landing page) submitted to CEO Office for review")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("region", { name: "Create landing page" })).toHaveTextContent("In review"));
     expect(screen.getByText("Found checkable proof and submitted it to CEO Office for review.")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Department Leader Report" })).toHaveTextContent(
-      "Found checkable proof and submitted it to CEO Office for review.",
-    );
   });
 
-  it("recovers a failed timeout task from the Department Workspace", async () => {
+  it("runs a failed timeout task again from its trace", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();
     api.createCompany = vi.fn(async () => ({
@@ -2767,14 +2687,14 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    const trace = screen.getByRole("region", { name: "Create landing page" });
 
-    expect(within(leaderReport).queryByRole("button", { name: "Refresh Create landing page" })).not.toBeInTheDocument();
-    await user.click(within(leaderReport).getByRole("button", { name: "Recover Task Create landing page" }));
+    expect(within(trace).queryByRole("button", { name: "Check again Create landing page" })).not.toBeInTheDocument();
+    await user.click(within(trace).getByRole("button", { name: "Run again Create landing page" }));
 
     expect(api.recoverTask).toHaveBeenCalledWith("task_1");
     await waitFor(() => expect(screen.getAllByText("Task recovered and queued for another run.").length).toBeGreaterThan(0));
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting"));
+    await waitFor(() => expect(trace).toHaveTextContent("Waiting"));
   });
 
   /**
@@ -2782,7 +2702,7 @@ describe("Dashboard App", () => {
    * draw Refresh and Recover, and the route behind approval was a stub anyway (ADR 0020 amendment).
    * The button is drawn from the affordance, and the Approval id rides on the affordance itself.
    */
-  it("answers a Founder Approval request from the Department Workspace", async () => {
+  it("answers a Founder Approval request from the task's trace", async () => {
     const api = createMockApiClient();
     const created = createCompanyResponse();
     api.createCompany = vi.fn(async () => ({
@@ -2841,18 +2761,18 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    const trace = screen.getByRole("region", { name: "Create landing page" });
 
     // The Hold explains itself, so the founder knows what the button is for.
     expect(screen.getAllByText("Create landing page needs Founder Approval before it can run.").length)
       .toBeGreaterThan(0);
-    expect(within(leaderReport).queryByRole("button", { name: "Recover Task Create landing page" }))
+    expect(within(trace).queryByRole("button", { name: "Run again Create landing page" }))
       .not.toBeInTheDocument();
 
-    await user.click(within(leaderReport).getByRole("button", { name: "Approve And Run Create landing page" }));
+    await user.click(within(trace).getByRole("button", { name: "Approve And Run Create landing page" }));
 
     expect(api.decideFounderApproval).toHaveBeenCalledWith("approval_1", { decision: "approved" });
-    await waitFor(() => expect(leaderReport).toHaveTextContent("Task (Create landing page) waiting"));
+    await waitFor(() => expect(trace).toHaveTextContent("Waiting"));
   });
 
   it("shows agent activity on the Operations Diagnostics page", async () => {
@@ -2987,14 +2907,16 @@ describe("Dashboard App", () => {
     render(<App apiClient={api} />);
     await createCompany(user);
     await user.click(screen.getByRole("button", { name: "Engineering" }));
-    const leaderReport = screen.getByRole("region", { name: "Department Leader Report" });
+    const trace = screen.getByRole("region", { name: "Create landing page" });
+    expect(trace).toHaveTextContent("Create landing page reached the Bounded Recovery ceiling and needs a replan.");
 
     // Neither of the actions the board used to know about applies here.
-    expect(within(leaderReport).queryByRole("button", { name: "Refresh Create landing page" })).not.toBeInTheDocument();
-    expect(within(leaderReport).queryByRole("button", { name: "Recover Task Create landing page" })).not.toBeInTheDocument();
+    expect(within(trace).queryByRole("button", { name: "Check again Create landing page" })).not.toBeInTheDocument();
+    expect(within(trace).queryByRole("button", { name: "Run again Create landing page" })).not.toBeInTheDocument();
 
-    await user.click(within(leaderReport).getByRole("button", { name: "Request Replan Create landing page" }));
-    expect(api.createReplanProposal).toHaveBeenCalledWith("task_1");
+    await user.click(within(trace).getByRole("button", { name: "Ask for a new plan Create landing page" }));
+    await user.click(within(trace).getByRole("button", { name: "Create Replan Proposal" }));
+    expect(api.createReplanProposal).toHaveBeenCalledWith("task_1", { mode: null, note: null });
   });
 
   it("requests a Revision with a note, rejects it with a reason, and re-reads proposals from the server after each", async () => {
@@ -3019,7 +2941,8 @@ describe("Dashboard App", () => {
 
     render(<App apiClient={api} />);
     await createCompany(user);
-    await openPage(user, "Operations Diagnostics");
+    await openPage(user, "Engineering");
+    await user.click(screen.getByRole("button", { name: "Ask for a new plan Create landing page" }));
 
     await user.selectOptions(await screen.findByLabelText("Replan mode for Create landing page"), "Revision — rewrite this task");
     await user.type(screen.getByLabelText("Note for the planner"), "Accept an estimate.");
@@ -3035,10 +2958,10 @@ describe("Dashboard App", () => {
     await waitFor(() => expect(vi.mocked(api.getCompanyState).mock.calls.length).toBeGreaterThan(readsBeforeReject));
     expect(await screen.findByText("Rejected. Too broad.")).toBeInTheDocument();
     // Rejected, so the task can be asked about again.
-    expect(screen.getByRole("button", { name: "Create Replan Proposal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask for a new plan Create landing page" })).toBeInTheDocument();
   });
 
-  it("shows and confirms replan proposals on the Operations Diagnostics page", async () => {
+  it("shows and confirms a new plan on the department page of its task", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
     const created = createCompanyResponse();
@@ -3142,10 +3065,10 @@ describe("Dashboard App", () => {
       });
     });
 
-    await openPage(user, "Operations Diagnostics");
+    await openPage(user, "Engineering");
+    await user.click(await screen.findByRole("button", { name: "Ask for a new plan Create landing page" }));
     await user.click(await screen.findByRole("button", { name: "Create Replan Proposal" }));
 
-    expect(await screen.findByRole("region", { name: "New plans" })).toBeInTheDocument();
     expect(screen.getByText("Create landing page — Original task exceeded long budget.")).toBeInTheDocument();
     expect(screen.getByText("Generated by CEO Agent")).toBeInTheDocument();
     expect(screen.getByText(".auto-crop/companies/company_1/replan-task_1-prompt.md")).toBeInTheDocument();
@@ -3153,7 +3076,7 @@ describe("Dashboard App", () => {
     expect(screen.getByText("Replacement Chain")).toBeInTheDocument();
     expect(screen.getByText("Plan smaller slice for Create landing page")).toBeInTheDocument();
     expect(screen.getByText("Affected Downstream")).toBeInTheDocument();
-    expect(screen.getByText("Validate landing page")).toBeInTheDocument();
+    expect(screen.getAllByText("Validate landing page").length).toBeGreaterThan(0);
     expect(screen.getByText("Rewire Preview")).toBeInTheDocument();
     expect(screen.getByText("Validate landing page will wait for Produce proof for Create landing page.")).toBeInTheDocument();
 
@@ -3161,9 +3084,11 @@ describe("Dashboard App", () => {
 
     expect(api.confirmReplanProposal).toHaveBeenCalledWith("replan_proposal_1");
     expect(await screen.findByText("Produce proof for Create landing page")).toBeInTheDocument();
-    // The rewired plan is what the department page now shows.
-    await openPage(user, "Engineering");
-    expect(await screen.findByRole("region", { name: "Department Leader Report" })).toHaveTextContent("Validate landing page");
+    // The replacement tasks and the rewired downstream task are traces on the page.
+    expect(screen.getByRole("region", { name: "Validate landing page" })).toBeInTheDocument();
+    // Operations Diagnostics no longer lists new plans.
+    await openPage(user, "Operations Diagnostics");
+    expect(screen.queryByRole("region", { name: "New plans" })).not.toBeInTheDocument();
   });
 
   it("shows task budgets and failed reasons in Operations Diagnostics from SSE", async () => {
@@ -3315,8 +3240,9 @@ describe("Dashboard App", () => {
     await switchLanguage(user, "中文");
 
     expect(screen.getByRole("button", { name: "工程" })).toBeInTheDocument();
+    // Chrome follows the switch; task titles stay in the company locale, like CEO Office.
     await openPage(user, "工程");
-    expect(screen.getAllByText(/创建落地页/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("region", { name: "任务" })).toHaveTextContent("Create landing page");
     await openPage(user, "运营诊断");
     expect(screen.getByText(/任务已准备好审查。/)).toBeInTheDocument();
     expect(screen.queryByText(/Task is ready for review\./)).not.toBeInTheDocument();
@@ -4166,7 +4092,7 @@ describe("Workbench", () => {
       render(<App apiClient={api} />);
 
       expect(await screen.findByRole("heading", { level: 1, name: "Engineering" })).toBeInTheDocument();
-      expect(screen.getByRole("region", { name: "Department Leader Report" })).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
     } finally {
       restoreStorage();
     }
@@ -4685,6 +4611,7 @@ function createFounderIntakeCeoOfficeItem(
   body: string,
   status: "received" | "assessing" | "dispatched" | "failed",
   occurredAt: string,
+  options: { departmentId?: string | null; routedFromIntakeId?: string | null } = {},
 ): CeoOfficeItemSummary {
   return {
     id: `founder_intake:${intakeId}`,
@@ -4692,14 +4619,14 @@ function createFounderIntakeCeoOfficeItem(
     companyId: "company_1",
     sourceId: intakeId,
     taskId: null,
-    departmentId: null,
+    departmentId: options.departmentId ?? null,
     objectiveId: null,
     keyResultId: null,
     occurredAt,
     title: "Founder input",
     titleText: { en: "Founder input", zh: "Founder input" },
     actionBearing: false,
-    data: { intakeId, body, status },
+    data: { intakeId, body, status, routedFromIntakeId: options.routedFromIntakeId ?? null },
   };
 }
 
@@ -4707,11 +4634,14 @@ function createIntakeOutcomeCeoOfficeItem(
   intakeId: string,
   data: {
     status: "dispatched" | "failed";
-    outcome: "create_tasks" | "revise_plan" | "context_only" | null;
+    outcome: "create_tasks" | "revise_plan" | "context_only" | "route_department" | "attach_to_task" | "route_to_ceo" | null;
     summary: { en?: string; zh?: string } | null;
     createdTaskIds?: string[];
     replanProposalId?: string | null;
-    failureReason?: "agent_failed" | "invalid_agent_output" | "plan_not_made" | "company_stopped" | "no_ceo_agent" | null;
+    targetTaskId?: string | null;
+    targetDepartmentId?: string | null;
+    departmentId?: string | null;
+    failureReason?: "agent_failed" | "invalid_agent_output" | "plan_not_made" | "company_stopped" | "no_agent" | null;
   },
 ): CeoOfficeItemSummary {
   return {
@@ -4719,8 +4649,8 @@ function createIntakeOutcomeCeoOfficeItem(
     type: "intake_outcome",
     companyId: "company_1",
     sourceId: intakeId,
-    taskId: null,
-    departmentId: null,
+    taskId: data.targetTaskId ?? null,
+    departmentId: data.departmentId ?? null,
     objectiveId: null,
     keyResultId: null,
     occurredAt: "2026-08-17T00:06:00.000Z",
@@ -4733,7 +4663,8 @@ function createIntakeOutcomeCeoOfficeItem(
       outcome: data.outcome,
       summary: data.summary,
       createdTaskIds: data.createdTaskIds ?? [],
-      targetTaskId: null,
+      targetTaskId: data.targetTaskId ?? null,
+      targetDepartmentId: data.targetDepartmentId ?? null,
       replanProposalId: data.replanProposalId ?? null,
       failureReason: data.failureReason ?? null,
     },
@@ -5136,6 +5067,17 @@ function createMockApiClient(): ApiClient & { lastEventHandler?: (event: ServerE
     async retryCompanyCreation() {
       return createCreatingCompanyResponse();
     },
+    createDepartmentIntake: vi.fn(async (companyId, departmentId, input) => ({
+      intake: {
+        id: "department_intake_1",
+        companyId,
+        departmentId,
+        body: input.body,
+        status: "received" as const,
+        createdAt: "2026-08-17T00:00:00.000Z",
+        updatedAt: "2026-08-17T00:00:00.000Z",
+      },
+    })),
     createCeoIntake: vi.fn(async (companyId, input) => ({
       intake: {
         id: "ceo_intake_1",

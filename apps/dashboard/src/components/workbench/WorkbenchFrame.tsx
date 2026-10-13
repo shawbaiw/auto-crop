@@ -71,7 +71,7 @@ export function WorkbenchFrame({ agents, ceoOfficeItems, children, commands, com
 
   return (
     <WorkbenchShell
-      fill={location.page === "ceo-office"}
+      fill={location.page === "ceo-office" || location.page === "department"}
       location={title}
       navigationKey={serializeLocation(location)}
       notice={notice}

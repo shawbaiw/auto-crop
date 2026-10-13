@@ -12,8 +12,8 @@ const viewports = [
 ];
 
 const labels = {
-  en: { timeline: "Timeline", plan: "Plan", outcomes: "Outcomes", needsYou: /^Needs you · / , decide: "Open: Choose the pricing model" },
-  zh: { timeline: "时间线", plan: "计划", outcomes: "成果", needsYou: /^需要你 · /, decide: "打开：Choose the pricing model" },
+  en: { timeline: "Timeline", plan: "Plan", outcomes: "Outcomes", needsYou: /^Needs you · / , decide: "Open: Choose the pricing model", engineering: "Engineering" },
+  zh: { timeline: "时间线", plan: "计划", outcomes: "成果", needsYou: /^需要你 · /, decide: "打开：Choose the pricing model", engineering: "工程部" },
 };
 
 for (const language of ["en", "zh"] as const) {
@@ -58,6 +58,16 @@ for (const language of ["en", "zh"] as const) {
       await expect(page.getByRole("tab", { name: text.outcomes })).toHaveAttribute("aria-selected", "true");
       await expect(page.getByRole("tab", { name: text.plan })).toHaveAttribute("aria-selected", "false");
       await shot("outcomes");
+
+      // The department page: header, a running and a stopped trace, and its "Needs you".
+      if (viewport.name === "mobile") await page.getByRole("button", { name: language === "zh" ? "打开导航" : "Open navigation" }).click();
+      await page.getByRole("navigation").getByRole("button", { name: text.engineering, exact: true }).click();
+      await expect(page.getByRole("heading", { level: 1, name: text.engineering })).toBeVisible();
+      await shot("department");
+      if (viewport.name === "mobile") {
+        await page.locator("summary").filter({ hasText: text.needsYou }).click();
+        await shot("department-needs-you-open");
+      }
     });
   }
 }

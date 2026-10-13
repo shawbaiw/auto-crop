@@ -5,18 +5,23 @@ import { Button } from "@/components/ui";
 import { ComposerInput } from "../composer";
 import { useLanguage } from "../../ui/language";
 
+/** What a composer says, so CEO Office and a department page can share it. Defaults to CEO Office. */
+export type ComposerCopy = { label: string; placeholder: string; hint: string };
+
 /**
- * The CEO Office composer: text only (dashboard ADR 0002). Each message becomes a CEO Intake that the
- * CEO Agent assesses (root ADR 0046). A paused company keeps the message until it resumes; a stopped
- * company takes none.
+ * A text-only composer (dashboard ADR 0002). On CEO Office each message becomes a CEO Intake; on a
+ * department page, a Department Intake (root ADR 0046). A paused company keeps the message until it
+ * resumes; a stopped company takes none.
  */
 export function CeoComposer({
   companyStatus,
+  copy,
   draft,
   onDraftChange,
   onSubmit,
 }: {
   companyStatus: CompanySummary["status"];
+  copy?: ComposerCopy;
   draft: string;
   onDraftChange(value: string): void;
   onSubmit?: (body: string) => Promise<void> | void;
@@ -52,7 +57,7 @@ export function CeoComposer({
       }}
     >
       <label className="sr-only" htmlFor={inputId}>
-        {t("ceoOffice.composerLabel")}
+        {copy?.label ?? t("ceoOffice.composerLabel")}
       </label>
       <div className="relative">
         <ComposerInput
@@ -67,7 +72,7 @@ export function CeoComposer({
               void send();
             }
           }}
-          placeholder={t("ceoOffice.composerPlaceholder")}
+          placeholder={copy?.placeholder ?? t("ceoOffice.composerPlaceholder")}
           value={draft}
         />
         <Button
@@ -82,7 +87,7 @@ export function CeoComposer({
         </Button>
       </div>
       <p className="text-xs text-muted-foreground" id={hintId}>
-        {stopped ? t("ceoOffice.composerStopped") : companyStatus === "paused" ? t("ceoOffice.composerPaused") : t("ceoOffice.composerHint")}
+        {stopped ? t("ceoOffice.composerStopped") : companyStatus === "paused" ? t("ceoOffice.composerPaused") : copy?.hint ?? t("ceoOffice.composerHint")}
       </p>
       {error ? <p className="text-xs text-red-700" role="alert">{error}</p> : null}
     </form>

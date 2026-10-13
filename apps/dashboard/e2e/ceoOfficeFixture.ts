@@ -158,6 +158,19 @@ const ceoIntakes = [
   { id: "intake_2", companyId: ceoOfficeCompany.id, body: "Our first customers are indie game studios.", bodyText: { en: "Our first customers are indie game studios." }, status: "assessing", createdAt: "2026-10-13T08:30:00.000Z", updatedAt: "2026-10-13T08:30:00.000Z" },
 ];
 
+const step = (id: string, taskId: string, departmentId: string, kind: string, status: string, label: string, zh: string, createdAt: string) => ({
+  id, companyId: ceoOfficeCompany.id, departmentId, parentTaskId: taskId, subjectTaskId: taskId, step: kind, status, label, labelText: text(label, zh), detail: null, createdAt,
+});
+
+const taskProgressEvents = [
+  step("p1", "task_build", "dept_engineering", "received", "complete", "Received CEO task", "已接收 CEO 任务", "2026-10-11T10:30:00.000Z"),
+  step("p2", "task_build", "dept_engineering", "assessment_complete", "complete", "Assessment complete", "评估完成", "2026-10-11T10:31:00.000Z"),
+  step("p3", "task_build", "dept_engineering", "executing", "current", "Codex is building the generator", "Codex 正在开发生成器", "2026-10-13T07:50:00.000Z"),
+  step("p4", "task_deploy", "dept_engineering", "received", "complete", "Received CEO task", "已接收 CEO 任务", "2026-10-12T14:00:00.000Z"),
+  step("p5", "task_deploy", "dept_engineering", "executing", "current", "Deploying the preview", "正在部署预览版", "2026-10-12T14:10:00.000Z"),
+  step("p6", "task_deploy", "dept_engineering", "blocked", "blocked", "A domain is needed to publish", "发布需要一个域名", "2026-10-12T15:00:00.000Z"),
+];
+
 export function ceoOfficeState(overrides: Record<string, unknown> = {}) {
   return {
     company: ceoOfficeCompany,
@@ -180,7 +193,7 @@ export function ceoOfficeState(overrides: Record<string, unknown> = {}) {
     reviews: [],
     activity: [],
     replanProposals: [],
-    taskProgressEvents: [],
+    taskProgressEvents,
     taskCompletionEvents,
     founderDecisions,
     humanActions,

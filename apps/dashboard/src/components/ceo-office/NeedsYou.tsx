@@ -88,7 +88,7 @@ export function NeedsYou({
                 <p className="text-sm font-medium leading-snug">{taskTitle(task, view.ctx.locale)}</p>
                 {department ? <p className="text-xs text-muted-foreground">{departmentName(department, view.ctx.locale)}</p> : null}
                 <p className="text-sm text-foreground/80">{t(`ceoOffice.waitsOnYouReason.${kind}` as TranslationKey)}</p>
-                <Button className="mt-1 justify-self-start" onClick={() => view.onOpenDepartment(task.departmentId)} size="sm" variant="outline">
+                <Button className="mt-1 justify-self-start" onClick={() => view.onOpenTask(task.id)} size="sm" variant="outline">
                   {t("ceoOffice.openDepartmentPage")}
                 </Button>
               </article>
@@ -107,7 +107,7 @@ export function NeedsYou({
             return (
               <article className="grid gap-2 rounded-lg border border-l-4 border-border/80 border-l-amber-400 bg-card p-3 shadow-workbench" key={proposal.id}>
                 <p className="text-sm">{t("ceoOffice.newPlanCard").replace("{task}", task ? taskTitle(task, view.ctx.locale) : proposal.sourceTaskId)}</p>
-                <Button className="justify-self-start" onClick={view.onOpenOperations} size="sm" variant="outline">
+                <Button className="justify-self-start" onClick={() => view.onOpenTask(proposal.sourceTaskId)} size="sm" variant="outline">
                   {t("ceoOffice.openNewPlan")}
                 </Button>
               </article>

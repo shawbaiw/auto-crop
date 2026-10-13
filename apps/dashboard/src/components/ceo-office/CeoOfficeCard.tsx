@@ -15,7 +15,11 @@ export type CeoOfficeView = {
   lastSeen: string | null;
   onOpenItem(item: CeoOfficeItemSummary): void;
   onOpenDepartment(departmentId: string): void;
-  onOpenOperations(): void;
+  /** Opens a task on its department page, where its trace and new plans are. */
+  onOpenTask(taskId: string): void;
+  onOpenCeoOffice(): void;
+  /** Which department each intake was sent to (null for CEO Office), to name where passed-on input came from. */
+  intakeDepartments: Map<string, string | null>;
 };
 
 /** Cards that ask the founder to act, while they still do. They carry the amber of "needs you". */
@@ -97,15 +101,24 @@ function CardMeta({ item, typeLabel, view }: { item: CeoOfficeItemSummary; typeL
   );
 }
 
-/** The founder's own message, as sent, with a line while the CEO has not answered yet. */
+/** Who answers an intake: the CEO, or the department it was sent to. */
+function intakeSpeaker(departmentId: string | null, view: CeoOfficeView, t: ReturnType<typeof useLanguage>["t"]): string {
+  const department = departmentId ? view.departmentsById.get(departmentId) : undefined;
+  return department ? departmentName(department, view.ctx.locale) : t("ceoOffice.type.intake_outcome");
+}
+
+/** The founder's own message, as sent, with a line while its agent has not answered yet. */
 function FounderIntakeCard({ item, view }: { item: Extract<CeoOfficeItemSummary, { type: "founder_intake" }>; view: CeoOfficeView }) {
   const { language, t } = useLanguage();
+  const speaker = intakeSpeaker(item.departmentId, view, t);
   const waiting: TranslationKey | null =
     item.data.status === "received"
       ? view.companyStatus === "paused" ? "ceoOffice.intakeWaitsForResume" : "ceoOffice.intakeReceived"
       : item.data.status === "assessing" || item.data.status === "assessment_complete" || item.data.status === "planning"
         ? "ceoOffice.intakeAssessing"
         : null;
+  const routedFrom = item.data.routedFromIntakeId;
+  const source = routedFrom && view.intakeDepartments.has(routedFrom) ? intakeSpeaker(view.intakeDepartments.get(routedFrom) ?? null, view, t) : null;
   return (
     <article aria-label={t("ceoOffice.type.founder_intake")} className="ml-auto grid w-fit max-w-[min(36rem,90%)] gap-1.5 rounded-lg bg-primary/5 p-3 ring-1 ring-primary/15">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -113,48 +126,61 @@ function FounderIntakeCard({ item, view }: { item: Extract<CeoOfficeItemSummary,
         <span className="font-medium text-foreground/70">{t("ceoOffice.type.founder_intake")}</span>
         <time dateTime={item.occurredAt}>{formatTimelineRelativeTime(item.occurredAt, language)}</time>
       </div>
+      {source ? <p className="text-xs text-muted-foreground">{t("ceoOffice.intakePassedOnFrom").replace("{source}", source)}</p> : null}
       <p className="whitespace-pre-wrap break-words text-sm">{item.data.body}</p>
-      {waiting ? <p className="text-xs text-muted-foreground motion-safe:animate-pulse">{t(waiting)}</p> : null}
+      {waiting ? <p className="text-xs text-muted-foreground motion-safe:animate-pulse">{t(waiting).replace("{agent}", speaker)}</p> : null}
     </article>
   );
 }
 
-/** The CEO's answer to one message: what it decided, in the company's words, and where it led. */
+/** The agent's answer to one message: what it decided, in the company's words, and where it led. */
 function IntakeOutcomeCard({ item, view }: { item: Extract<CeoOfficeItemSummary, { type: "intake_outcome" }>; view: CeoOfficeView }) {
   const { language, t } = useLanguage();
   const { ctx } = view;
+  const speaker = intakeSpeaker(item.departmentId, view, t);
   const failed = item.data.status === "failed";
   const headline = failed
     ? t("ceoOffice.intakeFailedTitle")
-    : item.data.outcome ? t(`ceoOffice.intakeOutcome.${item.data.outcome}` as TranslationKey) : t("ceoOffice.type.intake_outcome");
-  const createdTasks = item.data.createdTaskIds
+    : item.data.outcome ? t(`ceoOffice.intakeOutcome.${item.data.outcome}` as TranslationKey) : speaker;
+  const linkedTasks = [...item.data.createdTaskIds, ...(item.data.outcome === "attach_to_task" && item.data.targetTaskId ? [item.data.targetTaskId] : [])]
     .map((id) => ctx.tasksById.get(id))
     .filter((task): task is NonNullable<typeof task> => Boolean(task));
+  const targetDepartment = item.data.targetDepartmentId ? view.departmentsById.get(item.data.targetDepartmentId) : undefined;
   return (
     <article
-      aria-label={`${t("ceoOffice.type.intake_outcome")}: ${headline}`}
+      aria-label={`${speaker}: ${headline}`}
       className={cn("grid max-w-[min(40rem,95%)] gap-1.5 rounded-lg border border-border/80 bg-card p-3 shadow-workbench", failed && "border-l-4 border-l-red-400")}
     >
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {failed ? <CircleAlert aria-hidden="true" className="size-3.5 text-red-600" /> : <Bot aria-hidden="true" className="size-3.5" />}
-        <span className="font-medium text-foreground/70">{t("ceoOffice.type.intake_outcome")}</span>
+        <span className="font-medium text-foreground/70">{speaker}</span>
         <time dateTime={item.occurredAt}>{formatTimelineRelativeTime(item.occurredAt, language)}</time>
       </div>
       <p className="text-sm font-semibold">{headline}</p>
       <p className="text-sm text-foreground/80">{timelineItemView(item, ctx).keyLine}</p>
-      {createdTasks.length > 0 ? (
+      {linkedTasks.length > 0 && !failed ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <span className="text-muted-foreground">{t("ceoOffice.intakeNewTasks")}:</span>
-          {createdTasks.map((task) => (
-            <Button key={task.id} onClick={() => view.onOpenDepartment(task.departmentId)} variant="link">
+          <span className="text-muted-foreground">{t(item.data.outcome === "attach_to_task" ? "ceoOffice.intakeTask" : "ceoOffice.intakeNewTasks")}:</span>
+          {linkedTasks.map((task) => (
+            <Button key={task.id} onClick={() => view.onOpenTask(task.id)} variant="link">
               {formatTimelineTasks([task.id], ctx.tasksById, ctx.locale, t)}
             </Button>
           ))}
         </div>
       ) : null}
-      {item.data.outcome === "revise_plan" && item.data.replanProposalId && !failed ? (
-        <Button className="justify-self-start" onClick={view.onOpenOperations} size="sm" variant="outline">
+      {item.data.outcome === "revise_plan" && item.data.replanProposalId && item.data.targetTaskId && !failed ? (
+        <Button className="justify-self-start" onClick={() => view.onOpenTask(item.data.targetTaskId!)} size="sm" variant="outline">
           {t("ceoOffice.intakeOpenNewPlan")}
+        </Button>
+      ) : null}
+      {item.data.outcome === "route_department" && targetDepartment && !failed ? (
+        <Button className="justify-self-start" onClick={() => view.onOpenDepartment(targetDepartment.id)} size="sm" variant="outline">
+          {t("ceoOffice.openDepartment").replace("{department}", departmentName(targetDepartment, ctx.locale))}
+        </Button>
+      ) : null}
+      {item.data.outcome === "route_to_ceo" && !failed ? (
+        <Button className="justify-self-start" onClick={view.onOpenCeoOffice} size="sm" variant="outline">
+          {t("ceoOffice.openCeoOffice")}
         </Button>
       ) : null}
       {failed && item.data.failureReason ? (

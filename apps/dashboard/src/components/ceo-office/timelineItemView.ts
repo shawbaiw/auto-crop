@@ -228,7 +228,7 @@ export function intakeFailureSentence(reason: string | null, t: TranslateFn): st
       return t("ceoOffice.intakeFailed.plan");
     case "company_stopped":
       return t("ceoOffice.intakeFailed.stopped");
-    case "no_ceo_agent":
+    case "no_agent":
       return t("ceoOffice.intakeFailed.noAgent");
     default:
       return t("ceoOffice.intakeFailed.agent");

@@ -1,5 +1,5 @@
 import { ExecutionActionsContext } from "./ui/tasks/TaskExecutionPanel";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   createApiClient,
   type AgentSummary,
@@ -36,7 +36,7 @@ import {
 import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
 import { Deliverables } from "./pages/Deliverables";
 import { CeoOffice } from "./pages/CeoOffice";
-import { DepartmentWorkspace } from "./pages/DepartmentWorkspace";
+import { DepartmentPage } from "./pages/DepartmentPage";
 import { Onboarding, type OnboardingStep } from "./pages/Onboarding";
 import { OperationsDiagnostics } from "./pages/OperationsDiagnostics";
 import { Settings } from "./pages/Settings";
@@ -97,6 +97,9 @@ export default function App({ apiClient }: AppProps) {
   const viewRef = useRef(view);
   viewRef.current = view;
   const [location, setLocation] = useState<WorkbenchLocation>(ceoOfficeLocation);
+  // A task the founder followed a link to, brought into view when its department page opens.
+  const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
+  const clearFocusTask = useCallback(() => setFocusTaskId(null), []);
   const locationRef = useRef(location);
   locationRef.current = location;
   // The company the founder left to create a new one, so the Onboarding Wizard can go back to it.
@@ -694,6 +697,28 @@ export default function App({ apiClient }: AppProps) {
     }).catch(() => undefined);
   }
 
+  async function handleCreateDepartmentIntake(departmentId: string, body: string) {
+    if (!blueprint) {
+      return;
+    }
+
+    const companyId = blueprint.company.id;
+    const response = await client.createDepartmentIntake(companyId, departmentId, { body });
+    setCeoIntakes((current) => upsertCeoIntake(current, response.intake));
+    // The message is a card in the server's projection; read it back so it shows at once.
+    void client.getCompanyState(companyId).then((state) => {
+      if (companyIdRef.current === companyId) adoptBusinessProjection(state);
+    }).catch(() => undefined);
+  }
+
+  /** Opens a task on its department page and brings its trace into view. */
+  function openTask(taskId: string) {
+    const task = blueprint?.tasks.find((candidate) => candidate.id === taskId);
+    if (!task) return;
+    setFocusTaskId(taskId);
+    setLocation({ page: "department", departmentId: task.departmentId });
+  }
+
   async function handleCreateCeoReviewDecision(input: Parameters<ApiClient["createCeoReviewDecision"]>[0]) {
     const response = await client.createCeoReviewDecision(input);
     setBlueprint((current) => updateBlueprintTask(current, response.task));
@@ -854,16 +879,7 @@ export default function App({ apiClient }: AppProps) {
   function renderWorkbenchPage(company: CreateCompanyResponse) {
     if (location.page === "operations") {
       return (
-        <OperationsDiagnostics
-          events={events}
-          humanActions={humanActions}
-          onConfirmReplanProposal={handleConfirmReplanProposal}
-          onCreateReplanProposal={handleCreateReplanProposal}
-          onRejectReplanProposal={handleRejectReplanProposal}
-          replanProposals={replanProposals}
-          tasks={company.tasks}
-          waitStates={waitStates}
-        />
+        <OperationsDiagnostics events={events} humanActions={humanActions} tasks={company.tasks} waitStates={waitStates} />
       );
     }
 
@@ -902,7 +918,7 @@ export default function App({ apiClient }: AppProps) {
           onCreateCeoIntake={handleCreateCeoIntake}
           onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
           onOpenDepartment={(departmentId) => setLocation({ page: "department", departmentId })}
-          onOpenOperations={() => setLocation({ page: "operations" })}
+          onOpenTask={openTask}
           onResolveFounderDecision={handleResolveFounderDecision}
           proof={proof}
           replanProposals={replanProposals}
@@ -913,25 +929,37 @@ export default function App({ apiClient }: AppProps) {
       );
     }
 
-    // The department pages stay legacy until the second P4 step.
     return (
       <ExecutionActionsContext.Provider value={{ client, update: task => setBlueprint(current => updateBlueprintTask(current, task)) }}>
-        <DepartmentWorkspace
+        <DepartmentPage
           agents={agents}
+          businessArtifacts={businessArtifacts}
+          ceoOfficeItems={(company.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
+          company={company.company}
           departmentId={location.departmentId}
           departments={company.departments}
-          onRefreshTask={handleRefreshTask}
-          onRecoverTask={handleRecoverTask}
-          onConfirmTaskTermination={handleConfirmTaskTermination}
-          onDecideFounderApproval={handleDecideFounderApproval}
-          onCreateReplanProposal={handleCreateReplanProposal}
+          focusTaskId={focusTaskId}
+          key={location.departmentId}
           onConfirmHumanAction={handleConfirmHumanAction}
+          onConfirmReplanProposal={handleConfirmReplanProposal}
+          onConfirmTaskTermination={handleConfirmTaskTermination}
+          onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
+          onCreateDepartmentIntake={handleCreateDepartmentIntake}
+          onCreateReplanProposal={handleCreateReplanProposal}
+          onDecideFounderApproval={handleDecideFounderApproval}
+          onFocusHandled={clearFocusTask}
           onOpenCeoOffice={() => setLocation(ceoOfficeLocation)}
-          ceoOfficeItems={(company.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
-          humanActions={humanActions}
-          waitStates={waitStates}
+          onOpenDepartment={(departmentId) => setLocation({ page: "department", departmentId })}
+          onOpenTask={openTask}
+          onRecoverTask={handleRecoverTask}
+          onRefreshTask={handleRefreshTask}
+          onRejectReplanProposal={handleRejectReplanProposal}
+          onResolveFounderDecision={handleResolveFounderDecision}
+          progressEvents={taskProgressEvents}
+          proof={proof}
+          replanProposals={replanProposals}
           tasks={company.tasks}
-          taskProgressEvents={taskProgressEvents}
+          waitStates={waitStates}
         />
       </ExecutionActionsContext.Provider>
     );

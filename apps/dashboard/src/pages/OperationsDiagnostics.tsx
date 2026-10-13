@@ -1,9 +1,6 @@
-import { Activity, AlertTriangle, FileCheck2, GitBranchPlus, ListChecks } from "lucide-react";
+import { Activity, AlertTriangle, FileCheck2, ListChecks } from "lucide-react";
 import { useMemo } from "react";
-import type { HumanActionSummary, ReplanProposalSummary, ServerEvent, TaskSummary, WaitStateSummary } from "../api/client";
-import { ReplanProposalCard } from "../components/replan/ReplanProposalCard";
-import { ReplanRequestForm, type ReplanRequest } from "../components/replan/ReplanRequestForm";
-import { Card } from "../components/ui";
+import type { HumanActionSummary, ServerEvent, TaskSummary, WaitStateSummary } from "../api/client";
 import { WorkbenchSection } from "../components/workbench/WorkbenchSection";
 import { KeyValueList, LineList, type KeyValueItem } from "../components/workbench/KeyValueList";
 import { useLanguage, type TranslationKey } from "../ui/language";
@@ -15,10 +12,6 @@ import { formatTaskStatus } from "../ui/tasks/formatTaskStatus";
 export type OperationsDiagnosticsProps = {
   events: ServerEvent[];
   humanActions: HumanActionSummary[];
-  onConfirmReplanProposal(proposalId: string): Promise<void> | void;
-  onCreateReplanProposal(taskId: string, request: ReplanRequest): Promise<void> | void;
-  onRejectReplanProposal(proposalId: string, note: string | null): Promise<void> | void;
-  replanProposals: ReplanProposalSummary[];
   tasks: TaskSummary[];
   waitStates: WaitStateSummary[];
 };
@@ -27,15 +20,11 @@ const stuckStatuses = new Set(["blocked", "failed", "needs_replan"]);
 
 /**
  * How work is flowing and where it is stuck, with raw codes kept under Details (dashboard ADR 0002).
- * New plans are requested and confirmed here until P4 moves them to the department page.
+ * New plans are requested and confirmed on the department page of the task.
  */
 export function OperationsDiagnostics({
   events,
   humanActions,
-  onConfirmReplanProposal,
-  onCreateReplanProposal,
-  onRejectReplanProposal,
-  replanProposals,
   tasks,
   waitStates,
 }: OperationsDiagnosticsProps) {
@@ -45,23 +34,6 @@ export function OperationsDiagnostics({
     () => events.map((event) => formatAgentActivityEvent(event, event.taskId ? tasksById.get(event.taskId) : undefined, language, t)),
     [events, tasksById, language, t],
   );
-  // A task with a proposal still awaiting a decision is decided from that proposal. One whose proposal
-  // was rejected, failed or went stale is asked again — the server dismisses what a new request replaces.
-  const pendingProposalTaskIds = useMemo(
-    () => new Set(replanProposals.filter((proposal) => proposal.status === "proposed" && !proposal.stale).map((proposal) => proposal.sourceTaskId)),
-    [replanProposals],
-  );
-  // Read from the server's Resume Affordances, not from a status rule of our own. The old rule —
-  // `status === "needs_replan"` — missed every task whose only way forward is a replan without ever
-  // reaching that status, most importantly one at the Bounded Recovery ceiling (ADR 0020).
-  const tasksAwaitingReplanProposal = tasks.filter(
-    (task) =>
-      (task.affordances ?? []).some((affordance) => affordance.kind === "request_replan")
-      && !pendingProposalTaskIds.has(task.id),
-  );
-  // Proposals awaiting a decision first; the rest is history.
-  const orderedProposals = [...replanProposals].sort((left, right) =>
-    Number(right.status === "proposed") - Number(left.status === "proposed") || right.createdAt.localeCompare(left.createdAt));
   const counts = countTasks(tasks);
   const stuckTasks = tasks.filter((task) => stuckStatuses.has(task.status));
   const reviewTasks = tasks.filter((task) => task.taskKind !== "department_subtask" && task.status === "review");
@@ -102,27 +74,6 @@ export function OperationsDiagnostics({
             </li>
           ))}
         </ul>
-      </WorkbenchSection>
-
-      <WorkbenchSection icon={<GitBranchPlus aria-hidden="true" />} title={t("diagnostics.newPlans")}>
-        <p className="text-sm text-muted-foreground">{t("diagnostics.newPlansNote")}</p>
-        {tasksAwaitingReplanProposal.map((task) => (
-          <Card className="p-4" key={task.id}>
-            <ReplanRequestForm onSubmit={(request) => onCreateReplanProposal(task.id, request)} taskTitle={taskTitle(task, language)} />
-          </Card>
-        ))}
-        {replanProposals.length === 0 && tasksAwaitingReplanProposal.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("diagnostics.noNewPlans")}</p>
-        ) : null}
-        {orderedProposals.map((proposal) => (
-          <ReplanProposalCard
-            key={proposal.id}
-            onConfirm={onConfirmReplanProposal}
-            onReject={onRejectReplanProposal}
-            proposal={proposal}
-            tasks={tasks}
-          />
-        ))}
       </WorkbenchSection>
 
       <div className="grid gap-4 lg:grid-cols-2">

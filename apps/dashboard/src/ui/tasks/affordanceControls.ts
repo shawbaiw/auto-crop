@@ -62,12 +62,12 @@ export const taskAffordanceControls: Record<TaskAffordanceKind, TaskAffordanceCo
     handler: "requestReplan",
     buttons: [{ labelKey: "department.requestReplan" }],
   },
-  ceo_review_decision: { render: "surface", surface: "CEO Office: the review form in an item's dialog, gated by the affordance" },
-  resolve_founder_decision: { render: "surface", surface: "CEO Office: the decision form in an item's dialog" },
-  confirm_human_action: { render: "surface", surface: "CEO Office: the Human Action form in an item's dialog, and the department page's Human Action panel" },
-  confirm_replan: { render: "surface", surface: "Operations Diagnostics new plans, until P4 moves them to the department page" },
-  authorize_execution_budget: { render: "surface", surface: "Task execution panel: explicit budget authorization form" },
-  cancel_task: { render: "surface", surface: "Task execution panel: cancellation confirmation" },
+  ceo_review_decision: { render: "surface", surface: "CEO Office and department pages: the review form in an item's dialog, gated by the affordance" },
+  resolve_founder_decision: { render: "surface", surface: "CEO Office and department pages: the decision form in an item's dialog" },
+  confirm_human_action: { render: "surface", surface: "CEO Office and department pages: the Human Action form in an item's dialog" },
+  confirm_replan: { render: "surface", surface: "Department page: the new plan on the task's Execution Trace" },
+  authorize_execution_budget: { render: "surface", surface: "Department page: the task execution panel's budget authorization form" },
+  cancel_task: { render: "surface", surface: "Department page: the task execution panel's cancellation confirmation" },
 };
 
 /** The inline buttons to draw for a task, in the order its affordances were offered. */

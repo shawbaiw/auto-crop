@@ -117,6 +117,14 @@ The three legacy pages overlapped. Counts of blocked work, Human Actions and Wai
   - Business content is shown in the company locale. The interface language changes only the chrome (root ADR 0013).
   - The founder's own message and the CEO's answer are their own timeline cards (root ADR 0046).
   - The Founder Vision is shown once, above the tabs.
+- P4 department pages delivered, as the founder decided on 2026-10-13:
+  - A trace stays open until its result is settled; a waiting task's trace is open too. A settled trace folds to "status · N steps" and keeps its result in view.
+  - Department subtasks show inside their parent's trace with their status and actions.
+  - A task's wait shows on its trace as "Waiting: reason, next check".
+  - New plans are requested, reviewed and confirmed on the task's trace. Operations Diagnostics no longer lists them, and CEO Office's new plan cards open the task on its department page.
+  - The department's "Needs you" is the CEO Office list filtered to the department.
+  - The answers to a Department Intake are cards under the traces.
+  - No Retro component, theme or CSS rule is left. The legacy element rules and tokens in `styles.css` remain for P5.
 - The P4 steps run on a short-lived branch that is rebased often and merged once, so no page is delivered half legacy and half modern (ADR 0001).
 
 ## Considered Options

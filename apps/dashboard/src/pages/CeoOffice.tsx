@@ -17,17 +17,16 @@ import type {
 } from "../api/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui";
 import { CeoComposer } from "../components/ceo-office/CeoComposer";
-import type { CeoOfficeView } from "../components/ceo-office/CeoOfficeCard";
 import { CeoOfficeItemDialog, type CeoOfficeActions } from "../components/ceo-office/CeoOfficeItemDialog";
 import { CeoOutcomes, outcomeItems } from "../components/ceo-office/CeoOutcomes";
 import { CeoPlanCanvas } from "../components/ceo-office/CeoPlanCanvas";
 import { CeoTimeline } from "../components/ceo-office/CeoTimeline";
 import { NeedsYou } from "../components/ceo-office/NeedsYou";
 import { deriveNeedsYou, needsYouCount as countNeedsYou } from "../components/ceo-office/deriveNeedsYou";
-import { compareCeoOfficeTimelineItems, makeLineResolver, type TimelineRenderContext } from "../components/ceo-office/timelineItemView";
+import { isDepartmentIntakeItem, useOfficeView } from "../components/ceo-office/useOfficeView";
 import { isUnseenSince, readOutcomesLastSeen, writeOutcomesLastSeen } from "../ui/ceoOutcomes/lastSeen";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 import { useLanguage } from "../ui/language";
-import { resolveLocalizedValue } from "../ui/language/localizedText";
 
 export type CeoOfficeProps = CeoOfficeActions & {
   agents: AgentSummary[];
@@ -41,7 +40,8 @@ export type CeoOfficeProps = CeoOfficeActions & {
   objectives: ObjectiveSummary[];
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
   onOpenDepartment(departmentId: string): void;
-  onOpenOperations(): void;
+  /** Opens a task on its department page. */
+  onOpenTask(taskId: string): void;
   proof: ProofSummary[];
   replanProposals: ReplanProposalSummary[];
   tasks: TaskSummary[];
@@ -71,7 +71,7 @@ export function CeoOffice({
   onCreateCeoIntake,
   onCreateCeoReviewDecision,
   onOpenDepartment,
-  onOpenOperations,
+  onOpenTask,
   onResolveFounderDecision,
   proof,
   replanProposals,
@@ -96,37 +96,30 @@ export function CeoOffice({
     // Only a different company resets the page; a status change while it is open does not.
   }, [company.id]);
 
-  const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
-  const departmentsById = useMemo(() => new Map(departments.map((department) => [department.id, department])), [departments]);
-  const items = useMemo(() => [...ceoOfficeItems].sort(compareCeoOfficeTimelineItems), [ceoOfficeItems]);
-  const ctx: TimelineRenderContext = useMemo(
-    () => ({
-      locale: companyLocale,
-      line: makeLineResolver(companyLocale, t),
-      localize: (text, fallback) => resolveLocalizedValue(text, companyLocale, fallback),
-      t,
-      tasksById,
-    }),
-    [companyLocale, t, tasksById],
-  );
-  const view: CeoOfficeView = {
-    ctx,
-    companyStatus: company.status,
-    departmentsById,
+  const { items: allItems, view } = useOfficeView({
+    company,
+    ceoOfficeItems,
+    departments,
+    tasks,
     lastSeen,
-    onOpenItem: (item) => {
-      setMessage(null);
-      setOpenItemId(item.id);
+    actions: {
+      onOpenItem: (item) => {
+        setMessage(null);
+        setOpenItemId(item.id);
+      },
+      onOpenDepartment: (departmentId) => {
+        setOpenItemId(null);
+        onOpenDepartment(departmentId);
+      },
+      onOpenTask: (taskId) => {
+        setOpenItemId(null);
+        onOpenTask(taskId);
+      },
+      onOpenCeoOffice: () => setOpenItemId(null),
     },
-    onOpenDepartment: (departmentId) => {
-      setOpenItemId(null);
-      onOpenDepartment(departmentId);
-    },
-    onOpenOperations: () => {
-      setOpenItemId(null);
-      onOpenOperations();
-    },
-  };
+  });
+  // What the founder told one department stays on that department's page.
+  const items = useMemo(() => allItems.filter((item) => !isDepartmentIntakeItem(item)), [allItems]);
   const openItem = openItemId ? items.find((item) => item.id === openItemId) ?? null : null;
   const needs = deriveNeedsYou(items, tasks, replanProposals);
   const needsYouCount = countNeedsYou(needs);
@@ -213,19 +206,4 @@ export function CeoOffice({
       />
     </div>
   );
-}
-
-/** Whether a media query matches now, following changes. Without `matchMedia` (tests), the wide layout. */
-function useMediaQuery(query: string): boolean {
-  const read = () => (typeof window === "undefined" || typeof window.matchMedia !== "function" ? true : window.matchMedia(query).matches);
-  const [matches, setMatches] = useState(read);
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const list = window.matchMedia(query);
-    const onChange = () => setMatches(list.matches);
-    onChange();
-    list.addEventListener("change", onChange);
-    return () => list.removeEventListener("change", onChange);
-  }, [query]);
-  return matches;
 }

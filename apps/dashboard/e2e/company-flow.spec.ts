@@ -58,6 +58,19 @@ test("creates and operates a mock agent company through the dashboard", async ({
   });
   await expect(timeline.getByRole("article", { name: "CEO: Kept as company context" })).toContainText("I kept this as company context.");
 
+  // A message to a department becomes a Department Intake; this one is outside its responsibility,
+  // so the department's agent passes it to the CEO, whose answer then lands on CEO Office.
+  await openPage(page, "Research");
+  await page.getByRole("textbox", { name: "Message to Research" }).fill("Change the target market.");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const messages = page.getByRole("region", { name: "Your messages to this department" });
+  await expect(messages.getByRole("article", { name: "You" })).toContainText("Change the target market.");
+  await runCeoIntakeJobs({ projectRoot: fixture.projectRoot, repositories: fixture.repositories, adapters: fixture.agents, emit: (event) => fixture.events.publish(event) });
+  await expect(messages.getByRole("article", { name: "Research: Passed to the CEO" })).toBeVisible();
+  await runCeoIntakeJobs({ projectRoot: fixture.projectRoot, repositories: fixture.repositories, adapters: fixture.agents, emit: (event) => fixture.events.publish(event) });
+  await openPage(page, "CEO Office");
+  await expect(timeline.getByText("Passed on by Research")).toBeVisible();
+
   const companyId = fixture.repositories.fetchQueuedTasks(1)[0]?.companyId;
   await runSchedulerOnce({
     projectRoot: fixture.projectRoot,

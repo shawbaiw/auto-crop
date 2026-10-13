@@ -63,3 +63,14 @@ export function needsYouByDepartment(needsYou: NeedsYou, tasks: TaskSummary[]): 
   needsYou.tasks.forEach(({ task }) => add(task.departmentId));
   return counts;
 }
+
+/** The part of "Needs you" that belongs to one department, for its page. */
+export function needsYouForDepartment(needsYou: NeedsYou, departmentId: string, tasks: TaskSummary[]): NeedsYou {
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const departmentOf = (taskId: string | null | undefined) => (taskId ? tasksById.get(taskId)?.departmentId : undefined);
+  return {
+    items: needsYou.items.filter((item) => (item.departmentId ?? departmentOf(item.taskId)) === departmentId),
+    plans: needsYou.plans.filter((proposal) => departmentOf(proposal.sourceTaskId) === departmentId),
+    tasks: needsYou.tasks.filter(({ task }) => task.departmentId === departmentId),
+  };
+}
