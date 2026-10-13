@@ -261,14 +261,14 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("region", { name: "CEO Office" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Company Creation Trace" })).toBeInTheDocument();
     expect(document.querySelector("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("Creating Company")).toBeInTheDocument();
+    expect(screen.getByText("Running for")).toBeInTheDocument();
     expect(screen.getAllByText("Pricing Page Studio").length).toBeGreaterThan(0);
     expect(screen.getByText("Codex")).toBeInTheDocument();
     expect(screen.getByText("Creation request accepted")).toBeInTheDocument();
-    expect(screen.getByText("CEO Agent is generating the company blueprint")).toBeInTheDocument();
-    expect(screen.getByText("Company blueprint parsed")).toBeInTheDocument();
-    expect(screen.getByText("Departments and tasks created")).toBeInTheDocument();
-    expect(screen.getByText("Company creation complete")).toBeInTheDocument();
+    expect(screen.getByText("Generate company blueprint")).toBeInTheDocument();
+    expect(screen.getByText("Parse blueprint")).toBeInTheDocument();
+    expect(screen.getByText("Create departments and tasks")).toBeInTheDocument();
+    expect(screen.getByText("Company ready")).toBeInTheDocument();
 
     created.resolve(createCompanyResponse());
     expect(await screen.findByRole("heading", { name: "Pricing Page Studio" })).toBeInTheDocument();
@@ -348,7 +348,7 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByText("Company Creation failed: temporary model failure")).toBeInTheDocument();
+    expect(await screen.findByText("Failed · temporary model failure")).toBeInTheDocument();
     expect(screen.queryByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /retry creation/i }));
 

@@ -238,6 +238,7 @@ export type CompanyEventSummary = {
   message: string;
   messageText?: CompleteLocalizedText;
   status?: string;
+  createdAt?: string;
 };
 export type VisionGapSummary = VisionGap;
 export type HumanActionSummary = HumanAction;

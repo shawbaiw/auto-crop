@@ -78,16 +78,16 @@ for (const viewport of viewports) {
         companies: [company],
         company: { ...company, status: outcome, permissionMode: "balanced" },
         creationEvents: [
-          creationEvent("company_creation_accepted", "Company Creation accepted.", "creating"),
-          creationEvent("company_creation_agent_started", "CEO agent started drafting the blueprint.", "creating"),
+          creationEvent("company_creation_accepted", "Company Creation accepted.", "creating", "2026-08-17T00:00:00.000Z"),
+          creationEvent("company_creation_agent_started", "CEO agent started drafting the blueprint.", "creating", "2026-08-17T00:00:00.300Z"),
           ...(outcome === "creation_failed"
-            ? [creationEvent("company_creation_failed", "Company Creation failed: temporary model failure", outcome)]
+            ? [creationEvent("company_creation_failed", "Company Creation failed: temporary model failure", outcome, "2026-08-17T00:00:14.000Z")]
             : []),
         ],
       });
       await page.goto("/");
 
-      await expect(page.getByRole("region", { name: outcome === "creation_failed" ? "Company setup couldn't be completed" : "Company Creation Trace" })).toBeVisible();
+      await expect(page.getByRole("region", { name: "Company Creation Trace" })).toBeVisible();
       await expectModernPage(page);
       await page.screenshot({ fullPage: true, path: testInfo.outputPath(`modern-${outcome}-${viewport.name}.png`) });
     }
@@ -102,8 +102,8 @@ async function expectModernPage(page: Page) {
 }
 
 /** Serves just enough of the API for a page to render, without a server or a live event stream. */
-function creationEvent(type: string, message: string, status: string) {
-  return { type, companyId: company.id, message, status };
+function creationEvent(type: string, message: string, status: string, createdAt: string) {
+  return { type, companyId: company.id, message, status, createdAt };
 }
 
 async function mockApi(
