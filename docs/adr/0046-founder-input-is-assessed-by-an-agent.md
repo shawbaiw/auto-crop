@@ -55,3 +55,11 @@ The founder decided these during implementation:
   - New plan: `assessing` → `assessment_complete` → `planning` → `dispatched` once the proposal waits for the founder.
   - Context only: `assessing` → `assessment_complete` → `dispatched`.
 - **The card.** CEO Office projects two items from each intake, with no new table (ADR 0019): `founder_intake` when it is sent and `intake_outcome` when it is assessed. A `ceo_intake_updated` event tells the dashboard to read the company again.
+
+## Clarifications (2026-10-13, Department Intake implementation)
+
+- **One pipeline.** A Department Intake is the same record as a CEO Intake, with the department it was sent to. The department's lead agent assesses it, under the same retry, pause and stop rules.
+- **What a department's agent may choose.** New tasks in its own department only; a note for one of its tasks that has not ended; or passing the input to the CEO. It may not keep input as company context: that is the CEO's call.
+- **A note reaches the task's next run.** A running agent process takes no new input, so the note becomes a Settled Fact of the task (`founder_note`), which every later run of it reads. The answer card says so.
+- **Routing.** The CEO may send input to one department, and a department's agent may pass input to the CEO. Either way it becomes a new intake that names where it came from, and passed-on input is never passed on again, so it cannot bounce between agents.
+- **Where the cards show.** A Department Intake's cards are on its department page, not on the CEO Office timeline. Input passed to the CEO shows on CEO Office, marked with the department that passed it on.

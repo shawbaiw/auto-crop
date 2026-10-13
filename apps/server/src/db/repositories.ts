@@ -232,10 +232,13 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO ceo_intakes (
-            id, company_id, body, status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
+            id, company_id, body, status, created_at, updated_at, department_id, routed_from_intake_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(intake.id, intake.companyId, intake.body, intake.status, intake.createdAt, intake.updatedAt);
+        .run(
+          intake.id, intake.companyId, intake.body, intake.status, intake.createdAt, intake.updatedAt,
+          intake.departmentId ?? null, intake.routedFromIntakeId ?? null,
+        );
     },
 
     listCeoIntakesForCompany(companyId: string): CeoIntake[] {
@@ -271,7 +274,7 @@ export function createRepositories(database: DatabaseClient) {
           `UPDATE ceo_intakes SET
             status = ?, updated_at = ?, outcome = ?, outcome_summary = ?, created_task_ids = ?,
             target_task_id = ?, replan_proposal_id = ?, failure_reason = ?, failure_message = ?,
-            attempts = ?, assessed_at = ?
+            attempts = ?, assessed_at = ?, target_department_id = ?, routed_intake_id = ?
           WHERE id = ?`,
         )
         .run(
@@ -286,6 +289,8 @@ export function createRepositories(database: DatabaseClient) {
           intake.failureMessage ?? null,
           intake.attempts ?? 0,
           intake.assessedAt ?? null,
+          intake.targetDepartmentId ?? null,
+          intake.routedIntakeId ?? null,
           intake.id,
         );
     },
@@ -2218,6 +2223,10 @@ type CeoIntakeRow = {
   failure_message: string | null;
   attempts: number | null;
   assessed_at: string | null;
+  department_id: string | null;
+  target_department_id: string | null;
+  routed_intake_id: string | null;
+  routed_from_intake_id: string | null;
 };
 
 type CeoReviewDecisionRow = {
@@ -2643,6 +2652,10 @@ function mapCeoIntake(row: CeoIntakeRow): CeoIntake {
     failureMessage: row.failure_message ?? null,
     attempts: row.attempts ?? 0,
     assessedAt: row.assessed_at ?? null,
+    departmentId: row.department_id ?? null,
+    targetDepartmentId: row.target_department_id ?? null,
+    routedIntakeId: row.routed_intake_id ?? null,
+    routedFromIntakeId: row.routed_from_intake_id ?? null,
   };
 }
 

@@ -200,6 +200,7 @@ describe("repositories", () => {
     const unassessed = {
       outcome: null, outcomeSummary: null, createdTaskIds: [], targetTaskId: null, replanProposalId: null,
       failureReason: null, failureMessage: null, attempts: 0, assessedAt: null,
+      departmentId: null, targetDepartmentId: null, routedIntakeId: null, routedFromIntakeId: null,
     };
     expect(repos.listCeoIntakesForCompany(records.company.id)).toEqual([
       { ...intake, ...unassessed },

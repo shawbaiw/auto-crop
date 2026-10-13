@@ -1137,6 +1137,20 @@ describe("API routes", () => {
     expect(state.ceoIntakes).toEqual([expect.objectContaining({ id: submitted.intake.id, status: "received" })]);
     expect(schedulerWakeRequests).toContain("ceo_intake_received");
 
+    // A Department Intake goes to one department of the company, through the same pipeline.
+    const department = fixture.repositories.listDepartments(created.company.id)[0]!;
+    const sentToDepartment = await postJson<{ intake: { departmentId: string | null; status: string } }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/departments/${department.id}/intakes`,
+      { body: "Use the brand colours." },
+    );
+    expect(sentToDepartment.intake).toMatchObject({ departmentId: department.id, status: "received" });
+    const unknownDepartment = await fetch(`${fixture.baseUrl}/api/companies/${created.company.id}/departments/nope/intakes`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: "Hello" }),
+    });
+    expect(unknownDepartment.status).toBe(404);
+
     await fixture.close();
   });
 

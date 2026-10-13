@@ -466,13 +466,20 @@ async function routeRequest(
     return;
   }
 
+  // Founder input to CEO Office, or to one department. Both are assessed by an agent (ADR 0046).
   const ceoIntakeMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/ceo-intakes$/);
-  if (method === "POST" && ceoIntakeMatch) {
-    const companyId = ceoIntakeMatch[1];
+  const departmentIntakeMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/departments\/([^/]+)\/intakes$/);
+  if (method === "POST" && (ceoIntakeMatch || departmentIntakeMatch)) {
+    const companyId = (ceoIntakeMatch ?? departmentIntakeMatch)![1];
+    const departmentId = departmentIntakeMatch ? departmentIntakeMatch[2] : null;
     const company = options.repositories.getCompany(companyId);
 
     if (!company) {
       sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      return;
+    }
+    if (departmentId && !options.repositories.listDepartments(companyId).some((department) => department.id === departmentId)) {
+      sendJson(response, 404, { error: `Department not found: ${departmentId}` });
       return;
     }
     if (company.status === "stopped") {
@@ -484,7 +491,7 @@ async function routeRequest(
     const intakeBody = body.body?.trim() ?? "";
 
     if (!intakeBody) {
-      sendJson(response, 400, { error: "CEO intake body is required." });
+      sendJson(response, 400, { error: "Intake body is required." });
       return;
     }
 
@@ -492,6 +499,7 @@ async function routeRequest(
     const intake: CeoIntake = {
       id: createRouteId(options, "ceo_intake"),
       companyId,
+      departmentId,
       body: intakeBody,
       status: "received",
       createdAt: timestamp,
@@ -499,7 +507,7 @@ async function routeRequest(
     };
 
     options.repositories.createCeoIntake(intake);
-    // The CEO Agent assesses it off the request path (ADR 0046); waking the scheduler starts that soon.
+    // An agent assesses it off the request path (ADR 0046); waking the scheduler starts that soon.
     options.requestSchedulerWake?.("ceo_intake_received");
     sendJson(response, 201, { intake: summarizeCeoIntake(intake) });
     return;

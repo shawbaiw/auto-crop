@@ -48,9 +48,9 @@ const FALLBACK_PROOF_SCHEMA_ID = "test-output";
 export const ceoIntakeOutputSchema: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
-  required: ["outcome", "summary", "tasks", "targetTaskId", "replanNote"],
+  required: ["outcome", "summary", "tasks", "targetTaskId", "targetDepartmentId", "replanNote"],
   properties: {
-    outcome: { type: "string", enum: ["create_tasks", "revise_plan", "context_only"] },
+    outcome: { type: "string", enum: ["create_tasks", "revise_plan", "context_only", "route_department", "attach_to_task", "route_to_ceo"] },
     summary: { type: "string" },
     tasks: {
       type: "array",
@@ -77,12 +77,17 @@ export const ceoIntakeOutputSchema: Record<string, unknown> = {
       },
     },
     targetTaskId: { type: ["string", "null"] },
+    targetDepartmentId: { type: ["string", "null"] },
     replanNote: { type: ["string", "null"] },
   },
 };
 
 export type CeoIntakeAssessmentContext = {
   company: Company;
+  /** The department a Department Intake was sent to; null when the CEO assesses. */
+  department: Department | null;
+  /** Input already passed on once is not passed on again, so it cannot bounce between agents. */
+  canRoute: boolean;
   departments: Department[];
   objectives: Objective[];
   keyResults: KeyResult[];
@@ -97,6 +102,9 @@ export type CeoIntakeAssessmentContext = {
 
 export type CeoIntakeDecision =
   | { outcome: "context_only"; summary: string }
+  | { outcome: "route_department"; summary: string; targetDepartmentId: string }
+  | { outcome: "attach_to_task"; summary: string; targetTaskId: string }
+  | { outcome: "route_to_ceo"; summary: string }
   | { outcome: "revise_plan"; summary: string; targetTaskId: string; replanNote: string | null }
   | { outcome: "create_tasks"; summary: string; tasks: CeoIntakePlannedTask[] };
 
@@ -115,11 +123,20 @@ export type CeoIntakePlannedTask = {
   handoffContract: string;
 };
 
-export function resolveCeoIntakeAssessmentContext(repositories: Repositories, company: Company, playbook: Playbook, adapters: AgentAdapter[]): CeoIntakeAssessmentContext {
+export function resolveCeoIntakeAssessmentContext(
+  repositories: Repositories,
+  company: Company,
+  playbook: Playbook,
+  adapters: AgentAdapter[],
+  intake: Pick<CeoIntake, "departmentId" | "routedFromIntakeId"> = {},
+): CeoIntakeAssessmentContext {
   const tasks = repositories.listTasksForCompany(company.id);
+  const departments = repositories.listDepartments(company.id);
   return {
     company,
-    departments: repositories.listDepartments(company.id),
+    department: intake.departmentId ? departments.find((department) => department.id === intake.departmentId) ?? null : null,
+    canRoute: !intake.routedFromIntakeId,
+    departments,
     objectives: repositories.listObjectives(company.id),
     keyResults: repositories.listKeyResults(company.id),
     tasks,
@@ -137,23 +154,45 @@ export function resolveCeoIntakeAssessmentContext(repositories: Repositories, co
 export function listCompanyContextNotes(repositories: Repositories, companyId: string): string[] {
   return repositories
     .listCeoIntakesForCompany(companyId)
-    .filter((intake) => intake.outcome === "context_only" && intake.status === "dispatched")
+    .filter((intake) => !intake.departmentId && intake.outcome === "context_only" && intake.status === "dispatched")
     .map((intake) => intake.body);
+}
+
+/** Tasks a department can be given a note for: its own planned tasks that have not ended. */
+function attachableTasks(context: CeoIntakeAssessmentContext): Task[] {
+  return context.tasks.filter((task) => task.departmentId === context.department?.id
+    && (task.taskKind ?? "parent") !== "department_subtask" && task.status !== "complete" && task.status !== "cancelled");
 }
 
 export function buildCeoIntakePrompt(context: CeoIntakeAssessmentContext, intake: CeoIntake): string {
   const { company } = context;
   const language = LOCALE_LANGUAGE_NAME[company.locale];
   const departmentsById = new Map(context.departments.map((department) => [department.id, department]));
+  const department = context.department;
+  const outcomes = department
+    ? [
+      `- \`create_tasks\`: the input asks for new work that is ${department.name}'s responsibility. Plan 1 to 5 tasks in this department.`,
+      "- `attach_to_task`: the input adds to a task this department already has. Name it in `targetTaskId`. The note reaches the task from its next run.",
+      ...(context.canRoute ? ["- `route_to_ceo`: the input is outside this department's responsibility. The CEO assesses it instead."] : []),
+    ]
+    : [
+      "- `create_tasks`: the input asks for new work. Plan 1 to 5 tasks, placed in existing departments.",
+      "- `revise_plan`: the input changes a task that is stuck. Only tasks listed as \"can get a new plan\" qualify. The founder confirms the new plan before it applies.",
+      "- `context_only`: the input is information, a constraint or a preference. Keep it as company context. Later tasks will read it.",
+      ...(context.canRoute ? ["- `route_department`: the input belongs to one department. Name it in `targetDepartmentId`; that department's agent assesses it."] : []),
+    ];
+  const allowed = outcomes.map((line) => line.slice(3, line.indexOf("`", 3)));
   return [
     "# Assess Founder Input",
     "",
-    "You are the CEO Agent of an Auto-Crop company. The founder sent new input to CEO Office.",
+    department
+      ? `You are the agent who leads the ${department.name} department of an Auto-Crop company. The founder sent input to this department. Its responsibility: ${department.responsibility}`
+      : "You are the CEO Agent of an Auto-Crop company. The founder sent new input to CEO Office.",
     "Decide what it needs. Do not do the work yourself, and do not use tools. Choose exactly one outcome:",
-    "- `create_tasks`: the input asks for new work. Plan 1 to 5 tasks, placed in existing departments.",
-    "- `revise_plan`: the input changes a task that is stuck. Only tasks listed as \"can get a new plan\" qualify. The founder confirms the new plan before it applies.",
-    "- `context_only`: the input is information, a constraint or a preference. Keep it as company context. Later tasks will read it.",
-    "Prefer `context_only` when the input does not clearly ask for new work. Do not create a task that repeats a task that already exists.",
+    ...outcomes,
+    department
+      ? "Do not create a task that repeats a task that already exists."
+      : "Prefer `context_only` when the input does not clearly ask for new work. Do not create a task that repeats a task that already exists.",
     "",
     "## Company",
     `Name: ${company.name}`,
@@ -175,6 +214,7 @@ export function buildCeoIntakePrompt(context: CeoIntakeAssessmentContext, intake
     ]),
     "",
     "## Current Tasks",
+    ...(department ? [`Tasks of ${department.name} that can be given a note: ${attachableTasks(context).map((task) => `\`${task.id}\``).join(", ") || "none"}.`] : []),
     ...(context.tasks.length > 0
       ? context.tasks.map((task) => {
         const department = departmentsById.get(task.departmentId)?.name ?? task.departmentId;
@@ -192,10 +232,11 @@ export function buildCeoIntakePrompt(context: CeoIntakeAssessmentContext, intake
     "",
     "## Reply",
     "Return JSON with these fields:",
-    "- `outcome`: one of `create_tasks`, `revise_plan`, `context_only`.",
+    `- \`outcome\`: one of ${allowed.map((outcome) => `\`${outcome}\``).join(", ")}.`,
     `- \`summary\`: your answer to the founder, in ${language}. Say what you decided and what happens next, in one to three short sentences. Name the tasks you create or the task you replan by their titles.`,
     "- `tasks`: for `create_tasks`, the new tasks; otherwise an empty array. Each has a unique short `key`, a `departmentId` from the list above, a `keyResultId` from the key results above, a `title` and `description` in the company language, a `proofSchemaId`, `requiredCapabilities`, a `riskLevel`, `dependsOnTaskIds` (existing task ids it needs first), `dependsOnTaskKeys` (keys of earlier new tasks it needs first) and a `handoffContract` (what it hands to tasks that depend on it).",
-    "- `targetTaskId`: for `revise_plan`, the id of the stuck task; otherwise null.",
+    "- `targetTaskId`: for `revise_plan`, the id of the stuck task; for `attach_to_task`, the id of the task; otherwise null.",
+    "- `targetDepartmentId`: for `route_department`, the id of the department; otherwise null.",
     "- `replanNote`: for `revise_plan`, what the new plan must change, for the planner; otherwise null.",
     "",
     FOUNDER_WRITING_RULES[company.locale],
@@ -212,8 +253,28 @@ export function parseCeoIntakeOutput(stdout: string, context: CeoIntakeAssessmen
   const summary = typeof value.summary === "string" ? value.summary.trim() : "";
   if (!summary) throw new Error("summary is empty");
   const outcome = value.outcome as CeoIntakeOutcome;
+  const allowed: CeoIntakeOutcome[] = context.department
+    ? ["create_tasks", "attach_to_task", ...(context.canRoute ? ["route_to_ceo" as const] : [])]
+    : ["create_tasks", "revise_plan", "context_only", ...(context.canRoute ? ["route_department" as const] : [])];
+  if (!allowed.includes(outcome)) throw new Error(`outcome ${String(value.outcome)} is not one this assessment may choose`);
 
-  if (outcome === "context_only") return { outcome, summary };
+  if (outcome === "context_only" || outcome === "route_to_ceo") return { outcome, summary };
+
+  if (outcome === "route_department") {
+    const targetDepartmentId = typeof value.targetDepartmentId === "string" ? value.targetDepartmentId : "";
+    if (!context.departments.some((department) => department.id === targetDepartmentId)) {
+      throw new Error(`targetDepartmentId ${targetDepartmentId || "(none)"} is not a department`);
+    }
+    return { outcome, summary, targetDepartmentId };
+  }
+
+  if (outcome === "attach_to_task") {
+    const targetTaskId = typeof value.targetTaskId === "string" ? value.targetTaskId : "";
+    if (!attachableTasks(context).some((task) => task.id === targetTaskId)) {
+      throw new Error(`targetTaskId ${targetTaskId || "(none)"} is not a task this department can be given a note for`);
+    }
+    return { outcome, summary, targetTaskId };
+  }
 
   if (outcome === "revise_plan") {
     const targetTaskId = typeof value.targetTaskId === "string" ? value.targetTaskId : "";
@@ -244,6 +305,9 @@ export function parseCeoIntakeOutput(stdout: string, context: CeoIntakeAssessmen
     if (seenKeys.has(key)) throw new Error(`tasks[${index}].key ${key} is repeated`);
     const departmentId = text("departmentId");
     if (!departmentIds.has(departmentId)) throw new Error(`tasks[${index}].departmentId ${departmentId} is not a department`);
+    if (context.department && departmentId !== context.department.id) {
+      throw new Error(`tasks[${index}].departmentId ${departmentId} is not this department`);
+    }
     const keyResultId = text("keyResultId");
     if (!keyResultIds.has(keyResultId)) throw new Error(`tasks[${index}].keyResultId ${keyResultId} is not a key result`);
     const dependsOnTaskIds = strings("dependsOnTaskIds");
@@ -393,19 +457,22 @@ export function recoverInterruptedCeoIntakes(repositories: Repositories, now: ()
 async function assessCeoIntake(input: RunCeoIntakeJobsInput, intake: CeoIntake, company: Company, now: () => Date): Promise<void> {
   const { repositories } = input;
   const createId = input.createId ?? ((prefix: string) => `${prefix}_${crypto.randomUUID()}`);
-  const adapter = input.adapters.find((candidate) => candidate.id === company.selectedCeoAgentId);
+  // The CEO Agent assesses a CEO Intake; the department's lead agent assesses a Department Intake.
+  const department = intake.departmentId ? repositories.listDepartments(company.id).find((candidate) => candidate.id === intake.departmentId) : null;
+  const agentId = department ? department.leadAgentId : company.selectedCeoAgentId;
+  const adapter = input.adapters.find((candidate) => candidate.id === agentId);
   if (!adapter) {
-    finish(input, intake, { status: "failed", failureReason: "no_ceo_agent", failureMessage: `CEO Agent ${company.selectedCeoAgentId} is not available.` }, now);
+    finish(input, intake, { status: "failed", failureReason: "no_agent", failureMessage: `Agent ${agentId} is not available.` }, now);
     return;
   }
 
   const attempts = (intake.attempts ?? 0) + 1;
   let current: CeoIntake = { ...intake, status: "assessing", attempts, updatedAt: now().toISOString() };
   repositories.saveCeoIntakeAssessment(current);
-  input.emit({ type: "ceo_intake_updated", companyId: company.id, message: "CEO is assessing founder input." });
+  input.emit({ type: "ceo_intake_updated", companyId: company.id, message: "An agent is assessing founder input." });
 
   const playbook = selectPlaybook(company.founderVision);
-  const context = resolveCeoIntakeAssessmentContext(repositories, company, playbook, input.adapters);
+  const context = resolveCeoIntakeAssessmentContext(repositories, company, playbook, input.adapters, intake);
   const result = await runAssessment(input, adapter, company, current, context);
 
   // The company may have been paused or stopped while the CEO was thinking. A paused company's input
@@ -451,6 +518,39 @@ async function assessCeoIntake(input: RunCeoIntakeJobsInput, intake: CeoIntake, 
   repositories.saveCeoIntakeAssessment(current);
 
   if (decision.outcome === "context_only") {
+    finish(input, current, { status: "dispatched" }, now);
+    return;
+  }
+
+  if (decision.outcome === "attach_to_task") {
+    // A running agent process cannot take new input. The note becomes a Settled Fact of the task, which
+    // every later run of it reads (resolveSettledFacts).
+    finish(input, { ...current, targetTaskId: decision.targetTaskId }, { status: "dispatched" }, now);
+    return;
+  }
+
+  if (decision.outcome === "route_department" || decision.outcome === "route_to_ceo") {
+    // Passed on as a new intake that its own agent assesses. It records where it came from and is not
+    // passed on again.
+    const routed: CeoIntake = {
+      id: createId("ceo_intake"),
+      companyId: company.id,
+      departmentId: decision.outcome === "route_department" ? decision.targetDepartmentId : null,
+      body: intake.body,
+      status: "received",
+      routedFromIntakeId: intake.id,
+      createdAt: now().toISOString(),
+      updatedAt: now().toISOString(),
+    };
+    repositories.transaction(() => {
+      repositories.createCeoIntake(routed);
+      current = {
+        ...current,
+        routedIntakeId: routed.id,
+        targetDepartmentId: decision.outcome === "route_department" ? decision.targetDepartmentId : null,
+      };
+    });
+    input.requestSchedulerWake?.();
     finish(input, current, { status: "dispatched" }, now);
     return;
   }
@@ -529,7 +629,7 @@ async function runAssessment(
       prompt,
       promptPath,
       workspacePath: workspace.companyRoot,
-      metadata: { phase: "ceo_intake", intakeId: intake.id, locale: company.locale },
+      metadata: { phase: "ceo_intake", intakeId: intake.id, locale: company.locale, departmentId: intake.departmentId ?? "" },
       timeoutMs: resolveEffectiveTimeoutForProfileName("medium").effectiveTimeoutMs,
       // "Do not use tools" is enforced: the assessment holds none. The reply shape is a contract.
       grant: noToolGrant,

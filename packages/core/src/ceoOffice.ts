@@ -104,6 +104,8 @@ export type CEOOfficeItem =
       intakeId: string;
       body: string;
       status: CeoIntake["status"];
+      /** Set when another agent passed the founder's input on to here. */
+      routedFromIntakeId: string | null;
     }, false>
   /** What the CEO Agent did with one CEO Intake, or that it could not assess it (ADR 0046). */
   | OfficeItem<"intake_outcome", {
@@ -113,6 +115,7 @@ export type CEOOfficeItem =
       summary: LocalizedText | null;
       createdTaskIds: string[];
       targetTaskId: string | null;
+      targetDepartmentId: string | null;
       replanProposalId: string | null;
       failureReason: NonNullable<CeoIntake["failureReason"]> | null;
     }, false>;
@@ -435,21 +438,24 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
     });
   }
 
-  // Each intake is two facts: the founder sent it, and later the CEO answered. The answer is its own
-  // card at the time it happened, so the timeline reads as a conversation.
+  // Each intake is two facts: the founder sent it, and later the agent answered. The answer is its own
+  // card at the time it happened, so the timeline reads as a conversation. A Department Intake's
+  // cards carry its department, which is where they are shown.
   for (const intake of input.ceoIntakes ?? []) {
     if (intake.companyId !== input.company.id) continue;
     items.push({
       ...companyContext(input.company, intake.id, "Founder input", intake.createdAt),
       id: `founder_intake:${intake.id}`,
       type: "founder_intake",
-      data: { intakeId: intake.id, body: intake.body, status: intake.status },
+      departmentId: intake.departmentId ?? null,
+      data: { intakeId: intake.id, body: intake.body, status: intake.status, routedFromIntakeId: intake.routedFromIntakeId ?? null },
     });
     if (!intake.assessedAt) continue;
     items.push({
-      ...companyContext(input.company, intake.id, "CEO answer", intake.assessedAt),
+      ...companyContext(input.company, intake.id, "Answer", intake.assessedAt),
       id: `intake_outcome:${intake.id}`,
       type: "intake_outcome",
+      departmentId: intake.departmentId ?? null,
       taskId: intake.targetTaskId ?? null,
       data: {
         intakeId: intake.id,
@@ -458,6 +464,7 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
         summary: intake.outcomeSummary ?? null,
         createdTaskIds: intake.createdTaskIds ?? [],
         targetTaskId: intake.targetTaskId ?? null,
+        targetDepartmentId: intake.targetDepartmentId ?? null,
         replanProposalId: intake.replanProposalId ?? null,
         failureReason: intake.failureReason ?? null,
       },

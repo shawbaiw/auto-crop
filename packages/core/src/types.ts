@@ -523,19 +523,35 @@ export type CompanyEvent = {
   status?: CompanyStatus | null;
 };
 
-/** What the CEO Agent decided a CEO Intake needs (ADR 0046). Routing to a department waits for Department Intake. */
-export type CeoIntakeOutcome = "create_tasks" | "revise_plan" | "context_only";
+/**
+ * What an assessment decided founder input needs (ADR 0046). The CEO Agent chooses among new tasks, a
+ * new plan, company context or one department; a department's agent among a task in its department,
+ * a note for a task it has, or passing the input to the CEO.
+ */
+export type CeoIntakeOutcome =
+  | "create_tasks"
+  | "revise_plan"
+  | "context_only"
+  | "route_department"
+  | "attach_to_task"
+  | "route_to_ceo";
 /** Why an intake ended `failed`. The founder sees a plain sentence; the code stays for diagnosis. */
 export type CeoIntakeFailureReason =
   | "agent_failed"
   | "invalid_agent_output"
   | "plan_not_made"
   | "company_stopped"
-  | "no_ceo_agent";
+  | "no_agent";
 
+/**
+ * Founder input and its assessment. A CEO Intake has no department; a Department Intake names the
+ * department it was sent to. Both use one pipeline (ADR 0046).
+ */
 export type CeoIntake = {
   id: string;
   companyId: string;
+  /** Null for a CEO Intake; the department a Department Intake was sent to. */
+  departmentId?: string | null;
   body: string;
   status: CeoIntakeStatus;
   createdAt: string;
@@ -546,8 +562,14 @@ export type CeoIntake = {
   outcomeSummary?: LocalizedText | null;
   /** Tasks the intake created, for `create_tasks`. */
   createdTaskIds?: string[];
-  /** The stuck task a new plan was requested for, for `revise_plan`. */
+  /** The stuck task a new plan was requested for (`revise_plan`), or the task given the note (`attach_to_task`). */
   targetTaskId?: string | null;
+  /** The department the CEO sent the input to, for `route_department`. */
+  targetDepartmentId?: string | null;
+  /** The intake this one became when it was passed on (`route_department`, `route_to_ceo`). */
+  routedIntakeId?: string | null;
+  /** The intake this one was passed on from. Passed-on input is not passed on again. */
+  routedFromIntakeId?: string | null;
   replanProposalId?: string | null;
   failureReason?: CeoIntakeFailureReason | null;
   failureMessage?: string | null;

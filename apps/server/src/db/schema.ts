@@ -590,6 +590,11 @@ function migrateCeoIntakeAssessmentFields(database: DatabaseClient): void {
   addColumnIfMissing(database, columns, "ceo_intakes", "failure_message TEXT");
   addColumnIfMissing(database, columns, "ceo_intakes", "attempts INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, columns, "ceo_intakes", "assessed_at TEXT");
+  // A Department Intake shares the pipeline; input can be passed between the CEO and a department.
+  addColumnIfMissing(database, columns, "ceo_intakes", "department_id TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "target_department_id TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "routed_intake_id TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "routed_from_intake_id TEXT");
 }
 
 /** Founder Approval outcomes are recorded, not just requested (ADR 0020 amendment). */

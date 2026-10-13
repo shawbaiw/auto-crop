@@ -28,6 +28,14 @@ export type SettledFact =
       evidence: Record<string, string>;
     }
   | {
+      /** Founder input a department's agent attached to this task (ADR 0046). */
+      kind: "founder_note";
+      sourceId: string;
+      settledAt: string;
+      departmentName: string;
+      body: string;
+    }
+  | {
       kind: "verification_rework";
       sourceId: string;
       settledAt: string;
@@ -51,6 +59,7 @@ export type SettledFact =
  * - Confirmed Human Actions on this task (an Unblock Request) or gating it (a delivery's next step
  *   naming it as blocked).
  * - Verification Rework feedback not yet answered by a redelivery, against the verifier's current standard.
+ * - Founder notes a department's agent attached to this task from a Department Intake.
  */
 export function resolveSettledFacts(repositories: Repositories, task: Task): SettledFact[] {
   const completionEvents = repositories.listTaskCompletionEventsForCompany(task.companyId);
@@ -107,7 +116,18 @@ export function resolveSettledFacts(repositories: Repositories, task: Task): Set
     failedChecks: rework.failedChecks.filter((check) => !check.targetTaskId || check.targetTaskId === task.id),
   }));
 
-  return [...decisions, ...confirmations, ...reworks]
+  const departmentNames = new Map(repositories.listDepartments(task.companyId).map((department) => [department.id, department.name]));
+  const notes: SettledFact[] = repositories.listCeoIntakesForCompany(task.companyId)
+    .filter((intake) => intake.outcome === "attach_to_task" && intake.status === "dispatched" && intake.targetTaskId === task.id)
+    .map((intake) => ({
+      kind: "founder_note" as const,
+      sourceId: intake.id,
+      settledAt: intake.assessedAt ?? intake.updatedAt,
+      departmentName: intake.departmentId ? departmentNames.get(intake.departmentId) ?? intake.departmentId : "CEO Office",
+      body: intake.body,
+    }));
+
+  return [...decisions, ...confirmations, ...reworks, ...notes]
     .sort((left, right) => left.settledAt.localeCompare(right.settledAt) || left.sourceId.localeCompare(right.sourceId));
 }
 
@@ -141,6 +161,8 @@ function renderSettledFact(fact: SettledFact): string[] {
         `- Human Action Confirmation \`${fact.sourceId}\` "${fact.label}", asked for by task "${fact.requestedByTaskTitle}", confirmed ${fact.settledAt}. Evidence:`,
         ...Object.entries(fact.evidence).map(([key, value]) => `  - ${key}: ${value}`),
       ];
+    case "founder_note":
+      return [`- Founder note \`${fact.sourceId}\`, sent to ${fact.departmentName} on ${fact.settledAt} and given to this task: "${fact.body}"`];
     case "verification_rework":
       return [
         `- Verification Rework \`${fact.sourceId}\` from ${fact.verifierTitle}, verification round ${fact.round}:`,

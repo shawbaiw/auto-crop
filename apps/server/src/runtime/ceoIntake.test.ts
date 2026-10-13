@@ -7,7 +7,8 @@ import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "../adapters/
 import { createDatabaseClient } from "../db/client";
 import { createRepositories } from "../db/repositories";
 import { migrate } from "../db/schema";
-import { CEO_INTAKE_MAX_ATTEMPTS, recoverInterruptedCeoIntakes, runCeoIntakeJobs, type RunCeoIntakeJobsInput } from "./ceoIntake";
+import { CEO_INTAKE_MAX_ATTEMPTS, listCompanyContextNotes, recoverInterruptedCeoIntakes, runCeoIntakeJobs, type RunCeoIntakeJobsInput } from "./ceoIntake";
+import { renderSettledFacts, resolveSettledFacts } from "./settledFacts";
 import { buildTaskExecutionPrompt } from "./taskExecutionPrompt";
 
 const createdDirs: string[] = [];
@@ -51,7 +52,7 @@ describe("CEO Intake assessment (ADR 0046)", () => {
 
     const request = ceo.requests[0]!;
     expect(request.grant).toEqual({ granted: [], withheld: [], id: "none" });
-    expect(request.outputSchema).toMatchObject({ required: ["outcome", "summary", "tasks", "targetTaskId", "replanNote"] });
+    expect(request.outputSchema).toMatchObject({ required: ["outcome", "summary", "tasks", "targetTaskId", "targetDepartmentId", "replanNote"] });
     expect(request.metadata.phase).toBe("ceo_intake");
     expect(request.prompt).toContain("Add annual plans.");
     expect(request.prompt).toContain("`department_research` Research");
@@ -228,12 +229,93 @@ describe("CEO Intake assessment (ADR 0046)", () => {
   });
 });
 
+describe("Department Intake (ADR 0046)", () => {
+  it("is assessed by the department's lead agent, which may only plan work in its own department", async () => {
+    const fixture = createFixture();
+    fixture.send("Add a referral program.", "department_growth");
+    const ceo = createCeo(() => reply({ outcome: "context_only", summary: "Wrong agent." }));
+    const lead = createCeo(() => reply({ outcome: "create_tasks", summary: "Added.", tasks: [plannedTask({ departmentId: "department_research" })] }), "claude-code");
+
+    await fixture.run(ceo, {}, [lead]);
+
+    expect(ceo.requests).toHaveLength(0);
+    expect(lead.requests[0]!.prompt).toContain("You are the agent who leads the Growth department");
+    expect(lead.requests[0]!.prompt).toContain("one of `create_tasks`, `attach_to_task`, `route_to_ceo`");
+    expect(fixture.intake()).toMatchObject({ status: "received", failureReason: "invalid_agent_output" });
+    expect(fixture.intake().failureMessage).toContain("tasks[0].departmentId department_research is not this department");
+  });
+
+  it("gives a note to a task the department has, which the task's next run reads as a Settled Fact", async () => {
+    const fixture = createFixture([{ ...taskRecord("task_growth", "running", 1), departmentId: "department_growth" }]);
+    fixture.send("Mention the annual discount in every post.", "department_growth");
+    const lead = createCeo(() => reply({ outcome: "attach_to_task", summary: "I gave the note to the launch posts task.", targetTaskId: "task_growth" }), "claude-code");
+
+    await fixture.run(createCeo(() => reply({ outcome: "context_only", summary: "" })), {}, [lead]);
+
+    expect(fixture.intake()).toMatchObject({ status: "dispatched", outcome: "attach_to_task", targetTaskId: "task_growth" });
+    const facts = resolveSettledFacts(fixture.repositories, fixture.repositories.getTask("task_growth")!);
+    expect(facts).toEqual([expect.objectContaining({ kind: "founder_note", sourceId: "intake_1", departmentName: "Growth", body: "Mention the annual discount in every post." })]);
+    expect(renderSettledFacts(facts).join("\n")).toContain('Founder note `intake_1`, sent to Growth');
+  });
+
+  it("refuses a note for a task of another department", async () => {
+    const fixture = createFixture();
+    fixture.send("Note this.", "department_growth");
+    const lead = createCeo(() => reply({ outcome: "attach_to_task", summary: "Noted.", targetTaskId: "task_research" }), "claude-code");
+
+    await fixture.run(createCeo(() => reply({ outcome: "context_only", summary: "" })), {}, [lead]);
+
+    expect(fixture.intake().failureMessage).toContain("targetTaskId task_research is not a task this department can be given a note for");
+  });
+
+  it("passes input outside the department to the CEO, who cannot pass it on again", async () => {
+    const fixture = createFixture();
+    fixture.send("Change the company's target market.", "department_growth");
+    const lead = createCeo(() => reply({ outcome: "route_to_ceo", summary: "This is for the CEO." }), "claude-code");
+    const ceo = createCeo(() => reply({ outcome: "context_only", summary: "I noted the new market." }));
+
+    await fixture.run(ceo, {}, [lead]);
+    const routedId = fixture.intake().routedIntakeId!;
+    expect(fixture.intake()).toMatchObject({ status: "dispatched", outcome: "route_to_ceo" });
+    expect(fixture.repositories.getCeoIntake(routedId)).toMatchObject({ departmentId: null, routedFromIntakeId: "intake_1", status: "received", body: "Change the company's target market." });
+
+    await fixture.run(ceo, {}, [lead]);
+    expect(fixture.repositories.getCeoIntake(routedId)).toMatchObject({ status: "dispatched", outcome: "context_only" });
+    // Passed-on input is never passed on again, so it cannot bounce between agents.
+    expect(ceo.requests[0]!.prompt).toContain("`outcome`: one of `create_tasks`, `revise_plan`, `context_only`.");
+  });
+
+  it("lets the CEO send input to one department, whose agent then assesses it", async () => {
+    const fixture = createFixture();
+    fixture.send("Start a newsletter.");
+    const ceo = createCeo(() => reply({ outcome: "route_department", summary: "Growth will handle the newsletter.", targetDepartmentId: "department_growth" }));
+    const lead = createCeo(() => reply({ outcome: "create_tasks", summary: "Added.", tasks: [plannedTask({ departmentId: "department_growth", title: "Start the newsletter" })] }), "claude-code");
+
+    await fixture.run(ceo, {}, [lead]);
+    const routed = fixture.repositories.getCeoIntake(fixture.intake().routedIntakeId!)!;
+    expect(fixture.intake()).toMatchObject({ outcome: "route_department", targetDepartmentId: "department_growth" });
+    expect(routed).toMatchObject({ departmentId: "department_growth", routedFromIntakeId: "intake_1" });
+
+    await fixture.run(ceo, {}, [lead]);
+    const [taskId] = fixture.repositories.getCeoIntake(routed.id)!.createdTaskIds!;
+    expect(fixture.repositories.getTask(taskId!)).toMatchObject({ title: "Start the newsletter", departmentId: "department_growth" });
+    expect(lead.requests[0]!.prompt).toContain("`outcome`: one of `create_tasks`, `attach_to_task`.");
+  });
+
+  it("keeps a department's input out of company context", async () => {
+    const fixture = createFixture();
+    fixture.send("Note this.", "department_growth");
+    fixture.repositories.saveCeoIntakeAssessment({ ...fixture.intake(), outcome: "context_only", status: "dispatched" });
+    expect(listCompanyContextNotes(fixture.repositories, "company_1")).toEqual([]);
+  });
+});
+
 type Ceo = AgentAdapter & { requests: AgentRunRequest[] };
 
-function createCeo(answer: (request: AgentRunRequest) => AgentRunResult | Promise<AgentRunResult>): Ceo {
+function createCeo(answer: (request: AgentRunRequest) => AgentRunResult | Promise<AgentRunResult>, id = "codex"): Ceo {
   const requests: AgentRunRequest[] = [];
   return {
-    id: "codex",
+    id,
     name: "Codex",
     capabilities: ["code", "research", "writing"],
     requests,
@@ -251,8 +333,8 @@ function complete(stdout: string): AgentRunResult {
   return { status: "complete", exitCode: 0, stdout, stderr: "" };
 }
 
-function reply(value: { outcome: string; summary: string; tasks?: unknown[]; targetTaskId?: string | null; replanNote?: string | null }): AgentRunResult {
-  return complete(JSON.stringify({ tasks: [], targetTaskId: null, replanNote: null, ...value }));
+function reply(value: { outcome: string; summary: string; tasks?: unknown[]; targetTaskId?: string | null; targetDepartmentId?: string | null; replanNote?: string | null }): AgentRunResult {
+  return complete(JSON.stringify({ tasks: [], targetTaskId: null, targetDepartmentId: null, replanNote: null, ...value }));
 }
 
 function plannedTask(overrides: Record<string, unknown>) {
@@ -304,6 +386,14 @@ function createFixture(extraTasks: Task[] = []) {
     id: "key_result_1", objectiveId: "objective_1", title: "Pick a pricing model", metricName: "pricing_model",
     targetValue: "chosen", currentValue: "open", status: "active",
   });
+  repositories.createDepartment({
+    id: "department_growth",
+    companyId: company.id,
+    name: "Growth",
+    responsibility: "Bring the first buyers.",
+    leadAgentId: "claude-code",
+    memoryPath: ".auto-crop/companies/company_1/departments/growth/Memory.md",
+  });
   repositories.createTask(taskRecord("task_research", "running", 0));
   extraTasks.forEach((task) => repositories.createTask(task));
   const events: Array<{ type: string; companyId: string }> = [];
@@ -314,16 +404,16 @@ function createFixture(extraTasks: Task[] = []) {
     events,
     company: () => repositories.getCompany(company.id)!,
     setStatus: (status: Company["status"]) => repositories.updateCompanyStatus(company.id, status, "2026-10-13T08:30:00.000Z"),
-    send(body: string) {
-      const intake: CeoIntake = { id: "intake_1", companyId: company.id, body, status: "received", createdAt: "2026-10-13T08:00:00.000Z", updatedAt: "2026-10-13T08:00:00.000Z" };
+    send(body: string, departmentId: string | null = null) {
+      const intake: CeoIntake = { id: "intake_1", companyId: company.id, departmentId, body, status: "received", createdAt: "2026-10-13T08:00:00.000Z", updatedAt: "2026-10-13T08:00:00.000Z" };
       repositories.createCeoIntake(intake);
     },
     intake: () => repositories.getCeoIntake("intake_1")!,
-    run(ceo: Ceo, overrides: Partial<RunCeoIntakeJobsInput> = {}) {
+    run(ceo: Ceo, overrides: Partial<RunCeoIntakeJobsInput> = {}, others: Ceo[] = []) {
       return runCeoIntakeJobs({
         projectRoot,
         repositories,
-        adapters: [ceo],
+        adapters: [ceo, ...others],
         now: () => new Date("2026-10-13T09:00:00.000Z"),
         createId: (prefix) => `${prefix}_${++ids}`,
         emit: (event) => events.push(event),

@@ -43,13 +43,10 @@ export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter 
         }) };
       }
       if (request.metadata.phase === "ceo_intake") {
-        const reply = options.intakeReply?.(request) ?? {
-          outcome: "context_only",
-          summary: "I kept this as company context. Later tasks will use it.",
-          tasks: [],
-          targetTaskId: null,
-          replanNote: null,
-        };
+        // A department may not keep input as context, so by default it passes the input to the CEO.
+        const reply = options.intakeReply?.(request) ?? (request.metadata.departmentId
+          ? { outcome: "route_to_ceo", summary: "This is for the CEO.", tasks: [], targetTaskId: null, targetDepartmentId: null, replanNote: null }
+          : { outcome: "context_only", summary: "I kept this as company context. Later tasks will use it.", tasks: [], targetTaskId: null, targetDepartmentId: null, replanNote: null });
         return { status: "complete", exitCode: 0, stderr: "", stdout: JSON.stringify(reply) };
       }
       const envelope = options.deliver?.(request);
