@@ -124,10 +124,32 @@ describe("Dashboard App", () => {
     expect(window.localStorage.getItem("auto-crop.currentCompanyId")).toBe("company_2");
   });
 
-  it("opens the most recently updated company when none is active, and onboarding only when none exists", async () => {
+  it("opens a failed creation at startup only when it is the last choice", async () => {
     const api = createMockApiClient();
     api.listCompanies = vi.fn(async () => ({
       companies: [
+        { id: "company_failed", name: "Failed Lab", status: "creation_failed", playbookId: "ai-saas", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-22T00:00:00.000Z", taskCount: 0 },
+        { id: "company_stopped", name: "Stopped Lab", status: "stopped", playbookId: "ai-saas", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-18T00:00:00.000Z", taskCount: 1 },
+      ],
+    }));
+    api.getCompanyState = vi.fn(async (companyId: string) => {
+      const created = createCompanyResponse();
+      return { ...created, company: { ...created.company, id: companyId, status: "stopped" }, proof: [], reviews: [], activity: [], replanProposals: [] };
+    });
+
+    render(<App apiClient={api} />);
+
+    expect(await screen.findByRole("navigation", { name: "Workbench" })).toBeInTheDocument();
+    expect(api.getCompanyState).toHaveBeenCalledTimes(1);
+    expect(api.getCompanyState).toHaveBeenCalledWith("company_stopped");
+  });
+
+  it("prefers a paused company over newer stopped or failed ones when none is active", async () => {
+    const api = createMockApiClient();
+    api.listCompanies = vi.fn(async () => ({
+      companies: [
+        { id: "company_failed", name: "Failed Lab", status: "creation_failed", playbookId: "ai-saas", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-22T00:00:00.000Z", taskCount: 0 },
+        { id: "company_stopped_newer", name: "Stopped Newer", status: "stopped", playbookId: "ai-saas", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-21T00:00:00.000Z", taskCount: 1 },
         { id: "company_paused", name: "Paused Lab", status: "paused", playbookId: "ai-saas", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-19T00:00:00.000Z", taskCount: 1 },
         { id: "company_stopped", name: "Stopped Lab", status: "stopped", playbookId: "ai-saas", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-18T00:00:00.000Z", taskCount: 1 },
       ],
@@ -331,6 +353,70 @@ describe("Dashboard App", () => {
 
     expect(api.retryCompanyCreation).toHaveBeenCalledWith("company_1");
     expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+  });
+
+  it("leaves a failed creation for another company", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    api.createCompany = vi.fn(async () => createFailedCompanyCreationResponse());
+    api.listCompanies = vi
+      .fn()
+      .mockResolvedValueOnce({ companies: [] })
+      .mockResolvedValue({
+        companies: [
+          { id: "company_1", name: "Pricing Page Studio", status: "creation_failed", playbookId: "ai-saas", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-19T00:00:00.000Z", taskCount: 0 },
+          { id: "company_2", name: "Ops Lab", status: "paused", playbookId: "ai-saas", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z", taskCount: 2 },
+        ],
+      });
+    const created = createCompanyResponse();
+    api.getCompanyState = vi.fn(async (companyId: string) => ({
+      ...created,
+      company: { ...created.company, id: companyId, name: "Ops Lab", status: "paused" },
+      proof: [],
+      reviews: [],
+      activity: [],
+      replanProposals: [],
+    }));
+
+    render(<App apiClient={api} />);
+    await fillReadyToCreate(user);
+    await user.click(screen.getByRole("button", { name: /create company/i }));
+
+    const nextSteps = await screen.findByRole("region", { name: "What happens to this company" });
+    await user.click(await within(nextSteps).findByRole("button", { name: "Back to another company" }));
+
+    expect(await screen.findByRole("heading", { name: "Ops Lab" })).toBeInTheDocument();
+    expect(api.getCompanyState).toHaveBeenCalledWith("company_2");
+    expect(api.stopCompany).not.toHaveBeenCalled();
+  });
+
+  it("stops and abandons a failed creation after its name is typed, then starts afresh when no other company exists", async () => {
+    const api = createMockApiClient();
+    const user = userEvent.setup();
+    api.createCompany = vi.fn(async () => createFailedCompanyCreationResponse());
+    api.stopCompany = vi.fn(async (companyId: string) => ({
+      company: { id: companyId, name: "Pricing Page Studio", status: "stopped", playbookId: "ai-saas" },
+      interruptedTasks: [],
+      unreachableTasks: [],
+    }));
+
+    render(<App apiClient={api} />);
+    await fillReadyToCreate(user);
+    await user.click(screen.getByRole("button", { name: /create company/i }));
+
+    const nextSteps = await screen.findByRole("region", { name: "What happens to this company" });
+    expect(within(nextSteps).getByRole("button", { name: "Create New Company" })).toBeInTheDocument();
+    await user.click(within(nextSteps).getByRole("button", { name: "Stop and abandon this company" }));
+    expect(within(nextSteps).getByText(/no report is written/)).toBeInTheDocument();
+    const confirm = within(nextSteps).getByRole("button", { name: "Stop this company" });
+    expect(confirm).toBeDisabled();
+    await user.type(within(nextSteps).getByLabelText("Type Pricing Page Studio to confirm"), "Pricing Page Studio");
+    await user.click(confirm);
+
+    expect(api.stopCompany).toHaveBeenCalledWith("company_1");
+    expect(await screen.findByLabelText("Company name")).toBeInTheDocument();
+    // There is nothing to go back to: the abandoned company is not offered as a way back.
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 
   it("restores a company still being created with its own CEO and permission mode", async () => {
@@ -3928,6 +4014,31 @@ describe("Workbench", () => {
     vi.mocked(api.pauseCompany).mockClear();
     await user.keyboard("{Shift>}{Meta>}k{/Meta}{/Shift}");
     expect(api.pauseCompany).not.toHaveBeenCalled();
+  });
+
+  it("keeps a page crash to that page, so the rail still works", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({ ...created, tasks: [{ ...created.tasks[0]!, status: "running" as const }] }));
+    // A body the dashboard cannot render from; the real client rejects it, a bare mock does not.
+    api.getTaskExecution = vi.fn(async () => ({}) as Awaited<ReturnType<ApiClient["getTaskExecution"]>>);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const user = userEvent.setup();
+
+    try {
+      render(<App apiClient={api} />);
+      await createCompany(user);
+      await openPage(user, "Engineering");
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("This page hit a problem.");
+      expect(screen.getByRole("heading", { level: 1, name: "Engineering" })).toBeInTheDocument();
+
+      await openPage(user, "Deliverables");
+      expect(screen.queryByText("This page hit a problem.")).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 1, name: "Deliverables" })).toBeInTheDocument();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("reopens the department page the founder left after a refresh", async () => {

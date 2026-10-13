@@ -4,6 +4,7 @@ import { Alert } from "@/components/ui";
 import { getCeoPendingItems } from "../ceo-office/ceoPendingItems";
 import { useLanguage } from "../../ui/language";
 import { departmentName } from "../../ui/language/localizedNames";
+import { PageErrorBoundary } from "./PageErrorBoundary";
 import { operatingCommand, type WorkbenchCommands } from "./workbenchCommands";
 import { serializeLocation, type WorkbenchLocation } from "./workbenchLocation";
 import { WorkbenchRail, type RailAgent, type RailDepartment } from "./WorkbenchRail";
@@ -87,7 +88,7 @@ export function WorkbenchFrame({ agents, ceoOfficeItems, children, commands, com
         />
       }
     >
-      {children}
+      <PageErrorBoundary resetKey={serializeLocation(location)}>{children}</PageErrorBoundary>
     </WorkbenchShell>
   );
 }

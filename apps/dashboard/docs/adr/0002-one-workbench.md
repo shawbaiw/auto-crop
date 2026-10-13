@@ -105,7 +105,8 @@ The three legacy pages overlapped. Counts of blocked work, Human Actions and Wai
   - Two keyboard shortcuts remain, Cmd+Enter in the Onboarding Wizard and Shift+Cmd+K for Pause and Resume, and both read the shared command model. The menu shortcuts went with the menu.
   - The Operating Dashboard was removed in P2. Its proof and reviews moved to Deliverables, and its task states moved to Operations Diagnostics.
   - New plans are requested and confirmed on Operations Diagnostics until P4 moves them to the department page.
-  - At startup, when no `active` company exists, the most recently updated company opens; the Onboarding Wizard opens only when there is no company.
+  - At startup, with no remembered company, companies are ranked by status (`active`, `paused`, `creating`, `stopped`, then `creation_failed`) and then by most recent update. The Onboarding Wizard opens only when there is no company.
+  - A failed creation is never a dead end. Its page offers Stop and abandon, confirmed by the company name, and a way back to another company, or Create New Company when there is none.
 - The P4 steps run on a short-lived branch that is rebased often and merged once, so no page is delivered half legacy and half modern (ADR 0001).
 
 ## Considered Options

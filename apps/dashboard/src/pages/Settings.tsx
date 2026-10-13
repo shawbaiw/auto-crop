@@ -1,9 +1,10 @@
-import { Building2, Languages, OctagonX, Plus, RefreshCw } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { Building2, Languages, Plus, RefreshCw } from "lucide-react";
+import { useEffect } from "react";
 import type { CompanyListItem, CompanySummary } from "../api/client";
-import { Alert, AlertDescription, AlertTitle, Button, Input, Label } from "../components/ui";
+import { Alert, AlertDescription, AlertTitle, Button } from "../components/ui";
 import { CompanyStatus } from "../components/workbench/CompanyStatus";
 import { LanguageSwitch } from "../components/workbench/LanguageSwitch";
+import { StopOperatingConfirm } from "../components/workbench/StopOperatingConfirm";
 import type { WorkbenchCommand } from "../components/workbench/workbenchCommands";
 import { WorkbenchSection } from "../components/workbench/WorkbenchSection";
 import { useLanguage } from "../ui/language";
@@ -44,7 +45,7 @@ export function Settings({
           <p className="break-words text-base font-semibold">{company.name}</p>
           <CompanyStatus status={company.status} />
         </div>
-        <StopOperating command={stopCommand} companyName={company.name} />
+        <StopOperatingConfirm command={stopCommand} companyName={company.name} />
       </WorkbenchSection>
 
       <WorkbenchSection icon={<Building2 aria-hidden="true" />} title={t("settings.allCompanies")}>
@@ -108,69 +109,3 @@ export function Settings({
     </div>
   );
 }
-
-/** Stop Operating is final, so the founder confirms it by typing the company name (ADR 0044). */
-function StopOperating({ command, companyName }: { command: WorkbenchCommand; companyName: string }) {
-  const { t } = useLanguage();
-  const confirmId = useId();
-  const [confirming, setConfirming] = useState(false);
-  const [typedName, setTypedName] = useState("");
-  const [stopping, setStopping] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!command.enabled) {
-    return <p className="text-sm text-muted-foreground">{t("settings.stopUnavailable")}</p>;
-  }
-
-  async function stop() {
-    setStopping(true);
-    setError(null);
-    try {
-      await command.run();
-      setConfirming(false);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setStopping(false);
-    }
-  }
-
-  return (
-    <div className="grid gap-3 border-t border-border/70 pt-3">
-      <p className="text-sm text-muted-foreground">{t("settings.stopExplanation")}</p>
-      {confirming ? (
-        <div className="grid gap-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor={confirmId}>{t("settings.stopConfirmLabel").replace("{name}", companyName)}</Label>
-            <Input autoComplete="off" id={confirmId} onChange={(event) => setTypedName(event.target.value)} value={typedName} />
-          </div>
-          {error ? <Alert variant="destructive">{error}</Alert> : null}
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={typedName.trim() !== companyName || stopping} onClick={() => void stop()} variant="destructive">
-              <OctagonX aria-hidden="true" />
-              {t("settings.stopConfirm")}
-            </Button>
-            <Button
-              onClick={() => {
-                setConfirming(false);
-                setTypedName("");
-                setError(null);
-              }}
-              variant="outline"
-            >
-              {t("settings.stopCancel")}
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div>
-          <Button onClick={() => setConfirming(true)} variant="outline">
-            <OctagonX aria-hidden="true" />
-            {t(command.labelKey)}
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-

@@ -31,6 +31,12 @@ Adding an `inline` affordance also requires a handler keyed in `TaskStatusAction
 
 Company-level founder commands (Create Company, Pause, Resume and Stop Operating) are defined in `components/workbench/workbenchCommands.ts`, each with its label key, whether it can run now, and its handler. Every place that offers one reads it from there: the Workbench header, Settings, and the two keyboard shortcuts (Cmd+Enter in the Onboarding Wizard, Shift+Cmd+K for Pause and Resume). A surface lays commands out; it never decides on its own when one is available. Page navigation is the rail's, not a command. Task actions are not commands either: they come from server affordances, as above.
 
+## A Response Is Checked Where It Becomes Typed
+
+`api/client.ts` is the one place a server response becomes typed data, so it checks there that each body has the fields the dashboard reads from it straight away (a task's id and status, a company snapshot's company, departments and tasks). A body without them, from a server of another version or another service on the port, fails as a request error that the caller already shows. It does not travel on and crash a render. Fields the check does not name, including ones a newer server adds, pass through untouched.
+
+A render crash that still happens stays on the Workbench page it happened on: `PageErrorBoundary` shows a retry there, keeps the rail and header usable, and starts afresh when the founder opens another page.
+
 ## Server State Is Never Synthesised
 
 A task's `holds` and `affordances` were computed for the status the server saw. When a live event moves a task locally, that pairing is broken, so the client **drops** them rather than carrying them onto a status they were not computed for — otherwise the board offers an action for a state the server never offered it for.

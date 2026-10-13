@@ -221,6 +221,12 @@ export default function App({ apiClient }: AppProps) {
     writeCurrentLocation(location);
   }, [blueprint, view, location]);
 
+  // A failed creation offers a way back to another company, so it needs to know which exist.
+  const creationFailed = view === "creating" && blueprint?.company.status === "creation_failed";
+  useEffect(() => {
+    if (creationFailed) void loadCompanies();
+  }, [creationFailed]);
+
   // Deliverables loads by itself (dashboard ADR 0002). Some of what it shows, such as a company
   // review written from the CLI, arrives with no event, so opening the page reads it fresh.
   const companyId = blueprint?.company.id;
@@ -731,8 +737,22 @@ export default function App({ apiClient }: AppProps) {
     }
   }
 
-  function handleCreateNewCompany() {
-    setReturnCompanyId(blueprint?.company.id ?? null);
+  /**
+   * Leaves a failed creation, whether or not the founder stopped it first: for the best other company,
+   * else the Onboarding Wizard. There is nothing to cancel back to, so the wizard offers no way back.
+   */
+  function leaveFailedCreation() {
+    const failedCompanyId = blueprint?.company.id;
+    const otherCompany = pickStartupCompany(companies.filter((company) => company.id !== failedCompanyId));
+    if (otherCompany) {
+      void openCompany(otherCompany.id);
+    } else {
+      handleCreateNewCompany({ returnable: false });
+    }
+  }
+
+  function handleCreateNewCompany({ returnable = true }: { returnable?: boolean } = {}) {
+    setReturnCompanyId(returnable ? (blueprint?.company.id ?? null) : null);
     clearCurrentCompanyId();
     setBlueprint(null);
     setProof([]);
@@ -775,6 +795,7 @@ export default function App({ apiClient }: AppProps) {
   if (view === "creating") {
     // After a refresh the setup form is empty; the company being created knows its own choices.
     const creatingAgentId = blueprint?.company.selectedCeoAgentId ?? selectedAgentId;
+    const otherCompany = pickStartupCompany(companies.filter((company) => company.id !== blueprint?.company.id));
     const selectedAgent = agents.find((agent) => agent.id === creatingAgentId) ?? null;
 
     return renderModernAppFrame(
@@ -787,6 +808,9 @@ export default function App({ apiClient }: AppProps) {
         permissionMode={blueprint?.company.permissionMode ?? permissionMode}
         selectedAgent={selectedAgent}
         selectedAgentId={creatingAgentId || undefined}
+        stopCommand={blueprint ? commands["stop-operating"] : undefined}
+        onStopped={leaveFailedCreation}
+        leave={blueprint ? { kind: otherCompany ? "other" : "new", run: leaveFailedCreation } : undefined}
       />,
     );
   }
@@ -835,7 +859,7 @@ export default function App({ apiClient }: AppProps) {
           companiesLoadError={companyListLoadError}
           companiesLoadState={companyListLoadState}
           company={company.company}
-          onCreateNewCompany={handleCreateNewCompany}
+          onCreateNewCompany={() => handleCreateNewCompany()}
           onLoadCompanies={() => void loadCompanies()}
           onOpenCompany={(companyId) => void openCompany(companyId)}
           stopCommand={commands["stop-operating"]}
@@ -1246,10 +1270,19 @@ function shouldReloadCompanyStateAfterEvent(event: ServerEvent) {
   );
 }
 
-/** The company to open when none is remembered: the most recently updated active one, else the most recent. */
+/**
+ * Which company to open when none is remembered: operating first, then paused (the founder most
+ * likely means to come back to it), then one still being created, then stopped, and a failed creation
+ * last. Within a status, the most recently updated.
+ */
+const startupStatusOrder = ["active", "paused", "creating", "stopped", "creation_failed"];
+
 function pickStartupCompany(companies: CompanyListItem[]): CompanyListItem | null {
-  const byRecency = [...companies].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  return byRecency.find((company) => company.status === "active") ?? byRecency[0] ?? null;
+  const rank = (status: string) => {
+    const index = startupStatusOrder.indexOf(status);
+    return index === -1 ? startupStatusOrder.length : index;
+  };
+  return [...companies].sort((a, b) => rank(a.status) - rank(b.status) || b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
 }
 
 function readCurrentCompanyId(): string | null {

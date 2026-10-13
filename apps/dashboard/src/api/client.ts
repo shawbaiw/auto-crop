@@ -646,25 +646,25 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       return getJson(`${baseUrl}/api/agents`, requestTimeoutMs);
     },
     async listCompanies() {
-      return getJson(`${baseUrl}/api/companies`, requestTimeoutMs);
+      return getJson(`${baseUrl}/api/companies`, requestTimeoutMs, hasCompanies);
     },
     async createCompany(input) {
-      return postJson(`${baseUrl}/api/companies`, input, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/companies`, input, requestTimeoutMs, hasCompanyState);
     },
     async retryCompanyCreation(companyId) {
-      return postJson(`${baseUrl}/api/companies/${companyId}/retry-creation`, {}, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/companies/${companyId}/retry-creation`, {}, requestTimeoutMs, hasCompanyState);
     },
     async getCompanyState(companyId) {
-      return getJson(`${baseUrl}/api/companies/${companyId}/state`, requestTimeoutMs);
+      return getJson(`${baseUrl}/api/companies/${companyId}/state`, requestTimeoutMs, hasCompanyState);
     },
     async createCeoIntake(companyId, input) {
       return postJson(`${baseUrl}/api/companies/${companyId}/ceo-intakes`, input, requestTimeoutMs);
     },
     async createCeoReviewDecision(input) {
-      return postJson(`${baseUrl}/api/ceo-review-decisions`, input, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/ceo-review-decisions`, input, requestTimeoutMs, hasTask);
     },
     async resolveFounderDecision(input) {
-      return postJson(`${baseUrl}/api/founder-decisions`, input, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/founder-decisions`, input, requestTimeoutMs, hasTask);
     },
     async getTaskProof(taskId) {
       return getJson(`${baseUrl}/api/tasks/${taskId}/proof`, requestTimeoutMs);
@@ -673,16 +673,16 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       return getJson(`${baseUrl}/api/companies/${companyId}/reviews`, requestTimeoutMs);
     },
     async refreshTask(taskId) {
-      return postJson(`${baseUrl}/api/tasks/${taskId}/refresh`, {}, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/tasks/${taskId}/refresh`, {}, requestTimeoutMs, hasTask);
     },
-    async getTaskExecution(taskId) { return getJson(`${baseUrl}/api/tasks/${taskId}/execution`, requestTimeoutMs); },
-    async authorizeExecutionBudget(taskId, input) { return postJson(`${baseUrl}/api/tasks/${taskId}/execution-budget`, input, requestTimeoutMs); },
-    async cancelTask(taskId) { return postJson(`${baseUrl}/api/tasks/${taskId}/cancel`, {}, requestTimeoutMs); },
+    async getTaskExecution(taskId) { return getJson(`${baseUrl}/api/tasks/${taskId}/execution`, requestTimeoutMs, hasTask); },
+    async authorizeExecutionBudget(taskId, input) { return postJson(`${baseUrl}/api/tasks/${taskId}/execution-budget`, input, requestTimeoutMs, hasTask); },
+    async cancelTask(taskId) { return postJson(`${baseUrl}/api/tasks/${taskId}/cancel`, {}, requestTimeoutMs, hasTask); },
     async recoverTask(taskId) {
-      return postJson(`${baseUrl}/api/tasks/${taskId}/recover`, {}, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/tasks/${taskId}/recover`, {}, requestTimeoutMs, hasTask);
     },
     async confirmTaskTermination(taskId) {
-      return postJson(`${baseUrl}/api/tasks/${taskId}/confirm-termination`, {}, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/tasks/${taskId}/confirm-termination`, {}, requestTimeoutMs, hasTask);
     },
     async decideFounderApproval(approvalId, input) {
       return postJson(`${baseUrl}/api/approvals/${approvalId}`, input, requestTimeoutMs);
@@ -700,13 +700,13 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       return postJson(`${baseUrl}/api/companies/${companyId}/human-actions/${humanActionId}/confirm`, input, requestTimeoutMs);
     },
     async pauseCompany(companyId) {
-      return postJson(`${baseUrl}/api/companies/${companyId}/pause`, {}, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/companies/${companyId}/pause`, {}, requestTimeoutMs, hasCompany);
     },
     async resumeCompany(companyId) {
-      return postJson(`${baseUrl}/api/companies/${companyId}/resume`, {}, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/companies/${companyId}/resume`, {}, requestTimeoutMs, hasCompany);
     },
     async stopCompany(companyId) {
-      return postJson(`${baseUrl}/api/companies/${companyId}/stop`, {}, requestTimeoutMs);
+      return postJson(`${baseUrl}/api/companies/${companyId}/stop`, {}, requestTimeoutMs, hasCompany);
     },
     subscribeEvents(companyId, handler, onOpen) {
       const events = new EventSource(`${baseUrl}/api/events?companyId=${encodeURIComponent(companyId)}`);
@@ -743,17 +743,42 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
   };
 }
 
-async function getJson<T>(url: string, timeoutMs: number): Promise<T> {
+/**
+ * Names the field a response body is missing, or null when it has every field the dashboard reads
+ * from it straight away. Fields it does not check, including ones a newer server adds, pass through.
+ */
+type ResponseCheck = (body: unknown) => string | null;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasCompanySummary(value: unknown): boolean {
+  return isRecord(value) && typeof value.id === "string" && typeof value.status === "string";
+}
+
+const hasTask: ResponseCheck = (body) =>
+  isRecord(body) && isRecord(body.task) && typeof body.task.id === "string" && typeof body.task.status === "string" ? null : "task";
+const hasCompany: ResponseCheck = (body) => (isRecord(body) && hasCompanySummary(body.company) ? null : "company");
+const hasCompanies: ResponseCheck = (body) => (isRecord(body) && Array.isArray(body.companies) ? null : "companies");
+const hasCompanyState: ResponseCheck = (body) => {
+  if (!isRecord(body) || !hasCompanySummary(body.company)) return "company";
+  if (!Array.isArray(body.departments)) return "departments";
+  if (!Array.isArray(body.tasks)) return "tasks";
+  return null;
+};
+
+async function getJson<T>(url: string, timeoutMs: number, check?: ResponseCheck): Promise<T> {
   const response = await fetchWithTimeout(url, undefined, timeoutMs);
 
   if (!response.ok) {
     throw new Error(await formatRequestError(response));
   }
 
-  return parseJsonResponse<T>(response, url);
+  return checkResponse(await parseJsonResponse<T>(response, url), url, check);
 }
 
-async function postJson<T>(url: string, body: unknown, timeoutMs: number): Promise<T> {
+async function postJson<T>(url: string, body: unknown, timeoutMs: number, check?: ResponseCheck): Promise<T> {
   const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -764,7 +789,20 @@ async function postJson<T>(url: string, body: unknown, timeoutMs: number): Promi
     throw new Error(await formatRequestError(response));
   }
 
-  return parseJsonResponse<T>(response, url);
+  return checkResponse(await parseJsonResponse<T>(response, url), url, check);
+}
+
+/**
+ * The API client is the one place a response becomes typed data. A body without the fields its type
+ * promises (a server of another version, another service on the port) fails here as a request error
+ * the caller already shows, not later as a render crash that blanks the page.
+ */
+function checkResponse<T>(body: T, url: string, check: ResponseCheck | undefined): T {
+  const missing = check?.(body);
+  if (missing) {
+    throw new Error(`Unexpected response from ${url}: missing "${missing}".`);
+  }
+  return body;
 }
 
 async function parseJsonResponse<T>(response: Response, url: string): Promise<T> {
