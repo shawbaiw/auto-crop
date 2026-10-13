@@ -45,7 +45,8 @@ export default {
       },
       fontFamily: {
         sans: [
-          "Inter",
+          "Geist Variable",
+          "Geist",
           "ui-sans-serif",
           "system-ui",
           "-apple-system",

@@ -42,7 +42,7 @@ export function WorkbenchShell({ children, fill = false, location, navigationKey
 
   return (
     <div className="modern-dashboard-shell min-h-screen bg-background font-sans text-foreground">
-      <div className="mx-auto grid min-h-screen w-full max-w-[1440px] grid-cols-[minmax(0,1fr)] lg:grid-cols-[260px_minmax(0,1fr)]">
+      <div className="grid min-h-screen w-full grid-cols-[minmax(0,1fr)] lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="sticky top-0 hidden h-screen border-r border-border/70 p-3 lg:block">{rail}</aside>
         {railOpen ? (
           <div className="fixed inset-0 z-40 lg:hidden">
@@ -95,7 +95,7 @@ export function WorkbenchShell({ children, fill = false, location, navigationKey
           </header>
           <main
             className={cn(
-              "min-w-0 px-4 py-5 sm:px-6",
+              "min-w-0 px-4 py-5 sm:px-6 xl:px-8",
               fill ? "flex min-h-0 flex-col gap-3 overflow-hidden py-3 [&>*:last-child]:min-h-0 [&>*:last-child]:flex-1" : "grid content-start gap-4",
             )}
           >
@@ -107,4 +107,3 @@ export function WorkbenchShell({ children, fill = false, location, navigationKey
     </div>
   );
 }
-

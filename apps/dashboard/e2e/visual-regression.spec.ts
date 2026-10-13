@@ -87,7 +87,7 @@ for (const viewport of viewports) {
       });
       await page.goto("/");
 
-      await expect(page.getByRole("region", { name: "Creation Stages" })).toBeVisible();
+      await expect(page.getByRole("region", { name: "Company Creation Trace" })).toBeVisible();
       await expectModernPage(page);
       await page.screenshot({ fullPage: true, path: testInfo.outputPath(`modern-${outcome}-${viewport.name}.png`) });
     }

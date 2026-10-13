@@ -21,7 +21,7 @@ export function ModernAppShell({
 }: ModernAppShellProps) {
   return (
     <div className="modern-dashboard-shell min-h-screen bg-background text-foreground">
-      <div className="mx-auto grid min-h-screen w-full max-w-[1440px] grid-rows-[auto_minmax(0,1fr)_auto] px-4 py-4 font-sans sm:px-6 lg:px-8">
+      <div className="grid min-h-screen w-full grid-rows-[auto_minmax(0,1fr)_auto] px-4 py-4 font-sans sm:px-6 lg:px-8">
         {header ? <header className="z-10 border-b border-border/70 py-3">{header}</header> : null}
         <div className={cn("grid min-h-0 gap-5 py-5", sidebar ? "lg:grid-cols-[280px_minmax(0,1fr)]" : "grid-cols-1")}>
           {sidebar ? <aside className={cn(cardClassName, "min-h-0 p-3")}>{sidebar}</aside> : null}
