@@ -383,8 +383,7 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    const nextSteps = await screen.findByRole("region", { name: "What happens to this company" });
-    await user.click(await within(nextSteps).findByRole("button", { name: "Back to another company" }));
+    await user.click(await screen.findByRole("button", { name: "Back to another company" }));
 
     expect(await screen.findByRole("heading", { name: "Ops Lab" })).toBeInTheDocument();
     expect(api.getCompanyState).toHaveBeenCalledWith("company_2");
@@ -405,8 +404,8 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
+    expect(await screen.findByRole("button", { name: "Create New Company" })).toBeInTheDocument();
     const nextSteps = await screen.findByRole("region", { name: "What happens to this company" });
-    expect(within(nextSteps).getByRole("button", { name: "Create New Company" })).toBeInTheDocument();
     await user.click(within(nextSteps).getByRole("button", { name: "Stop and abandon this company" }));
     expect(within(nextSteps).getByText(/no report is written/)).toBeInTheDocument();
     const confirm = within(nextSteps).getByRole("button", { name: "Stop this company" });
