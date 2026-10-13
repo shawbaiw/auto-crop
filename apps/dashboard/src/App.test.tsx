@@ -257,14 +257,14 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "CEO Office" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Creating Company" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Creating Company" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Company Creation Trace" })).toBeInTheDocument();
     expect(document.querySelector("dialog")).not.toBeInTheDocument();
     expect(screen.getByText("Running for")).toBeInTheDocument();
     expect(screen.getAllByText("Pricing Page Studio").length).toBeGreaterThan(0);
     expect(screen.getByText("Codex")).toBeInTheDocument();
-    expect(screen.getByText("Creation request accepted")).toBeInTheDocument();
+    expect(screen.getByText("Accept creation request")).toBeInTheDocument();
     expect(screen.getByText("Generate company blueprint")).toBeInTheDocument();
     expect(screen.getByText("Parse blueprint")).toBeInTheDocument();
     expect(screen.getByText("Create departments and tasks")).toBeInTheDocument();
@@ -291,7 +291,7 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByText("Creation request accepted")).toBeInTheDocument();
+    expect(await screen.findByText("Accept creation request")).toBeInTheDocument();
     expect(api.subscribeEvents).toHaveBeenCalledWith("company_1", expect.any(Function), expect.any(Function));
 
     act(() => {
@@ -328,7 +328,7 @@ describe("Dashboard App", () => {
 
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
-    expect(await screen.findByText("Creation request accepted")).toBeInTheDocument();
+    expect(await screen.findByText("Accept creation request")).toBeInTheDocument();
 
     // The completion event was published before this subscriber existed, so it never arrives.
     act(() => openStream?.());
@@ -348,12 +348,13 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByText("Failed · temporary model failure")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "This step didn't finish" })).toBeInTheDocument();
+    expect(screen.getByText("temporary model failure")).toBeInTheDocument();
     expect(screen.queryByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /retry creation/i }));
 
     expect(api.retryCompanyCreation).toHaveBeenCalledWith("company_1");
-    expect(await screen.findByText("Creation request accepted")).toBeInTheDocument();
+    expect(await screen.findByText("Accept creation request")).toBeInTheDocument();
   });
 
   it("leaves a failed creation for another company", async () => {
@@ -435,7 +436,7 @@ describe("Dashboard App", () => {
     try {
       render(<App apiClient={api} />);
 
-      const summary = await screen.findByRole("region", { name: "Company Creation Trace" });
+      const summary = await screen.findByRole("region", { name: "Creating Company" });
       expect(within(summary).getByText("Autonomous")).toBeInTheDocument();
       expect(await within(summary).findByText("Codex")).toBeInTheDocument();
     } finally {
@@ -464,11 +465,11 @@ describe("Dashboard App", () => {
 
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
-    expect(await screen.findByText("Creation request accepted")).toBeInTheDocument();
+    expect(await screen.findByText("Accept creation request")).toBeInTheDocument();
 
     await user.click(within(screen.getByRole("group", { name: "Language" })).getByRole("button", { name: "中文" }));
 
-    expect(await screen.findByText("已接收创建请求")).toBeInTheDocument();
+    expect(await screen.findByText("接收创建请求")).toBeInTheDocument();
   });
 
   it("opens CEO Office after creation, with the timeline, a text composer and what needs the founder", async () => {
