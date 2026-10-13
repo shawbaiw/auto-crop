@@ -808,8 +808,7 @@ export default function App({ apiClient }: AppProps) {
   }
 
   /**
-   * Leaves a failed creation, whether or not the founder stopped it first: for the best other company,
-   * else the Onboarding Wizard. There is nothing to cancel back to, so the wizard offers no way back.
+   * Leaves a failed creation for the best other company, else the Onboarding Wizard. There is nothing to cancel back to, so the wizard offers no way back.
    */
   function leaveFailedCreation() {
     const failedCompanyId = blueprint?.company.id;
@@ -878,8 +877,6 @@ export default function App({ apiClient }: AppProps) {
         permissionMode={blueprint?.company.permissionMode ?? permissionMode}
         selectedAgent={selectedAgent}
         selectedAgentId={creatingAgentId || undefined}
-        stopCommand={blueprint ? commands["stop-operating"] : undefined}
-        onStopped={leaveFailedCreation}
         leave={blueprint ? { kind: otherCompany ? "other" : "new", run: leaveFailedCreation } : undefined}
       />,
     );

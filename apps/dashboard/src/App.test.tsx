@@ -348,8 +348,9 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByRole("heading", { name: "This step didn't finish" })).toBeInTheDocument();
-    expect(screen.getByText("temporary model failure")).toBeInTheDocument();
+    expect(await screen.findByText("temporary model failure")).toBeInTheDocument();
+    // A failed creation is retried or left, never abandoned from this page.
+    expect(screen.queryByRole("button", { name: "Stop and abandon this company" })).not.toBeInTheDocument();
     expect(screen.queryByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /retry creation/i }));
 
@@ -391,32 +392,21 @@ describe("Dashboard App", () => {
     expect(api.stopCompany).not.toHaveBeenCalled();
   });
 
-  it("stops and abandons a failed creation after its name is typed, then starts afresh when no other company exists", async () => {
+  it("starts afresh from a failed creation when no other company exists", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
     api.createCompany = vi.fn(async () => createFailedCompanyCreationResponse());
-    api.stopCompany = vi.fn(async (companyId: string) => ({
-      company: { id: companyId, name: "Pricing Page Studio", status: "stopped", playbookId: "ai-saas" },
-      interruptedTasks: [],
-      unreachableTasks: [],
-    }));
 
     render(<App apiClient={api} />);
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByRole("button", { name: "Create New Company" })).toBeInTheDocument();
     const nextSteps = await screen.findByRole("region", { name: "What happens to this company" });
-    await user.click(within(nextSteps).getByRole("button", { name: "Stop and abandon this company" }));
-    expect(within(nextSteps).getByText(/no report is written/)).toBeInTheDocument();
-    const confirm = within(nextSteps).getByRole("button", { name: "Stop this company" });
-    expect(confirm).toBeDisabled();
-    await user.type(within(nextSteps).getByLabelText("Type Pricing Page Studio to confirm"), "Pricing Page Studio");
-    await user.click(confirm);
+    await user.click(within(nextSteps).getByRole("button", { name: "Create New Company" }));
 
-    expect(api.stopCompany).toHaveBeenCalledWith("company_1");
     expect(await screen.findByLabelText("Company name")).toBeInTheDocument();
-    // There is nothing to go back to: the abandoned company is not offered as a way back.
+    expect(api.stopCompany).not.toHaveBeenCalled();
+    // There is nothing to go back to: the failed company is not offered as a way back.
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 

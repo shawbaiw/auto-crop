@@ -3,9 +3,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { AgentSummary, CompanyEventSummary } from "../api/client";
 import { AmbientBackground, Panel, PillButton, ReadingSurface, StatusTag } from "../components/ice-mist";
 import { LanguageSwitch } from "../components/workbench";
-import { StopOperatingConfirm } from "../components/workbench/StopOperatingConfirm";
+import { AgentIcon } from "../components/workbench/AgentIcon";
 import { cn } from "@/lib/utils";
-import type { WorkbenchCommand } from "../components/workbench/workbenchCommands";
 import { useLanguage, type TranslationKey } from "../ui/language";
 import { resolveLocalizedValue } from "../ui/language/localizedText";
 import { formatPermissionMode } from "../ui/tasks/formatDisplayValue";
@@ -21,12 +20,9 @@ export type CompanyCreationLoadingProps = {
   /** Shown when the agent list has not loaded, so the CEO is never blank. */
   selectedAgentId?: string;
   /**
-   * A failed creation can also be stopped (ADR 0044) or left for another company, so this page is
-   * never a dead end. Both appear only when creation failed.
+   * A failed creation is retried or left for another company, so this page is never a dead end.
+   * "other" returns to another company; "new" opens the Onboarding Wizard when there is none.
    */
-  stopCommand?: WorkbenchCommand;
-  onStopped?(): void;
-  /** "other" returns to another company; "new" opens the Onboarding Wizard when there is none. */
   leave?: { kind: "other" | "new"; run(): void };
 };
 
@@ -39,8 +35,6 @@ export function CompanyCreationLoading({
   permissionMode,
   selectedAgent,
   selectedAgentId,
-  stopCommand,
-  onStopped,
   leave,
 }: CompanyCreationLoadingProps) {
   const { language, t } = useLanguage();
@@ -85,7 +79,10 @@ export function CompanyCreationLoading({
               <dl className="flex flex-wrap items-center gap-x-6 gap-y-1 text-[13px] font-medium text-[color:var(--text-secondary)]">
                 <div className="inline-flex gap-1.5">
                   <dt>{t("creating.ceo")}</dt>
-                  <dd className="text-[color:var(--text-primary)]">{agentName}</dd>
+                  <dd className="inline-flex items-center gap-1.5 text-[color:var(--text-primary)]">
+                    <AgentIcon agentId={selectedAgent?.id ?? selectedAgentId ?? ""} decorative name={agentName} />
+                    {agentName}
+                  </dd>
                 </div>
                 <div className="inline-flex gap-1.5">
                   <dt>{t("creating.policy")}</dt>
@@ -108,15 +105,7 @@ export function CompanyCreationLoading({
                 {trace.map((step, index) => (
                   <CreationTraceStep isLast={index === trace.length - 1} key={step.type} step={step}>
                     {step.state === "failed" ? (
-                      <CreationFailureRecovery
-                        companyName={companyName}
-                        failureMessage={failureMessage}
-                        isRetrying={isRetrying}
-                        leave={leave}
-                        onRetry={onRetry}
-                        onStopped={onStopped}
-                                        stopCommand={stopCommand}
-                      />
+                      <CreationFailureRecovery failureMessage={failureMessage} isRetrying={isRetrying} leave={leave} onRetry={onRetry} />
                     ) : null}
                   </CreationTraceStep>
                 ))}
@@ -248,26 +237,20 @@ function StepIcon({ state }: { state: CreationStepState }) {
 }
 
 /**
- * The recovery area under the failed step (spec §5.2): what happened, the known reason, what was kept,
- * then the next step, the other ways out, and the separate abandon action. The raw message stays in
- * the technical details, but the reason is never hidden there alone.
+ * The recovery area under the failed step (spec §5.2, trimmed by the product owner): the reason on one
+ * line, the full raw message in the technical details, what was kept, then retry or leave. A failed
+ * creation is retried or left; it is not abandoned from here.
  */
 function CreationFailureRecovery({
-  companyName,
   failureMessage,
   isRetrying,
   leave,
   onRetry,
-  onStopped,
-  stopCommand,
 }: {
-  companyName: string;
   failureMessage: string | null;
   isRetrying: boolean;
   leave?: { kind: "other" | "new"; run(): void };
   onRetry?: () => void;
-  onStopped?(): void;
-  stopCommand?: WorkbenchCommand;
 }) {
   const { t } = useLanguage();
   const nextStepsId = "company-creation-next-steps";
@@ -275,13 +258,13 @@ function CreationFailureRecovery({
 
   return (
     <div className="mt-3 flex flex-col gap-4">
-      <h3 className="text-[15px] font-semibold normal-case">{t("creating.stepFailedTitle")}</h3>
-
       {reason ? (
-        <div className="flex flex-col gap-1 rounded-[var(--r-reading)] bg-[color:var(--status-failed-bg)] px-4 py-3">
-          <span className="text-[13px] font-medium text-[color:var(--status-failed-fg)]">{t("creating.failureReason")}</span>
-          <p className="max-w-[72ch] whitespace-pre-wrap break-words text-[15px] leading-[1.6]">{reason}</p>
-        </div>
+        <p className="flex min-w-0 items-baseline gap-2 rounded-[var(--r-reading)] bg-[color:var(--status-failed-bg)] px-4 py-2.5 text-[15px] leading-[1.6]">
+          <span className="shrink-0 text-[13px] font-medium text-[color:var(--status-failed-fg)]">{t("creating.failureReason")}</span>
+          <span className="min-w-0 truncate" title={reason}>
+            {reason}
+          </span>
+        </p>
       ) : null}
 
       {failureMessage ? (
@@ -301,13 +284,12 @@ function CreationFailureRecovery({
         {t("creating.failurePreserved")}
       </p>
 
-      {onRetry || leave || stopCommand ? (
+      {onRetry || leave ? (
         <section aria-labelledby={nextStepsId} className="flex flex-col gap-3">
           <h4 className="text-[13px] font-medium normal-case text-[color:var(--text-secondary)]" id={nextStepsId}>
             {t("creating.nextSteps")}
           </h4>
-          {onRetry || leave ? (
-            <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-3">
               {onRetry ? (
                 <PillButton disabled={isRetrying} onClick={onRetry} variant="primary">
                   <RefreshCw aria-hidden="true" />
@@ -320,20 +302,7 @@ function CreationFailureRecovery({
                   {t(leave.kind === "other" ? "creating.backToOtherCompany" : "creating.createNewCompany")}
                 </PillButton>
               ) : null}
-            </div>
-          ) : null}
-          {stopCommand ? (
-            <div className="mt-2 border-t border-[color:var(--edge-divider)] pt-4">
-              <StopOperatingConfirm
-                appearance="ice-mist"
-                command={stopCommand}
-                companyName={companyName}
-                explanation={t("creating.abandonExplanation")}
-                label={t("creating.abandon")}
-                onStopped={onStopped}
-              />
-            </div>
-          ) : null}
+          </div>
         </section>
       ) : null}
     </div>

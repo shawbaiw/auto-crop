@@ -10,6 +10,7 @@ export function LanguageSwitch() {
       <Languages aria-hidden="true" className="mr-1 hidden size-4 text-muted-foreground sm:block" />
       {languageOrder.map((languageId) => (
         <Button
+          aria-label={languageId === "zh" ? t("menu.languageChinese") : t("menu.languageEnglish")}
           aria-pressed={languageId === language}
           className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground"
           key={languageId}
@@ -17,7 +18,7 @@ export function LanguageSwitch() {
           size="sm"
           variant="ghost"
         >
-          {languageId === "zh" ? t("menu.languageChinese") : t("menu.languageEnglish")}
+          {languageId === "zh" ? t("menu.languageChinese") : t("menu.languageEnglishShort")}
         </Button>
       ))}
     </div>
