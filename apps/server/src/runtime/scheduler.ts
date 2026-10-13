@@ -46,6 +46,7 @@ import { projectCeoAttention } from "./ceoAttention";
 import { classifyFinalFounderReport, isCompanyQuiescent } from "./companyQuiescence";
 import { resolveDependencyReadiness, type TaskHandoff } from "./dependencyReadiness";
 import { generateFinalFounderReport, hasWorkCompletedSinceReport } from "./finalFounderReport";
+import { listCompanyContextNotes } from "./ceoIntake";
 import { formatExecutionBudget, resolveEffectiveTimeout, resolveRetryTimeout } from "./executionProfile";
 import { finalizeDelivery } from "./deliveryFinalization";
 import { RunObserver } from "./executionObservation";
@@ -75,7 +76,7 @@ import { cleanupGeneratedWorkspaceArtifacts, createTaskWorkspace } from "./works
 export type SchedulerFailureReason = AgentFailureReason;
 
 export type SchedulerEvent = {
-  type: TaskEvent["type"] | "company_report_ready";
+  type: TaskEvent["type"] | "company_report_ready" | "ceo_intake_updated";
   taskId?: string;
   companyId?: string;
   message: string;
@@ -653,6 +654,7 @@ export async function runSchedulerOnce(input: RunSchedulerOnceInput): Promise<Ru
                   acceptedProofTypes: proofRefPolicy.acceptedTypes,
                   verification: verificationPromptContext,
                   settledFacts,
+                  companyContextNotes: listCompanyContextNotes(input.repositories, company.id),
                 }) +
                   executionBriefPrompt(preparation),
               });

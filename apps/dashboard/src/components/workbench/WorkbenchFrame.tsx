@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from "react";
-import type { AgentSummary, CeoOfficeItemSummary, CompanySummary, DepartmentSummary, TaskSummary } from "../../api/client";
+import type { AgentSummary, CeoOfficeItemSummary, CompanySummary, DepartmentSummary, ReplanProposalSummary, TaskSummary } from "../../api/client";
 import { Alert } from "@/components/ui";
-import { getCeoPendingItems } from "../ceo-office/ceoPendingItems";
+import { deriveNeedsYou, needsYouByDepartment, needsYouCount } from "../ceo-office/deriveNeedsYou";
 import { useLanguage } from "../../ui/language";
 import { departmentName } from "../../ui/language/localizedNames";
 import { PageErrorBoundary } from "./PageErrorBoundary";
@@ -19,27 +19,26 @@ export type WorkbenchFrameProps = {
   departments: DepartmentSummary[];
   location: WorkbenchLocation;
   onNavigate(location: WorkbenchLocation): void;
+  replanProposals: ReplanProposalSummary[];
   tasks: TaskSummary[];
 };
 
 /** The open company's Workbench: its rail, its header, and a notice when the company is not operating. */
-export function WorkbenchFrame({ agents, ceoOfficeItems, children, commands, company, departments, location, onNavigate, tasks }: WorkbenchFrameProps) {
+export function WorkbenchFrame({ agents, ceoOfficeItems, children, commands, company, departments, location, onNavigate, replanProposals, tasks }: WorkbenchFrameProps) {
   const { language, t } = useLanguage();
   const departmentNamesById = useMemo(
     () => new Map(departments.map((department) => [department.id, departmentName(department, language)])),
     [departments, language],
   );
-  // The same CEO Pending projection CEO Office lists, counted per department for the rail.
-  const pendingItems = useMemo(
-    () => getCeoPendingItems(ceoOfficeItems, tasks, departmentNamesById),
-    [ceoOfficeItems, departmentNamesById, tasks],
-  );
+  // The same "Needs you" CEO Office lists, counted per department for the rail.
+  const needsYou = useMemo(() => deriveNeedsYou(ceoOfficeItems, tasks, replanProposals), [ceoOfficeItems, replanProposals, tasks]);
+  const needsYouPerDepartment = useMemo(() => needsYouByDepartment(needsYou, tasks), [needsYou, tasks]);
   const agentFor = (agentId: string): RailAgent => ({ id: agentId, name: agents.find((agent) => agent.id === agentId)?.name ?? agentId });
   const railDepartments: RailDepartment[] = departments.map((department) => ({
     id: department.id,
     name: departmentNamesById.get(department.id) ?? department.name,
     leadAgent: department.leadAgentId ? agentFor(department.leadAgentId) : null,
-    pendingCount: pendingItems.filter((item) => item.task.departmentId === department.id).length,
+    pendingCount: needsYouPerDepartment.get(department.id) ?? 0,
     workingAgents: [
       ...new Set(
         tasks
@@ -72,14 +71,14 @@ export function WorkbenchFrame({ agents, ceoOfficeItems, children, commands, com
 
   return (
     <WorkbenchShell
-      fill={location.page === "ceo-office"}
+      fill={location.page === "ceo-office" || location.page === "department"}
       location={title}
       navigationKey={serializeLocation(location)}
       notice={notice}
       operatingCommand={operatingCommand(commands)}
       rail={
         <WorkbenchRail
-          ceoPendingCount={pendingItems.length}
+          ceoPendingCount={needsYouCount(needsYou)}
           companyName={company.name}
           companyStatus={company.status}
           departments={railDepartments}

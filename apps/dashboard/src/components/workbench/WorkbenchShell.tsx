@@ -9,7 +9,7 @@ import type { WorkbenchCommand } from "./workbenchCommands";
 
 export type WorkbenchShellProps = {
   children: ReactNode;
-  /** The page is one screen tall and scrolls inside itself, as CEO Office does around its history. */
+  /** The page is one screen tall and scrolls inside itself, as CEO Office and the department pages do. */
   fill?: boolean;
   /** Where the founder is: CEO Office, a department, or a company-wide page. */
   location: string;

@@ -7,7 +7,7 @@ import type {
   TaskRefreshResponse,
 } from "../../api/client";
 
-/** The founder actions the Department Workspace hands down to its CEO Office and department surfaces. */
+/** The founder actions App hands down to the CEO Office and department pages. */
 export type WorkspaceHandlers = {
   onConfirmHumanAction?: (humanActionId: string, evidence: Record<string, string>) => Promise<void> | void;
   onResolveFounderDecision?: (input: {

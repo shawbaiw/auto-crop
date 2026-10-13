@@ -68,6 +68,16 @@ export type CeoIntakeSummary = {
   status: CeoIntakeStatus;
   createdAt: string;
   updatedAt: string;
+  /** Null for CEO Intake; the department a Department Intake was sent to. */
+  departmentId?: string | null;
+  /** What the assessing agent decided (ADR 0046). Absent until it has assessed the input. */
+  outcome?: "create_tasks" | "revise_plan" | "context_only" | "route_department" | "attach_to_task" | "route_to_ceo" | null;
+  outcomeSummary?: LocalizedText | null;
+  createdTaskIds?: string[];
+  targetTaskId?: string | null;
+  replanProposalId?: string | null;
+  failureReason?: string | null;
+  assessedAt?: string | null;
 };
 
 export type DepartmentSummary = {
@@ -115,6 +125,8 @@ export type TaskSummary = {
   titleText?: CompleteLocalizedText;
   status: string;
   departmentId: string;
+  /** The key result the task serves (ADR 0048). */
+  keyResultId?: string | null;
   departmentKey?: string;
   assigneeAgentId?: string;
   description?: string;
@@ -591,6 +603,8 @@ export type ApiClient = {
   retryCompanyCreation(companyId: string): Promise<CreateCompanyResponse>;
   getCompanyState(companyId: string): Promise<CompanyStateResponse>;
   createCeoIntake(companyId: string, input: { body: string }): Promise<{ intake: CeoIntakeSummary }>;
+  /** Founder input to one department, assessed by that department's agent (ADR 0046). */
+  createDepartmentIntake(companyId: string, departmentId: string, input: { body: string }): Promise<{ intake: CeoIntakeSummary }>;
   createCeoReviewDecision(input: {
     taskId: string;
     decision: "approve" | "return";
@@ -659,6 +673,9 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
     },
     async createCeoIntake(companyId, input) {
       return postJson(`${baseUrl}/api/companies/${companyId}/ceo-intakes`, input, requestTimeoutMs);
+    },
+    async createDepartmentIntake(companyId, departmentId, input) {
+      return postJson(`${baseUrl}/api/companies/${companyId}/departments/${departmentId}/intakes`, input, requestTimeoutMs);
     },
     async createCeoReviewDecision(input) {
       return postJson(`${baseUrl}/api/ceo-review-decisions`, input, requestTimeoutMs, hasTask);
@@ -738,6 +755,7 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       events.addEventListener("company_creation_completed", listener);
       events.addEventListener("company_creation_failed", listener);
       events.addEventListener("company_report_ready", listener);
+      events.addEventListener("ceo_intake_updated", listener);
       return () => events.close();
     },
   };

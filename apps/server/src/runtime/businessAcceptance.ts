@@ -1,7 +1,6 @@
 import {
   isVerificationSatisfied,
   type BusinessArtifact,
-  type KeyResult,
   type LocalizedText,
   type Task,
   type TaskAcceptanceProvenance,
@@ -43,10 +42,6 @@ export function acceptTaskBusinessArtifact(input: {
    * `null` so a reconciled acceptance fabricates no summary.
    */
   outcomeSummaryText?: LocalizedText | null;
-  keyResultProgress?: {
-    currentValue: string;
-    status: KeyResult["status"];
-  };
   dependencyCascade?: {
     maxDepth: number;
   };
@@ -95,14 +90,7 @@ export function acceptTaskBusinessArtifact(input: {
     now: input.now,
     createId: input.createId,
   });
-  // An internal delivery never moves a key result on its own; the parent's accepted result does, once.
-  if (input.task.keyResultId && input.keyResultProgress && (input.task.taskKind ?? "parent") !== "department_subtask") {
-    input.repositories.updateKeyResultProgress(
-      input.task.keyResultId,
-      input.keyResultProgress.currentValue,
-      input.keyResultProgress.status,
-    );
-  }
+  // The key result follows from the transition to `complete` (applyTaskTransition, ADR 0048).
 
   const event: TaskEvent = {
     id: input.createId?.("task_event") ?? createDefaultId("task_event"),
@@ -223,7 +211,6 @@ export function acceptDeliverableAutomatically(input: {
     eventType: "automatic_acceptance",
     eventMessage: input.eventMessage,
     ...(input.outcomeSummaryText !== undefined ? { outcomeSummaryText: input.outcomeSummaryText } : {}),
-    keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
     dependencyCascade: { maxDepth: 2 },
     requestSchedulerWake: input.requestSchedulerWake,
     now: input.now,

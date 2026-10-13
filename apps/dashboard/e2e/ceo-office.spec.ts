@@ -26,8 +26,8 @@ test("CEO Office keeps a fixed viewport, follows new cards, and preserves histor
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  const history = page.getByRole("region", { name: "CEO Office history" });
-  const input = page.getByRole("textbox", { name: "New vision, material, or task" });
+  const history = page.getByRole("region", { name: "Timeline" });
+  const input = page.getByRole("textbox", { name: "Message to the CEO" });
   await expect(history).toBeVisible();
   await expect(input).toBeVisible();
   const metrics = async () => ({
@@ -44,13 +44,23 @@ test("CEO Office keeps a fixed viewport, follows new cards, and preserves histor
   await history.evaluate(node => { node.scrollTop = 0; node.dispatchEvent(new Event("scroll")); });
   count++;
   await page.evaluate(() => window.dispatchEvent(new Event("test-company-update")));
-  await expect(page.getByRole("button", { name: /New messages/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /New updates/ })).toBeVisible();
   expect(await history.evaluate(node => node.scrollTop)).toBe(0);
-  await page.getByRole("button", { name: /New messages/ }).click();
+  await page.getByRole("button", { name: /New updates/ }).click();
   await expect.poll(() => history.evaluate(node => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(2);
+  // Three columns: the timeline and composer in the centre, "Needs you" on the right.
+  const needsYou = page.getByRole("complementary", { name: "Needs you" });
+  await expect(needsYou).toBeVisible();
+  const [centre, right] = await Promise.all([history.boundingBox(), needsYou.boundingBox()]);
+  expect(right!.x).toBeGreaterThan(centre!.x + centre!.width - 1);
+  const composer = await input.boundingBox();
+  expect(composer!.y).toBeGreaterThan(centre!.y + centre!.height - 1);
   await page.screenshot({ path: testInfo.outputPath("ceo-office-desktop.png") });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(input).toBeVisible();
+  // On a phone "Needs you" folds into a section above the timeline.
+  await expect(page.getByRole("complementary", { name: "Needs you" })).toHaveCount(0);
+  await expect(page.locator("summary").filter({ hasText: /^Needs you · 0/ })).toBeVisible();
   await expect.poll(async () => (await metrics()).historyHeight).toBeGreaterThan(80);
   expect((await metrics()).documentHeight).toBeLessThanOrEqual(845);
   await page.screenshot({ path: testInfo.outputPath("ceo-office-mobile.png") });

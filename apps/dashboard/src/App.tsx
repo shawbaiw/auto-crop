@@ -1,5 +1,5 @@
 import { ExecutionActionsContext } from "./ui/tasks/TaskExecutionPanel";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   createApiClient,
   type AgentSummary,
@@ -35,7 +35,8 @@ import {
 } from "./components/workbench/workbenchLocation";
 import { CompanyCreationLoading } from "./pages/CompanyCreationLoading";
 import { Deliverables } from "./pages/Deliverables";
-import { DepartmentWorkspace } from "./pages/DepartmentWorkspace";
+import { CeoOffice } from "./pages/CeoOffice";
+import { DepartmentPage } from "./pages/DepartmentPage";
 import { Onboarding, type OnboardingStep } from "./pages/Onboarding";
 import { OperationsDiagnostics } from "./pages/OperationsDiagnostics";
 import { Settings } from "./pages/Settings";
@@ -71,6 +72,8 @@ export default function App({ apiClient }: AppProps) {
   // stays open across view changes, because events published while it reconnects are lost.
   const companyStatusRef = useRef<string | null>(null);
   companyStatusRef.current = blueprint?.company.status ?? null;
+  const companyIdRef = useRef<string | null>(null);
+  companyIdRef.current = blueprint?.company.id ?? null;
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [events, setEvents] = useState<ServerEvent[]>([]);
@@ -94,6 +97,9 @@ export default function App({ apiClient }: AppProps) {
   const viewRef = useRef(view);
   viewRef.current = view;
   const [location, setLocation] = useState<WorkbenchLocation>(ceoOfficeLocation);
+  // A task the founder followed a link to, brought into view when its department page opens.
+  const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
+  const clearFocusTask = useCallback(() => setFocusTaskId(null), []);
   const locationRef = useRef(location);
   locationRef.current = location;
   // The company the founder left to create a new one, so the Onboarding Wizard can go back to it.
@@ -182,6 +188,31 @@ export default function App({ apiClient }: AppProps) {
       setStartupError(formatErrorMessage(error));
       setView("starting");
     }
+  }
+
+  /**
+   * Keeps the live activity stream and task status just received over SSE, and refreshes the
+   * authoritative business projection around them without replacing them with a snapshot in flight.
+   */
+  function adoptBusinessProjection(response: CreateCompanyResponse) {
+    setBlueprint(current => current ? { ...current, tasks: adoptSettledTasks(current.tasks, response.tasks),
+      // A key result's status follows its tasks on the server (ADR 0048), and a CEO Intake can add
+      // goals' tasks, so both come with every snapshot.
+      objectives: response.objectives ?? current.objectives, keyResults: response.keyResults ?? current.keyResults,
+      ceoOfficeItems: response.ceoOfficeItems,
+      finalFounderReport: response.finalFounderReport, finalFounderReportPreparing: response.finalFounderReportPreparing } : current);
+    setTaskCompletionEvents(response.taskCompletionEvents ?? []);
+    setFounderDecisions(response.founderDecisions ?? []);
+    setHumanActions(response.humanActions ?? []);
+    setWaitStates(response.waitStates ?? []);
+    setVisionGaps(response.visionGaps ?? []);
+    setCeoIntakes(response.ceoIntakes ?? []);
+    // A task that moved makes its pending proposal stale; the server says so on every read.
+    setReplanProposals(response.replanProposals ?? []);
+    // Deliverables reads these with nothing to load by hand, so they follow each snapshot.
+    setProof(response.proof ?? []);
+    setBusinessArtifacts(response.businessArtifacts ?? []);
+    setReviews(response.reviews ?? []);
   }
 
   /** Adopts a company snapshot. Creation shows its own page; a created company opens its Workbench. */
@@ -300,22 +331,7 @@ export default function App({ apiClient }: AppProps) {
             if (["task_review", "company_creation_completed", "company_creation_failed", "company_report_ready"].includes(event.type)) {
               applyCompanyState(response, event.type.startsWith("company_creation_") ? ceoOfficeLocation : locationRef.current);
             } else {
-              // Keep the live activity stream and task status just received over SSE. Refresh the
-              // authoritative business projection without replacing them with a snapshot in flight.
-              setBlueprint(current => current ? { ...current, tasks: adoptSettledTasks(current.tasks, response.tasks),
-                ceoOfficeItems: response.ceoOfficeItems,
-                finalFounderReport: response.finalFounderReport, finalFounderReportPreparing: response.finalFounderReportPreparing } : current);
-              setTaskCompletionEvents(response.taskCompletionEvents ?? []);
-              setFounderDecisions(response.founderDecisions ?? []);
-              setHumanActions(response.humanActions ?? []);
-              setWaitStates(response.waitStates ?? []);
-              setVisionGaps(response.visionGaps ?? []);
-              // A task that moved makes its pending proposal stale; the server says so on every read.
-              setReplanProposals(response.replanProposals ?? []);
-              // Deliverables reads these with nothing to load by hand, so they follow each snapshot.
-              setProof(response.proof ?? []);
-              setBusinessArtifacts(response.businessArtifacts ?? []);
-              setReviews(response.reviews ?? []);
+              adoptBusinessProjection(response);
             }
           })
           .catch(() => undefined);
@@ -672,8 +688,35 @@ export default function App({ apiClient }: AppProps) {
       return;
     }
 
-    const response = await client.createCeoIntake(blueprint.company.id, { body });
+    const companyId = blueprint.company.id;
+    const response = await client.createCeoIntake(companyId, { body });
     setCeoIntakes((current) => upsertCeoIntake(current, response.intake));
+    // The founder's message is a card in the server's projection; read it back so it shows at once.
+    void client.getCompanyState(companyId).then((state) => {
+      if (companyIdRef.current === companyId) adoptBusinessProjection(state);
+    }).catch(() => undefined);
+  }
+
+  async function handleCreateDepartmentIntake(departmentId: string, body: string) {
+    if (!blueprint) {
+      return;
+    }
+
+    const companyId = blueprint.company.id;
+    const response = await client.createDepartmentIntake(companyId, departmentId, { body });
+    setCeoIntakes((current) => upsertCeoIntake(current, response.intake));
+    // The message is a card in the server's projection; read it back so it shows at once.
+    void client.getCompanyState(companyId).then((state) => {
+      if (companyIdRef.current === companyId) adoptBusinessProjection(state);
+    }).catch(() => undefined);
+  }
+
+  /** Opens a task on its department page and brings its trace into view. */
+  function openTask(taskId: string) {
+    const task = blueprint?.tasks.find((candidate) => candidate.id === taskId);
+    if (!task) return;
+    setFocusTaskId(taskId);
+    setLocation({ page: "department", departmentId: task.departmentId });
   }
 
   async function handleCreateCeoReviewDecision(input: Parameters<ApiClient["createCeoReviewDecision"]>[0]) {
@@ -825,6 +868,7 @@ export default function App({ apiClient }: AppProps) {
         departments={blueprint.departments}
         location={location}
         onNavigate={setLocation}
+        replanProposals={replanProposals}
         tasks={blueprint.tasks}
       >
         {renderWorkbenchPage(blueprint)}
@@ -835,16 +879,7 @@ export default function App({ apiClient }: AppProps) {
   function renderWorkbenchPage(company: CreateCompanyResponse) {
     if (location.page === "operations") {
       return (
-        <OperationsDiagnostics
-          events={events}
-          humanActions={humanActions}
-          onConfirmReplanProposal={handleConfirmReplanProposal}
-          onCreateReplanProposal={handleCreateReplanProposal}
-          onRejectReplanProposal={handleRejectReplanProposal}
-          replanProposals={replanProposals}
-          tasks={company.tasks}
-          waitStates={waitStates}
-        />
+        <OperationsDiagnostics events={events} humanActions={humanActions} tasks={company.tasks} waitStates={waitStates} />
       );
     }
 
@@ -867,40 +902,64 @@ export default function App({ apiClient }: AppProps) {
       );
     }
 
-    // CEO Office and the department pages share one legacy component, so drafts survive moving between them.
-    return (
-      <ExecutionActionsContext.Provider value={{ client, update: task => setBlueprint(current => updateBlueprintTask(current, task)) }}>
-        <DepartmentWorkspace
+    if (location.page === "ceo-office") {
+      return (
+        <CeoOffice
           agents={agents}
-          company={company.company}
-          departments={company.departments}
-          objectives={company.objectives}
-          onRefreshTask={handleRefreshTask}
-          onRecoverTask={handleRecoverTask}
-          onConfirmTaskTermination={handleConfirmTaskTermination}
-          onDecideFounderApproval={handleDecideFounderApproval}
-          onCreateReplanProposal={handleCreateReplanProposal}
-          onCreateCeoIntake={handleCreateCeoIntake}
-          onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
-          onResolveFounderDecision={handleResolveFounderDecision}
-          onConfirmHumanAction={handleConfirmHumanAction}
-          onSelectDepartment={(departmentId) => setLocation(departmentId ? { page: "department", departmentId } : ceoOfficeLocation)}
-          proof={proof}
           businessArtifacts={businessArtifacts}
           ceoOfficeItems={(company.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
+          company={company.company}
+          departments={company.departments}
           finalFounderReport={company.finalFounderReport ?? null}
           finalFounderReportPreparing={company.finalFounderReportPreparing ?? false}
-          founderDecisions={founderDecisions}
-          humanActions={humanActions}
           keyResults={company.keyResults ?? []}
-          selectedDepartmentId={location.page === "department" ? location.departmentId : null}
-          taskCompletionEvents={taskCompletionEvents}
+          objectives={company.objectives}
+          onConfirmHumanAction={handleConfirmHumanAction}
+          onCreateCeoIntake={handleCreateCeoIntake}
+          onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
+          onOpenDepartment={(departmentId) => setLocation({ page: "department", departmentId })}
+          onOpenTask={openTask}
+          onResolveFounderDecision={handleResolveFounderDecision}
+          proof={proof}
+          replanProposals={replanProposals}
+          tasks={company.tasks}
           visionGaps={visionGaps}
           waitStates={waitStates}
-          selectedCeoAgentId={selectedAgentId}
+        />
+      );
+    }
+
+    return (
+      <ExecutionActionsContext.Provider value={{ client, update: task => setBlueprint(current => updateBlueprintTask(current, task)) }}>
+        <DepartmentPage
+          agents={agents}
+          businessArtifacts={businessArtifacts}
+          ceoOfficeItems={(company.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
+          company={company.company}
+          departmentId={location.departmentId}
+          departments={company.departments}
+          focusTaskId={focusTaskId}
+          key={location.departmentId}
+          onConfirmHumanAction={handleConfirmHumanAction}
+          onConfirmReplanProposal={handleConfirmReplanProposal}
+          onConfirmTaskTermination={handleConfirmTaskTermination}
+          onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
+          onCreateDepartmentIntake={handleCreateDepartmentIntake}
+          onCreateReplanProposal={handleCreateReplanProposal}
+          onDecideFounderApproval={handleDecideFounderApproval}
+          onFocusHandled={clearFocusTask}
+          onOpenCeoOffice={() => setLocation(ceoOfficeLocation)}
+          onOpenDepartment={(departmentId) => setLocation({ page: "department", departmentId })}
+          onOpenTask={openTask}
+          onRecoverTask={handleRecoverTask}
+          onRefreshTask={handleRefreshTask}
+          onRejectReplanProposal={handleRejectReplanProposal}
+          onResolveFounderDecision={handleResolveFounderDecision}
+          progressEvents={taskProgressEvents}
+          proof={proof}
+          replanProposals={replanProposals}
           tasks={company.tasks}
-          taskProgressEvents={taskProgressEvents}
-          ceoIntakes={ceoIntakes}
+          waitStates={waitStates}
         />
       </ExecutionActionsContext.Provider>
     );
@@ -1214,11 +1273,17 @@ function updateBlueprintTaskStatus(blueprint: CreateCompanyResponse | null, even
  */
 function adoptSettledTasks(current: TaskSummary[], snapshot: TaskSummary[]): TaskSummary[] {
   const snapshotById = new Map(snapshot.map((task) => [task.id, task]));
+  const currentIds = new Set(current.map((task) => task.id));
 
-  return current.map((task) => {
-    const settled = snapshotById.get(task.id);
-    return settled && settled.status === task.status ? settled : task;
-  });
+  return [
+    ...current.map((task) => {
+      const settled = snapshotById.get(task.id);
+      return settled && settled.status === task.status ? settled : task;
+    }),
+    // A task the live view has never seen, such as one a CEO Intake planned, has no live status to
+    // disagree with, so the snapshot's version is the only one there is.
+    ...snapshot.filter((task) => !currentIds.has(task.id)),
+  ];
 }
 
 function clearsTaskFailure(eventType: string): boolean {
@@ -1266,7 +1331,8 @@ function shouldReloadCompanyStateAfterEvent(event: ServerEvent) {
     event.type === "task_review" ||
     event.type === "company_creation_completed" ||
     event.type === "company_creation_failed" ||
-    event.type === "company_report_ready"
+    event.type === "company_report_ready" ||
+    event.type === "ceo_intake_updated"
   );
 }
 

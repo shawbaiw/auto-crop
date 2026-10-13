@@ -15,6 +15,8 @@ export type MockAgentOptions = {
    * would by calling `submit_artifact_envelope`. Undefined submits nothing.
    */
   deliver?: (request: AgentRunRequest) => unknown;
+  /** The reply to a CEO Intake assessment. Omitted: the mock keeps the input as company context. */
+  intakeReply?: (request: AgentRunRequest) => unknown;
   /** Launch support to report. Omitted: the mock makes no launch-isolation claim. */
   launchSupport?: Omit<AdapterLaunchSupport, "adapterId">;
 };
@@ -39,6 +41,13 @@ export function createMockAgentAdapter(options: MockAgentOptions): AgentAdapter 
           approach: "Compare the supplied inputs, perform the requested checks, and record their results",
           expectedOutcome: "A deliverable with evidence for the requested acceptance conditions",
         }) };
+      }
+      if (request.metadata.phase === "ceo_intake") {
+        // A department may not keep input as context, so by default it passes the input to the CEO.
+        const reply = options.intakeReply?.(request) ?? (request.metadata.departmentId
+          ? { outcome: "route_to_ceo", summary: "This is for the CEO.", tasks: [], targetTaskId: null, targetDepartmentId: null, replanNote: null }
+          : { outcome: "context_only", summary: "I kept this as company context. Later tasks will use it.", tasks: [], targetTaskId: null, targetDepartmentId: null, replanNote: null });
+        return { status: "complete", exitCode: 0, stderr: "", stdout: JSON.stringify(reply) };
       }
       const envelope = options.deliver?.(request);
       if (envelope !== undefined) {

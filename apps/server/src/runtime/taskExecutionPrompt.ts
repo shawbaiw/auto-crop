@@ -21,6 +21,8 @@ export type BuildTaskExecutionPromptInput = {
    * dispatch always passes it; there is no other channel by which a re-run learns what was settled.
    */
   settledFacts?: SettledFact[];
+  /** Founder input the CEO kept as company context (ADR 0046), oldest first. */
+  companyContextNotes?: string[];
   /** This task's Verification Contract obligations, resolved by the runtime before dispatch. */
   verification?: {
     producesRequirements: boolean;
@@ -210,6 +212,9 @@ export function buildTaskExecutionPrompt(input: BuildTaskExecutionPromptInput): 
     `Company Name: ${company.name}`,
     `Founder Vision: ${company.founderVision}`,
     `Selected Playbook: ${company.playbookId}`,
+    ...(input.companyContextNotes?.length
+      ? ["", "Later founder input kept as company context:", ...input.companyContextNotes.map((note) => `- ${note}`)]
+      : []),
     "",
     "Use this company context as the source of truth for business direction. Do not infer product direction from examples, placeholders, repository names, or previous work unless they are included in this context or accepted upstream handoffs.",
     "",

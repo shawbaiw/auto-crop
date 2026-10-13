@@ -232,10 +232,13 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare(
           `INSERT INTO ceo_intakes (
-            id, company_id, body, status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
+            id, company_id, body, status, created_at, updated_at, department_id, routed_from_intake_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(intake.id, intake.companyId, intake.body, intake.status, intake.createdAt, intake.updatedAt);
+        .run(
+          intake.id, intake.companyId, intake.body, intake.status, intake.createdAt, intake.updatedAt,
+          intake.departmentId ?? null, intake.routedFromIntakeId ?? null,
+        );
     },
 
     listCeoIntakesForCompany(companyId: string): CeoIntake[] {
@@ -249,6 +252,47 @@ export function createRepositories(database: DatabaseClient) {
       database
         .prepare("UPDATE ceo_intakes SET status = ?, updated_at = ? WHERE id = ?")
         .run(status, updatedAt, id);
+    },
+
+    getCeoIntake(id: string): CeoIntake | null {
+      const row = database.prepare("SELECT * FROM ceo_intakes WHERE id = ?").get(id);
+      return row ? mapCeoIntake(row as CeoIntakeRow) : null;
+    },
+
+    /** Intakes waiting for assessment, oldest first across companies. */
+    listReceivedCeoIntakes(): CeoIntake[] {
+      const rows = database
+        .prepare("SELECT * FROM ceo_intakes WHERE status = 'received' ORDER BY created_at ASC, id ASC")
+        .all();
+      return rows.map((row) => mapCeoIntake(row as CeoIntakeRow));
+    },
+
+    /** Record a full assessment state. Status and outcome change together, so a reader never sees half. */
+    saveCeoIntakeAssessment(intake: CeoIntake): void {
+      database
+        .prepare(
+          `UPDATE ceo_intakes SET
+            status = ?, updated_at = ?, outcome = ?, outcome_summary = ?, created_task_ids = ?,
+            target_task_id = ?, replan_proposal_id = ?, failure_reason = ?, failure_message = ?,
+            attempts = ?, assessed_at = ?, target_department_id = ?, routed_intake_id = ?
+          WHERE id = ?`,
+        )
+        .run(
+          intake.status,
+          intake.updatedAt,
+          intake.outcome ?? null,
+          intake.outcomeSummary ? JSON.stringify(intake.outcomeSummary) : null,
+          JSON.stringify(intake.createdTaskIds ?? []),
+          intake.targetTaskId ?? null,
+          intake.replanProposalId ?? null,
+          intake.failureReason ?? null,
+          intake.failureMessage ?? null,
+          intake.attempts ?? 0,
+          intake.assessedAt ?? null,
+          intake.targetDepartmentId ?? null,
+          intake.routedIntakeId ?? null,
+          intake.id,
+        );
     },
 
     createCeoReviewDecision(decision: CeoReviewDecision): void {
@@ -368,10 +412,8 @@ export function createRepositories(database: DatabaseClient) {
       return rows.map((row) => mapKeyResult(row as KeyResultRow));
     },
 
-    updateKeyResultProgress(id: string, currentValue: string, status: KeyResult["status"]): void {
-      database
-        .prepare("UPDATE key_results SET current_value = ?, status = ? WHERE id = ?")
-        .run(currentValue, status, id);
+    updateKeyResultStatus(id: string, status: KeyResult["status"]): void {
+      database.prepare("UPDATE key_results SET status = ? WHERE id = ?").run(status, id);
     },
 
     updateObjectivePriority(id: string, priority: number): void {
@@ -2172,6 +2214,19 @@ type CeoIntakeRow = {
   status: CeoIntakeStatus;
   created_at: string;
   updated_at: string;
+  outcome: CeoIntake["outcome"];
+  outcome_summary: string | null;
+  created_task_ids: string | null;
+  target_task_id: string | null;
+  replan_proposal_id: string | null;
+  failure_reason: CeoIntake["failureReason"];
+  failure_message: string | null;
+  attempts: number | null;
+  assessed_at: string | null;
+  department_id: string | null;
+  target_department_id: string | null;
+  routed_intake_id: string | null;
+  routed_from_intake_id: string | null;
 };
 
 type CeoReviewDecisionRow = {
@@ -2588,6 +2643,19 @@ function mapCeoIntake(row: CeoIntakeRow): CeoIntake {
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    outcome: row.outcome ?? null,
+    outcomeSummary: row.outcome_summary ? (JSON.parse(row.outcome_summary) as LocalizedText) : null,
+    createdTaskIds: row.created_task_ids ? (JSON.parse(row.created_task_ids) as string[]) : [],
+    targetTaskId: row.target_task_id ?? null,
+    replanProposalId: row.replan_proposal_id ?? null,
+    failureReason: row.failure_reason ?? null,
+    failureMessage: row.failure_message ?? null,
+    attempts: row.attempts ?? 0,
+    assessedAt: row.assessed_at ?? null,
+    departmentId: row.department_id ?? null,
+    targetDepartmentId: row.target_department_id ?? null,
+    routedIntakeId: row.routed_intake_id ?? null,
+    routedFromIntakeId: row.routed_from_intake_id ?? null,
   };
 }
 

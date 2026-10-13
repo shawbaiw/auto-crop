@@ -1504,7 +1504,6 @@ describe("runSchedulerOnce", () => {
       acceptanceProvenance: "manual_ceo_review",
       eventType: "ceo_review_decision",
       eventMessage: "CEO Office approved task: Task task_1.",
-      keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
       dependencyCascade: { maxDepth: 2 },
       now: () => new Date("2026-08-17T00:00:00.000Z"),
       createId: (prefix) => `manual_${prefix}`,
@@ -3766,7 +3765,7 @@ describe("Final Founder Report on Company Quiescence", () => {
     const { projectRoot, repositories, client } = createSchedulerFixture([
       createTaskRecord("task_1", "complete", "low"),
     ]);
-    repositories.updateKeyResultProgress("key_result_1", "shipped", "met");
+    repositories.updateKeyResultStatus("key_result_1", "met");
 
     await runReportSweep({ projectRoot, repositories });
 

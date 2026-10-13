@@ -252,7 +252,6 @@ describe("department subtask verification", () => {
       acceptanceProvenance: "manual_ceo_review",
       eventType: "ceo_review_decision",
       eventMessage: "CEO Office approved task.",
-      keyResultProgress: { currentValue: "verified", status: "met" },
     });
 
     for (const subtask of subtasks) {
@@ -260,7 +259,9 @@ describe("department subtask verification", () => {
       expect(repositories.listOpenTaskHolds(subtask.id)).toEqual([]);
       expect(repositories.getCurrentBusinessArtifactForTask(subtask.id)?.reviewStatus).toBe("unreviewed");
     }
-    expect(repositories.listKeyResults("company_1")[0]).toMatchObject({ currentValue: "verified", status: "met" });
+    // The parent was the key result's only task: accepting it meets the key result, and the plan's
+    // current value is left as the plan wrote it (ADR 0048).
+    expect(repositories.listKeyResults("company_1")[0]).toMatchObject({ currentValue: "not_started", status: "met" });
   });
 
   it("keeps a genuine Founder Decision in a subtask blocking the siblings that consume it", async () => {

@@ -4,13 +4,14 @@ import { taskTitle } from "../../ui/language/localizedNames";
 import { formatCodeLabel } from "../../ui/tasks/formatDisplayValue";
 import { formatDecisionKind } from "./formatDecisionKind";
 
+export type TranslateFn = ReturnType<typeof useLanguage>["t"];
+
 /**
  * A localized line resolver bound to the company canonical locale (ADR 0013 → single canonical
- * locale). Used by both the CEO Office Timeline and the Final Founder Report panel. When the
- * company-locale value is absent it returns a visible "untranslated" marker and logs the gap, rather
- * than silently falling back to another locale — the founder should see it as a gap, not the intended
- * content (spec Decision 2). A field that is simply not present (`null`) returns "" so a caller's
- * `|| t("department.none")` fallback wins.
+ * locale). When the company-locale value is absent it returns a visible "untranslated" marker and
+ * logs the gap, rather than silently falling back to another locale — the founder should see it as a
+ * gap, not the intended content. A field that is simply not present (`null`) returns "" so a
+ * caller's `|| t("ceoOffice.none")` fallback wins.
  */
 type LineResolver = (text: LocalizedText | null | undefined) => string;
 
@@ -28,11 +29,11 @@ export function makeLineResolver(companyLocale: Locale, t: TranslateFn): LineRes
         Object.keys(text).join(", ") || "none"
       }`,
     );
-    return t("department.timelineUntranslated");
+    return t("ceoOffice.untranslated");
   };
 }
 
-// Largest-unit relative time ("2 hours ago", "3 天前"), so a card reads like a broadcast feed.
+// Largest-unit relative time ("2 hours ago", "3 天前"), so a card reads like a feed.
 const RELATIVE_TIME_DIVISIONS: Array<{ amount: number; unit: Intl.RelativeTimeFormatUnit }> = [
   { amount: 60, unit: "second" },
   { amount: 60, unit: "minute" },
@@ -43,7 +44,7 @@ const RELATIVE_TIME_DIVISIONS: Array<{ amount: number; unit: Intl.RelativeTimeFo
   { amount: Number.POSITIVE_INFINITY, unit: "year" },
 ];
 
-export function formatTimelineRelativeTime(iso: string, language: "en" | "zh"): string {
+export function formatTimelineRelativeTime(iso: string, language: Locale): string {
   const timestamp = Date.parse(iso);
   if (!Number.isFinite(timestamp)) {
     return iso;
@@ -60,12 +61,10 @@ export function formatTimelineRelativeTime(iso: string, language: "en" | "zh"): 
 }
 
 /**
- * Everything the card and modal need to turn one timeline item into founder-facing text. The CEO
- * Office timeline is the founder's broadcast surface, so every value in it is resolved against the
- * company canonical locale (ADR 0013) — never the dashboard language toggle, which governs chrome
- * only. `line` is for agent-authored prose: it shows the visible "untranslated" marker when the
- * company-locale value is missing. `localize` is for blueprint-authored names and titles: it falls
- * back to the other locale and then the canonical string rather than showing a marker as a headline.
+ * Everything a card and its dialog need to turn one CEO Office Item into founder-facing text.
+ * Business content is resolved against the company canonical locale (ADR 0013); the interface
+ * language governs only the chrome, through `t`. `line` is for agent-authored prose and shows the
+ * visible "untranslated" marker; `localize` is for names and titles and falls back instead.
  */
 export type TimelineRenderContext = {
   locale: Locale;
@@ -76,129 +75,163 @@ export type TimelineRenderContext = {
 };
 
 type TimelineItemView = {
-  /** The one key line a summary card leads with: the point of the item. */
+  /** The one line a card leads with: the point of the item. */
   keyLine: string;
-  /** The full key-value detail, shown only inside the modal. */
+  /** The full detail, shown only inside the dialog. */
   rows: Array<{ label: string; value: string }>;
 };
 
 /**
- * The single place each timeline item's key line and detail rows are defined, so the card and the
- * modal never drift. The Decision card leads with the briefing; options and rationale are secondary
- * (spec). `execution_report` conclusion falls back to the older `outcome_summary` compatibility text;
- * the projection only emits the item when one of those carries a body, so there is always a key line.
+ * The single place each item's key line and detail rows are defined, so the card and the dialog
+ * never drift. Labels use the founder words of dashboard ADR 0002; no internal term reaches them.
  */
 export function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRenderContext): TimelineItemView {
   const { line, t, tasksById, locale } = ctx;
   const tasks = (ids: string[]) => formatTimelineTasks(ids, tasksById, locale, t);
-  const none = t("department.none");
+  const none = t("ceoOffice.none");
   switch (item.type) {
     case "plan_brief":
       return {
-        keyLine: `${t("department.timelinePlanBriefPrefix")}${item.data.taskCount}${t("department.timelinePlanBriefSuffix")}`,
-        rows: [
-          ...item.data.tasks.map(task => ({
-            label: line(task.title),
-            value: [line(task.purpose), task.dependsOnTaskIds.length ? `${t("department.timelineDependencies")}: ${task.dependsOnTaskIds.map(id => line(item.data.tasks.find(candidate => candidate.taskId === id)?.title)).filter(Boolean).join(", ")}` : ""].filter(Boolean).join(" — "),
+        keyLine: t("ceoOffice.planBriefLine")
+          .replace("{objectives}", String(item.data.objectives.length))
+          .replace("{keyResults}", String(item.data.objectives.reduce((sum, objective) => sum + objective.keyResults.length, 0)))
+          .replace("{count}", String(item.data.taskCount)),
+        // Goal → key result → the tasks that serve it. Dependencies between tasks are the Plan tab's.
+        rows: item.data.objectives.flatMap((objective) =>
+          objective.keyResults.map((keyResult) => ({
+            label: `${line(objective.title)} / ${line(keyResult.title)}`,
+            value: [
+              `${t("ceoOffice.row.target")}: ${line(keyResult.targetValue)}`,
+              item.data.tasks.filter((task) => task.keyResultId === keyResult.keyResultId).map((task) => line(task.title)).join(", ") || t("ceoOffice.goalNoTasks"),
+            ].join(" — "),
           })),
-        ],
+        ),
       };
     case "task_brief":
       return {
         keyLine: line(item.data.purpose),
         rows: [
-          { label: t("department.timelineApproach"), value: line(item.data.approach) || t("department.timelineNotRecorded") },
-          { label: t("department.timelineExpectedOutcome"), value: line(item.data.expectedOutcome) || t("department.timelineNotRecorded") },
-          { label: t("department.timelineObjective"), value: line(item.data.objectiveTitle) || none },
-          { label: t("department.timelineKeyResult"), value: line(item.data.keyResultTitle) || none },
-          { label: t("department.timelineMetric"), value: item.data.keyResultMetricName ?? none },
-          { label: t("department.timelineTarget"), value: line(item.data.keyResultTargetValue) || none },
-          { label: t("department.timelineDependencies"), value: tasks(item.data.dependsOnTaskIds) },
+          { label: t("ceoOffice.row.approach"), value: line(item.data.approach) || t("ceoOffice.notRecorded") },
+          { label: t("ceoOffice.row.expectedOutcome"), value: line(item.data.expectedOutcome) || t("ceoOffice.notRecorded") },
+          { label: t("ceoOffice.row.objective"), value: line(item.data.objectiveTitle) || none },
+          { label: t("ceoOffice.row.keyResult"), value: line(item.data.keyResultTitle) || none },
+          { label: t("ceoOffice.row.metric"), value: item.data.keyResultMetricName ?? none },
+          { label: t("ceoOffice.row.target"), value: line(item.data.keyResultTargetValue) || none },
+          { label: t("ceoOffice.row.dependsOn"), value: tasks(item.data.dependsOnTaskIds) },
         ],
       };
     case "execution_report":
       return {
         keyLine: line(item.data.conclusion) || line(item.data.summaryFallback) || none,
         rows: [
-          { label: t("department.timelineWorkSummary"), value: line(item.data.workSummary) || t("department.timelineNotRecorded") },
-          { label: t("department.timelineEvidence"), value: line(item.data.evidence) || t("department.timelineNotRecorded") },
-          { label: t("department.timelineVisionImpact"), value: line(item.data.visionImpact) || none },
-          { label: t("department.timelineRemainingGap"), value: line(item.data.remainingGap) || formatTimelineGaps(item.data.remainingGaps, none) },
-          { label: t("department.timelineRecommendation"), value: line(item.data.recommendation) || formatTimelineNextSteps(item.data.recommendedNextSteps, none) },
+          { label: t("ceoOffice.row.workSummary"), value: line(item.data.workSummary) || t("ceoOffice.notRecorded") },
+          { label: t("ceoOffice.row.evidence"), value: line(item.data.evidence) || t("ceoOffice.notRecorded") },
+          { label: t("ceoOffice.row.visionImpact"), value: line(item.data.visionImpact) || none },
+          { label: t("ceoOffice.row.remainingGap"), value: line(item.data.remainingGap) || joinLabels(item.data.remainingGaps, none) },
+          { label: t("ceoOffice.row.recommendation"), value: line(item.data.recommendation) || joinLabels(item.data.recommendedNextSteps, none) },
         ],
       };
     case "decision_request":
       return {
         keyLine: item.data.briefing || item.data.rationale || none,
         rows: [
-          { label: t("department.timelineBriefing"), value: item.data.briefing || none },
-          { label: t("department.founderDecisionKind"), value: formatDecisionKind(item.data.decisionKind, t) },
-          { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
-          { label: t("department.timelineRationale"), value: item.data.rationale || none },
-          { label: t("department.timelineChosenOption"), value: item.data.resolvedOption ?? none },
-          { label: t("department.blockedTasks"), value: tasks(item.data.blockedTaskIds) },
+          { label: t("ceoOffice.row.decisionKind"), value: formatDecisionKind(item.data.decisionKind, t) },
+          { label: t("ceoOffice.row.status"), value: formatTimelineStatus(item.data.status, t) },
+          { label: t("ceoOffice.row.rationale"), value: item.data.rationale || none },
+          { label: t("ceoOffice.row.chosenOption"), value: item.data.resolvedOption ?? none },
+          { label: t("ceoOffice.row.blockedTasks"), value: tasks(item.data.blockedTaskIds) },
         ],
       };
     case "approval_request":
       return {
-        keyLine: t("department.timelineApprovalRequestBody"),
-        rows: [{ label: t("department.status"), value: formatTimelineStatus(item.data.status, t) }],
+        keyLine: t("ceoOffice.reviewWaiting"),
+        rows: [{ label: t("ceoOffice.row.status"), value: formatTimelineStatus(item.data.status, t) }],
       };
     case "decision_resolution":
       return {
         keyLine: line(item.data.note) || item.data.chosenOption || formatCompletionOutcome(item.data.outcome, t),
         rows: [
-          { label: t("department.timelineResolutionOutcome"), value: formatCompletionOutcome(item.data.outcome, t) },
-          { label: t("department.timelineChosenOption"), value: item.data.chosenOption ?? none },
-          { label: t("department.timelineDecisionRequest"), value: item.data.requestItemId },
+          { label: t("ceoOffice.row.resolution"), value: formatCompletionOutcome(item.data.outcome, t) },
+          { label: t("ceoOffice.row.chosenOption"), value: item.data.chosenOption ?? none },
         ],
       };
     case "human_action":
       return {
         keyLine: line(item.data.label),
         rows: [
-          { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
-          { label: t("department.humanActionConfirmation"), value: formatTimelineTextList(item.data.confirmationRequirements, t) },
-          { label: t("department.blockedTasks"), value: tasks(item.data.blockedTaskIds) },
-          { label: t("department.timelineVerifiedAt"), value: item.data.verifiedAt ?? none },
+          { label: t("ceoOffice.row.status"), value: formatTimelineStatus(item.data.status, t) },
+          { label: t("ceoOffice.row.confirmationNeeded"), value: item.data.confirmationRequirements.join(", ") || none },
+          { label: t("ceoOffice.row.blockedTasks"), value: tasks(item.data.blockedTaskIds) },
+          ...(item.data.verifiedAt ? [{ label: t("ceoOffice.row.verifiedAt"), value: new Date(item.data.verifiedAt).toLocaleString(locale) }] : []),
         ],
       };
     case "wait_state":
       return {
         keyLine: line(item.data.reason),
         rows: [
-          { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
-          { label: t("department.waitStateNextCheck"), value: item.data.nextCheckAt },
-          { label: t("department.waitStateAffectedTasks"), value: tasks(item.data.affectedTaskIds) },
+          { label: t("ceoOffice.row.status"), value: formatTimelineStatus(item.data.status, t) },
+          { label: t("ceoOffice.row.nextCheck"), value: new Date(item.data.nextCheckAt).toLocaleString(locale) },
+          { label: t("ceoOffice.row.affectedTasks"), value: tasks(item.data.affectedTaskIds) },
         ],
       };
     case "blocked_issue":
       return {
         keyLine: line(item.data.reason),
         rows: [
-          { label: t("department.status"), value: formatTimelineStatus(item.data.status, t) },
-          { label: t("department.blockedTasks"), value: tasks(item.data.affectedTaskIds) },
+          { label: t("ceoOffice.row.status"), value: formatTimelineStatus(item.data.status, t) },
+          { label: t("ceoOffice.row.affectedTasks"), value: tasks(item.data.affectedTaskIds) },
         ],
       };
     case "stage_change":
       return {
         keyLine: line(item.data.summary),
         rows: [
-          { label: t("department.timelineRecommendation"), value: line(item.data.recommendedNextAction) },
-          { label: t("department.completedTasks"), value: tasks(item.data.affectedTaskIds) },
+          { label: t("ceoOffice.row.recommendation"), value: line(item.data.recommendedNextAction) },
+          { label: t("ceoOffice.row.tasks"), value: tasks(item.data.affectedTaskIds) },
         ],
       };
     case "final_report":
       return {
         keyLine: line(item.data.sections.actualResult),
         rows: [
-          { label: t("department.finalFounderReport"), value: item.data.isCurrent ? t("department.timelineCurrentReport") : t("department.timelineSupersededReport") },
-          { label: t("department.finalReportVision"), value: line(item.data.sections.vision) },
-          { label: t("department.finalReportGoalFit"), value: line(item.data.sections.goalFit) },
-          { label: t("department.finalReportRemainingGaps"), value: line(item.data.sections.remainingGaps) },
-          { label: t("department.finalReportNextStep"), value: line(item.data.sections.recommendedNextStep) },
+          { label: t("ceoOffice.row.report"), value: item.data.isCurrent ? t("ceoOffice.currentReport") : t("ceoOffice.supersededReport") },
+          { label: t("ceoOffice.report.vision"), value: line(item.data.sections.vision) },
+          { label: t("ceoOffice.report.goalFit"), value: line(item.data.sections.goalFit) },
+          { label: t("ceoOffice.report.remainingGaps"), value: line(item.data.sections.remainingGaps) },
+          { label: t("ceoOffice.report.nextStep"), value: line(item.data.sections.recommendedNextStep) },
         ],
       };
+    case "key_result_met":
+      return {
+        keyLine: t("ceoOffice.keyResultMetLine").replace("{target}", line(item.data.targetValue)),
+        rows: [
+          { label: t("ceoOffice.row.objective"), value: line(item.data.objectiveTitle) || none },
+          { label: t("ceoOffice.row.target"), value: line(item.data.targetValue) },
+          { label: t("ceoOffice.row.tasks"), value: tasks(item.data.taskIds) },
+        ],
+      };
+    case "founder_intake":
+      // The founder's own words are raw source content, shown as written (CONTEXT: Interface Locale).
+      return { keyLine: item.data.body, rows: [] };
+    case "intake_outcome":
+      return {
+        keyLine: item.data.status === "failed" ? intakeFailureSentence(item.data.failureReason, t) : line(item.data.summary) || none,
+        rows: item.data.createdTaskIds.length > 0 ? [{ label: t("ceoOffice.intakeNewTasks"), value: tasks(item.data.createdTaskIds) }] : [],
+      };
+  }
+}
+
+/** The plain sentence for an intake the CEO could not handle. The code itself stays under Details. */
+export function intakeFailureSentence(reason: string | null, t: TranslateFn): string {
+  switch (reason) {
+    case "plan_not_made":
+      return t("ceoOffice.intakeFailed.plan");
+    case "company_stopped":
+      return t("ceoOffice.intakeFailed.stopped");
+    case "no_agent":
+      return t("ceoOffice.intakeFailed.noAgent");
+    default:
+      return t("ceoOffice.intakeFailed.agent");
   }
 }
 
@@ -214,6 +247,9 @@ const ceoOfficeTimelineOrder: Record<CeoOfficeItemSummary["type"], number> = {
   decision_resolution: 7,
   stage_change: 8,
   final_report: 9,
+  founder_intake: 10,
+  intake_outcome: 11,
+  key_result_met: 7.5,
 };
 
 export function compareCeoOfficeTimelineItems(a: CeoOfficeItemSummary, b: CeoOfficeItemSummary): number {
@@ -222,118 +258,46 @@ export function compareCeoOfficeTimelineItems(a: CeoOfficeItemSummary, b: CeoOff
     (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
-export function formatCeoOfficeItemType(type: CeoOfficeItemSummary["type"], t: ReturnType<typeof useLanguage>["t"]): string {
-  switch (type) {
-    case "plan_brief":
-      return t("department.timelinePlanBrief");
-    case "task_brief":
-      return t("department.timelineTaskBrief");
-    case "execution_report":
-      return t("department.timelineExecutionReport");
-    case "decision_request":
-      return t("department.timelineDecisionRequest");
-    case "approval_request":
-      return t("department.timelineApprovalRequest");
-    case "decision_resolution":
-      return t("department.timelineDecisionResolution");
-    case "human_action":
-      return t("department.timelineHumanAction");
-    case "wait_state":
-      return t("department.timelineWaitState");
-    case "blocked_issue":
-      return t("department.timelineBlockedIssue");
-    case "stage_change":
-      return t("department.timelineStageChange");
-    case "final_report":
-      return t("department.timelineFinalReport");
-  }
+export function formatCeoOfficeItemType(type: CeoOfficeItemSummary["type"], t: TranslateFn): string {
+  return t(`ceoOffice.type.${type}` as TranslationKey);
 }
 
-function formatTimelineGaps(
-  gaps: Extract<CeoOfficeItemSummary, { type: "execution_report" }>["data"]["remainingGaps"],
-  emptyLabel: string,
-): string {
-  return gaps.length === 0 ? emptyLabel : gaps.map((gap) => gap.label).join(" ");
+function joinLabels(entries: Array<{ label: string }>, emptyLabel: string): string {
+  return entries.length === 0 ? emptyLabel : entries.map((entry) => entry.label).join(" ");
 }
-
-function formatTimelineNextSteps(
-  nextSteps: Extract<CeoOfficeItemSummary, { type: "execution_report" }>["data"]["recommendedNextSteps"],
-  emptyLabel: string,
-): string {
-  return nextSteps.length === 0 ? emptyLabel : nextSteps.map((step) => step.label).join(" ");
-}
-
-export type TranslateFn = ReturnType<typeof useLanguage>["t"];
 
 /**
- * Task references (dependencies, affected/blocked tasks) render as task titles, never raw IDs
- * (spec User Story 12), resolved in the company canonical locale like the rest of the timeline.
- * Falls back to a localized count only when an ID resolves to no known task.
+ * Task references render as task titles, never raw IDs, resolved in the company canonical locale like
+ * the rest of the timeline. Falls back to a localized count only when no ID resolves to a known task.
  */
-export function formatTimelineTasks(
-  taskIds: string[],
-  tasksById: Map<string, TaskSummary>,
-  locale: Locale,
-  t: TranslateFn,
-): string {
+export function formatTimelineTasks(taskIds: string[], tasksById: Map<string, TaskSummary>, locale: Locale, t: TranslateFn): string {
   if (taskIds.length === 0) {
-    return t("department.none");
+    return t("ceoOffice.none");
   }
-
   const titles = taskIds
     .map((taskId) => {
       const task = tasksById.get(taskId);
       return task ? taskTitle(task, locale) : null;
     })
     .filter((title): title is string => Boolean(title));
-
   if (titles.length > 0) {
     return titles.join(", ");
   }
-  const countKey = taskIds.length === 1 ? "department.timelineTaskCountOne" : "department.timelineTaskCountOther";
+  const countKey = taskIds.length === 1 ? "ceoOffice.taskCountOne" : "ceoOffice.taskCountOther";
   return t(countKey).replace("{count}", String(taskIds.length));
 }
 
-/** Free-text requirement lists (not task IDs) — joined, with a localized empty fallback. */
-function formatTimelineTextList(values: string[], t: TranslateFn): string {
-  return values.length === 0 ? t("department.none") : values.join(", ");
-}
-
-// Enum-class timeline values render through translation keys; an unmapped value still de-snakes via
-// `formatCodeLabel`, so the timeline never shows raw snake_case (spec User Story 16). The blocked/wait
-// deterministic reason strings have a matching bilingual table in `packages/core/src/ceoOffice.ts`.
-const TIMELINE_STATUS_KEY: Record<string, TranslationKey> = {
-  pending: "department.timelineStatusPending",
-  resolved: "department.timelineStatusResolved",
-  returned: "department.timelineStatusReturned",
-  approved: "department.timelineStatusApproved",
-  confirmed: "department.timelineStatusConfirmed",
-  waiting: "department.timelineStatusWaiting",
-  ready_for_check_in: "department.timelineStatusReadyForCheckIn",
-  open: "department.timelineStatusOpen",
-};
-
-const TIMELINE_OUTCOME_KEY: Record<string, TranslationKey> = {
-  accepted: "department.timelineOutcomeAccepted",
-  blocked: "department.timelineOutcomeBlocked",
-  failed_to_review: "department.timelineOutcomeFailedToReview",
-  needs_replan: "department.timelineOutcomeNeedsReplan",
-  awaiting_founder_decision: "department.timelineOutcomeAwaitingFounderDecision",
-  awaiting_human_action: "department.timelineOutcomeAwaitingHumanAction",
-  resolved: "department.timelineOutcomeResolved",
-  approved: "department.timelineOutcomeApproved",
-  returned: "department.timelineOutcomeReturned",
-};
-
-function translateTimelineCode(value: string, keys: Record<string, TranslationKey>, t: TranslateFn): string {
-  const key = keys[value];
-  return key ? t(key) : formatCodeLabel(value);
-}
+// Enum-class values render through translation keys; an unmapped value still de-snakes through
+// `formatCodeLabel`, so the timeline never shows raw snake_case.
+const TIMELINE_STATUSES = new Set(["pending", "resolved", "returned", "approved", "confirmed", "waiting", "ready_for_check_in", "open"]);
+const COMPLETION_OUTCOMES = new Set([
+  "accepted", "blocked", "failed_to_review", "needs_replan", "awaiting_founder_decision", "awaiting_human_action", "resolved", "approved", "returned",
+]);
 
 function formatTimelineStatus(status: string, t: TranslateFn): string {
-  return translateTimelineCode(status, TIMELINE_STATUS_KEY, t);
+  return TIMELINE_STATUSES.has(status) ? t(`ceoOffice.status.${status}` as TranslationKey) : formatCodeLabel(status);
 }
 
 function formatCompletionOutcome(outcome: string, t: TranslateFn): string {
-  return translateTimelineCode(outcome, TIMELINE_OUTCOME_KEY, t);
+  return COMPLETION_OUTCOMES.has(outcome) ? t(`ceoOffice.outcome.${outcome}` as TranslationKey) : formatCodeLabel(outcome);
 }

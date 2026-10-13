@@ -86,7 +86,8 @@ export type SchedulerWakeReason =
   | "parent_aggregation_queued"
   | "budget_authorized"
   | "company_created"
-  | "company_resumed";
+  | "company_resumed"
+  | "ceo_intake_received";
 const creationAttemptTimeoutMs = 10 * 60 * 1000;
 const creationAttemptGraceMs = 30 * 1000;
 
@@ -465,13 +466,20 @@ async function routeRequest(
     return;
   }
 
+  // Founder input to CEO Office, or to one department. Both are assessed by an agent (ADR 0046).
   const ceoIntakeMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/ceo-intakes$/);
-  if (method === "POST" && ceoIntakeMatch) {
-    const companyId = ceoIntakeMatch[1];
+  const departmentIntakeMatch = url.pathname.match(/^\/api\/companies\/([^/]+)\/departments\/([^/]+)\/intakes$/);
+  if (method === "POST" && (ceoIntakeMatch || departmentIntakeMatch)) {
+    const companyId = (ceoIntakeMatch ?? departmentIntakeMatch)![1];
+    const departmentId = departmentIntakeMatch ? departmentIntakeMatch[2] : null;
     const company = options.repositories.getCompany(companyId);
 
     if (!company) {
       sendJson(response, 404, { error: `Company not found: ${companyId}` });
+      return;
+    }
+    if (departmentId && !options.repositories.listDepartments(companyId).some((department) => department.id === departmentId)) {
+      sendJson(response, 404, { error: `Department not found: ${departmentId}` });
       return;
     }
     if (company.status === "stopped") {
@@ -483,7 +491,7 @@ async function routeRequest(
     const intakeBody = body.body?.trim() ?? "";
 
     if (!intakeBody) {
-      sendJson(response, 400, { error: "CEO intake body is required." });
+      sendJson(response, 400, { error: "Intake body is required." });
       return;
     }
 
@@ -491,6 +499,7 @@ async function routeRequest(
     const intake: CeoIntake = {
       id: createRouteId(options, "ceo_intake"),
       companyId,
+      departmentId,
       body: intakeBody,
       status: "received",
       createdAt: timestamp,
@@ -498,6 +507,8 @@ async function routeRequest(
     };
 
     options.repositories.createCeoIntake(intake);
+    // An agent assesses it off the request path (ADR 0046); waking the scheduler starts that soon.
+    options.requestSchedulerWake?.("ceo_intake_received");
     sendJson(response, 201, { intake: summarizeCeoIntake(intake) });
     return;
   }
@@ -1306,6 +1317,7 @@ function buildCompanyState(
       visionGaps: ceoAttention.visionGaps,
       ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
       finalFounderReports: repositories.listFinalFounderReportsForCompany(currentCompany.id),
+      ceoIntakes: repositories.listCeoIntakesForCompany(currentCompany.id),
     }),
     taskCompletionEvents: taskCompletionEvents.map(summarizeTaskCompletionEvent),
     visionGaps: ceoAttention.visionGaps,
@@ -2135,7 +2147,6 @@ function createCeoReviewDecision(input: {
       acceptanceProvenance: "manual_ceo_review",
       eventType: "ceo_review_decision",
       eventMessage: `CEO Office approved task: ${task.title}.`,
-      keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
       dependencyCascade: { maxDepth: 2 },
       requestSchedulerWake: input.requestSchedulerWake,
       now: input.now,
@@ -2504,7 +2515,6 @@ function pickFounderDecisionOption(context: FounderDecisionContext, chosenOption
     acceptanceProvenance: "founder_decision",
     eventType: "founder_decision",
     eventMessage: `Founder decision accepted task: ${task.title}.`,
-    keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
     dependencyCascade: { maxDepth: 2 },
     requestSchedulerWake: context.requestSchedulerWake,
     now: context.now,
@@ -2767,6 +2777,8 @@ function summarizeTask(
     titleText: localizedSummaryText(task.titleText, task.title),
     status: task.status,
     departmentId: task.departmentId,
+    /** The key result the task serves (ADR 0048). */
+    keyResultId: task.keyResultId ?? null,
     departmentKey: task.departmentKey ?? undefined,
     assigneeAgentId: task.assigneeAgentId,
     description: task.description,

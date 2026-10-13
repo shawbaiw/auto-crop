@@ -435,6 +435,8 @@ export const departmentBlueprintSchema = z.object({
 });
 
 export const keyResultBlueprintSchema = z.object({
+  /** Stable lowercase key a task names to say it serves this key result. */
+  key: taskKeySchema,
   title: nonEmptyString,
   titleText: localizedTextSchema.optional(),
   metricName: nonEmptyString,
@@ -487,6 +489,8 @@ export const taskSchema = z.object({
   requiredCapabilities: z.array(nonEmptyString).min(1),
   proofSchemaId: nonEmptyString,
   riskLevel: riskLevelSchema,
+  /** The key result this task serves. Every planned task serves exactly one (ADR 0048). */
+  keyResultKey: taskKeySchema,
   dependsOnTaskKeys: z.array(taskKeySchema).default([]),
   handoffContract: nonEmptyString,
   handoffContractText: localizedTextSchema.optional(),
@@ -511,6 +515,20 @@ export const companyBlueprintSchema = z
     const departmentKeys = new Set(blueprint.departments.map((department) => department.key).filter((key): key is string => Boolean(key)));
     const proofSchemaIds = new Set(blueprint.proofSchemas.map((proofSchema) => proofSchema.id));
     const taskIndexesByKey = new Map<string, number>();
+    const keyResultKeys = new Set<string>();
+
+    blueprint.objectives.forEach((objective, objectiveIndex) => {
+      objective.keyResults.forEach((keyResult, keyResultIndex) => {
+        if (keyResultKeys.has(keyResult.key)) {
+          context.addIssue({
+            code: "custom",
+            path: ["objectives", objectiveIndex, "keyResults", keyResultIndex, "key"],
+            message: `Duplicate key result key: ${keyResult.key}`,
+          });
+        }
+        keyResultKeys.add(keyResult.key);
+      });
+    });
 
     blueprint.tasks.forEach((task, index) => {
       if (taskIndexesByKey.has(task.key)) {
@@ -535,6 +553,14 @@ export const companyBlueprintSchema = z
           code: "custom",
           path: ["tasks", index, task.departmentKey ? "departmentKey" : "departmentName"],
           message: `Task references missing department: ${task.departmentKey ?? task.departmentName}`,
+        });
+      }
+
+      if (!keyResultKeys.has(task.keyResultKey)) {
+        context.addIssue({
+          code: "custom",
+          path: ["tasks", index, "keyResultKey"],
+          message: `Task references missing key result: ${task.keyResultKey}`,
         });
       }
 

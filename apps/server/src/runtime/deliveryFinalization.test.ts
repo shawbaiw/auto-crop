@@ -63,56 +63,56 @@ const MATRIX: Case[] = [
   {
     name: "an eligible ordinary deliverable is accepted automatically",
     subtask: false,
-    expected: { status: "complete", holds: [], reviewStatus: "accepted", keyResult: "accepted_business_artifact", completionOutcomes: ["accepted"] },
+    expected: { status: "complete", holds: [], reviewStatus: "accepted", keyResult: "met", completionOutcomes: ["accepted"] },
   },
   {
     name: "a risky ordinary deliverable goes to CEO review",
     subtask: false,
     risky: true,
-    expected: { status: "review", holds: ["awaiting_ceo_review"], reviewStatus: "unreviewed", keyResult: "not_started", completionOutcomes: [] },
+    expected: { status: "review", holds: ["awaiting_ceo_review"], reviewStatus: "unreviewed", keyResult: "active", completionOutcomes: [] },
   },
   {
     name: "an ordinary deliverable declaring a Founder Decision waits for the founder",
     subtask: false,
     decision: true,
-    expected: { status: "review", holds: ["awaiting_founder_decision"], reviewStatus: "unreviewed", keyResult: "not_started", completionOutcomes: ["awaiting_founder_decision"] },
+    expected: { status: "review", holds: ["awaiting_founder_decision"], reviewStatus: "unreviewed", keyResult: "active", completionOutcomes: ["awaiting_founder_decision"] },
   },
   {
     name: "for an ordinary deliverable a risk hit outranks a declared decision",
     subtask: false,
     risky: true,
     decision: true,
-    expected: { status: "review", holds: ["awaiting_ceo_review"], reviewStatus: "unreviewed", keyResult: "not_started", completionOutcomes: [] },
+    expected: { status: "review", holds: ["awaiting_ceo_review"], reviewStatus: "unreviewed", keyResult: "active", completionOutcomes: [] },
   },
   {
     name: "prose that names a risk while declaring no action is accepted",
     subtask: false,
     risky: true,
     actions: [],
-    expected: { status: "complete", holds: [], reviewStatus: "accepted", keyResult: "accepted_business_artifact", completionOutcomes: ["accepted"] },
+    expected: { status: "complete", holds: [], reviewStatus: "accepted", keyResult: "met", completionOutcomes: ["accepted"] },
   },
   {
     name: "a declared performed action goes to CEO review, whatever the prose says",
     subtask: false,
     actions: [{ category: "deployment", status: "performed", description: "Deployed the site to production." }],
-    expected: { status: "review", holds: ["awaiting_ceo_review"], reviewStatus: "unreviewed", keyResult: "not_started", completionOutcomes: [] },
+    expected: { status: "review", holds: ["awaiting_ceo_review"], reviewStatus: "unreviewed", keyResult: "active", completionOutcomes: [] },
   },
   {
     name: "a subtask delivery is internal",
     subtask: true,
-    expected: { status: "review", holds: ["awaiting_parent_aggregation"], reviewStatus: "unreviewed", keyResult: "not_started", completionOutcomes: [] },
+    expected: { status: "review", holds: ["awaiting_parent_aggregation"], reviewStatus: "unreviewed", keyResult: "active", completionOutcomes: [] },
   },
   {
     name: "a subtask delivery is never risk-scanned",
     subtask: true,
     risky: true,
-    expected: { status: "review", holds: ["awaiting_parent_aggregation"], reviewStatus: "unreviewed", keyResult: "not_started", completionOutcomes: [] },
+    expected: { status: "review", holds: ["awaiting_parent_aggregation"], reviewStatus: "unreviewed", keyResult: "active", completionOutcomes: [] },
   },
   {
     name: "a subtask declaring a Founder Decision waits for the founder",
     subtask: true,
     decision: true,
-    expected: { status: "review", holds: ["awaiting_founder_decision"], reviewStatus: "unreviewed", keyResult: "not_started", completionOutcomes: ["awaiting_founder_decision"] },
+    expected: { status: "review", holds: ["awaiting_founder_decision"], reviewStatus: "unreviewed", keyResult: "active", completionOutcomes: ["awaiting_founder_decision"] },
   },
 ];
 
@@ -232,7 +232,6 @@ describe("business acceptance seam", () => {
         acceptanceProvenance: "manual_ceo_review",
         eventType: "ceo_review_decision",
         eventMessage: "CEO Office approved task.",
-        keyResultProgress: { currentValue: "accepted_business_artifact", status: "met" },
       }),
     );
 
@@ -296,7 +295,7 @@ function summarize(fixture: ReturnType<typeof createFixture>, taskId: string): O
     status: repositories.getTask(taskId)!.status,
     holds: repositories.listOpenTaskHolds(taskId).map((hold) => hold.kind),
     reviewStatus: repositories.getCurrentBusinessArtifactForTask(taskId)?.reviewStatus ?? "none",
-    keyResult: repositories.listKeyResults("company_1")[0]!.currentValue,
+    keyResult: repositories.listKeyResults("company_1")[0]!.status,
     completionOutcomes: repositories.listTaskCompletionEventsForTask(taskId).map((event) => event.outcome),
   };
 }

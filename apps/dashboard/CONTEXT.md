@@ -11,7 +11,7 @@ Whether an action is available to a task is computed server-side and arrives on 
 This is not a style preference. The board used to keep its own predicates, and they drifted from the server's guards in both directions:
 
 - `isRecoverableTask` refused recovery for `blocked` tasks the API accepted, so those tasks showed no way forward;
-- the Operations page listed replannable tasks as `status === "needs_replan"`, which misses a task at the Bounded Recovery ceiling — `blocked`, with replanning as its **only** way forward. That task had no button anywhere in the product.
+- the old Operations page listed replannable tasks as `status === "needs_replan"`, which misses a task at the Bounded Recovery ceiling — `blocked`, with replanning as its **only** way forward. That task had no button anywhere in the product.
 
 An eligibility rule kept on both sides is a rule that drifts. See ADR 0020.
 
@@ -20,7 +20,7 @@ An eligibility rule kept on both sides is a rule that drifts. See ADR 0020.
 `ui/tasks/affordanceControls.ts` maps every `TaskAffordanceKind` to one of:
 
 - `inline` — drawn on the task row itself, with its label keys and the handler that performs it;
-- `surface` — drawn by a named surface elsewhere (the CEO Office cards, the Human Action panel, the new plans on Operations Diagnostics);
+- `surface` — drawn by a named surface elsewhere (the forms in a CEO Office or department page item's dialog, the new plan on a task's Execution Trace, the task execution panel);
 - `unsurfaced` — nothing draws it, **and the reason is written down**.
 
 The registry is exhaustive over the union, so a new affordance cannot be added without someone deciding where it appears. `unsurfaced` is a legitimate answer but never a silent one: an affordance nothing renders because nobody thought about it is how the replan gap survived; one that nothing renders because someone argued for it is a decision. `affordanceControls.test.ts` enforces all three shapes.
@@ -41,7 +41,7 @@ A render crash that still happens stays on the Workbench page it happened on: `P
 
 A task's `holds` and `affordances` were computed for the status the server saw. When a live event moves a task locally, that pairing is broken, so the client **drops** them rather than carrying them onto a status they were not computed for — otherwise the board offers an action for a state the server never offered it for.
 
-They return with the next snapshot that agrees: `adoptSettledTasks` takes the server's version of a task only where its status matches what the live stream already showed. Where the two disagree the snapshot is simply in flight, and mixing the two is the same fabrication in a subtler place.
+They return with the next snapshot that agrees: `adoptSettledTasks` takes the server's version of a task only where its status matches what the live stream already showed. Where the two disagree the snapshot is simply in flight, and mixing the two is the same fabrication in a subtler place. A task the live view has never seen, such as one a CEO Intake planned, has nothing to disagree with, so the snapshot's version is adopted as it is.
 
 ### The event stream does not replay
 
@@ -51,6 +51,18 @@ Two rules follow:
 
 - **The stream is per company, not per view.** Changing views must not close and reopen it — every reopen is a window in which events are lost. Callbacks read the current view from a ref instead of resubscribing.
 - **Every (re)connection resyncs from a snapshot.** `subscribeEvents` reports each open, and the App adopts the server's state there wholesale. This is the one place a snapshot overrides the live stream rather than waiting to agree with it (see Settled Task): after a gap, the live view is the one known to be stale. A reload for any later event bumps the revision and supersedes it.
+
+## CEO Office Acts In One Place
+
+Every CEO Office card opens its item in one dialog, and that dialog holds the only form for acting on it: a review, a decision, or a Human Action. Timeline cards and "Needs you" cards open the same dialog, so the founder never meets two forms for one decision that could disagree. A review form appears only while the server offers `ceo_review_decision`; when it does not, the dialog says so and points to the department page.
+
+"Needs you" is defined once, in `deriveNeedsYou`: open reviews, decisions and Human Actions, new plans to confirm, and tasks only the founder can move. The CEO Office column, its phone summary and the rail's counts all read it, so they cannot disagree. A task waits on the founder when its server affordances include a founder action no other card covers and no runtime action — read from the affordances, never from a status rule of the dashboard's own. A task that already has a card is not listed again: a new plan offered beside a Human Action is that action's way out. Waits, and stuck tasks the runtime can still handle, are counted in the overview but not listed.
+
+The composer sends a CEO Intake. Its card comes from the server's projection, read back at once, never synthesised in the browser.
+
+## A Trace Folds Only When Its Result Is Settled
+
+Each task on a department page is an Execution Trace built from the runtime's progress steps; a run starts where execution starts again. A trace is open while its task runs, waits or is stuck, and folds to a summary only when the task is complete or in review, keeping its result in view. A founder's own open or fold holds while the page is open; live updates never reset it. Task actions stay mounted when a trace folds, so the outcome of an action just taken stays in view.
 
 ## Modern UI Direction
 

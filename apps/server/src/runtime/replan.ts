@@ -7,6 +7,7 @@ import { planningCapabilityNeeds, resolveAgentCapabilityGrant, resolveTaskCapabi
 import { resolvePolicyForPermissionMode } from "../policies/defaults";
 import { defaultAgentSessionManager, type AgentSessionManager, type AgentSessionRunEvent } from "./agentSessions";
 import { resetTaskAttempts } from "./boundedRecovery";
+import { planSnapshot } from "./createCompany";
 import { applyTaskTransition } from "./taskTransition";
 import { buildReplanPlannerPrompt, parseReplanPlannerOutput, type ReplanPlannerResponse } from "./replanPlanner";
 import { isReplanProposalCurrent, resolveReplanBasis, resolveStuckContext, revisableRequirements, verifiersJudging } from "./replanContext";
@@ -542,14 +543,10 @@ function confirmSplit(input: ConfirmReplanProposalInput, proposal: ReplanProposa
     now: () => new Date(now),
     createId,
   });
-  const locale = input.repositories.getCompany(sourceTask.companyId)?.locale ?? "en";
   input.repositories.appendCompanyEvent({
     id: createId("company_event"), companyId: sourceTask.companyId, type: "company_plan_created",
     message: proposal.rationale, createdAt: now,
-    planSnapshot: { tasks: createdTasks.map(task => ({ taskId: task.id,
-      title: task.titleText ?? { [locale]: task.title }, purpose: task.descriptionText ?? { [locale]: task.description },
-      departmentId: task.departmentId, dependsOnTaskIds: input.repositories.listTaskDependencies(task.id).map(dep => dep.dependsOnTaskId),
-    })) },
+    planSnapshot: planSnapshot(input.repositories, input.repositories.getCompany(sourceTask.companyId)!, createdTasks),
   });
   // A CEO replan resets the source task's Bounded Recovery budget so it can be recovered again.
   resetTaskAttempts(input.repositories, sourceTask.id, now);

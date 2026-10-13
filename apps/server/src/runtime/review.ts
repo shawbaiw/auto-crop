@@ -51,10 +51,6 @@ export function runCompanyReview(input: RunCompanyReviewInput): RunCompanyReview
     });
     completedTasks.push(task.id);
     proofSummaries.push(...proofs.map((proof) => `- ${task.title}: ${proof.summary}`));
-
-    if (task.keyResultId) {
-      input.repositories.updateKeyResultProgress(task.keyResultId, "proof_received", "met");
-    }
   }
 
   const reviewPath = writeReviewMarkdown({

@@ -205,7 +205,20 @@ export type ExecutionBrief = {
 };
 
 export type CompanyPlanSnapshot = {
-  tasks: Array<{ taskId: string; title: LocalizedText; purpose: LocalizedText; departmentId: string; dependsOnTaskIds: string[] }>;
+  /** The goals the plan serves, each with its key results (ADR 0048). */
+  objectives: Array<{
+    objectiveId: string;
+    title: LocalizedText;
+    keyResults: Array<{ keyResultId: string; title: LocalizedText; targetValue: LocalizedText }>;
+  }>;
+  tasks: Array<{
+    taskId: string;
+    title: LocalizedText;
+    purpose: LocalizedText;
+    departmentId: string;
+    keyResultId: string | null;
+    dependsOnTaskIds: string[];
+  }>;
 };
 
 export type ExecutionReport = {
@@ -510,13 +523,60 @@ export type CompanyEvent = {
   status?: CompanyStatus | null;
 };
 
+/**
+ * What an assessment decided founder input needs (ADR 0046). The CEO Agent chooses among new tasks, a
+ * new plan, company context or one department; a department's agent among a task in its department,
+ * a note for a task it has, or passing the input to the CEO.
+ */
+export type CeoIntakeOutcome =
+  | "create_tasks"
+  | "revise_plan"
+  | "context_only"
+  | "route_department"
+  | "attach_to_task"
+  | "route_to_ceo";
+/** Why an intake ended `failed`. The founder sees a plain sentence; the code stays for diagnosis. */
+export type CeoIntakeFailureReason =
+  | "agent_failed"
+  | "invalid_agent_output"
+  | "plan_not_made"
+  | "company_stopped"
+  | "no_agent";
+
+/**
+ * Founder input and its assessment. A CEO Intake has no department; a Department Intake names the
+ * department it was sent to. Both use one pipeline (ADR 0046).
+ */
 export type CeoIntake = {
   id: string;
   companyId: string;
+  /** Null for a CEO Intake; the department a Department Intake was sent to. */
+  departmentId?: string | null;
   body: string;
   status: CeoIntakeStatus;
   createdAt: string;
   updatedAt: string;
+  /** Set once the assessment chose an outcome. */
+  outcome?: CeoIntakeOutcome | null;
+  /** The CEO Agent's answer to the founder, in the company locale, under the Founder Writing Rules (ADR 0045). */
+  outcomeSummary?: LocalizedText | null;
+  /** Tasks the intake created, for `create_tasks`. */
+  createdTaskIds?: string[];
+  /** The stuck task a new plan was requested for (`revise_plan`), or the task given the note (`attach_to_task`). */
+  targetTaskId?: string | null;
+  /** The department the CEO sent the input to, for `route_department`. */
+  targetDepartmentId?: string | null;
+  /** The intake this one became when it was passed on (`route_department`, `route_to_ceo`). */
+  routedIntakeId?: string | null;
+  /** The intake this one was passed on from. Passed-on input is not passed on again. */
+  routedFromIntakeId?: string | null;
+  replanProposalId?: string | null;
+  failureReason?: CeoIntakeFailureReason | null;
+  failureMessage?: string | null;
+  /** Assessment runs started for this intake, including the one that ended it. */
+  attempts?: number;
+  /** When the outcome was decided or the intake failed. */
+  assessedAt?: string | null;
 };
 
 export type CeoReviewDecision = {
@@ -864,6 +924,8 @@ export type BlueprintTask = {
   requiredCapabilities: string[];
   proofSchemaId: string;
   riskLevel: RiskLevel;
+  /** The key result this task serves (ADR 0048). */
+  keyResultKey: string;
   dependsOnTaskKeys: string[];
   handoffContract: string;
   handoffContractText?: LocalizedText;
@@ -897,6 +959,7 @@ export type CompanyBlueprint = {
     titleText?: LocalizedText;
     priority: number;
     keyResults: Array<{
+      key: string;
       title: string;
       titleText?: LocalizedText;
       metricName: string;

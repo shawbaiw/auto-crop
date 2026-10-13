@@ -107,6 +107,24 @@ The three legacy pages overlapped. Counts of blocked work, Human Actions and Wai
   - New plans are requested and confirmed on Operations Diagnostics until P4 moves them to the department page.
   - At startup, with no remembered company, companies are ranked by status (`active`, `paused`, `creating`, `stopped`, then `creation_failed`) and then by most recent update. The Onboarding Wizard opens only when there is no company.
   - A failed creation is never a dead end. Its page offers Stop and abandon, confirmed by the company name, and a way back to another company, or Create New Company when there is none.
+- P4 CEO Office delivered, as the founder decided on 2026-10-13:
+  - The timeline shows the latest day with any item, which is today while the company works. Earlier days fold into one line each and open on demand, so the page is never empty.
+  - "Needs you" has cards for reviews, decisions, Human Actions, new plans, and tasks only the founder can move ("Waits on you", opening the department page). Waits, and stuck tasks the runtime can still handle, are counted in the overview but have no card. The rail counts the same list.
+  - The plan card names the goals and key results. The Plan tab shows them above the canvas, and a card is posted when a key result is met (root ADR 0048). The Outcomes tab lists what is still missing from the vision.
+  - The Chinese name of CEO Office is "CEO 办公室".
+  - A card opens the item in a dialog, which is the one place to act on it. Timeline cards and "Needs you" cards open the same dialog.
+  - A new plan card links to Operations Diagnostics until the department page takes new plans.
+  - Business content is shown in the company locale. The interface language changes only the chrome (root ADR 0013).
+  - The founder's own message and the CEO's answer are their own timeline cards (root ADR 0046).
+  - The Founder Vision is shown once, above the tabs.
+- P4 department pages delivered, as the founder decided on 2026-10-13:
+  - A trace stays open until its result is settled; a waiting task's trace is open too. A settled trace folds to "status · N steps" and keeps its result in view.
+  - Department subtasks show inside their parent's trace with their status and actions.
+  - A task's wait shows on its trace as "Waiting: reason, next check".
+  - New plans are requested, reviewed and confirmed on the task's trace. Operations Diagnostics no longer lists them, and CEO Office's new plan cards open the task on its department page.
+  - The department's "Needs you" is the CEO Office list filtered to the department.
+  - The answers to a Department Intake are cards under the traces.
+  - No Retro component, theme or CSS rule is left. The legacy element rules and tokens in `styles.css` remain for P5.
 - The P4 steps run on a short-lived branch that is rebased often and merged once, so no page is delivered half legacy and half modern (ADR 0001).
 
 ## Considered Options

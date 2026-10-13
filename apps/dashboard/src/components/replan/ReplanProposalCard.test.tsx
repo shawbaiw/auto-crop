@@ -4,7 +4,6 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ReplanProposalSummary, TaskSummary } from "../../api/client";
-import { OperationsDiagnostics } from "../../pages/OperationsDiagnostics";
 import { LanguageProvider } from "../../ui/language";
 import { ReplanProposalCard } from "./ReplanProposalCard";
 import { ReplanRequestForm } from "./ReplanRequestForm";
@@ -123,22 +122,5 @@ describe("requesting a proposal", () => {
     await user.type(screen.getByLabelText("Note for the planner"), "Accept an estimate.");
     await user.click(screen.getByRole("button", { name: "Create Replan Proposal" }));
     expect(onSubmit).toHaveBeenLastCalledWith({ mode: "revision", note: "Accept an estimate." });
-  });
-
-  it("is offered on Operations Diagnostics for a task whose only proposal went stale, and not while a current one waits", () => {
-    const operations = (proposals: ReplanProposalSummary[]) => (
-      <LanguageProvider defaultLanguage="en">
-        <OperationsDiagnostics
-          events={[]} humanActions={[]} waitStates={[]}
-          onConfirmReplanProposal={vi.fn()} onCreateReplanProposal={vi.fn()} onRejectReplanProposal={vi.fn()}
-          replanProposals={proposals} tasks={[keyword, verifier]}
-        />
-      </LanguageProvider>
-    );
-    const { rerender } = render(operations([revision]));
-    expect(screen.queryByRole("button", { name: "Create Replan Proposal" })).not.toBeInTheDocument();
-
-    rerender(operations([{ ...revision, stale: true }]));
-    expect(screen.getByRole("button", { name: "Create Replan Proposal" })).toBeInTheDocument();
   });
 });

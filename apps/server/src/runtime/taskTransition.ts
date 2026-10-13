@@ -1,3 +1,4 @@
+import { settleKeyResultStatus } from "./keyResultStatus";
 import {
   deriveTaskHold,
   isHeldTaskStatus,
@@ -135,6 +136,9 @@ export function applyTaskTransition(input: ApplyTaskTransitionInput): TaskTransi
     ...resolveContradictedHolds(input.repositories, task, resolution, timestamp),
   ];
   const openedHolds = openHoldForStatus(input, task, createId, timestamp);
+  if (before.status !== task.status) {
+    settleKeyResultStatus(input.repositories, task.companyId, task.keyResultId);
+  }
 
   return { task: input.repositories.getTask(taskId) ?? task, openedHolds, resolvedHolds, moved: true };
 }

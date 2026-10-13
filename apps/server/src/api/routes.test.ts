@@ -1105,8 +1105,9 @@ describe("API routes", () => {
     await fixture.close();
   });
 
-  it("creates CEO intakes and returns them in company state", async () => {
-    const fixture = await startFixtureServer();
+  it("creates CEO intakes, wakes the scheduler to assess them, and returns them in company state", async () => {
+    const schedulerWakeRequests: SchedulerWakeReason[] = [];
+    const fixture = await startFixtureServer({ schedulerWakeRequests });
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
@@ -1134,6 +1135,21 @@ describe("API routes", () => {
       `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
     );
     expect(state.ceoIntakes).toEqual([expect.objectContaining({ id: submitted.intake.id, status: "received" })]);
+    expect(schedulerWakeRequests).toContain("ceo_intake_received");
+
+    // A Department Intake goes to one department of the company, through the same pipeline.
+    const department = fixture.repositories.listDepartments(created.company.id)[0]!;
+    const sentToDepartment = await postJson<{ intake: { departmentId: string | null; status: string } }>(
+      `${fixture.baseUrl}/api/companies/${created.company.id}/departments/${department.id}/intakes`,
+      { body: "Use the brand colours." },
+    );
+    expect(sentToDepartment.intake).toMatchObject({ departmentId: department.id, status: "received" });
+    const unknownDepartment = await fetch(`${fixture.baseUrl}/api/companies/${created.company.id}/departments/nope/intakes`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: "Hello" }),
+    });
+    expect(unknownDepartment.status).toBe(404);
 
     await fixture.close();
   });
@@ -1537,7 +1553,7 @@ describe("API routes", () => {
 
     const state = await getJson<{
       ceoReviewDecisions: Array<{ id: string; taskId: string; decision: string; returnReason?: string }>;
-      keyResults: Array<{ currentValue: string; status: string }>;
+      keyResults: Array<{ id: string; currentValue: string; status: string }>;
       taskProgressEvents: Array<{ label: string; labelText: { en: string; zh: string }; detail?: string; detailText?: { en: string; zh: string } }>;
       businessArtifacts: Array<{ id: string; taskId: string; reviewStatus: string }>;
       founderReport: { actualOutputs: Array<{ taskId: string }>; nextSteps: string[] };
@@ -1557,7 +1573,9 @@ describe("API routes", () => {
       expect.objectContaining({ id: "ceo_review_decision_1", taskId: approvedTask!.id, decision: "approve" }),
       expect.objectContaining({ id: "ceo_review_decision_2", taskId: returnedTask!.id, decision: "return", returnReason: "needs_changes" }),
     ]);
-    expect(state.keyResults).toContainEqual(expect.objectContaining({ currentValue: "accepted_business_artifact", status: "met" }));
+    // One accepted task does not meet a key result that other open tasks still serve (ADR 0048).
+    const approvedKeyResult = state.keyResults.find((keyResult) => keyResult.id === fixture.repositories.getTask(approvedTask!.id)!.keyResultId);
+    expect(approvedKeyResult).toMatchObject({ status: "active", currentValue: "not_started" });
     expect(state.businessArtifacts).toContainEqual(
       expect.objectContaining({ id: "business_artifact_1", taskId: approvedTask!.id, reviewStatus: "accepted" }),
     );
@@ -1963,8 +1981,8 @@ describe("API routes", () => {
     for (const task of tasks) {
       fixture.repositories.writeTaskStatusUnchecked(task.id, "complete");
     }
-    fixture.repositories.updateKeyResultProgress(keyResults[0]!.id, "local_url", "met");
-    fixture.repositories.updateKeyResultProgress(keyResults[1]!.id, "not_documented", "missed");
+    fixture.repositories.updateKeyResultStatus(keyResults[0]!.id, "met");
+    fixture.repositories.updateKeyResultStatus(keyResults[1]!.id, "missed");
     fixture.repositories.appendTaskCompletionEvent({
       id: "task_completion_event_stage_change_1",
       companyId: created.company.id,

@@ -54,6 +54,7 @@ const BUSINESSES: Business[] = [
     vision: "Publish a simple tide-times site for coastal walkers.",
     locale: "en",
     producer: {
+      keyResultKey: "prototype_shipped",
       key: "build_site",
       departmentName: "Engineering",
       title: "Build the tide-times site",
@@ -64,6 +65,7 @@ const BUSINESSES: Business[] = [
       handoffContract: "Static site files.",
     },
     verifier: {
+      keyResultKey: "prototype_shipped",
       key: "check_site",
       departmentName: "Engineering",
       title: "Check the tide-times site",
@@ -95,6 +97,7 @@ const BUSINESSES: Business[] = [
     vision: "Clean our member sign-up list so the newsletter reaches real people.",
     locale: "en",
     producer: {
+      keyResultKey: "prototype_shipped",
       key: "clean_members",
       departmentName: "Engineering",
       title: "Clean the member sign-up list",
@@ -105,6 +108,7 @@ const BUSINESSES: Business[] = [
       handoffContract: "The cleaned members CSV.",
     },
     verifier: {
+      keyResultKey: "prototype_shipped",
       key: "audit_members",
       departmentName: "Research",
       title: "Audit the cleaned member list",
@@ -138,6 +142,7 @@ const BUSINESSES: Business[] = [
     vision: "为茶园访客写一篇带引用来源的采茶指南。",
     locale: "zh",
     producer: {
+      keyResultKey: "prototype_shipped",
       key: "write_guide",
       departmentName: "Growth",
       title: "撰写采茶指南",
@@ -148,6 +153,7 @@ const BUSINESSES: Business[] = [
       handoffContract: "带来源的采茶指南正文。",
     },
     verifier: {
+      keyResultKey: "prototype_shipped",
       key: "review_guide",
       departmentName: "Product",
       title: "审核采茶指南",

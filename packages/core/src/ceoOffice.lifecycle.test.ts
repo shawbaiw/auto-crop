@@ -17,9 +17,12 @@ describe("CEO Office execution facts", () => {
 
 describe("CEO Office durable history", () => {
   it("retains the original decomposition after task edits and new tasks", () => {
-    const planSnapshot = { tasks: [{ taskId: "a", title: { en: "Original assignment" }, purpose: { en: "Original purpose" }, departmentId: "d", dependsOnTaskIds: [] }] };
+    const planSnapshot = {
+      objectives: [{ objectiveId: "o", title: { en: "Goal" }, keyResults: [{ keyResultId: "kr", title: { en: "Key result" }, targetValue: { en: "1" } }] }],
+      tasks: [{ taskId: "a", title: { en: "Original assignment" }, purpose: { en: "Original purpose" }, departmentId: "d", keyResultId: "kr", dependsOnTaskIds: [] }],
+    };
     const items = projectCeoOfficeItems({ company, tasks: [{ ...task("a"), title: "Changed" }, task("b")], companyEvents: [{ id: "plan", companyId: company.id, type: "company_plan_created", message: "Plan", createdAt: company.createdAt, planSnapshot }], taskCompletionEvents: [] });
-    expect(items.find(item => item.type === "plan_brief")?.data).toEqual({ taskCount: 1, tasks: planSnapshot.tasks });
+    expect(items.find(item => item.type === "plan_brief")?.data).toEqual({ taskCount: 1, objectives: planSnapshot.objectives, tasks: planSnapshot.tasks });
   });
   it("collapses explicit cascade causes and retains independent downstream issues", () => {
     const items = projectCeoOfficeItems({ company, tasks: [task("a"), task("b"), task("c")], taskCompletionEvents: [], taskEvents: [event("a"), { ...event("b"), blockedByTaskId: "a" }, { ...event("c"), blockedByTaskId: "b" }, { ...event("b"), id: "independent_b", createdAt: "2026-09-01T10:00:00Z" }] });

@@ -55,6 +55,7 @@ const validBlueprint = {
       priority: 1,
       keyResults: [
         {
+          key: "prototype_shipped",
           title: "Ship a proof-backed landing page prototype",
           metricName: "prototype_status",
           targetValue: "local_url_or_deployment_url",
@@ -85,6 +86,7 @@ const validBlueprint = {
       requiredCapabilities: ["research", "writing"],
       proofSchemaId: "research-report-proof",
       riskLevel: "low",
+      keyResultKey: "prototype_shipped",
       dependsOnTaskKeys: [],
       handoffContract: "Produce a competitor research brief for prototype positioning.",
       verification: null,
@@ -99,6 +101,7 @@ const validBlueprint = {
       requiredCapabilities: ["code", "frontend"],
       proofSchemaId: "landing-page-proof",
       riskLevel: "medium",
+      keyResultKey: "prototype_shipped",
       dependsOnTaskKeys: ["competitor_research"],
       handoffContract: "Produce runnable landing page files for downstream validation.",
       verification: null,
@@ -224,6 +227,25 @@ describe("companyBlueprintSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("rejects a task that serves no declared key result, and a repeated key result key", () => {
+    const unknownKeyResult = companyBlueprintSchema.safeParse({
+      ...validBlueprint,
+      tasks: [{ ...validBlueprint.tasks[0], keyResultKey: "missing" }, validBlueprint.tasks[1]],
+    });
+    expect(unknownKeyResult.success).toBe(false);
+    expect(JSON.stringify(unknownKeyResult.error?.issues)).toContain("Task references missing key result: missing");
+
+    const { keyResultKey: _omitted, ...withoutKeyResult } = validBlueprint.tasks[0];
+    expect(companyBlueprintSchema.safeParse({ ...validBlueprint, tasks: [withoutKeyResult, validBlueprint.tasks[1]] }).success).toBe(false);
+
+    const objective = validBlueprint.objectives[0]!;
+    const repeated = companyBlueprintSchema.safeParse({
+      ...validBlueprint,
+      objectives: [{ ...objective, keyResults: [objective.keyResults[0], objective.keyResults[0]] }],
+    });
+    expect(JSON.stringify(repeated.error?.issues)).toContain("Duplicate key result key: prototype_shipped");
   });
 
   it("accepts explicit dependencies on earlier task keys", () => {

@@ -194,7 +194,7 @@ function RevisionChanges({ proposal, title, t }: { proposal: ReplanProposalSumma
           </table>
         ))}
         {(proposal.requirementSourceNotes ?? []).map((note) => (
-          <p className="muted" key={note.verifierTaskId}>
+          <p className="text-sm text-muted-foreground" key={note.verifierTaskId}>
             {title(note.verifierTaskId)} {t("operations.replanRequirementSourceConnector")} {title(note.producerTaskId)}.
           </p>
         ))}

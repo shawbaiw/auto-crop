@@ -240,13 +240,13 @@ async function createKeywordCompany() {
     ...base,
     tasks: [
       {
-        key: "pick_keyword", departmentName: "Research", title: "Pick a low-KD keyword",
+        key: "pick_keyword", keyResultKey: "prototype_shipped", departmentName: "Research", title: "Pick a low-KD keyword",
         description: "Pick one keyword for the tool from five candidates.", requiredCapabilities: ["research"],
         proofSchemaId: "research-report", riskLevel: "low", handoffContract: "The chosen keyword.",
         assigneeAgentId: "worker", dependsOnTaskKeys: [], verification: null, decomposition: null,
       },
       {
-        key: "check_keyword", departmentName: "Research", title: "Check the keyword pick",
+        key: "check_keyword", keyResultKey: "prototype_shipped", departmentName: "Research", title: "Check the keyword pick",
         description: "Check the keyword pick against its requirements.", requiredCapabilities: ["research"],
         proofSchemaId: "test-output", riskLevel: "low", handoffContract: "A verdict per requirement.",
         assigneeAgentId: "worker", dependsOnTaskKeys: ["pick_keyword"],
