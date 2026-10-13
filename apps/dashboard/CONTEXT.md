@@ -56,7 +56,7 @@ Two rules follow:
 
 Every CEO Office card opens its item in one dialog, and that dialog holds the only form for acting on it: a review, a decision, or a Human Action. Timeline cards and "Needs you" cards open the same dialog, so the founder never meets two forms for one decision that could disagree. A review form appears only while the server offers `ceo_review_decision`; when it does not, the dialog says so and points to the department page.
 
-"Needs you" lists reviews, decisions, Human Actions and new plans. It counts waits and stuck tasks but does not list them. The rail's CEO Office count is the older CEO Pending projection, which also counts stuck tasks, so the two numbers can differ until the department pages move in P4.
+"Needs you" is defined once, in `deriveNeedsYou`: open reviews, decisions and Human Actions, new plans to confirm, and tasks only the founder can move. The CEO Office column, its phone summary and the rail's counts all read it, so they cannot disagree. A task waits on the founder when its server affordances include a founder action no other card covers and no runtime action — read from the affordances, never from a status rule of the dashboard's own. A task that already has a card is not listed again: a new plan offered beside a Human Action is that action's way out. Waits, and stuck tasks the runtime can still handle, are counted in the overview but not listed.
 
 The composer sends a CEO Intake. Its card comes from the server's projection, read back at once, never synthesised in the browser.
 

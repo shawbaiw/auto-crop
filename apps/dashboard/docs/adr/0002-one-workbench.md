@@ -109,7 +109,9 @@ The three legacy pages overlapped. Counts of blocked work, Human Actions and Wai
   - A failed creation is never a dead end. Its page offers Stop and abandon, confirmed by the company name, and a way back to another company, or Create New Company when there is none.
 - P4 CEO Office delivered, as the founder decided on 2026-10-13:
   - The timeline shows the latest day with any item, which is today while the company works. Earlier days fold into one line each and open on demand, so the page is never empty.
-  - "Needs you" has cards for reviews, decisions, Human Actions and new plans. Waits and stuck tasks are counted in the overview but have no card; the founder acts on them from the department page or Operations Diagnostics.
+  - "Needs you" has cards for reviews, decisions, Human Actions, new plans, and tasks only the founder can move ("Waits on you", opening the department page). Waits, and stuck tasks the runtime can still handle, are counted in the overview but have no card. The rail counts the same list.
+  - The plan card names the goals and key results. The Plan tab shows them above the canvas, and a card is posted when a key result is met (root ADR 0048). The Outcomes tab lists what is still missing from the vision.
+  - The Chinese name of CEO Office is "CEO 办公室".
   - A card opens the item in a dialog, which is the one place to act on it. Timeline cards and "Needs you" cards open the same dialog.
   - A new plan card links to Operations Diagnostics until the department page takes new plans.
   - Business content is shown in the company locale. The interface language changes only the chrome (root ADR 0013).

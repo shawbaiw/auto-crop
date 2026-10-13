@@ -507,6 +507,13 @@ describe("Dashboard App", () => {
         { ...created.tasks[0], id: "task_3", title: "Publish the prototype", status: "blocked" },
         { ...created.tasks[0], id: "task_4", title: "Monitor indexing", status: "running" },
         { ...created.tasks[0], id: "task_5", title: "Write launch copy", status: "complete" },
+        // Only the founder can move this one; the runtime has no way forward for it.
+        { ...created.tasks[0], id: "task_6", title: "Fix the checkout", status: "blocked", affordances: offered("request_replan") },
+        // The runtime can still recover this one, so it is counted as stuck but has no card.
+        {
+          ...created.tasks[0], id: "task_7", title: "Retry the import", status: "failed",
+          affordances: [...offered("request_replan"), { kind: "recover_task" as const, actor: "runtime" as const, holdId: "hold_7", holdKind: null, subjectKind: null, subjectId: null }],
+        },
       ],
       founderDecisions: [decision],
       humanActions: [{ ...createHumanActionSummary(), taskId: "task_3" }],
@@ -537,9 +544,9 @@ describe("Dashboard App", () => {
 
     const column = needsYouColumn();
     const overview = within(column).getByLabelText("Overview");
-    expect(overview).toHaveTextContent("Done1/5");
+    expect(overview).toHaveTextContent("Done1/7");
     expect(overview).toHaveTextContent("Running1");
-    expect(overview).toHaveTextContent("Stuck1");
+    expect(overview).toHaveTextContent("Stuck3");
     expect(overview).toHaveTextContent("Waiting1");
     expect(Boolean(overview.compareDocumentPosition(within(column).getByRole("region", { name: "Needs your review" })) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
 
@@ -547,9 +554,18 @@ describe("Dashboard App", () => {
     expect(within(column).getByRole("region", { name: "Needs your decision" })).toHaveTextContent("Choose the first market");
     expect(within(column).getByRole("region", { name: "Needs your action" })).toHaveTextContent("Publish the prototype");
     expect(within(column).getByRole("region", { name: "New plans" })).toHaveTextContent("A new plan for “Publish the prototype” waits for you to confirm.");
-    // A wait and a stuck task are counted, not listed.
+    const waitsOnYou = within(column).getByRole("region", { name: "Waits on you" });
+    expect(waitsOnYou).toHaveTextContent("Fix the checkout");
+    expect(waitsOnYou).toHaveTextContent("This task cannot go on as planned. Ask for a new plan.");
+    expect(waitsOnYou).not.toHaveTextContent("Retry the import");
+    // A wait, and a stuck task the runtime can still handle, are counted, not listed.
     expect(column).not.toHaveTextContent("Wait for search indexing signals.");
     expect(column).not.toHaveTextContent("The deployment did not finish.");
+
+    // The rail counts exactly what the column lists: one review, one decision, one Human Action,
+    // one new plan and one task only the founder can move.
+    expect(within(screen.getByRole("navigation", { name: "Workbench" })).getByRole("button", { name: "CEO Office" })).toHaveAccessibleDescription("5 need you");
+    expect(within(column).getAllByRole("article")).toHaveLength(5);
     // The cards open the item; the decision is never made on the card itself.
     expect(within(column).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
 
@@ -3816,6 +3832,80 @@ describe("Dashboard App", () => {
       note: "Bring options with a clearer wedge.",
     });
     expect(await within(needsYouColumn()).findByText("You returned it to the department for better options.")).toBeInTheDocument();
+  });
+
+  it("announces the goals with the plan, keeps them in view on the Plan tab, and posts each key result met", async () => {
+    const api = createMockApiClient();
+    const created = createCompanyResponse();
+    api.createCompany = vi.fn(async () => ({
+      ...created,
+      objectives: [{ id: "objective_1", title: "Validate first wedge", priority: 1 }],
+      keyResults: [
+        { id: "key_result_1", objectiveId: "objective_1", title: "Ship the prototype", metricName: "prototype", targetValue: "live URL", currentValue: "none", status: "met" },
+        { id: "key_result_2", objectiveId: "objective_1", title: "Document the revenue path", metricName: "revenue", targetValue: "documented", currentValue: "none", status: "active" },
+      ],
+      tasks: [
+        { ...created.tasks[0], id: "task_1", title: "Create landing page", status: "complete", keyResultId: "key_result_1" },
+        { ...created.tasks[0], id: "task_2", title: "Write pricing brief", status: "running", keyResultId: "key_result_2" },
+      ],
+      visionGaps: [{
+        id: "gap_1", companyId: "company_1", sourceTaskCompletionEventId: "done_1", taskId: "task_1", departmentId: "department_1",
+        keyResultId: "key_result_1", businessArtifactId: null, label: "No paying customer has tried the page yet.", severity: "strategic" as const,
+        relatedTaskId: null, relatedBusinessArtifactId: null, createdAt: "2026-08-17T00:04:00.000Z",
+      }],
+      ceoOfficeItems: [
+        {
+          id: "plan_brief:plan", type: "plan_brief", companyId: "company_1", sourceId: "plan", taskId: null, departmentId: null,
+          objectiveId: null, keyResultId: null, occurredAt: "2026-08-17T00:00:00.000Z", title: "Company plan", titleText: null, actionBearing: false,
+          data: {
+            taskCount: 2,
+            objectives: [{
+              objectiveId: "objective_1", title: { en: "Validate first wedge" },
+              keyResults: [
+                { keyResultId: "key_result_1", title: { en: "Ship the prototype" }, targetValue: { en: "live URL" } },
+                { keyResultId: "key_result_2", title: { en: "Document the revenue path" }, targetValue: { en: "documented" } },
+              ],
+            }],
+            tasks: [
+              { taskId: "task_1", title: { en: "Create landing page" }, purpose: { en: "Build it." }, departmentId: "department_1", keyResultId: "key_result_1", dependsOnTaskIds: [] },
+              { taskId: "task_2", title: { en: "Write pricing brief" }, purpose: { en: "Write it." }, departmentId: "department_1", keyResultId: "key_result_2", dependsOnTaskIds: [] },
+            ],
+          },
+        },
+        {
+          id: "key_result_met:key_result_1", type: "key_result_met", companyId: "company_1", sourceId: "key_result_1", taskId: null,
+          departmentId: null, objectiveId: "objective_1", keyResultId: "key_result_1", occurredAt: "2026-08-17T00:03:00.000Z",
+          title: "Ship the prototype", titleText: { en: "Ship the prototype", zh: "Ship the prototype" }, actionBearing: false,
+          data: { keyResultId: "key_result_1", objectiveTitle: { en: "Validate first wedge" }, targetValue: { en: "live URL" }, metricName: "prototype", taskIds: ["task_1"] },
+        },
+      ] satisfies CeoOfficeItemSummary[],
+    }));
+    const user = userEvent.setup();
+
+    render(<App apiClient={api} />);
+    await createCompany(user);
+
+    const timeline = ceoTimeline();
+    expect(timeline).toHaveTextContent("The CEO set 1 goals with 2 key results, and planned 2 tasks.");
+    expect(timeline).toHaveTextContent("Key result met");
+    expect(timeline).toHaveTextContent("Every task for this key result is done. Target: live URL.");
+
+    // The plan's detail reads goal → key result → the tasks that serve it.
+    await user.click(within(timeline).getByRole("button", { name: "Open Plan: Company plan" }));
+    const plan = screen.getByRole("dialog");
+    expect(plan).toHaveTextContent("Validate first wedge / Ship the prototype");
+    expect(plan).toHaveTextContent("Target: live URL — Create landing page");
+    expect(plan).toHaveTextContent("Validate first wedge / Document the revenue path");
+    expect(plan).toHaveTextContent("Target: documented — Write pricing brief");
+    await user.click(within(plan).getByRole("button", { name: "Close" }));
+
+    // The Outcomes tab carries the key result card and what is still missing from the vision.
+    await user.click(screen.getByRole("tab", { name: "Outcomes" }));
+    const outcomes = screen.getByRole("tabpanel", { name: "Outcomes" });
+    expect(cardLabels(outcomes)).toEqual(["Open Key result met: Ship the prototype"]);
+    const gaps = within(outcomes).getByRole("region", { name: "What is still missing from the vision" });
+    expect(gaps).toHaveTextContent("No paying customer has tried the page yet.");
+    expect(gaps).toHaveTextContent("Strategic");
   });
 
   it("keeps the decision in Needs you and the timeline while the task it blocks waits", async () => {

@@ -193,6 +193,9 @@ export default function App({ apiClient }: AppProps) {
    */
   function adoptBusinessProjection(response: CreateCompanyResponse) {
     setBlueprint(current => current ? { ...current, tasks: adoptSettledTasks(current.tasks, response.tasks),
+      // A key result's status follows its tasks on the server (ADR 0048), and a CEO Intake can add
+      // goals' tasks, so both come with every snapshot.
+      objectives: response.objectives ?? current.objectives, keyResults: response.keyResults ?? current.keyResults,
       ceoOfficeItems: response.ceoOfficeItems,
       finalFounderReport: response.finalFounderReport, finalFounderReportPreparing: response.finalFounderReportPreparing } : current);
     setTaskCompletionEvents(response.taskCompletionEvents ?? []);
@@ -840,6 +843,7 @@ export default function App({ apiClient }: AppProps) {
         departments={blueprint.departments}
         location={location}
         onNavigate={setLocation}
+        replanProposals={replanProposals}
         tasks={blueprint.tasks}
       >
         {renderWorkbenchPage(blueprint)}
@@ -892,6 +896,8 @@ export default function App({ apiClient }: AppProps) {
           departments={company.departments}
           finalFounderReport={company.finalFounderReport ?? null}
           finalFounderReportPreparing={company.finalFounderReportPreparing ?? false}
+          keyResults={company.keyResults ?? []}
+          objectives={company.objectives}
           onConfirmHumanAction={handleConfirmHumanAction}
           onCreateCeoIntake={handleCreateCeoIntake}
           onCreateCeoReviewDecision={handleCreateCeoReviewDecision}
@@ -901,6 +907,7 @@ export default function App({ apiClient }: AppProps) {
           proof={proof}
           replanProposals={replanProposals}
           tasks={company.tasks}
+          visionGaps={visionGaps}
           waitStates={waitStates}
         />
       );

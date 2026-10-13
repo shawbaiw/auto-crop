@@ -1,11 +1,12 @@
 import "@xyflow/react/dist/style.css";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance } from "@xyflow/react";
 import { useMemo, useRef } from "react";
-import type { DepartmentSummary, TaskSummary } from "../../api/client";
+import type { DepartmentSummary, KeyResultSummary, ObjectiveSummary, TaskSummary } from "../../api/client";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "../../ui/language";
 import { departmentName, taskTitle } from "../../ui/language/localizedNames";
 import { taskStatusTone, taskStatusToneClassName, taskStatusToneLabelKey } from "../task/taskStatusTone";
+import { PlanGoals } from "./PlanGoals";
 import { DEPARTMENT_COLORS, layoutPlan, PLAN_NODE_HEIGHT, PLAN_NODE_WIDTH } from "./planLayout";
 
 type TaskNodeData = { title: string; departmentLabel: string; color: string; status: string; label: string };
@@ -19,12 +20,16 @@ const nodeTypes = { task: TaskNodeView };
  */
 export function CeoPlanCanvas({
   departments,
+  keyResults,
   locale,
+  objectives,
   onOpenDepartment,
   tasks,
 }: {
   departments: DepartmentSummary[];
+  keyResults: KeyResultSummary[];
   locale: "en" | "zh";
+  objectives: ObjectiveSummary[];
   onOpenDepartment(departmentId: string): void;
   tasks: TaskSummary[];
 }) {
@@ -71,6 +76,7 @@ export function CeoPlanCanvas({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
+      <PlanGoals keyResults={keyResults} locale={locale} objectives={objectives} tasks={tasks} />
       <div aria-label={t("ceoOffice.planCanvas")} className="min-h-64 flex-1 overflow-hidden rounded-lg border border-border/80 bg-card" ref={containerRef} role="region">
         <ReactFlow
           edges={edges}

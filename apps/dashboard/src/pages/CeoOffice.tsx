@@ -7,9 +7,12 @@ import type {
   CompanySummary,
   DepartmentSummary,
   FinalFounderReportSummary,
+  KeyResultSummary,
+  ObjectiveSummary,
   ProofSummary,
   ReplanProposalSummary,
   TaskSummary,
+  VisionGapSummary,
   WaitStateSummary,
 } from "../api/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui";
@@ -19,7 +22,8 @@ import { CeoOfficeItemDialog, type CeoOfficeActions } from "../components/ceo-of
 import { CeoOutcomes, outcomeItems } from "../components/ceo-office/CeoOutcomes";
 import { CeoPlanCanvas } from "../components/ceo-office/CeoPlanCanvas";
 import { CeoTimeline } from "../components/ceo-office/CeoTimeline";
-import { NeedsYou, needsYouCards } from "../components/ceo-office/NeedsYou";
+import { NeedsYou } from "../components/ceo-office/NeedsYou";
+import { deriveNeedsYou, needsYouCount as countNeedsYou } from "../components/ceo-office/deriveNeedsYou";
 import { compareCeoOfficeTimelineItems, makeLineResolver, type TimelineRenderContext } from "../components/ceo-office/timelineItemView";
 import { isUnseenSince, readOutcomesLastSeen, writeOutcomesLastSeen } from "../ui/ceoOutcomes/lastSeen";
 import { useLanguage } from "../ui/language";
@@ -33,12 +37,15 @@ export type CeoOfficeProps = CeoOfficeActions & {
   departments: DepartmentSummary[];
   finalFounderReport: FinalFounderReportSummary | null;
   finalFounderReportPreparing: boolean;
+  keyResults: KeyResultSummary[];
+  objectives: ObjectiveSummary[];
   onCreateCeoIntake?: (body: string) => Promise<void> | void;
   onOpenDepartment(departmentId: string): void;
   onOpenOperations(): void;
   proof: ProofSummary[];
   replanProposals: ReplanProposalSummary[];
   tasks: TaskSummary[];
+  visionGaps: VisionGapSummary[];
   waitStates: WaitStateSummary[];
 };
 
@@ -58,6 +65,8 @@ export function CeoOffice({
   departments,
   finalFounderReport,
   finalFounderReportPreparing,
+  keyResults,
+  objectives,
   onConfirmHumanAction,
   onCreateCeoIntake,
   onCreateCeoReviewDecision,
@@ -67,6 +76,7 @@ export function CeoOffice({
   proof,
   replanProposals,
   tasks,
+  visionGaps,
   waitStates,
 }: CeoOfficeProps) {
   const { t } = useLanguage();
@@ -118,13 +128,13 @@ export function CeoOffice({
     },
   };
   const openItem = openItemId ? items.find((item) => item.id === openItemId) ?? null : null;
-  const cards = needsYouCards(items, replanProposals);
-  const needsYouCount = cards.items.length + cards.plans.length;
+  const needs = deriveNeedsYou(items, tasks, replanProposals);
+  const needsYouCount = countNeedsYou(needs);
   const newOutcomes = outcomeItems(items).filter((item) => isUnseenSince(item.occurredAt, lastSeen)).length;
   const ceoAgent = agents.find((agent) => agent.id === company.selectedCeoAgentId);
 
   const needsYou = (
-    <NeedsYou items={items} message={message} replanProposals={replanProposals} tasks={tasks} view={view} waitStates={waitStates} />
+    <NeedsYou message={message} needs={needs} tasks={tasks} view={view} waitStates={waitStates} />
   );
 
   return (
@@ -162,10 +172,23 @@ export function CeoOffice({
             <CeoTimeline companyId={company.id} items={items} view={view} />
           </TabsContent>
           <TabsContent className="min-h-0 flex-1 data-[state=inactive]:hidden" value="plan">
-            <CeoPlanCanvas departments={departments} locale={companyLocale} onOpenDepartment={view.onOpenDepartment} tasks={tasks} />
+            <CeoPlanCanvas
+              departments={departments}
+              keyResults={keyResults}
+              locale={companyLocale}
+              objectives={objectives}
+              onOpenDepartment={view.onOpenDepartment}
+              tasks={tasks}
+            />
           </TabsContent>
           <TabsContent className="flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden" value="outcomes">
-            <CeoOutcomes items={items} report={finalFounderReport} reportPreparing={finalFounderReportPreparing} view={view} />
+            <CeoOutcomes
+              items={items}
+              report={finalFounderReport}
+              reportPreparing={finalFounderReportPreparing}
+              view={view}
+              visionGaps={visionGaps}
+            />
           </TabsContent>
         </Tabs>
         <CeoComposer companyStatus={company.status} draft={draft} onDraftChange={setDraft} onSubmit={onCreateCeoIntake} />

@@ -1,10 +1,11 @@
-import { FileCheck2, GitBranchPlus, Hand, Scale } from "lucide-react";
+import { CircleArrowRight, FileCheck2, GitBranchPlus, Hand, Scale } from "lucide-react";
 import type { ReactNode } from "react";
-import type { CeoOfficeItemSummary, ReplanProposalSummary, TaskSummary, WaitStateSummary } from "../../api/client";
+import type { CeoOfficeItemSummary, TaskSummary, WaitStateSummary } from "../../api/client";
 import { Button } from "@/components/ui";
 import { useLanguage, type TranslationKey } from "../../ui/language";
 import { departmentName, taskTitle } from "../../ui/language/localizedNames";
 import type { CeoOfficeView } from "./CeoOfficeCard";
+import type { NeedsYou as NeedsYouList } from "./deriveNeedsYou";
 
 type NeedsYouSection = { key: "reviews" | "decisions" | "actions"; type: CeoOfficeItemSummary["type"]; icon: ReactNode };
 
@@ -14,36 +15,25 @@ const SECTIONS: NeedsYouSection[] = [
   { key: "actions", type: "human_action", icon: <Hand aria-hidden="true" /> },
 ];
 
-/** The cards "Needs you" lists: open reviews, decisions and Human Actions, and new plans to confirm. */
-export function needsYouCards(items: CeoOfficeItemSummary[], replanProposals: ReplanProposalSummary[]) {
-  return {
-    items: items.filter((item) => item.actionBearing && SECTIONS.some((section) => section.type === item.type)),
-    plans: replanProposals.filter((proposal) => proposal.status === "proposed" && !proposal.stale),
-  };
-}
-
 /**
  * The "Needs you" column of CEO Office (dashboard ADR 0002): overview counts, then a card for each
- * review, decision, Human Action and new plan. What is waiting or stuck is counted, not listed: the
- * founder acts on those from the department page or Operations Diagnostics.
+ * review, decision, Human Action and new plan, and for each task only the founder can move. What is
+ * waiting, or stuck in a way the runtime can still handle, is counted, not listed.
  */
 export function NeedsYou({
-  items,
   message,
-  replanProposals,
+  needs: cards,
   tasks,
   view,
   waitStates,
 }: {
-  items: CeoOfficeItemSummary[];
   message: string | null;
-  replanProposals: ReplanProposalSummary[];
+  needs: NeedsYouList;
   tasks: TaskSummary[];
   view: CeoOfficeView;
   waitStates: WaitStateSummary[];
 }) {
   const { t } = useLanguage();
-  const cards = needsYouCards(items, replanProposals);
   const planned = tasks.filter((task) => task.taskKind !== "department_subtask");
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
   const counts: Array<{ key: TranslationKey; value: string; tone: string }> = [
@@ -52,7 +42,7 @@ export function NeedsYou({
     { key: "ceoOffice.countStuck", value: String(planned.filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed").length), tone: "text-amber-800" },
     { key: "ceoOffice.countWaitingFor", value: String(waitStates.length), tone: "text-slate-600" },
   ];
-  const empty = cards.items.length === 0 && cards.plans.length === 0;
+  const empty = cards.items.length === 0 && cards.plans.length === 0 && cards.tasks.length === 0;
 
   return (
     <div className="grid content-start gap-4">
@@ -85,6 +75,27 @@ export function NeedsYou({
           </section>
         );
       })}
+      {cards.tasks.length > 0 ? (
+        <section aria-label={t("ceoOffice.waitsOnYou")} className="grid gap-2">
+          <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-800 [&_svg]:size-3.5">
+            <CircleArrowRight aria-hidden="true" />
+            {t("ceoOffice.waitsOnYou")}
+          </h3>
+          {cards.tasks.map(({ task, kind }) => {
+            const department = view.departmentsById.get(task.departmentId);
+            return (
+              <article className="grid gap-1 rounded-lg border border-l-4 border-border/80 border-l-amber-400 bg-card p-3 shadow-workbench" key={task.id}>
+                <p className="text-sm font-medium leading-snug">{taskTitle(task, view.ctx.locale)}</p>
+                {department ? <p className="text-xs text-muted-foreground">{departmentName(department, view.ctx.locale)}</p> : null}
+                <p className="text-sm text-foreground/80">{t(`ceoOffice.waitsOnYouReason.${kind}` as TranslationKey)}</p>
+                <Button className="mt-1 justify-self-start" onClick={() => view.onOpenDepartment(task.departmentId)} size="sm" variant="outline">
+                  {t("ceoOffice.openDepartmentPage")}
+                </Button>
+              </article>
+            );
+          })}
+        </section>
+      ) : null}
       {cards.plans.length > 0 ? (
         <section aria-label={t("ceoOffice.newPlans")} className="grid gap-2">
           <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-800 [&_svg]:size-3.5">

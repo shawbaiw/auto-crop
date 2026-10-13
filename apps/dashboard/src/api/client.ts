@@ -123,6 +123,8 @@ export type TaskSummary = {
   titleText?: CompleteLocalizedText;
   status: string;
   departmentId: string;
+  /** The key result the task serves (ADR 0048). */
+  keyResultId?: string | null;
   departmentKey?: string;
   assigneeAgentId?: string;
   description?: string;

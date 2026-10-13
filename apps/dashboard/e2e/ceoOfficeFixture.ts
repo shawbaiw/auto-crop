@@ -35,18 +35,35 @@ const departments = [
 const offered = (...kinds: string[]) => kinds.map((kind) => ({ kind, actor: "founder", holdId: "hold_1" }));
 
 const tasks = [
-  { id: "task_research", title: "Compare competitor pricing pages", titleText: text("Compare competitor pricing pages", "对比竞品定价页"), status: "complete", departmentId: "dept_research", assigneeAgentId: "claude-code", dependsOnTaskIds: [] },
-  { id: "task_interviews", title: "Summarize buyer interviews", titleText: text("Summarize buyer interviews", "整理买家访谈"), status: "review", departmentId: "dept_research", assigneeAgentId: "claude-code", dependsOnTaskIds: [], affordances: offered("ceo_review_decision") },
-  { id: "task_offer", title: "Choose the pricing model", titleText: text("Choose the pricing model", "确定定价模式"), status: "blocked", departmentId: "dept_product", assigneeAgentId: "codex", dependsOnTaskIds: ["task_research", "task_interviews"] },
-  { id: "task_brief", title: "Write the MVP brief", titleText: text("Write the MVP brief", "撰写 MVP 简介"), status: "waiting_dependency", departmentId: "dept_product", assigneeAgentId: "codex", dependsOnTaskIds: ["task_offer"] },
-  { id: "task_build", title: "Build the page generator", titleText: text("Build the page generator", "开发定价页生成器"), status: "running", departmentId: "dept_engineering", assigneeAgentId: "codex", dependsOnTaskIds: ["task_research"] },
-  { id: "task_deploy", title: "Deploy a public preview", titleText: text("Deploy a public preview", "部署公开预览版"), status: "blocked", departmentId: "dept_engineering", assigneeAgentId: "codex", dependsOnTaskIds: ["task_build", "task_brief"], affordances: offered("confirm_human_action", "request_replan") },
+  { id: "task_research", keyResultId: "kr_research", title: "Compare competitor pricing pages", titleText: text("Compare competitor pricing pages", "对比竞品定价页"), status: "complete", departmentId: "dept_research", assigneeAgentId: "claude-code", dependsOnTaskIds: [] },
+  { id: "task_interviews", keyResultId: "kr_research", title: "Summarize buyer interviews", titleText: text("Summarize buyer interviews", "整理买家访谈"), status: "review", departmentId: "dept_research", assigneeAgentId: "claude-code", dependsOnTaskIds: [], affordances: offered("ceo_review_decision") },
+  { id: "task_offer", keyResultId: "kr_launch", title: "Choose the pricing model", titleText: text("Choose the pricing model", "确定定价模式"), status: "blocked", departmentId: "dept_product", assigneeAgentId: "codex", dependsOnTaskIds: ["task_research", "task_interviews"] },
+  { id: "task_brief", keyResultId: "kr_launch", title: "Write the MVP brief", titleText: text("Write the MVP brief", "撰写 MVP 简介"), status: "waiting_dependency", departmentId: "dept_product", assigneeAgentId: "codex", dependsOnTaskIds: ["task_offer"] },
+  { id: "task_build", keyResultId: "kr_launch", title: "Build the page generator", titleText: text("Build the page generator", "开发定价页生成器"), status: "running", departmentId: "dept_engineering", assigneeAgentId: "codex", dependsOnTaskIds: ["task_research"] },
+  { id: "task_deploy", keyResultId: "kr_launch", title: "Deploy a public preview", titleText: text("Deploy a public preview", "部署公开预览版"), status: "blocked", departmentId: "dept_engineering", assigneeAgentId: "codex", dependsOnTaskIds: ["task_build", "task_brief"], affordances: offered("confirm_human_action", "request_replan") },
 ];
 
 const ceoOfficeItems = [
   base("plan_brief:plan", "plan_brief", "2026-10-10T08:05:00.000Z", {
     taskId: null, departmentId: null, title: "Plan created", actionBearing: false,
-    data: { taskCount: 6, tasks: [] },
+    data: {
+      taskCount: 6,
+      objectives: [{
+        objectiveId: "objective_1", title: text("Validate the first offer", "验证第一个产品方案"),
+        keyResults: [
+          { keyResultId: "kr_research", title: text("Know what buyers pay for", "弄清买家愿意付费的内容"), targetValue: text("12 pages and 15 interviews", "12 个定价页和 15 次访谈") },
+          { keyResultId: "kr_launch", title: text("Put a preview in front of buyers", "让买家看到预览版"), targetValue: text("A public preview URL", "一个公开预览网址") },
+        ],
+      }],
+      tasks: [
+        { taskId: "task_research", title: text("Compare competitor pricing pages", "对比竞品定价页"), purpose: text("", ""), departmentId: "dept_research", keyResultId: "kr_research", dependsOnTaskIds: [] },
+        { taskId: "task_interviews", title: text("Summarize buyer interviews", "整理买家访谈"), purpose: text("", ""), departmentId: "dept_research", keyResultId: "kr_research", dependsOnTaskIds: [] },
+        { taskId: "task_offer", title: text("Choose the pricing model", "确定定价模式"), purpose: text("", ""), departmentId: "dept_product", keyResultId: "kr_launch", dependsOnTaskIds: [] },
+        { taskId: "task_brief", title: text("Write the MVP brief", "撰写 MVP 简介"), purpose: text("", ""), departmentId: "dept_product", keyResultId: "kr_launch", dependsOnTaskIds: [] },
+        { taskId: "task_build", title: text("Build the page generator", "开发定价页生成器"), purpose: text("", ""), departmentId: "dept_engineering", keyResultId: "kr_launch", dependsOnTaskIds: [] },
+        { taskId: "task_deploy", title: text("Deploy a public preview", "部署公开预览版"), purpose: text("", ""), departmentId: "dept_engineering", keyResultId: "kr_launch", dependsOnTaskIds: [] },
+      ],
+    },
   }),
   base("task_brief:task_research", "task_brief", "2026-10-10T08:10:00.000Z", {
     taskId: "task_research", departmentId: "dept_research", title: "Compare competitor pricing pages", titleText: text("Compare competitor pricing pages", "对比竞品定价页"), actionBearing: false,
@@ -147,7 +164,15 @@ export function ceoOfficeState(overrides: Record<string, unknown> = {}) {
     creationEvents: [],
     departments,
     objectives: [{ id: "objective_1", title: "Validate the first offer", titleText: text("Validate the first offer", "验证第一个产品方案"), priority: 1 }],
-    keyResults: [],
+    keyResults: [
+      { id: "kr_research", objectiveId: "objective_1", title: "Know what buyers pay for", titleText: text("Know what buyers pay for", "弄清买家愿意付费的内容"), metricName: "research", targetValue: "12 pages and 15 interviews", targetValueText: text("12 pages and 15 interviews", "12 个定价页和 15 次访谈"), currentValue: "0", status: "active" },
+      { id: "kr_launch", objectiveId: "objective_1", title: "Put a preview in front of buyers", titleText: text("Put a preview in front of buyers", "让买家看到预览版"), metricName: "launch", targetValue: "A public preview URL", targetValueText: text("A public preview URL", "一个公开预览网址"), currentValue: "none", status: "active" },
+    ],
+    visionGaps: [{
+      id: "gap_1", companyId: ceoOfficeCompany.id, sourceTaskCompletionEventId: "done_research", taskId: "task_research", departmentId: "dept_research",
+      keyResultId: "kr_research", businessArtifactId: null, label: "We do not know yet what buyers will pay.", severity: "strategic",
+      relatedTaskId: null, relatedBusinessArtifactId: null, createdAt: "2026-10-11T10:00:00.000Z",
+    }],
     tasks,
     ceoOfficeItems,
     proof: [],
@@ -160,7 +185,6 @@ export function ceoOfficeState(overrides: Record<string, unknown> = {}) {
     founderDecisions,
     humanActions,
     waitStates,
-    visionGaps: [],
     ceoIntakes,
     ...overrides,
   };

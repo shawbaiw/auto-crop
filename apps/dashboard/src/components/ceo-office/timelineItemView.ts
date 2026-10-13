@@ -96,15 +96,16 @@ export function timelineItemView(item: CeoOfficeItemSummary, ctx: TimelineRender
           .replace("{objectives}", String(item.data.objectives.length))
           .replace("{keyResults}", String(item.data.objectives.reduce((sum, objective) => sum + objective.keyResults.length, 0)))
           .replace("{count}", String(item.data.taskCount)),
-        rows: item.data.tasks.map((task) => ({
-          label: line(task.title),
-          value: [
-            line(task.purpose),
-            task.dependsOnTaskIds.length
-              ? `${t("ceoOffice.row.dependsOn")}: ${task.dependsOnTaskIds.map((id) => line(item.data.tasks.find((candidate) => candidate.taskId === id)?.title)).filter(Boolean).join(", ")}`
-              : "",
-          ].filter(Boolean).join(" — "),
-        })),
+        // Goal → key result → the tasks that serve it. Dependencies between tasks are the Plan tab's.
+        rows: item.data.objectives.flatMap((objective) =>
+          objective.keyResults.map((keyResult) => ({
+            label: `${line(objective.title)} / ${line(keyResult.title)}`,
+            value: [
+              `${t("ceoOffice.row.target")}: ${line(keyResult.targetValue)}`,
+              item.data.tasks.filter((task) => task.keyResultId === keyResult.keyResultId).map((task) => line(task.title)).join(", ") || t("ceoOffice.goalNoTasks"),
+            ].join(" — "),
+          })),
+        ),
       };
     case "task_brief":
       return {

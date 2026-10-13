@@ -2769,6 +2769,8 @@ function summarizeTask(
     titleText: localizedSummaryText(task.titleText, task.title),
     status: task.status,
     departmentId: task.departmentId,
+    /** The key result the task serves (ADR 0048). */
+    keyResultId: task.keyResultId ?? null,
     departmentKey: task.departmentKey ?? undefined,
     assigneeAgentId: task.assigneeAgentId,
     description: task.description,
