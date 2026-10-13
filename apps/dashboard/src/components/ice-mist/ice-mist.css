@@ -1,0 +1,182 @@
+/*
+ * Ice Mist materials (docs/design/ice-mist-ui-spec.md §3): one blurred shell, three unblurred surfaces.
+ * Values come only from the tokens in styles.css. Do not add backdrop-filter anywhere but .im-shell.
+ */
+
+.im-ambient {
+  min-height: 100dvh;
+  padding: var(--page-gutter);
+  color: var(--text-primary);
+  background:
+    radial-gradient(60% 55% at 0% 0%, var(--c-ice) 0%, transparent 72%),
+    radial-gradient(55% 60% at 100% 100%, var(--c-cool) 0%, transparent 72%),
+    radial-gradient(28% 32% at 100% 0%, var(--c-warm) 0%, transparent 70%),
+    var(--c-mist);
+}
+
+.im-shell {
+  display: flex;
+  min-height: calc(100dvh - 2 * var(--page-gutter));
+  border: 1px solid var(--edge-highlight);
+  border-radius: var(--r-shell);
+  background: var(--surface-shell);
+  -webkit-backdrop-filter: blur(var(--blur-shell));
+  backdrop-filter: blur(var(--blur-shell));
+}
+
+.im-shell-nav {
+  display: flex;
+  flex: 0 0 var(--nav-width);
+  flex-direction: column;
+  align-items: center;
+  gap: var(--module-gap);
+  padding-block: var(--panel-padding);
+}
+
+/* The cooler workspace the warm shell wraps; tinted, never blurred. */
+.im-shell-workspace {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: calc(var(--page-gutter) / 4);
+  margin-left: 0;
+  padding: var(--panel-padding);
+  border-radius: var(--r-panel);
+  background:
+    radial-gradient(70% 60% at 20% 0%, color-mix(in srgb, var(--c-cool) 70%, transparent) 0%, transparent 75%),
+    color-mix(in srgb, var(--c-ice) 78%, transparent);
+}
+
+@media (max-width: 640px) {
+  .im-shell {
+    flex-direction: column;
+  }
+
+  .im-shell-nav {
+    flex: 0 0 auto;
+    flex-direction: row;
+    padding: calc(var(--panel-padding) / 2) var(--panel-padding);
+  }
+
+  .im-shell-workspace {
+    margin: 0 calc(var(--page-gutter) / 2) calc(var(--page-gutter) / 2);
+  }
+}
+
+.im-panel {
+  padding: var(--panel-padding);
+  border: 1px solid var(--edge-highlight);
+  border-radius: var(--r-panel);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.im-reading {
+  padding: calc(var(--panel-padding) * 0.66);
+  border-radius: var(--r-reading);
+  background: var(--surface-reading);
+}
+
+.im-tag {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  gap: 6px;
+  padding-inline: 10px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.im-tag svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.im-tag[data-tone="success"] { color: var(--status-success-fg); background: var(--status-success-bg); }
+.im-tag[data-tone="failed"] { color: var(--status-failed-fg); background: var(--status-failed-bg); }
+.im-tag[data-tone="waiting"] { color: var(--status-waiting-fg); background: var(--status-waiting-bg); }
+.im-tag[data-tone="running"] { color: var(--status-running-fg); background: var(--status-running-bg); }
+.im-tag[data-tone="queued"] { color: var(--text-secondary); background: var(--surface-input); }
+
+.im-spin {
+  animation: im-spin 1s linear infinite;
+}
+
+@keyframes im-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.im-pill {
+  display: inline-flex;
+  min-width: var(--hit-min);
+  height: var(--hit-min);
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding-inline: 22px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  font-size: 15px;
+  font-weight: 500;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+.im-pill svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.im-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.im-pill[data-variant="primary"] {
+  color: var(--text-on-dark);
+  background: var(--c-charcoal);
+  font-weight: 600;
+}
+
+.im-pill[data-variant="primary"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--c-charcoal) 88%, var(--text-on-dark));
+}
+
+.im-pill[data-variant="secondary"] {
+  color: var(--text-primary);
+  border-color: var(--edge-input);
+  background: var(--surface-input);
+}
+
+.im-pill[data-variant="secondary"]:hover:not(:disabled) {
+  background: var(--c-warm);
+}
+
+.im-pill[data-variant="danger"] {
+  color: var(--status-failed-fg);
+  border-color: color-mix(in srgb, var(--status-failed-fg) 45%, transparent);
+  background: transparent;
+}
+
+.im-pill[data-variant="danger"]:hover:not(:disabled) {
+  background: var(--status-failed-bg);
+}
+
+/* Disabled stays legible: a real surface and edge, never a ghost. */
+.im-pill:disabled {
+  color: var(--text-disabled);
+  border-color: var(--edge-input);
+  background: var(--surface-input);
+  cursor: not-allowed;
+}

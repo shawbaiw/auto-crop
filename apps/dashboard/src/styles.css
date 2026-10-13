@@ -159,3 +159,97 @@ h3 {
   letter-spacing: 0;
   text-transform: uppercase;
 }
+
+/*
+ * Ice Mist design tokens (docs/design/ice-mist-ui-spec.md §2–§3).
+ * Every Ice Mist component reads its colors, radii and blur from these variables only.
+ */
+:root {
+  /* Base five colors (fixed by the product owner) */
+  --c-mist: #e9eeee;
+  --c-ice: #dae3eb;
+  --c-cool: #c7d3e0;
+  --c-warm: #f4f2f1;
+  --c-charcoal: #25282e;
+
+  /* Text */
+  --text-primary: var(--c-charcoal);
+  --text-secondary: #56616c; /* warm 5.66 / mist 5.40 / ice 4.87 */
+  --text-on-dark: #ffffff;
+  --text-disabled: #8a949e; /* below 4.5: disabled states and decoration only */
+  /* On --c-cool only charcoal text: --text-secondary reaches just 4.16 there. */
+
+  /* Surfaces */
+  --surface-shell: rgba(244, 242, 241, 0.55); /* the only blurred layer */
+  --surface-panel: rgba(244, 242, 241, 0.72);
+  --surface-reading: rgba(244, 242, 241, 0.94);
+  --surface-input: rgba(244, 242, 241, 0.9);
+  --surface-selected: var(--c-cool);
+
+  --edge-highlight: rgba(255, 255, 255, 0.7);
+  --edge-divider: rgba(37, 40, 46, 0.08);
+  --edge-input: rgba(37, 40, 46, 0.28); /* use --text-secondary where ≥3:1 is required */
+  --shadow-panel: 0 12px 40px rgba(86, 103, 125, 0.1);
+
+  --blur-shell: 20px;
+
+  /* Business status: icons, tags and reason areas only, never large backgrounds */
+  --status-success-fg: #0f6b5c;
+  --status-success-bg: #e1f0ec;
+  --status-failed-fg: #b13a2a;
+  --status-failed-bg: #fbe8e3;
+  --status-waiting-fg: #8a5300;
+  --status-waiting-bg: #faefd9;
+  --status-running-fg: #3d5a80;
+  --status-running-bg: #e3eaf3;
+  /* Plain queued waiting uses --text-secondary, not a color. */
+
+  /* Radii */
+  --r-shell: 32px;
+  --r-panel: 24px;
+  --r-reading: 18px;
+  --r-textarea: 22px;
+  --r-pill: 999px; /* short controls only */
+
+  /* Spacing and sizes */
+  --page-gutter: 28px;
+  --nav-width: 80px;
+  --panel-padding: 30px;
+  --module-gap: 24px;
+  --aside-width: 312px;
+  --hit-min: 44px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur: 200ms;
+  --focus-ring: 0 0 0 3px rgba(61, 90, 128, 0.35);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --surface-shell: rgba(244, 242, 241, 0.92);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --surface-shell: var(--c-warm);
+    --surface-panel: var(--c-warm);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}
+
+/* The spec sizes the desktop layout; phones keep the same materials with tighter spacing. */
+@media (max-width: 640px) {
+  :root {
+    --page-gutter: 12px;
+    --panel-padding: 20px;
+    --module-gap: 16px;
+  }
+}
