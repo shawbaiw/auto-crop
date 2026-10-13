@@ -76,6 +76,13 @@
   background: var(--surface-reading);
 }
 
+/* Monospace for file paths, commands and error codes. */
+.im-code {
+  font-family: var(--font-code);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .im-tag {
   display: inline-flex;
   height: 24px;

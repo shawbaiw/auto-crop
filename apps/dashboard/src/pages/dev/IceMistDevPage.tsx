@@ -32,6 +32,9 @@ export function IceMistDevPage() {
                   <p className={body}>
                     阅读表面用于失败原因、生成结果和长文本。它几乎不透明、没有阴影，直接放在面板内，靠色差而不是嵌套边框来分组。
                   </p>
+                  <p className="im-code text-[color:var(--text-secondary)]">
+                    Geist Mono · apps/dashboard/src/pages/CompanyCreationLoading.tsx · ERR_BLUEPRINT_TIMEOUT
+                  </p>
                 </ReadingSurface>
               </Panel>
 

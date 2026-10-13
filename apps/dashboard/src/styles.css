@@ -219,6 +219,9 @@ h3 {
   --aside-width: 312px;
   --hit-min: 44px;
 
+  /* Type: Geist Mono for file paths, commands and error codes only (12–13px) */
+  --font-code: "Geist Mono Variable", var(--font-mono);
+
   /* Motion */
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --dur: 200ms;
