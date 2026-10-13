@@ -11,6 +11,8 @@ import {
   createProofCollector,
   createRepositories,
   migrate,
+  recoverInterruptedCeoIntakes,
+  runCeoIntakeJobs,
   runFinalFounderReportJobs,
   runSchedulerOnce,
   executionBudgetFromEnvironment,
@@ -132,6 +134,9 @@ export function startSchedulerLoop(input: {
   let wakePending = false;
   let wakeTimer: ReturnType<typeof setTimeout> | null = null;
   let reportJobsRunning = false;
+  let intakeJobsRunning = false;
+  // An assessment this process was running when it last stopped is not running now.
+  recoverInterruptedCeoIntakes(input.repositories);
 
   function emit(event: SchedulerEvent) {
     input.log(`Scheduler ${event.type}: ${event.taskId ?? event.companyId ?? ""} ${event.message}`);
@@ -153,6 +158,25 @@ export function startSchedulerLoop(input: {
       .catch((error) => input.log(`Final Founder Report job failed: ${(error as Error).message}`))
       .finally(() => {
         reportJobsRunning = false;
+      });
+  }
+
+  function drainCeoIntakeJobs() {
+    if (intakeJobsRunning || stopped) {
+      return;
+    }
+    intakeJobsRunning = true;
+    void runCeoIntakeJobs({
+      projectRoot: input.projectRoot,
+      repositories: input.repositories,
+      adapters: input.agents,
+      createId: input.createId,
+      emit: (event) => emit(event),
+      requestSchedulerWake: () => requestWake("ceo_intake_received"),
+    })
+      .catch((error) => input.log(`CEO Intake assessment failed: ${(error as Error).message}`))
+      .finally(() => {
+        intakeJobsRunning = false;
       });
   }
 
@@ -194,6 +218,8 @@ export function startSchedulerLoop(input: {
       // Author any enqueued Final Founder Report off the tick's path so a slow CEO Agent run never
       // stalls task dispatch; a guard keeps at most one job runner in flight.
       drainFinalFounderReportJobs();
+      // Founder input is assessed off the tick's path too, so a CEO run never stalls dispatch.
+      drainCeoIntakeJobs();
       if (wakePending && !stopped) {
         scheduleWakeTick();
       }
@@ -215,18 +241,20 @@ export function startSchedulerLoop(input: {
   void tick();
   input.log(`Scheduler: running every ${input.intervalMs}ms`);
 
-  return {
-    requestWake(reason: SchedulerWakeReason) {
-      if (stopped) {
-        return;
-      }
+  function requestWake(reason: SchedulerWakeReason) {
+    if (stopped) {
+      return;
+    }
 
-      input.log(`Scheduler wake requested: ${reason}`);
-      wakePending = true;
-      if (!running) {
-        scheduleWakeTick();
-      }
-    },
+    input.log(`Scheduler wake requested: ${reason}`);
+    wakePending = true;
+    if (!running) {
+      scheduleWakeTick();
+    }
+  }
+
+  return {
+    requestWake,
     stop() {
       stopped = true;
       clearInterval(interval);

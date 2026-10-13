@@ -17,6 +17,7 @@ export * from "./runtime/ceoParser";
 export * from "./runtime/createCompany";
 export * from "./runtime/companyQuiescence";
 export * from "./runtime/finalFounderReport";
+export * from "./runtime/ceoIntake";
 export * from "./runtime/scheduler";
 export * from "./runtime/executionProfile";
 export * from "./runtime/proof";

@@ -86,7 +86,8 @@ export type SchedulerWakeReason =
   | "parent_aggregation_queued"
   | "budget_authorized"
   | "company_created"
-  | "company_resumed";
+  | "company_resumed"
+  | "ceo_intake_received";
 const creationAttemptTimeoutMs = 10 * 60 * 1000;
 const creationAttemptGraceMs = 30 * 1000;
 
@@ -498,6 +499,8 @@ async function routeRequest(
     };
 
     options.repositories.createCeoIntake(intake);
+    // The CEO Agent assesses it off the request path (ADR 0046); waking the scheduler starts that soon.
+    options.requestSchedulerWake?.("ceo_intake_received");
     sendJson(response, 201, { intake: summarizeCeoIntake(intake) });
     return;
   }
@@ -1306,6 +1309,7 @@ function buildCompanyState(
       visionGaps: ceoAttention.visionGaps,
       ceoAttentionRollups: ceoAttention.ceoAttentionRollups,
       finalFounderReports: repositories.listFinalFounderReportsForCompany(currentCompany.id),
+      ceoIntakes: repositories.listCeoIntakesForCompany(currentCompany.id),
     }),
     taskCompletionEvents: taskCompletionEvents.map(summarizeTaskCompletionEvent),
     visionGaps: ceoAttention.visionGaps,

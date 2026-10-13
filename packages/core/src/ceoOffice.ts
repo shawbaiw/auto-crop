@@ -2,7 +2,7 @@ import { localizedTextFromString, type Locale, type LocalizedText } from "./loca
 import type { TaskHold } from "./taskHold";
 import { isVerificationSatisfied } from "./verification";
 import type {
-  CompanyEvent, CompanyPlanSnapshot, AgentFailureReason, BusinessArtifact, CeoAttentionRollup, CeoReviewDecision, Company, FinalFounderReport,
+  CompanyEvent, CompanyPlanSnapshot, AgentFailureReason, BusinessArtifact, CeoAttentionRollup, CeoIntake, CeoReviewDecision, Company, FinalFounderReport,
   FounderDecision, FounderDecisionResolution, HumanAction, KeyResult, Objective, Task, TaskCompletionEvent,
   NextStepItem, TaskDependency, TaskEvent, TaskProgressEvent, TaskStatus, VisionGap, WaitState,
 } from "./types";
@@ -89,7 +89,24 @@ export type CEOOfficeItem =
       affectedTaskIds: string[];
     }, false>
   | OfficeItem<"final_report", Pick<FinalFounderReport,
-      "classification" | "sections" | "isCurrent" | "supersedesReportId">, false>;
+      "classification" | "sections" | "isCurrent" | "supersedesReportId">, false>
+  /** The founder's own words, as sent from the CEO Office composer (ADR 0046). Raw source content. */
+  | OfficeItem<"founder_intake", {
+      intakeId: string;
+      body: string;
+      status: CeoIntake["status"];
+    }, false>
+  /** What the CEO Agent did with one CEO Intake, or that it could not assess it (ADR 0046). */
+  | OfficeItem<"intake_outcome", {
+      intakeId: string;
+      status: CeoIntake["status"];
+      outcome: NonNullable<CeoIntake["outcome"]> | null;
+      summary: LocalizedText | null;
+      createdTaskIds: string[];
+      targetTaskId: string | null;
+      replanProposalId: string | null;
+      failureReason: NonNullable<CeoIntake["failureReason"]> | null;
+    }, false>;
 
 type PlanBriefTaskSummary = CompanyPlanSnapshot["tasks"][number];
 
@@ -125,12 +142,13 @@ export type CeoOfficeProjectionInput = {
   visionGaps?: readonly VisionGap[];
   ceoAttentionRollups?: readonly CeoAttentionRollup[];
   finalFounderReports?: readonly FinalFounderReport[];
+  ceoIntakes?: readonly CeoIntake[];
 };
 
 const timelineOrder: Record<CEOOfficeItem["type"], number> = {
   plan_brief: -1, task_brief: 0, execution_report: 1, decision_request: 2, approval_request: 3,
   human_action: 4, wait_state: 5, blocked_issue: 6, decision_resolution: 7,
-  stage_change: 8, final_report: 9,
+  stage_change: 8, final_report: 9, founder_intake: 10, intake_outcome: 11,
 };
 
 /**
@@ -388,6 +406,35 @@ export function projectCeoOfficeItems(input: CeoOfficeProjectionInput): CEOOffic
         sections: report.sections,
         isCurrent: report.isCurrent,
         supersedesReportId: report.supersedesReportId,
+      },
+    });
+  }
+
+  // Each intake is two facts: the founder sent it, and later the CEO answered. The answer is its own
+  // card at the time it happened, so the timeline reads as a conversation.
+  for (const intake of input.ceoIntakes ?? []) {
+    if (intake.companyId !== input.company.id) continue;
+    items.push({
+      ...companyContext(input.company, intake.id, "Founder input", intake.createdAt),
+      id: `founder_intake:${intake.id}`,
+      type: "founder_intake",
+      data: { intakeId: intake.id, body: intake.body, status: intake.status },
+    });
+    if (!intake.assessedAt) continue;
+    items.push({
+      ...companyContext(input.company, intake.id, "CEO answer", intake.assessedAt),
+      id: `intake_outcome:${intake.id}`,
+      type: "intake_outcome",
+      taskId: intake.targetTaskId ?? null,
+      data: {
+        intakeId: intake.id,
+        status: intake.status,
+        outcome: intake.outcome ?? null,
+        summary: intake.outcomeSummary ?? null,
+        createdTaskIds: intake.createdTaskIds ?? [],
+        targetTaskId: intake.targetTaskId ?? null,
+        replanProposalId: intake.replanProposalId ?? null,
+        failureReason: intake.failureReason ?? null,
       },
     });
   }

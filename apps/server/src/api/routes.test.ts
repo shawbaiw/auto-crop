@@ -1105,8 +1105,9 @@ describe("API routes", () => {
     await fixture.close();
   });
 
-  it("creates CEO intakes and returns them in company state", async () => {
-    const fixture = await startFixtureServer();
+  it("creates CEO intakes, wakes the scheduler to assess them, and returns them in company state", async () => {
+    const schedulerWakeRequests: SchedulerWakeReason[] = [];
+    const fixture = await startFixtureServer({ schedulerWakeRequests });
     const created = await postJson<{ company: { id: string } }>(`${fixture.baseUrl}/api/companies`, {
       companyName: "Pricing Page Studio",
       founderVision: "Build an AI SaaS that creates pricing pages.",
@@ -1134,6 +1135,7 @@ describe("API routes", () => {
       `${fixture.baseUrl}/api/companies/${created.company.id}/state`,
     );
     expect(state.ceoIntakes).toEqual([expect.objectContaining({ id: submitted.intake.id, status: "received" })]);
+    expect(schedulerWakeRequests).toContain("ceo_intake_received");
 
     await fixture.close();
   });

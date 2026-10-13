@@ -510,6 +510,16 @@ export type CompanyEvent = {
   status?: CompanyStatus | null;
 };
 
+/** What the CEO Agent decided a CEO Intake needs (ADR 0046). Routing to a department waits for Department Intake. */
+export type CeoIntakeOutcome = "create_tasks" | "revise_plan" | "context_only";
+/** Why an intake ended `failed`. The founder sees a plain sentence; the code stays for diagnosis. */
+export type CeoIntakeFailureReason =
+  | "agent_failed"
+  | "invalid_agent_output"
+  | "plan_not_made"
+  | "company_stopped"
+  | "no_ceo_agent";
+
 export type CeoIntake = {
   id: string;
   companyId: string;
@@ -517,6 +527,21 @@ export type CeoIntake = {
   status: CeoIntakeStatus;
   createdAt: string;
   updatedAt: string;
+  /** Set once the assessment chose an outcome. */
+  outcome?: CeoIntakeOutcome | null;
+  /** The CEO Agent's answer to the founder, in the company locale, under the Founder Writing Rules (ADR 0045). */
+  outcomeSummary?: LocalizedText | null;
+  /** Tasks the intake created, for `create_tasks`. */
+  createdTaskIds?: string[];
+  /** The stuck task a new plan was requested for, for `revise_plan`. */
+  targetTaskId?: string | null;
+  replanProposalId?: string | null;
+  failureReason?: CeoIntakeFailureReason | null;
+  failureMessage?: string | null;
+  /** Assessment runs started for this intake, including the one that ended it. */
+  attempts?: number;
+  /** When the outcome was decided or the intake failed. */
+  assessedAt?: string | null;
 };
 
 export type CeoReviewDecision = {

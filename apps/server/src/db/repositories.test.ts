@@ -196,10 +196,54 @@ describe("repositories", () => {
     repos.createCeoIntake({ ...intake, id: "ceo_intake_2", createdAt: "2026-08-17T00:01:00.000Z" });
     repos.createCeoIntake(intake);
 
+    // A new intake has no assessment yet.
+    const unassessed = {
+      outcome: null, outcomeSummary: null, createdTaskIds: [], targetTaskId: null, replanProposalId: null,
+      failureReason: null, failureMessage: null, attempts: 0, assessedAt: null,
+    };
     expect(repos.listCeoIntakesForCompany(records.company.id)).toEqual([
-      intake,
-      { ...intake, id: "ceo_intake_2", createdAt: "2026-08-17T00:01:00.000Z" },
+      { ...intake, ...unassessed },
+      { ...intake, ...unassessed, id: "ceo_intake_2", createdAt: "2026-08-17T00:01:00.000Z" },
     ]);
+
+    close();
+  });
+
+  it("saves a CEO Intake assessment and lists only intakes that wait for one", () => {
+    const { repos, close } = openTestRepositories();
+    const records = createRecords();
+    const intake: CeoIntake = {
+      id: "ceo_intake_1",
+      companyId: records.company.id,
+      body: "Add annual plans.",
+      status: "received",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    };
+    repos.createCompany(records.company);
+    repos.createCeoIntake(intake);
+    repos.createCeoIntake({ ...intake, id: "ceo_intake_2", createdAt: "2026-08-17T00:01:00.000Z" });
+
+    repos.saveCeoIntakeAssessment({
+      ...intake,
+      status: "dispatched",
+      outcome: "create_tasks",
+      outcomeSummary: { en: "I added one task." },
+      createdTaskIds: ["task_9"],
+      attempts: 1,
+      assessedAt: "2026-08-17T00:02:00.000Z",
+      updatedAt: "2026-08-17T00:02:00.000Z",
+    });
+
+    expect(repos.getCeoIntake("ceo_intake_1")).toMatchObject({
+      status: "dispatched",
+      outcome: "create_tasks",
+      outcomeSummary: { en: "I added one task." },
+      createdTaskIds: ["task_9"],
+      attempts: 1,
+      assessedAt: "2026-08-17T00:02:00.000Z",
+    });
+    expect(repos.listReceivedCeoIntakes().map((item) => item.id)).toEqual(["ceo_intake_2"]);
 
     close();
   });

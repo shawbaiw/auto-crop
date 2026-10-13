@@ -269,78 +269,22 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
       throw new Error(`Task references unknown department after parse: ${taskBlueprint.departmentKey ?? taskBlueprint.departmentName}`);
     }
 
-    const taskId = createId("task");
-    const taskWorkspace = createTaskWorkspace(input.projectRoot, taskId);
-    const schemaDecision = applyProofSchemaSanity(taskBlueprint);
-    const task: Task = {
-      id: taskId,
-      companyId: company.id,
-      departmentId,
-      departmentKey: taskBlueprint.departmentKey ?? null,
-      keyResultId: firstKeyResultId,
-      title: taskBlueprint.title,
-      titleText: taskBlueprint.titleText ?? null,
-      description: withPrototypeGuidance(taskBlueprint.description, schemaDecision.proofSchemaId),
-      descriptionText: taskBlueprint.descriptionText ?? null,
-      assigneeAgentId: taskBlueprint.assigneeAgentId,
-      requiredCapabilities: taskBlueprint.requiredCapabilities,
-      proofSchemaId: schemaDecision.proofSchemaId,
-      workspacePath: taskWorkspace.root,
-      artifactWorkspacePath: isArtifactProducer(schemaDecision.proofSchemaId) ? taskWorkspace.root : null,
-      status: "queued",
-      riskLevel: taskBlueprint.riskLevel,
-      position,
-      latestFailureReason: null,
-      latestFailureMessage: null,
-      latestExecutionProfileName: null,
-      latestRequestedTimeoutMs: null,
-      latestEffectiveTimeoutMs: null,
-      dependencyNote: null,
-      parentTaskId: null,
-      taskKind: "parent",
-      source: "ceo",
-      verificationRequirements: taskBlueprint.verification?.requirements ?? null,
-      decomposition: taskBlueprint.decomposition ?? null,
-    };
-    repositories.createTask(task);
-    repositories.appendTaskProgressEvent({
-      id: createId("task_progress"),
-      companyId: company.id,
-      departmentId,
-      parentTaskId: task.id,
-      subjectTaskId: null,
-      step: "received",
-      status: "complete",
-      label: "Received CEO task",
-      labelText: receivedCeoTaskText(),
-      detail: null,
+    const { task, warning } = createPlannedTask({
+      projectRoot: input.projectRoot,
+      company,
+      repositories,
       createdAt: input.createdAt,
+      createId,
+      position,
+      departmentId,
+      keyResultId: firstKeyResultId,
+      planned: taskBlueprint,
+      proofSchemaNormalization: normalizationsByKey.get(taskBlueprint.key) ?? null,
     });
+    if (warning) taskWarnings.push(warning);
     taskIdsByBlueprintKey.set(taskBlueprint.key, task.id);
     handoffContractsByBlueprintKey.set(taskBlueprint.key, taskBlueprint.handoffContract);
     handoffContractTextsByBlueprintKey.set(taskBlueprint.key, taskBlueprint.handoffContractText);
-    const normalization = normalizationsByKey.get(taskBlueprint.key);
-    const warningMessage = normalization
-      ? `Task warning: ${task.title} proof schema ${normalization.from} is not a Collectable Proof Schema; normalized to ${normalization.to}.`
-      : schemaDecision.warning;
-    if (warningMessage) {
-      taskWarnings.push({
-        id: createId("task_event"),
-        companyId: company.id,
-        taskId: task.id,
-        type: "task_warning",
-        message: warningMessage,
-        createdAt: input.createdAt,
-        status: task.status,
-        failureReason: null,
-        failureMessage: null,
-        executionProfileName: null,
-        requestedTimeoutMs: null,
-        effectiveTimeoutMs: null,
-        dependencyNote: null,
-        artifactWorkspacePath: task.artifactWorkspacePath ?? null,
-      });
-    }
     return task;
   });
 
@@ -368,6 +312,107 @@ export function writeCompanyBlueprintRecords(input: WriteCompanyBlueprintRecords
     keyResults,
     tasks,
   };
+}
+
+/** What a plan says about one task, whether it comes from the blueprint or from a CEO Intake. */
+export type PlannedTaskDefinition = Pick<
+  BlueprintTask,
+  "title" | "titleText" | "description" | "descriptionText" | "assigneeAgentId" | "requiredCapabilities" | "proofSchemaId" | "riskLevel"
+> & {
+  departmentKey?: string | null;
+  verification?: BlueprintTask["verification"];
+  decomposition?: BlueprintTask["decomposition"];
+};
+
+/**
+ * Place one planned task in a company: its workspace, the proof schema sanity check, prototype
+ * guidance and the "received" progress marker. The blueprint and a CEO Intake both plan tasks, and
+ * both go through here so a task the founder asked for later is placed exactly like a founding one
+ * (ADR 0046). Returns the warning event for the caller to append once the plan is written.
+ */
+export function createPlannedTask(input: {
+  projectRoot: string;
+  company: Company;
+  repositories: ReturnType<typeof createRepositories>;
+  createdAt: string;
+  createId: (prefix: string) => string;
+  position: number;
+  departmentId: string;
+  keyResultId: string | null;
+  planned: PlannedTaskDefinition;
+  proofSchemaNormalization?: ProofSchemaNormalization | null;
+}): { task: Task; warning: TaskEvent | null } {
+  const { company, repositories, createId, planned } = input;
+  const taskId = createId("task");
+  const taskWorkspace = createTaskWorkspace(input.projectRoot, taskId);
+  const schemaDecision = applyProofSchemaSanity(planned);
+  const task: Task = {
+    id: taskId,
+    companyId: company.id,
+    departmentId: input.departmentId,
+    departmentKey: planned.departmentKey ?? null,
+    keyResultId: input.keyResultId,
+    title: planned.title,
+    titleText: planned.titleText ?? null,
+    description: withPrototypeGuidance(planned.description, schemaDecision.proofSchemaId),
+    descriptionText: planned.descriptionText ?? null,
+    assigneeAgentId: planned.assigneeAgentId,
+    requiredCapabilities: planned.requiredCapabilities,
+    proofSchemaId: schemaDecision.proofSchemaId,
+    workspacePath: taskWorkspace.root,
+    artifactWorkspacePath: isArtifactProducer(schemaDecision.proofSchemaId) ? taskWorkspace.root : null,
+    status: "queued",
+    riskLevel: planned.riskLevel,
+    position: input.position,
+    latestFailureReason: null,
+    latestFailureMessage: null,
+    latestExecutionProfileName: null,
+    latestRequestedTimeoutMs: null,
+    latestEffectiveTimeoutMs: null,
+    dependencyNote: null,
+    parentTaskId: null,
+    taskKind: "parent",
+    source: "ceo",
+    verificationRequirements: planned.verification?.requirements ?? null,
+    decomposition: planned.decomposition ?? null,
+  };
+  repositories.createTask(task);
+  repositories.appendTaskProgressEvent({
+    id: createId("task_progress"),
+    companyId: company.id,
+    departmentId: input.departmentId,
+    parentTaskId: task.id,
+    subjectTaskId: null,
+    step: "received",
+    status: "complete",
+    label: "Received CEO task",
+    labelText: receivedCeoTaskText(),
+    detail: null,
+    createdAt: input.createdAt,
+  });
+  const normalization = input.proofSchemaNormalization;
+  const warningMessage = normalization
+    ? `Task warning: ${task.title} proof schema ${normalization.from} is not a Collectable Proof Schema; normalized to ${normalization.to}.`
+    : schemaDecision.warning;
+  const warning: TaskEvent | null = warningMessage
+    ? {
+      id: createId("task_event"),
+      companyId: company.id,
+      taskId: task.id,
+      type: "task_warning",
+      message: warningMessage,
+      createdAt: input.createdAt,
+      status: task.status,
+      failureReason: null,
+      failureMessage: null,
+      executionProfileName: null,
+      requestedTimeoutMs: null,
+      effectiveTimeoutMs: null,
+      dependencyNote: null,
+      artifactWorkspacePath: task.artifactWorkspacePath ?? null,
+    }
+    : null;
+  return { task, warning };
 }
 
 function defaultCreateId(prefix: string): string {

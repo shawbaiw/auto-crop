@@ -549,6 +549,7 @@ export function migrate(database: DatabaseClient): void {
   migrateReplanProposalDiagnostics(database);
   migrateLocalizedBusinessContentFields(database);
   migrateApprovalDecisionFields(database);
+  migrateCeoIntakeAssessmentFields(database);
   database.exec("CREATE INDEX IF NOT EXISTS tasks_company_position_idx ON tasks(company_id, position)");
   database.exec("CREATE INDEX IF NOT EXISTS task_dependencies_depends_on_idx ON task_dependencies(depends_on_task_id)");
   // Open Holds are read on every task summary and every affordance guard, so the hot lookup is
@@ -575,6 +576,20 @@ export function migrate(database: DatabaseClient): void {
   database.exec("CREATE INDEX IF NOT EXISTS founder_reports_company_created_idx ON founder_reports(company_id, created_at, id)");
   database.exec("CREATE INDEX IF NOT EXISTS founder_report_jobs_company_status_idx ON founder_report_jobs(company_id, status)");
   database.exec("CREATE INDEX IF NOT EXISTS founder_report_jobs_status_created_idx ON founder_report_jobs(status, created_at, id)");
+}
+
+/** A CEO Intake records what its assessment decided, or why it failed (ADR 0046). */
+function migrateCeoIntakeAssessmentFields(database: DatabaseClient): void {
+  const columns = getColumnNames(database, "ceo_intakes");
+  addColumnIfMissing(database, columns, "ceo_intakes", "outcome TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "outcome_summary TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "created_task_ids TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "target_task_id TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "replan_proposal_id TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "failure_reason TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "failure_message TEXT");
+  addColumnIfMissing(database, columns, "ceo_intakes", "attempts INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, columns, "ceo_intakes", "assessed_at TEXT");
 }
 
 /** Founder Approval outcomes are recorded, not just requested (ADR 0020 amendment). */
