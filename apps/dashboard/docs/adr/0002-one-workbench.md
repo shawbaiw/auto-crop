@@ -107,6 +107,14 @@ The three legacy pages overlapped. Counts of blocked work, Human Actions and Wai
   - New plans are requested and confirmed on Operations Diagnostics until P4 moves them to the department page.
   - At startup, with no remembered company, companies are ranked by status (`active`, `paused`, `creating`, `stopped`, then `creation_failed`) and then by most recent update. The Onboarding Wizard opens only when there is no company.
   - A failed creation is never a dead end. Its page offers Stop and abandon, confirmed by the company name, and a way back to another company, or Create New Company when there is none.
+- P4 CEO Office delivered, as the founder decided on 2026-10-13:
+  - The timeline shows the latest day with any item, which is today while the company works. Earlier days fold into one line each and open on demand, so the page is never empty.
+  - "Needs you" has cards for reviews, decisions, Human Actions and new plans. Waits and stuck tasks are counted in the overview but have no card; the founder acts on them from the department page or Operations Diagnostics.
+  - A card opens the item in a dialog, which is the one place to act on it. Timeline cards and "Needs you" cards open the same dialog.
+  - A new plan card links to Operations Diagnostics until the department page takes new plans.
+  - Business content is shown in the company locale. The interface language changes only the chrome (root ADR 0013).
+  - The founder's own message and the CEO's answer are their own timeline cards (root ADR 0046).
+  - The Founder Vision is shown once, above the tabs.
 - The P4 steps run on a short-lived branch that is rebased often and merged once, so no page is delivered half legacy and half modern (ADR 0001).
 
 ## Considered Options

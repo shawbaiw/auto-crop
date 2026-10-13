@@ -11,6 +11,7 @@ import {
   createMockAgentAdapter,
   createRepositories,
   migrate,
+  runCeoIntakeJobs,
   runCompanyReview,
   runSchedulerOnce,
 } from "@auto-crop/server";
@@ -42,6 +43,20 @@ test("creates and operates a mock agent company through the dashboard", async ({
   // The company runs as soon as its blueprint exists (ADR 0044) and opens on CEO Office.
   await expect(page.getByRole("heading", { name: "Pricing Page Studio" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 1, name: "CEO Office" })).toBeVisible();
+
+  // A message to the CEO becomes a CEO Intake. The CEO Agent assesses it off the request path
+  // (ADR 0046) and its answer returns as a card over the event stream.
+  await page.getByRole("textbox", { name: "Message to the CEO" }).fill("Our first customers are indie game studios.");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const timeline = page.getByRole("region", { name: "Timeline" });
+  await expect(timeline.getByRole("article", { name: "You" })).toContainText("Our first customers are indie game studios.");
+  await runCeoIntakeJobs({
+    projectRoot: fixture.projectRoot,
+    repositories: fixture.repositories,
+    adapters: fixture.agents,
+    emit: (event) => fixture.events.publish(event),
+  });
+  await expect(timeline.getByRole("article", { name: "CEO: Kept as company context" })).toContainText("I kept this as company context.");
 
   const companyId = fixture.repositories.fetchQueuedTasks(1)[0]?.companyId;
   await runSchedulerOnce({

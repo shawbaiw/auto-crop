@@ -47,6 +47,29 @@ describe("createApiClient", () => {
     });
   });
 
+  it("forwards ceo_intake_updated, so the CEO's answer to founder input reaches CEO Office", () => {
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener(type: string, listener: (event: MessageEvent) => void) {
+          listeners.set(type, listener);
+        }
+        close() {}
+      },
+    );
+    const handler = vi.fn();
+    createApiClient("http://127.0.0.1:8787").subscribeEvents("company_1", handler);
+
+    listeners.get("ceo_intake_updated")?.(
+      new MessageEvent("ceo_intake_updated", {
+        data: JSON.stringify({ type: "ceo_intake_updated", companyId: "company_1", message: "CEO answered founder input." }),
+      }),
+    );
+
+    expect(handler).toHaveBeenCalledWith({ type: "ceo_intake_updated", companyId: "company_1", message: "CEO answered founder input." });
+  });
+
   it("registers a company_report_ready listener and forwards the event to the handler", () => {
     const listeners = new Map<string, (event: MessageEvent) => void>();
     class FakeEventSource {

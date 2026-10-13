@@ -68,6 +68,14 @@ export type CeoIntakeSummary = {
   status: CeoIntakeStatus;
   createdAt: string;
   updatedAt: string;
+  /** What the CEO Agent decided (ADR 0046). Absent until it has assessed the input. */
+  outcome?: "create_tasks" | "revise_plan" | "context_only" | null;
+  outcomeSummary?: LocalizedText | null;
+  createdTaskIds?: string[];
+  targetTaskId?: string | null;
+  replanProposalId?: string | null;
+  failureReason?: string | null;
+  assessedAt?: string | null;
 };
 
 export type DepartmentSummary = {
@@ -738,6 +746,7 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       events.addEventListener("company_creation_completed", listener);
       events.addEventListener("company_creation_failed", listener);
       events.addEventListener("company_report_ready", listener);
+      events.addEventListener("ceo_intake_updated", listener);
       return () => events.close();
     },
   };

@@ -19,8 +19,8 @@ const company = {
 };
 
 for (const viewport of viewports) {
-  // The Workbench frame and its company-wide pages are modern. CEO Office and the department pages
-  // keep Retro UI content inside the frame until P4 (dashboard ADR 0002).
+  // The Workbench frame, CEO Office and the company-wide pages are modern. The department pages keep
+  // Retro UI content inside the frame until the second P4 step (dashboard ADR 0002).
   test(`captures Workbench screenshots for every page on ${viewport.name}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ height: viewport.height, width: viewport.width });
     await page.addInitScript((companyId) => window.localStorage.setItem("auto-crop.currentCompanyId", companyId), company.id);
@@ -29,7 +29,7 @@ for (const viewport of viewports) {
     await expect(page.getByRole("heading", { level: 1, name: "CEO Office" })).toBeVisible();
 
     const pages = [
-      { name: "CEO Office", file: "ceo-office", modernContent: false },
+      { name: "CEO Office", file: "ceo-office", modernContent: true },
       { name: "Product", file: "department", modernContent: false },
       { name: "Operations Diagnostics", file: "operations-diagnostics", modernContent: true },
       { name: "Deliverables", file: "deliverables", modernContent: true },
