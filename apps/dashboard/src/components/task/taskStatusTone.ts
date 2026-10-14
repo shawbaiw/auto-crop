@@ -1,4 +1,5 @@
 import { Check, CircleAlert, CircleSlash, Clock, Eye, Hand, LoaderCircle, type LucideIcon } from "lucide-react";
+import type { StatusTone } from "../ice-mist";
 import type { TranslationKey } from "../../ui/language";
 
 /** The task status groups of dashboard ADR 0002; their colors and icons follow color system v2 §6.1. */
@@ -59,4 +60,26 @@ export const taskStatusToneIcon: Record<TaskStatusTone, LucideIcon> = {
   failed: CircleAlert,
   complete: Check,
   cancelled: CircleSlash,
+};
+
+/** The Ice Mist StatusTag tone for each group (color system v2 §6.1). */
+export const taskStatusToneTag: Record<TaskStatusTone, StatusTone> = {
+  running: "running",
+  waiting: "queued",
+  review: "yourTurn",
+  needsYou: "yourTurn",
+  failed: "failed",
+  complete: "success",
+  cancelled: "queued",
+};
+
+/** A bare status icon's color, for rows that show the icon without a tag. Your turn is charcoal. */
+export const taskStatusToneIconClassName: Record<TaskStatusTone, string> = {
+  running: "text-status-running-icon",
+  waiting: "text-status-neutral-icon",
+  review: "text-foreground",
+  needsYou: "text-foreground",
+  failed: "text-status-failed-icon",
+  complete: "text-status-success-icon",
+  cancelled: "text-status-neutral-icon",
 };

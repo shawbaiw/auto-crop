@@ -1,4 +1,3 @@
-import { ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type {
   AgentSummary,
@@ -21,7 +20,7 @@ import { CeoOfficeItemDialog, type CeoOfficeActions } from "../components/ceo-of
 import { CeoOutcomes, outcomeItems } from "../components/ceo-office/CeoOutcomes";
 import { CeoPlanCanvas } from "../components/ceo-office/CeoPlanCanvas";
 import { CeoTimeline } from "../components/ceo-office/CeoTimeline";
-import { NeedsYou } from "../components/ceo-office/NeedsYou";
+import { NeedsYou, NeedsYouFrame } from "../components/ceo-office/NeedsYou";
 import { deriveNeedsYou, needsYouCount as countNeedsYou } from "../components/ceo-office/deriveNeedsYou";
 import { isDepartmentIntakeItem, useOfficeView } from "../components/ceo-office/useOfficeView";
 import { isUnseenSince, readOutcomesLastSeen, writeOutcomesLastSeen } from "../ui/ceoOutcomes/lastSeen";
@@ -131,16 +130,12 @@ export function CeoOffice({
   );
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,320px)]">
+    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)] gap-[var(--module-gap)] lg:grid-cols-[minmax(0,1fr)_var(--aside-width)]">
       <div className="flex min-h-0 min-w-0 flex-col gap-3">
         {!wide ? (
-          <details className="group shrink-0 rounded-lg border border-border/80 bg-card shadow-workbench">
-            <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-sm font-semibold">
-              {t("ceoOffice.needsYouSummary").replace("{count}", String(needsYouCount))}
-              <ChevronDown aria-hidden="true" className="size-4 transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="max-h-[40dvh] overflow-y-auto border-t border-border/70 p-3">{needsYou}</div>
-          </details>
+          <NeedsYouFrame count={needsYouCount} wide={false}>
+            {needsYou}
+          </NeedsYouFrame>
         ) : null}
         <Tabs className="flex min-h-0 flex-1 flex-col gap-3" onValueChange={(value) => setTab(value as CeoOfficeTab)} value={tab}>
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -187,10 +182,9 @@ export function CeoOffice({
         <CeoComposer companyStatus={company.status} draft={draft} onDraftChange={setDraft} onSubmit={onCreateCeoIntake} />
       </div>
       {wide ? (
-        <aside aria-label={t("ceoOffice.needsYou")} className="hidden min-h-0 overflow-y-auto lg:block">
-          <h2 className="mb-3 text-sm font-semibold">{t("ceoOffice.needsYou")}</h2>
+        <NeedsYouFrame count={needsYouCount} wide>
           {needsYou}
-        </aside>
+        </NeedsYouFrame>
       ) : null}
       <CeoOfficeItemDialog
         actions={{ onConfirmHumanAction, onCreateCeoReviewDecision, onResolveFounderDecision }}

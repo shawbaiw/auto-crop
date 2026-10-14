@@ -1,4 +1,3 @@
-import { ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type {
   AgentSummary,
@@ -12,13 +11,12 @@ import type {
   TaskSummary,
   WaitStateSummary,
 } from "../api/client";
-import { Card } from "@/components/ui";
 import { useMediaQuery } from "@/lib/useMediaQuery";
 import { CeoComposer } from "../components/ceo-office/CeoComposer";
 import { CeoOfficeCard } from "../components/ceo-office/CeoOfficeCard";
 import { CeoOfficeItemDialog, type CeoOfficeActions } from "../components/ceo-office/CeoOfficeItemDialog";
 import { deriveNeedsYou, needsYouCount, needsYouForDepartment } from "../components/ceo-office/deriveNeedsYou";
-import { NeedsYou } from "../components/ceo-office/NeedsYou";
+import { NeedsYou, NeedsYouFrame } from "../components/ceo-office/NeedsYou";
 import { useOfficeView } from "../components/ceo-office/useOfficeView";
 import { ExecutionTrace, type ReplanHandlers } from "../components/department-page/ExecutionTrace";
 import type { TaskActionHandlers } from "../components/department-page/TaskActions";
@@ -122,14 +120,15 @@ export function DepartmentPage(props: DepartmentPageProps) {
   );
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,320px)]">
-      <div className="flex min-h-0 min-w-0 flex-col gap-3">
-        <Card className="grid shrink-0 gap-2 p-3">
-          <p className="text-sm">
+    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)] gap-[var(--module-gap)] lg:grid-cols-[minmax(0,1fr)_var(--aside-width)]">
+      <div className="flex min-h-0 min-w-0 flex-col gap-4">
+        {/* The work summary lies open on the workspace (spec §5.3): what the department is for, and who works now. */}
+        <div className="grid shrink-0 gap-2">
+          <p className="max-w-[72ch] text-[15px] leading-relaxed">
             <span className="font-medium text-muted-foreground">{t("departmentPage.responsibility")}: </span>
             {departmentResponsibility(department, view.ctx.locale)}
           </p>
-          <div aria-label={t("departmentPage.working")} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" role="group">
+          <div aria-label={t("departmentPage.working")} className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm" role="group">
             {working.length === 0 ? <span className="text-muted-foreground">{t("departmentPage.nobodyWorking")}</span> : null}
             {working.map((task) => {
               const agent = agents.find((candidate) => candidate.id === task.assigneeAgentId);
@@ -148,20 +147,16 @@ export function DepartmentPage(props: DepartmentPageProps) {
                       .replace("{agent}", agentName)
                       .replace("{activity}", latest ? resolveLocalizedValue(latest.labelText, language, latest.label) : t("departmentPage.starting"))}
                   </span>
-                  {minutes !== null ? <span className="text-xs text-muted-foreground">{t("departmentPage.elapsed").replace("{minutes}", String(minutes))}</span> : null}
+                  {minutes !== null ? <span className="text-[13px] font-medium text-muted-foreground">{t("departmentPage.elapsed").replace("{minutes}", String(minutes))}</span> : null}
                 </span>
               );
             })}
           </div>
-        </Card>
+        </div>
         {!wide ? (
-          <details className="group shrink-0 rounded-lg border border-border/80 bg-card shadow-workbench">
-            <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-sm font-semibold">
-              {t("ceoOffice.needsYouSummary").replace("{count}", String(needsYouCount(needs)))}
-              <ChevronDown aria-hidden="true" className="size-4 transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="max-h-[40dvh] overflow-y-auto border-t border-border/70 p-3">{needsYou}</div>
-          </details>
+          <NeedsYouFrame count={needsYouCount(needs)} wide={false}>
+            {needsYou}
+          </NeedsYouFrame>
         ) : null}
         <div aria-label={t("departmentPage.tasks")} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1" role="region" tabIndex={0}>
           <div className="grid content-start gap-3 pb-2">
@@ -194,7 +189,7 @@ export function DepartmentPage(props: DepartmentPageProps) {
             ))}
             {messages.length > 0 ? (
               <section aria-label={t("departmentPage.messages")} className="grid gap-3 pt-2">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("departmentPage.messages")}</h2>
+                <h2 className="text-[13px] font-medium normal-case text-muted-foreground">{t("departmentPage.messages")}</h2>
                 {messages.map((item) => (
                   <CeoOfficeCard item={item} key={item.id} view={view} />
                 ))}
@@ -215,10 +210,9 @@ export function DepartmentPage(props: DepartmentPageProps) {
         />
       </div>
       {wide ? (
-        <aside aria-label={t("ceoOffice.needsYou")} className="hidden min-h-0 overflow-y-auto lg:block">
-          <h2 className="mb-3 text-sm font-semibold">{t("ceoOffice.needsYou")}</h2>
+        <NeedsYouFrame count={needsYouCount(needs)} wide>
           {needsYou}
-        </aside>
+        </NeedsYouFrame>
       ) : null}
       <CeoOfficeItemDialog
         actions={{ onConfirmHumanAction: props.onConfirmHumanAction, onCreateCeoReviewDecision: props.onCreateCeoReviewDecision, onResolveFounderDecision: props.onResolveFounderDecision }}

@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import type { ReplanProposalSummary, ReplanRequirementSummary, ReplanTaskDefinitionSummary, TaskSummary } from "../../api/client";
 import { cn } from "@/lib/utils";
-import { Alert, Button, Card, Label, Textarea } from "../ui";
+import { Alert, Button, Label, Textarea } from "../ui";
 import { KeyValueList, LineList } from "../workbench/KeyValueList";
 import { useLanguage, type TranslationKey } from "../../ui/language";
 import { resolveLocalizedValue } from "../../ui/language/localizedText";
@@ -55,7 +55,8 @@ export function ReplanProposalCard({
   }
 
   return (
-    <Card className="grid gap-4 p-4">
+    // A reading surface inside the trace panel, not a second bordered card.
+    <div className="im-reading grid gap-4">
       <div className="flex flex-wrap items-start gap-2">
         <p className="min-w-0 flex-1 text-sm font-medium">
           {sourceTask ? title(sourceTask.id) : t("operations.unknownTask")} —{" "}
@@ -63,7 +64,7 @@ export function ReplanProposalCard({
         </p>
         <span className="text-xs text-muted-foreground">{formatReplanProposalStatus(proposal.status, t)}</span>
         {mode ? (
-          <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
+          <span className="rounded-[var(--r-pill)] bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
             {t(mode === "revision" ? "operations.replanModeLabelRevision" : "operations.replanModeLabelSplit")}
           </span>
         ) : null}
@@ -112,7 +113,7 @@ export function ReplanProposalCard({
       ) : (
         <p className="text-sm text-muted-foreground">{closedMessage(proposal, t)}</p>
       )}
-    </Card>
+    </div>
   );
 }
 
