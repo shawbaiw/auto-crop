@@ -1,6 +1,6 @@
 import "@xyflow/react/dist/style.css";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance } from "@xyflow/react";
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 import type { DepartmentSummary, KeyResultSummary, ObjectiveSummary, TaskSummary } from "../../api/client";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "../../ui/language";
@@ -35,7 +35,6 @@ export function CeoPlanCanvas({
   tasks: TaskSummary[];
 }) {
   const { t } = useLanguage();
-  const containerRef = useRef<HTMLDivElement>(null);
   const departmentsById = useMemo(() => new Map(departments.map((department) => [department.id, department])), [departments]);
   const { nodes, edges } = useMemo(() => {
     const layout = layoutPlan(tasks, departments);
@@ -78,7 +77,7 @@ export function CeoPlanCanvas({
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <PlanGoals keyResults={keyResults} locale={locale} objectives={objectives} tasks={tasks} />
-      <div aria-label={t("ceoOffice.planCanvas")} className="min-h-64 flex-1 overflow-hidden rounded-[var(--r-panel)] border border-[color:var(--edge-highlight)] bg-[color:var(--c-mist)]" ref={containerRef} role="region">
+      <div aria-label={t("ceoOffice.planCanvas")} className="min-h-64 flex-1 overflow-hidden rounded-[var(--r-panel)] border border-[color:var(--edge-highlight)] bg-[color:var(--c-mist)]" role="region">
         <ReactFlow
           edges={edges}
           edgesFocusable={false}
@@ -88,7 +87,7 @@ export function CeoPlanCanvas({
           nodes={nodes}
           nodesConnectable={false}
           nodesDraggable={false}
-          onInit={(instance) => showPlanStart(instance, nodes, containerRef.current)}
+          onInit={showPlanStart}
           onNodeClick={(_, node) => onOpenDepartment(tasks.find((task) => task.id === node.id)?.departmentId ?? "")}
         >
           <Background color="var(--c-cool)" gap={20} size={1} />
@@ -108,18 +107,12 @@ export function CeoPlanCanvas({
 }
 
 /**
- * Start where the plan starts: its first tasks at the top left, zoomed out only as far as text stays
- * readable. A wide plan continues to the right, where the founder pans to it.
+ * Start where the plan starts: its first tasks at the top left, at full size so node text stays
+ * readable. A wide or tall plan continues beyond the frame, where the founder pans to it.
  */
-function showPlanStart(instance: ReactFlowInstance<TaskNode, Edge>, nodes: TaskNode[], container: HTMLDivElement | null) {
+function showPlanStart(instance: ReactFlowInstance<TaskNode, Edge>) {
   const margin = 24;
-  const width = container?.clientWidth ?? 0;
-  const height = container?.clientHeight ?? 0;
-  const contentWidth = Math.max(...nodes.map((node) => node.position.x)) + PLAN_NODE_WIDTH;
-  const contentHeight = Math.max(...nodes.map((node) => node.position.y)) + PLAN_NODE_HEIGHT;
-  const fit = Math.min((width - margin * 2) / contentWidth, (height - margin * 2) / contentHeight);
-  const zoom = Math.min(1, Math.max(0.7, Number.isFinite(fit) && fit > 0 ? fit : 1));
-  void instance.setViewport({ x: margin, y: margin, zoom });
+  void instance.setViewport({ x: margin, y: margin, zoom: 1 });
 }
 
 function TaskNodeView({ data, selected }: NodeProps<TaskNode>) {
