@@ -5,7 +5,7 @@ import type { DepartmentSummary, KeyResultSummary, ObjectiveSummary, TaskSummary
 import { cn } from "@/lib/utils";
 import { useLanguage } from "../../ui/language";
 import { departmentName, taskTitle } from "../../ui/language/localizedNames";
-import { TaskStatusBadge } from "../task/TaskStatusBadge";
+import { TaskStatusTag } from "../task/TaskStatusTag";
 import { taskStatusTone, taskStatusToneLabelKey } from "../task/taskStatusTone";
 import { PlanGoals } from "./PlanGoals";
 import { DEPARTMENT_COLORS, layoutPlan, PLAN_NODE_HEIGHT, PLAN_NODE_WIDTH } from "./planLayout";
@@ -78,7 +78,7 @@ export function CeoPlanCanvas({
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <PlanGoals keyResults={keyResults} locale={locale} objectives={objectives} tasks={tasks} />
-      <div aria-label={t("ceoOffice.planCanvas")} className="min-h-64 flex-1 overflow-hidden rounded-lg border border-border/80 bg-[color:var(--c-mist)]" ref={containerRef} role="region">
+      <div aria-label={t("ceoOffice.planCanvas")} className="min-h-64 flex-1 overflow-hidden rounded-[var(--r-panel)] border border-[color:var(--edge-highlight)] bg-[color:var(--c-mist)]" ref={containerRef} role="region">
         <ReactFlow
           edges={edges}
           edgesFocusable={false}
@@ -92,7 +92,7 @@ export function CeoPlanCanvas({
           onNodeClick={(_, node) => onOpenDepartment(tasks.find((task) => task.id === node.id)?.departmentId ?? "")}
         >
           <Background color="var(--c-cool)" gap={20} size={1} />
-          <Controls showInteractive={false} />
+          <Controls className="im-flow-controls" orientation="horizontal" showInteractive={false} />
         </ReactFlow>
       </div>
       <ul aria-label={t("ceoOffice.planLegend")} className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -122,24 +122,24 @@ function showPlanStart(instance: ReactFlowInstance<TaskNode, Edge>, nodes: TaskN
   void instance.setViewport({ x: margin, y: margin, zoom });
 }
 
-function TaskNodeView({ data }: NodeProps<TaskNode>) {
-  const { t } = useLanguage();
+function TaskNodeView({ data, selected }: NodeProps<TaskNode>) {
   const tone = taskStatusTone(data.status);
   return (
     <div
-      className="grid cursor-pointer content-between gap-1 rounded-md border border-status-neutral-border bg-card px-3 py-2 text-left"
+      className={cn(
+        "grid cursor-pointer grid-rows-[auto_1fr_auto] gap-1.5 rounded-[var(--r-reading)] border border-status-neutral-border bg-[color:var(--c-warm)] px-3.5 py-3 text-left",
+        selected && "outline outline-2 -outline-offset-1 outline-[color:var(--c-charcoal)]",
+      )}
       style={{ width: PLAN_NODE_WIDTH, height: PLAN_NODE_HEIGHT }}
       title={data.label}
     >
       <Handle className="!opacity-0" isConnectable={false} position={Position.Left} type="target" />
-      <p className={cn("line-clamp-2 text-xs font-semibold leading-snug", tone === "cancelled" && "line-through text-muted-foreground")}>{data.title}</p>
-      <div className="flex items-center justify-between gap-2 text-[11px]">
-        <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-          <span aria-hidden="true" className="size-2 shrink-0 rounded-[var(--r-pill)]" style={{ backgroundColor: data.color }} />
-          <span className="truncate">{data.departmentLabel}</span>
-        </span>
-        <TaskStatusBadge className="px-1.5 text-[11px]" status={data.status} />
-      </div>
+      <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <span aria-hidden="true" className="size-2 shrink-0 rounded-[var(--r-pill)]" style={{ backgroundColor: data.color }} />
+        <span className="truncate">{data.departmentLabel}</span>
+      </span>
+      <p className={cn("line-clamp-2 text-[13px] font-semibold leading-snug", tone === "cancelled" && "line-through text-muted-foreground")}>{data.title}</p>
+      <TaskStatusTag className="justify-self-start" status={data.status} />
       <Handle className="!opacity-0" isConnectable={false} position={Position.Right} type="source" />
     </div>
   );

@@ -1,13 +1,14 @@
 import { Target } from "lucide-react";
 import type { KeyResultSummary, Locale, ObjectiveSummary, TaskSummary } from "../../api/client";
-import { cn } from "@/lib/utils";
+import { StatusTag, type StatusTone } from "../ice-mist";
 import { useLanguage, type TranslationKey } from "../../ui/language";
 import { resolveLocalizedValue } from "../../ui/language/localizedText";
 
-const STATUS_TONE: Record<string, string> = {
-  met: "bg-status-success-bg text-status-success",
-  missed: "bg-status-failed-bg text-status-failed",
-  active: "bg-status-neutral-bg text-status-neutral",
+// Color system v2 §6.3.
+const STATUS_TONE: Record<string, StatusTone> = {
+  met: "success",
+  missed: "failed",
+  active: "queued",
 };
 
 /**
@@ -30,11 +31,11 @@ export function PlanGoals({
   const { t } = useLanguage();
   if (objectives.length === 0) return null;
   return (
-    <section aria-label={t("ceoOffice.planGoals")} className="grid max-h-48 shrink-0 gap-2 overflow-y-auto rounded-lg border border-border/80 bg-card p-3">
+    <section aria-label={t("ceoOffice.planGoals")} className="grid max-h-48 shrink-0 gap-3 overflow-y-auto rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3">
       {[...objectives].sort((a, b) => a.priority - b.priority).map((objective) => (
-        <div className="grid gap-1" key={objective.id}>
-          <h3 className="flex items-center gap-1.5 text-xs font-semibold">
-            <Target aria-hidden="true" className="size-3.5 text-muted-foreground" />
+        <div className="grid gap-1.5" key={objective.id}>
+          <h3 className="flex items-center gap-1.5 text-[15px] font-semibold normal-case">
+            <Target aria-hidden="true" className="size-4 text-status-neutral-icon" />
             {resolveLocalizedValue(objective.titleText, locale, objective.title)}
           </h3>
           <ul className="grid gap-1">
@@ -43,7 +44,7 @@ export function PlanGoals({
               const done = serving.filter((task) => task.status === "complete").length;
               const status = keyResult.status in STATUS_TONE ? keyResult.status : "active";
               return (
-                <li className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-5 text-xs" key={keyResult.id}>
+                <li className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-[22px] text-[13px]" key={keyResult.id}>
                   <span className="min-w-0 font-medium">{resolveLocalizedValue(keyResult.titleText, locale, keyResult.title)}</span>
                   <span className="text-muted-foreground">
                     {t("ceoOffice.goalTarget").replace("{target}", resolveLocalizedValue(keyResult.targetValueText, locale, keyResult.targetValue))}
@@ -51,7 +52,7 @@ export function PlanGoals({
                   <span className="text-muted-foreground">
                     {serving.length === 0 ? t("ceoOffice.goalNoTasks") : t("ceoOffice.goalTasks").replace("{done}", String(done)).replace("{total}", String(serving.length))}
                   </span>
-                  <span className={cn("rounded-[var(--r-pill)] px-1.5 py-0.5 font-medium", STATUS_TONE[status])}>{t(`ceoOffice.keyResultStatus.${status}` as TranslationKey)}</span>
+                  <StatusTag tone={STATUS_TONE[status]!}>{t(`ceoOffice.keyResultStatus.${status}` as TranslationKey)}</StatusTag>
                 </li>
               );
             })}

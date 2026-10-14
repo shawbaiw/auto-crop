@@ -1,9 +1,9 @@
 import type { DepartmentSummary, TaskSummary } from "../../api/client";
 
-export const PLAN_NODE_WIDTH = 224;
-export const PLAN_NODE_HEIGHT = 84;
-const COLUMN_GAP = 72;
-const ROW_GAP = 20;
+export const PLAN_NODE_WIDTH = 248;
+export const PLAN_NODE_HEIGHT = 116;
+const COLUMN_GAP = 64;
+const ROW_GAP = 24;
 
 /**
  * One low-saturation color per department, in rail order (color system v2 §5.6), each ≥3.4:1 on warm
