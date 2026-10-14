@@ -49,7 +49,7 @@ export function DecisionPanel({
             <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
               {option.label}
               {option.recommended ? (
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{t("ceoOffice.recommended")}</span>
+                <span className="rounded-[var(--r-pill)] border border-foreground px-2 py-0.5 text-xs font-medium text-foreground">{t("ceoOffice.recommended")}</span>
               ) : null}
             </p>
             {option.tradeoffs ? <p className="text-sm text-muted-foreground">{option.tradeoffs}</p> : null}
@@ -98,7 +98,7 @@ export function DecisionPanel({
           </div>
         </details>
       ) : null}
-      {error ? <p className="text-sm text-red-700" role="alert">{error}</p> : null}
+      {error ? <p className="text-sm text-status-failed" role="alert">{error}</p> : null}
     </section>
   );
 }

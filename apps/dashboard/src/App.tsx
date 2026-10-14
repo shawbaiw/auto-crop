@@ -54,6 +54,7 @@ type AppView = "starting" | "onboarding" | "creating" | "workbench";
 const currentCompanyStorageKey = "auto-crop.currentCompanyId";
 const currentViewStorageKey = "auto-crop.currentView";
 const creationIdempotencyKeyStorageKey = "auto-crop.creationIdempotencyKey";
+const creationCompleteHoldMs = 1200;
 
 export default function App({ apiClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createApiClient(), [apiClient]);
@@ -105,6 +106,15 @@ export default function App({ apiClient }: AppProps) {
   // The company the founder left to create a new one, so the Onboarding Wizard can go back to it.
   const [returnCompanyId, setReturnCompanyId] = useState<string | null>(null);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("company");
+  const creationCompleteTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (creationCompleteTimerRef.current !== null) {
+        window.clearTimeout(creationCompleteTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const companyId = readCurrentCompanyId();
@@ -216,7 +226,7 @@ export default function App({ apiClient }: AppProps) {
   }
 
   /** Adopts a company snapshot. Creation shows its own page; a created company opens its Workbench. */
-  function applyCompanyState(response: CreateCompanyResponse, nextLocation: WorkbenchLocation = locationRef.current) {
+  function applyCompanyState(response: CreateCompanyResponse, nextLocation: WorkbenchLocation = locationRef.current, holdCompletedCreation = false) {
     setBlueprint(response);
     setProof(response.proof ?? []);
     setBusinessArtifacts(response.businessArtifacts ?? []);
@@ -236,11 +246,27 @@ export default function App({ apiClient }: AppProps) {
       clearCreationIdempotencyKey();
     }
     const isCreationStatus = response.company.status === "creating" || response.company.status === "creation_failed";
+    const shouldHoldCompletedCreation = response.company.status !== "creating"
+      && response.company.status !== "creation_failed"
+      && (viewRef.current === "creating" || companyStatusRef.current === "creating")
+      && (holdCompletedCreation || (response.creationEvents ?? []).some((event) => event.type === "company_creation_completed"));
     setLocation(
       nextLocation.page === "department" && !response.departments.some((department) => department.id === nextLocation.departmentId)
         ? ceoOfficeLocation
         : nextLocation,
     );
+    if (creationCompleteTimerRef.current !== null) {
+      window.clearTimeout(creationCompleteTimerRef.current);
+      creationCompleteTimerRef.current = null;
+    }
+    if (shouldHoldCompletedCreation) {
+      setView("creating");
+      creationCompleteTimerRef.current = window.setTimeout(() => {
+        creationCompleteTimerRef.current = null;
+        setView("workbench");
+      }, creationCompleteHoldMs);
+      return;
+    }
     setView(isCreationStatus ? "creating" : "workbench");
   }
 
@@ -329,7 +355,7 @@ export default function App({ apiClient }: AppProps) {
           .then((response) => {
             if (cancelled || requestRevision !== revision) return;
             if (["task_review", "company_creation_completed", "company_creation_failed", "company_report_ready"].includes(event.type)) {
-              applyCompanyState(response, event.type.startsWith("company_creation_") ? ceoOfficeLocation : locationRef.current);
+              applyCompanyState(response, event.type.startsWith("company_creation_") ? ceoOfficeLocation : locationRef.current, event.type === "company_creation_completed");
             } else {
               adoptBusinessProjection(response);
             }
@@ -451,6 +477,7 @@ export default function App({ apiClient }: AppProps) {
     }
 
     setIsCreating(true);
+    setCreationEvents([]);
     try {
       const response = await client.retryCompanyCreation(companyId);
       applyCompanyState(response, ceoOfficeLocation);
@@ -781,8 +808,7 @@ export default function App({ apiClient }: AppProps) {
   }
 
   /**
-   * Leaves a failed creation, whether or not the founder stopped it first: for the best other company,
-   * else the Onboarding Wizard. There is nothing to cancel back to, so the wizard offers no way back.
+   * Leaves a failed creation for the best other company, else the Onboarding Wizard. There is nothing to cancel back to, so the wizard offers no way back.
    */
   function leaveFailedCreation() {
     const failedCompanyId = blueprint?.company.id;
@@ -851,8 +877,6 @@ export default function App({ apiClient }: AppProps) {
         permissionMode={blueprint?.company.permissionMode ?? permissionMode}
         selectedAgent={selectedAgent}
         selectedAgentId={creatingAgentId || undefined}
-        stopCommand={blueprint ? commands["stop-operating"] : undefined}
-        onStopped={leaveFailedCreation}
         leave={blueprint ? { kind: otherCompany ? "other" : "new", run: leaveFailedCreation } : undefined}
       />,
     );
@@ -860,19 +884,21 @@ export default function App({ apiClient }: AppProps) {
 
   if (view === "workbench" && blueprint) {
     return renderModernAppFrame(
-      <WorkbenchFrame
-        agents={agents}
-        ceoOfficeItems={(blueprint.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
-        commands={commands}
-        company={blueprint.company}
-        departments={blueprint.departments}
-        location={location}
-        onNavigate={setLocation}
-        replanProposals={replanProposals}
-        tasks={blueprint.tasks}
-      >
-        {renderWorkbenchPage(blueprint)}
-      </WorkbenchFrame>,
+      <div className="workbench-enter">
+        <WorkbenchFrame
+          agents={agents}
+          ceoOfficeItems={(blueprint.ceoOfficeItems ?? []) as CeoOfficeItemSummary[]}
+          commands={commands}
+          company={blueprint.company}
+          departments={blueprint.departments}
+          location={location}
+          onNavigate={setLocation}
+          replanProposals={replanProposals}
+          tasks={blueprint.tasks}
+        >
+          {renderWorkbenchPage(blueprint)}
+        </WorkbenchFrame>
+      </div>,
     );
   }
 

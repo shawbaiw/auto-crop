@@ -1,11 +1,22 @@
-import { Bot, CircleAlert, User } from "lucide-react";
+import { Bot, CircleAlert, Eye, Hand, Sparkle, User } from "lucide-react";
 import type { CeoOfficeItemSummary, CompanySummary, DepartmentSummary } from "../../api/client";
 import { Button } from "@/components/ui";
+import { StatusTag } from "../ice-mist";
 import { cn } from "@/lib/utils";
 import { isUnseenSince } from "../../ui/ceoOutcomes/lastSeen";
 import { useLanguage, type TranslationKey } from "../../ui/language";
 import { departmentName } from "../../ui/language/localizedNames";
 import { formatCeoOfficeItemType, formatTimelineRelativeTime, formatTimelineTasks, timelineItemView, type TimelineRenderContext } from "./timelineItemView";
+
+/**
+ * Timeline materials (spec §3, §5.3): agents speak from translucent panels with a highlight edge; text
+ * reads at 15px within 72 characters; meta stays 13px secondary, never lighter.
+ */
+const agentCard = "grid gap-2 rounded-[var(--r-panel)] border border-[color:var(--edge-highlight)] bg-[color:var(--surface-panel)] px-5 py-4";
+const cardTitle = "text-[15px] font-semibold leading-snug";
+const cardBody = "max-w-[72ch] text-[15px] leading-relaxed text-foreground";
+const cardMeta = "text-[13px] text-muted-foreground";
+const cardMetaRow = "flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] font-medium text-muted-foreground";
 
 /** What every CEO Office card needs from its page. */
 export type CeoOfficeView = {
@@ -22,7 +33,7 @@ export type CeoOfficeView = {
   intakeDepartments: Map<string, string | null>;
 };
 
-/** Cards that ask the founder to act, while they still do. They carry the amber of "needs you". */
+/** Cards that ask the founder to act, while they still do. They carry the charcoal "your turn" tag. */
 function needsFounder(item: CeoOfficeItemSummary): boolean {
   return item.actionBearing && (item.type === "decision_request" || item.type === "approval_request" || item.type === "human_action" || item.type === "blocked_issue");
 }
@@ -39,21 +50,16 @@ export function CeoOfficeCard({ item, view }: { item: CeoOfficeItemSummary; view
   const title = ctx.localize(item.titleText, item.title);
   const typeLabel = formatCeoOfficeItemType(item.type, ctx.t);
   return (
-    <article
-      className={cn(
-        "grid gap-1.5 rounded-lg border border-border/80 bg-card p-3 shadow-workbench",
-        needsFounder(item) && "border-l-4 border-l-amber-400",
-      )}
-    >
+    <article className={agentCard}>
       <CardMeta item={item} typeLabel={typeLabel} view={view} />
       <button
         aria-label={ctx.t("ceoOffice.openCard").replace("{type}", typeLabel).replace("{title}", title)}
-        className="grid gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="grid gap-1 rounded-[var(--r-reading)] text-left focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none"
         onClick={() => view.onOpenItem(item)}
         type="button"
       >
-        <span className="text-sm font-semibold leading-snug">{title}</span>
-        <span className="text-sm text-foreground/80">{timelineItemView(item, ctx).keyLine}</span>
+        <span className={cardTitle}>{title}</span>
+        <span className={cardBody}>{timelineItemView(item, ctx).keyLine}</span>
         {item.type === "task_brief" ? <TaskBriefLines data={item.data} view={view} /> : null}
       </button>
     </article>
@@ -66,9 +72,9 @@ function TaskBriefLines({ data, view }: { data: Extract<CeoOfficeItemSummary, { 
   const goal = [ctx.line(data.objectiveTitle), ctx.line(data.keyResultTitle)].filter(Boolean).join(" / ");
   return (
     <>
-      {goal ? <span className="text-xs text-muted-foreground">{goal}</span> : null}
+      {goal ? <span className={cardMeta}>{goal}</span> : null}
       {data.dependsOnTaskIds.length > 0 ? (
-        <span className="text-xs text-muted-foreground">
+        <span className={cardMeta}>
           {`${ctx.t("ceoOffice.row.dependsOn")}: ${formatTimelineTasks(data.dependsOnTaskIds, ctx.tasksById, ctx.locale, ctx.t)}`}
         </span>
       ) : null}
@@ -81,12 +87,18 @@ function CardMeta({ item, typeLabel, view }: { item: CeoOfficeItemSummary; typeL
   const department = item.departmentId ? view.departmentsById.get(item.departmentId) : undefined;
   const name = department ? departmentName(department, view.ctx.locale) : null;
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-      <span className={cn("font-medium", needsFounder(item) ? "text-amber-800" : "text-foreground/70")}>{typeLabel}</span>
+    <div className={cardMetaRow}>
+      {needsFounder(item) ? (
+        <StatusTag icon={item.type === "approval_request" ? Eye : Hand} tone="yourTurn">
+          {typeLabel}
+        </StatusTag>
+      ) : (
+        <span className="font-semibold text-foreground">{typeLabel}</span>
+      )}
       {department && name ? (
         <Button
           aria-label={t("ceoOffice.openDepartment").replace("{department}", name)}
-          className="text-xs text-muted-foreground"
+          className="text-[13px] font-medium text-muted-foreground"
           onClick={() => view.onOpenDepartment(department.id)}
           variant="link"
         >
@@ -95,7 +107,9 @@ function CardMeta({ item, typeLabel, view }: { item: CeoOfficeItemSummary; typeL
       ) : null}
       <time dateTime={item.occurredAt}>{formatTimelineRelativeTime(item.occurredAt, language)}</time>
       {isUnseenSince(item.occurredAt, view.lastSeen) ? (
-        <span className="rounded-full bg-blue-50 px-1.5 py-0.5 font-medium text-blue-700">{t("ceoOffice.new")}</span>
+        <StatusTag icon={Sparkle} tone="running">
+          {t("ceoOffice.new")}
+        </StatusTag>
       ) : null}
     </div>
   );
@@ -120,15 +134,16 @@ function FounderIntakeCard({ item, view }: { item: Extract<CeoOfficeItemSummary,
   const routedFrom = item.data.routedFromIntakeId;
   const source = routedFrom && view.intakeDepartments.has(routedFrom) ? intakeSpeaker(view.intakeDepartments.get(routedFrom) ?? null, view, t) : null;
   return (
-    <article aria-label={t("ceoOffice.type.founder_intake")} className="ml-auto grid w-fit max-w-[min(36rem,90%)] gap-1.5 rounded-lg bg-primary/5 p-3 ring-1 ring-primary/15">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <User aria-hidden="true" className="size-3.5" />
-        <span className="font-medium text-foreground/70">{t("ceoOffice.type.founder_intake")}</span>
+    // The founder's own words: on the right, on the brighter reading surface, no edge (spec §3).
+    <article aria-label={t("ceoOffice.type.founder_intake")} className="ml-auto grid w-fit max-w-[min(36rem,90%)] gap-1.5 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3">
+      <div className={cardMetaRow}>
+        <User aria-hidden="true" className="size-4" />
+        <span className="font-semibold text-foreground">{t("ceoOffice.type.founder_intake")}</span>
         <time dateTime={item.occurredAt}>{formatTimelineRelativeTime(item.occurredAt, language)}</time>
       </div>
-      {source ? <p className="text-xs text-muted-foreground">{t("ceoOffice.intakePassedOnFrom").replace("{source}", source)}</p> : null}
-      <p className="whitespace-pre-wrap break-words text-sm">{item.data.body}</p>
-      {waiting ? <p className="text-xs text-muted-foreground motion-safe:animate-pulse">{t(waiting).replace("{agent}", speaker)}</p> : null}
+      {source ? <p className={cardMeta}>{t("ceoOffice.intakePassedOnFrom").replace("{source}", source)}</p> : null}
+      <p className={cn(cardBody, "whitespace-pre-wrap break-words")}>{item.data.body}</p>
+      {waiting ? <p className={cardMeta}>{t(waiting).replace("{agent}", speaker)}</p> : null}
     </article>
   );
 }
@@ -147,17 +162,14 @@ function IntakeOutcomeCard({ item, view }: { item: Extract<CeoOfficeItemSummary,
     .filter((task): task is NonNullable<typeof task> => Boolean(task));
   const targetDepartment = item.data.targetDepartmentId ? view.departmentsById.get(item.data.targetDepartmentId) : undefined;
   return (
-    <article
-      aria-label={`${speaker}: ${headline}`}
-      className={cn("grid max-w-[min(40rem,95%)] gap-1.5 rounded-lg border border-border/80 bg-card p-3 shadow-workbench", failed && "border-l-4 border-l-red-400")}
-    >
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {failed ? <CircleAlert aria-hidden="true" className="size-3.5 text-red-600" /> : <Bot aria-hidden="true" className="size-3.5" />}
-        <span className="font-medium text-foreground/70">{speaker}</span>
+    <article aria-label={`${speaker}: ${headline}`} className={cn(agentCard, "max-w-[min(40rem,95%)]")}>
+      <div className={cardMetaRow}>
+        {failed ? <CircleAlert aria-hidden="true" className="size-4 text-status-failed-icon" /> : <Bot aria-hidden="true" className="size-4" />}
+        <span className="font-semibold text-foreground">{speaker}</span>
         <time dateTime={item.occurredAt}>{formatTimelineRelativeTime(item.occurredAt, language)}</time>
       </div>
-      <p className="text-sm font-semibold">{headline}</p>
-      <p className="text-sm text-foreground/80">{timelineItemView(item, ctx).keyLine}</p>
+      <p className={cardTitle}>{headline}</p>
+      <p className={cardBody}>{timelineItemView(item, ctx).keyLine}</p>
       {linkedTasks.length > 0 && !failed ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <span className="text-muted-foreground">{t(item.data.outcome === "attach_to_task" ? "ceoOffice.intakeTask" : "ceoOffice.intakeNewTasks")}:</span>
@@ -184,9 +196,9 @@ function IntakeOutcomeCard({ item, view }: { item: Extract<CeoOfficeItemSummary,
         </Button>
       ) : null}
       {failed && item.data.failureReason ? (
-        <details className="text-xs text-muted-foreground">
+        <details className={cardMeta}>
           <summary className="cursor-pointer">{t("workbench.details")}</summary>
-          <code className="mt-1 block">{item.data.failureReason}</code>
+          <code className="im-code mt-1 block">{item.data.failureReason}</code>
         </details>
       ) : null}
     </article>

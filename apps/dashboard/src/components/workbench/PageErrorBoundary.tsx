@@ -44,7 +44,7 @@ function PageCrashed({ error, onRetry }: { error: Error; onRetry(): void }) {
   return (
     <Card className="grid content-start gap-3 p-5" role="alert">
       <h2 className="flex items-center gap-2 text-sm font-semibold">
-        <AlertTriangle aria-hidden="true" className="size-4 text-amber-600" />
+        <AlertTriangle aria-hidden="true" className="size-4 text-status-failed-icon" />
         {t("workbench.pageCrashed")}
       </h2>
       <p className="text-sm text-muted-foreground">{t("workbench.pageCrashedBody")}</p>

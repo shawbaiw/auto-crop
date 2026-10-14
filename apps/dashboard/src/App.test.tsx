@@ -257,17 +257,19 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByRole("heading", { name: "CEO Office" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "CEO Office" })).toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Creating Company" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Creating Company" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Company Creation Trace" })).toBeInTheDocument();
     expect(document.querySelector("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("Creating Company")).toBeInTheDocument();
+    // Before the server accepts the request there is no event timestamp, so no elapsed time is shown.
+    expect(screen.queryByText("Running for")).not.toBeInTheDocument();
     expect(screen.getAllByText("Pricing Page Studio").length).toBeGreaterThan(0);
     expect(screen.getByText("Codex")).toBeInTheDocument();
-    expect(screen.getByText("Sending founder vision")).toBeInTheDocument();
-    expect(screen.getByText("CEO agent generating blueprint")).toBeInTheDocument();
-    expect(screen.getByText("Validating strict JSON")).toBeInTheDocument();
-    expect(screen.getByText("Creating departments and tasks")).toBeInTheDocument();
+    expect(screen.getByText("Accept creation request")).toBeInTheDocument();
+    expect(screen.getByText("Generate company blueprint")).toBeInTheDocument();
+    expect(screen.getByText("Parse blueprint")).toBeInTheDocument();
+    expect(screen.getByText("Create departments and tasks")).toBeInTheDocument();
+    expect(screen.getByText("Company ready")).toBeInTheDocument();
 
     created.resolve(createCompanyResponse());
     expect(await screen.findByRole("heading", { name: "Pricing Page Studio" })).toBeInTheDocument();
@@ -290,7 +292,7 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+    expect(await screen.findByText("Accept creation request")).toBeInTheDocument();
     expect(api.subscribeEvents).toHaveBeenCalledWith("company_1", expect.any(Function), expect.any(Function));
 
     act(() => {
@@ -302,7 +304,7 @@ describe("Dashboard App", () => {
       });
     });
 
-    expect(await screen.findByRole("navigation", { name: "Workbench" })).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Workbench" }, { timeout: 2500 })).toBeInTheDocument();
     expect(api.getCompanyState).toHaveBeenCalledWith("company_1");
   });
 
@@ -327,12 +329,12 @@ describe("Dashboard App", () => {
 
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
-    expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+    expect(await screen.findByText("Accept creation request")).toBeInTheDocument();
 
     // The completion event was published before this subscriber existed, so it never arrives.
     act(() => openStream?.());
 
-    expect(await screen.findByRole("navigation", { name: "Workbench" })).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Workbench" }, { timeout: 2500 })).toBeInTheDocument();
     expect(api.getCompanyState).toHaveBeenCalledWith("company_1");
   });
 
@@ -347,12 +349,14 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByText("Company Creation failed: temporary model failure")).toBeInTheDocument();
+    expect(await screen.findByText("Codex ran into an error")).toBeInTheDocument();
+    // A failed creation is retried or left, never abandoned from this page.
+    expect(screen.queryByRole("button", { name: "Stop and abandon this company" })).not.toBeInTheDocument();
     expect(screen.queryByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /retry creation/i }));
 
     expect(api.retryCompanyCreation).toHaveBeenCalledWith("company_1");
-    expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+    expect(await screen.findByText("Accept creation request")).toBeInTheDocument();
   });
 
   it("leaves a failed creation for another company", async () => {
@@ -382,40 +386,28 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    const nextSteps = await screen.findByRole("region", { name: "What happens to this company" });
-    await user.click(await within(nextSteps).findByRole("button", { name: "Back to another company" }));
+    await user.click(await screen.findByRole("button", { name: "Back to another company" }));
 
     expect(await screen.findByRole("heading", { name: "Ops Lab" })).toBeInTheDocument();
     expect(api.getCompanyState).toHaveBeenCalledWith("company_2");
     expect(api.stopCompany).not.toHaveBeenCalled();
   });
 
-  it("stops and abandons a failed creation after its name is typed, then starts afresh when no other company exists", async () => {
+  it("starts afresh from a failed creation when no other company exists", async () => {
     const api = createMockApiClient();
     const user = userEvent.setup();
     api.createCompany = vi.fn(async () => createFailedCompanyCreationResponse());
-    api.stopCompany = vi.fn(async (companyId: string) => ({
-      company: { id: companyId, name: "Pricing Page Studio", status: "stopped", playbookId: "ai-saas" },
-      interruptedTasks: [],
-      unreachableTasks: [],
-    }));
 
     render(<App apiClient={api} />);
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
     const nextSteps = await screen.findByRole("region", { name: "What happens to this company" });
-    expect(within(nextSteps).getByRole("button", { name: "Create New Company" })).toBeInTheDocument();
-    await user.click(within(nextSteps).getByRole("button", { name: "Stop and abandon this company" }));
-    expect(within(nextSteps).getByText(/no report is written/)).toBeInTheDocument();
-    const confirm = within(nextSteps).getByRole("button", { name: "Stop this company" });
-    expect(confirm).toBeDisabled();
-    await user.type(within(nextSteps).getByLabelText("Type Pricing Page Studio to confirm"), "Pricing Page Studio");
-    await user.click(confirm);
+    await user.click(within(nextSteps).getByRole("button", { name: "Create New Company" }));
 
-    expect(api.stopCompany).toHaveBeenCalledWith("company_1");
     expect(await screen.findByLabelText("Company name")).toBeInTheDocument();
-    // There is nothing to go back to: the abandoned company is not offered as a way back.
+    expect(api.stopCompany).not.toHaveBeenCalled();
+    // There is nothing to go back to: the failed company is not offered as a way back.
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 
@@ -435,7 +427,7 @@ describe("Dashboard App", () => {
     try {
       render(<App apiClient={api} />);
 
-      const summary = await screen.findByRole("region", { name: "Company Creation" });
+      const summary = await screen.findByRole("region", { name: "Creating Company" });
       expect(within(summary).getByText("Autonomous")).toBeInTheDocument();
       expect(await within(summary).findByText("Codex")).toBeInTheDocument();
     } finally {
@@ -464,11 +456,11 @@ describe("Dashboard App", () => {
 
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
-    expect(await screen.findByText("Company Creation accepted.")).toBeInTheDocument();
+    expect(await screen.findByText("Accept creation request")).toBeInTheDocument();
 
     await user.click(within(screen.getByRole("group", { name: "Language" })).getByRole("button", { name: "中文" }));
 
-    expect(await screen.findByText("已接受公司创建。")).toBeInTheDocument();
+    expect(await screen.findByText("接收创建请求")).toBeInTheDocument();
   });
 
   it("opens CEO Office after creation, with the timeline, a text composer and what needs the founder", async () => {
@@ -1062,16 +1054,12 @@ describe("Dashboard App", () => {
     expect(timeline).not.toHaveTextContent("ready_for_check_in");
     expect(timeline).not.toHaveTextContent("awaiting_founder_decision");
 
-    // Cards that still need the founder carry the amber of "needs you"; routine ones stay quiet.
-    expect(
-      within(timeline).getByRole("button", { name: "Open Needs your decision: Choose pricing path" }).closest("article"),
-    ).toHaveClass("border-l-amber-400");
-    expect(
-      within(timeline).getByRole("button", { name: "Open Stuck: Recover launch proof" }).closest("article"),
-    ).toHaveClass("border-l-amber-400");
-    expect(
-      within(timeline).getByRole("button", { name: "Open Waiting: Monitor first import" }).closest("article"),
-    ).not.toHaveClass("border-l-amber-400");
+    // Cards that still need the founder carry a "your turn" tag; routine ones stay quiet.
+    const yourTurnTag = (name: string) =>
+      within(timeline).getByRole("button", { name }).closest("article")!.querySelector('[data-tone="yourTurn"]');
+    expect(yourTurnTag("Open Needs your decision: Choose pricing path")).toHaveTextContent("Needs your decision");
+    expect(yourTurnTag("Open Stuck: Recover launch proof")).toHaveTextContent("Stuck");
+    expect(yourTurnTag("Open Waiting: Monitor first import")).toBeNull();
 
     // Opening the Decision card shows the options, trade-offs, rationale, and status as business language.
     await user.click(within(timeline).getByRole("button", { name: "Open Needs your decision: Choose pricing path" }));

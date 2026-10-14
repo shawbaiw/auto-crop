@@ -61,22 +61,22 @@ export function CeoTimeline({ companyId, items, view }: { companyId: string; ite
         role="region"
         tabIndex={0}
       >
-        <div className="grid content-end gap-3 pb-2">
+        <div className="grid content-end gap-4 pb-2">
           {groups.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">{t("ceoOffice.timelineEmpty")}</p> : null}
           {groups.map((group, index) =>
             index === groups.length - 1 ? (
-              <section aria-label={group.label} className="grid gap-3" key={group.key}>
-                <h3 className="text-center text-xs font-medium text-muted-foreground">{group.label}</h3>
+              <section aria-label={group.label} className="grid gap-4" key={group.key}>
+                <h3 className="text-center text-[13px] font-medium normal-case text-muted-foreground">{group.label}</h3>
                 {group.items.map((item) => (
                   <CeoOfficeCard item={item} key={item.id} view={view} />
                 ))}
               </section>
             ) : (
-              <details className="group grid gap-3" key={group.key}>
-                <summary className="cursor-pointer list-none text-center text-xs font-medium text-muted-foreground hover:text-foreground">
+              <details className="group grid gap-4" key={group.key}>
+                <summary className="mx-auto w-fit cursor-pointer list-none rounded-[var(--r-pill)] px-3 py-1 text-center text-[13px] font-medium text-muted-foreground transition-colors hover:bg-[color:var(--c-warm)] hover:text-foreground focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none">
                   {t("ceoOffice.earlierDay").replace("{date}", group.label).replace("{count}", String(group.items.length))}
                 </summary>
-                <div className="mt-3 grid gap-3">
+                <div className="mt-4 grid gap-4">
                   {group.items.map((item) => (
                     <CeoOfficeCard item={item} key={item.id} view={view} />
                   ))}
@@ -87,7 +87,7 @@ export function CeoTimeline({ companyId, items, view }: { companyId: string; ite
         </div>
       </div>
       {hasNewItems ? (
-        <Button className="absolute bottom-3 left-1/2 -translate-x-1/2 shadow-md" onClick={scrollToLatest} size="sm">
+        <Button className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-[var(--r-pill)] shadow-[var(--shadow-panel)]" onClick={scrollToLatest} size="sm">
           <ArrowDown aria-hidden="true" />
           {t("ceoOffice.newUpdates")}
         </Button>

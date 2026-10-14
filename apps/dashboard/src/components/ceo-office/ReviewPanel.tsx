@@ -69,7 +69,7 @@ export function ReviewPanel({
 
   return (
     <section aria-label={t("ceoOffice.reviews")} className="grid gap-4">
-      <Alert className={canApprove ? undefined : "border-amber-300 bg-amber-50 text-amber-900"} role="status">
+      <Alert role="status" variant={canApprove ? "info" : "caution"}>
         {canApprove ? t("ceoOffice.reviewCanApprove") : t("ceoOffice.reviewCannotApprove")}
       </Alert>
       <div className="grid gap-1">
@@ -87,7 +87,7 @@ export function ReviewPanel({
       </div>
       <EvidenceDetails businessArtifacts={businessArtifacts} proofs={proofs} />
       <ReturnReasonFields note={note} onNoteChange={setNote} onReasonChange={setReason} reason={reason} />
-      {error ? <p className="text-sm text-red-700" role="alert">{error}</p> : null}
+      {error ? <p className="text-sm text-status-failed" role="alert">{error}</p> : null}
       <div className="flex flex-wrap justify-end gap-2">
         <Button aria-busy={submitting === "return"} disabled={submitting !== null} onClick={() => void decide("return")} variant="outline">
           {t("ceoOffice.return")}

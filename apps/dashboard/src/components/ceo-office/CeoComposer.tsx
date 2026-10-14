@@ -49,8 +49,9 @@ export function CeoComposer({
   };
 
   return (
+    // The composer docks on a warm panel: its input edge needs a warm surface to reach 3:1 (color system v2 §3.2).
     <form
-      className="grid shrink-0 gap-1.5"
+      className="grid shrink-0 gap-2 rounded-[var(--r-panel)] border border-[color:var(--edge-highlight)] bg-[color:var(--surface-panel)] p-3"
       onSubmit={(event) => {
         event.preventDefault();
         void send();
@@ -78,7 +79,7 @@ export function CeoComposer({
         <Button
           aria-busy={submitting}
           aria-label={t("ceoOffice.composerSend")}
-          className="absolute bottom-2.5 right-2.5"
+          className="absolute bottom-2.5 right-2.5 rounded-[var(--r-pill)]"
           disabled={!canSend}
           size="icon"
           type="submit"
@@ -86,10 +87,10 @@ export function CeoComposer({
           <Send aria-hidden="true" />
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground" id={hintId}>
+      <p className="px-2 text-xs text-muted-foreground" id={hintId}>
         {stopped ? t("ceoOffice.composerStopped") : companyStatus === "paused" ? t("ceoOffice.composerPaused") : copy?.hint ?? t("ceoOffice.composerHint")}
       </p>
-      {error ? <p className="text-xs text-red-700" role="alert">{error}</p> : null}
+      {error ? <p className="px-2 text-xs text-status-failed" role="alert">{error}</p> : null}
     </form>
   );
 }

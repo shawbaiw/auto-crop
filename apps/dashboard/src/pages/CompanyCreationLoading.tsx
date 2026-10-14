@@ -1,11 +1,11 @@
-import { ArrowLeft, CircleAlert, LoaderCircle, Plus, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowLeft, Check, ChevronRight, Circle, CircleAlert, Info, LoaderCircle, Plus, RefreshCw } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { AgentSummary, CompanyEventSummary } from "../api/client";
-import { CompanyFlowPage, CreationTimeline } from "../components/company-flow";
-import { Alert, AlertTitle, Button, Card } from "../components/ui";
-import { StopOperatingConfirm } from "../components/workbench/StopOperatingConfirm";
-import type { WorkbenchCommand } from "../components/workbench/workbenchCommands";
-import { useLanguage } from "../ui/language";
+import { AmbientBackground, Panel, PillButton, ReadingSurface, StatusTag } from "../components/ice-mist";
+import { LanguageSwitch } from "../components/workbench";
+import { AgentIcon } from "../components/workbench/AgentIcon";
+import { cn } from "@/lib/utils";
+import { useLanguage, type TranslationKey } from "../ui/language";
 import { resolveLocalizedValue } from "../ui/language/localizedText";
 import { formatPermissionMode } from "../ui/tasks/formatDisplayValue";
 
@@ -20,12 +20,9 @@ export type CompanyCreationLoadingProps = {
   /** Shown when the agent list has not loaded, so the CEO is never blank. */
   selectedAgentId?: string;
   /**
-   * A failed creation can also be stopped (ADR 0044) or left for another company, so this page is
-   * never a dead end. Both appear only when creation failed.
+   * A failed creation is retried or left for another company, so this page is never a dead end.
+   * "other" returns to another company; "new" opens the Onboarding Wizard when there is none.
    */
-  stopCommand?: WorkbenchCommand;
-  onStopped?(): void;
-  /** "other" returns to another company; "new" opens the Onboarding Wizard when there is none. */
   leave?: { kind: "other" | "new"; run(): void };
 };
 
@@ -38,111 +35,335 @@ export function CompanyCreationLoading({
   permissionMode,
   selectedAgent,
   selectedAgentId,
-  stopCommand,
-  onStopped,
   leave,
 }: CompanyCreationLoadingProps) {
   const { language, t } = useLanguage();
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const summaryId = "company-creation-summary";
-  const stagesId = "company-creation-stages";
-  const nextStepsId = "company-creation-next-steps";
+  const now = useNow(!isFailed);
+  const titleId = "company-creation-dialog-title";
+  const traceId = "company-creation-trace";
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setElapsedSeconds((current) => current + 1);
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const summary = [
-    { label: t("creating.company"), value: companyName },
-    { label: t("creating.ceo"), value: selectedAgent?.name ?? selectedAgentId ?? t("creating.selectedAgent") },
-    { label: t("creating.policy"), value: formatPermissionMode(permissionMode, t) },
-    { label: t("creating.elapsed"), value: `${elapsedSeconds}s` },
-  ];
+  const agentName = selectedAgent?.name ?? selectedAgentId ?? t("creating.selectedAgent");
+  const policyName = formatPermissionMode(permissionMode, t);
+  const trace = creationTrace(events, isFailed, t, now);
+  const traceElapsedSeconds = creationElapsedSeconds(events, isFailed, now);
+  const failedEvent = [...events].reverse().find((event) => event.type === "company_creation_failed");
+  const failureMessage = failedEvent ? resolveLocalizedValue(failedEvent.messageText, language, failedEvent.message) : null;
 
   return (
-    <CompanyFlowPage
-      eyebrow={companyName}
-      status={isFailed ? t("creating.failed") : t("creating.statusText")}
-      statusIcon={isFailed ? <CircleAlert aria-hidden="true" /> : <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" />}
-      title={t("app.title")}
-      titleId="company-creation-dialog-title"
-    >
-      <Card aria-labelledby={summaryId} className="grid gap-5 p-4 sm:p-6" role="region">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-foreground" id={summaryId}>
-            {t("creating.panel")}
-          </h2>
-          {!isFailed ? <span className="text-sm text-muted-foreground">{t("creating.status")}</span> : null}
+    <div className="modern-dashboard-shell">
+      <AmbientBackground>
+        <div className="mx-auto flex w-full max-w-[920px] flex-col gap-[var(--module-gap)]">
+          <header className="flex min-h-[var(--hit-min)] flex-wrap items-center justify-between gap-3">
+            <span className="text-[15px] font-semibold">{t("menu.app")}</span>
+            <LanguageSwitch />
+          </header>
+
+          <Panel aria-labelledby={titleId} className="flex flex-col gap-[var(--module-gap)]">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="min-w-0 break-words text-[17px] font-semibold">{companyName}</span>
+              {isFailed ? <StatusTag tone="failed">{t("creating.failed")}</StatusTag> : <StatusTag spin={false} tone="running">{t("creating.statusText")}</StatusTag>}
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <h1 className="break-words text-[34px] font-[350] normal-case leading-[1.1] tracking-[-0.02em] sm:text-[42px]" id={titleId}>
+                {isFailed ? t("creating.failureTitle") : t("creating.status")}
+              </h1>
+              <dl className="flex flex-wrap items-center gap-x-6 gap-y-1 text-[13px] font-medium text-[color:var(--text-secondary)]">
+                <div className="inline-flex gap-1.5">
+                  <dt>{t("creating.ceo")}</dt>
+                  <dd className="inline-flex items-center gap-1.5 text-[color:var(--text-primary)]">
+                    <AgentIcon agentId={selectedAgent?.id ?? selectedAgentId ?? ""} decorative name={agentName} />
+                    {agentName}
+                  </dd>
+                </div>
+                <div className="inline-flex gap-1.5">
+                  <dt>{t("creating.policy")}</dt>
+                  <dd className="text-[color:var(--text-primary)]">{policyName}</dd>
+                </div>
+                {traceElapsedSeconds !== null ? (
+                  <div className="inline-flex gap-1.5">
+                    <dt>{isFailed ? t("creating.stoppedAfter") : t("creating.runningFor")}</dt>
+                    <dd className="text-[color:var(--text-primary)]">{formatDuration(traceElapsedSeconds)}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </div>
+
+            <section aria-labelledby={traceId} className="flex flex-col gap-4 border-t border-[color:var(--edge-divider)] pt-[var(--module-gap)]">
+              <h2 className="text-[13px] font-medium normal-case text-[color:var(--text-secondary)]" id={traceId}>
+                {t("creating.trace")}
+              </h2>
+              <ol className="flex flex-col">
+                {trace.map((step, index) => (
+                  <CreationTraceStep isLast={index === trace.length - 1} key={step.type} step={step}>
+                    {step.state === "failed" ? (
+                      <CreationFailureRecovery agentName={agentName} failureMessage={failureMessage} isRetrying={isRetrying} leave={leave} onRetry={onRetry} />
+                    ) : null}
+                  </CreationTraceStep>
+                ))}
+              </ol>
+            </section>
+          </Panel>
         </div>
-        {!isFailed ? (
-          <div aria-label={t("creating.statusText")} className="h-1.5 overflow-hidden rounded-full bg-secondary" role="progressbar">
-            <span className="block h-full w-2/5 rounded-full bg-primary motion-safe:animate-progress-indeterminate" />
-          </div>
-        ) : null}
-        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {summary.map((item) => (
-            <div className="grid min-w-0 gap-1" key={item.label}>
-              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.label}</dt>
-              <dd className="break-words text-sm font-medium text-foreground">{item.value}</dd>
-            </div>
-          ))}
-        </dl>
-      </Card>
-
-      <Card aria-labelledby={stagesId} className="grid gap-4 p-4 sm:p-6" role="region">
-        <h2 className="text-base font-semibold text-foreground" id={stagesId}>
-          {t("creating.stages")}
-        </h2>
-        <CreationTimeline
-          expectedStages={[
-            t("creating.stageVision"),
-            t("creating.stageBlueprint"),
-            t("creating.stageJson"),
-            t("creating.stageTasks"),
-          ]}
-          isFailed={isFailed}
-          stages={events.map((event) => resolveLocalizedValue(event.messageText, language, event.message))}
-        />
-      </Card>
-
-      {isFailed ? (
-        <Alert className="flex flex-wrap items-center justify-between gap-3" role="status" variant="destructive">
-          <AlertTitle>{t("creating.failed")}</AlertTitle>
-          <Button disabled={isRetrying} onClick={onRetry} variant="outline">
-            <RefreshCw aria-hidden="true" />
-            {isRetrying ? t("creating.retrying") : t("creating.retry")}
-          </Button>
-        </Alert>
-      ) : null}
-
-      {isFailed && (stopCommand || leave) ? (
-        <Card aria-labelledby={nextStepsId} className="grid gap-3 p-4 sm:p-6" role="region">
-          <h2 className="text-base font-semibold text-foreground" id={nextStepsId}>
-            {t("creating.nextSteps")}
-          </h2>
-          {leave ? (
-            <div>
-              <Button onClick={leave.run} variant="outline">
-                {leave.kind === "other" ? <ArrowLeft aria-hidden="true" /> : <Plus aria-hidden="true" />}
-                {t(leave.kind === "other" ? "creating.backToOtherCompany" : "creating.createNewCompany")}
-              </Button>
-            </div>
-          ) : null}
-          {stopCommand ? (
-            <StopOperatingConfirm
-              command={stopCommand}
-              companyName={companyName}
-              explanation={t("creating.abandonExplanation")}
-              label={t("creating.abandon")}
-              onStopped={onStopped}
-            />
-          ) : null}
-        </Card>
-      ) : null}
-    </CompanyFlowPage>
+      </AmbientBackground>
+    </div>
   );
+}
+
+type CreationStepState = "complete" | "current" | "failed" | "pending";
+type CreationStep = { type: string; label: string; state: CreationStepState; durationLabel?: string };
+
+const creationStepTypes = [
+  "company_creation_accepted",
+  "company_creation_agent_started",
+  "company_creation_blueprint_parsed",
+  "company_creation_records_created",
+  "company_creation_completed",
+] as const;
+
+function creationTrace(events: CompanyEventSummary[], failed: boolean, t: (key: TranslationKey) => string, now: number): CreationStep[] {
+  const eventTypes = new Set(events.map((event) => event.type));
+  const eventByType = new Map(events.map((event) => [event.type, event]));
+  const completed = new Set<string>();
+  if (eventTypes.has("company_creation_accepted")) completed.add("company_creation_accepted");
+  if (eventTypes.has("company_creation_blueprint_parsed") || eventTypes.has("company_creation_records_created") || eventTypes.has("company_creation_completed")) {
+    completed.add("company_creation_agent_started");
+  }
+  if (eventTypes.has("company_creation_blueprint_parsed")) completed.add("company_creation_blueprint_parsed");
+  if (eventTypes.has("company_creation_records_created") || eventTypes.has("company_creation_completed")) completed.add("company_creation_records_created");
+  if (eventTypes.has("company_creation_completed")) completed.add("company_creation_completed");
+
+  const firstIncomplete = creationStepTypes.findIndex((type) => !completed.has(type));
+  const activeIndex = firstIncomplete === -1 ? creationStepTypes.length - 1 : firstIncomplete;
+
+  return creationStepTypes.map((type, index) => {
+    const state = completed.has(type)
+      ? "complete"
+      : failed && index === activeIndex
+        ? "failed"
+        : !failed && index === activeIndex
+          ? "current"
+          : "pending";
+    return {
+      type,
+      label: t(creationStepLabelKeys[type]),
+      state,
+      durationLabel: durationLabelForStep(type, index, state, eventByType, now),
+    };
+  });
+}
+
+const creationStepLabelKeys = {
+  company_creation_accepted: "creating.stepAccepted",
+  company_creation_agent_started: "creating.stepGeneratingBlueprint",
+  company_creation_blueprint_parsed: "creating.stepBlueprintParsed",
+  company_creation_records_created: "creating.stepRecordsCreated",
+  company_creation_completed: "creating.stepCompleted",
+} as const;
+
+const stepStateKeys = {
+  complete: "creating.stepState.complete",
+  current: "creating.stepState.current",
+  failed: "creating.stepState.failed",
+  pending: "creating.stepState.pending",
+} as const;
+
+/** One row of the trace: icon on a thin connector, label, real duration; the failed row expands in place. */
+function CreationTraceStep({ children, isLast, step }: { children?: ReactNode; isLast: boolean; step: CreationStep }) {
+  const isCurrent = step.state === "current";
+  return (
+    <li className="grid grid-cols-[24px_minmax(0,1fr)] gap-x-4">
+      <div className="relative flex justify-center pt-[3px]">
+        {!isLast ? <span aria-hidden="true" className="absolute bottom-0 top-[27px] w-px bg-[color:var(--edge-input)]" /> : null}
+        <StepIcon state={step.state} />
+      </div>
+      <div className={cn("min-w-0", !isLast && "pb-5")}>
+        <div
+          className={cn(
+            "flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1",
+            isCurrent && "-ml-2 -mt-1.5 rounded-[var(--r-reading)] border border-[color:var(--edge-divider)] bg-[color:var(--surface-reading)] py-1.5 pl-2 pr-3",
+          )}
+        >
+          <span
+            className={cn(
+              "text-[15px] leading-[1.6]",
+              step.state === "pending" ? "text-[color:var(--text-secondary)]" : "text-[color:var(--text-primary)]",
+              (isCurrent || step.state === "failed") && "font-semibold",
+            )}
+          >
+            {step.label}
+            <StepStateText state={step.state} />
+          </span>
+          {step.durationLabel ? <span className="im-code text-[color:var(--text-secondary)]">{step.durationLabel}</span> : null}
+        </div>
+        {children}
+      </div>
+    </li>
+  );
+}
+
+function StepStateText({ state }: { state: CreationStepState }) {
+  const { t } = useLanguage();
+  return <span className="sr-only"> · {t(stepStateKeys[state])}</span>;
+}
+
+function StepIcon({ state }: { state: CreationStepState }) {
+  if (state === "complete") {
+    return (
+      <span className="relative z-10 inline-flex size-5 items-center justify-center rounded-[var(--r-pill)] bg-[color:var(--status-success-fg)] text-[color:var(--text-on-dark)]">
+        <Check aria-hidden="true" className="size-3" strokeWidth={3} />
+      </span>
+    );
+  }
+  if (state === "current") {
+    return <LoaderCircle aria-hidden="true" className="im-spin relative z-10 size-5 text-[color:var(--status-running-fg)]" />;
+  }
+  if (state === "failed") {
+    return (
+      <span className="relative z-10 inline-flex size-5 items-center justify-center rounded-[var(--r-pill)] bg-[color:var(--status-failed-fg)] text-[12px] font-bold leading-none text-[color:var(--text-on-dark)]">
+        <span aria-hidden="true">!</span>
+      </span>
+    );
+  }
+  return <Circle aria-hidden="true" className="relative z-10 size-5 text-[color:var(--text-secondary)]" strokeWidth={1.5} />;
+}
+
+/**
+ * The recovery area under the failed step (spec §5.2, trimmed by the product owner): a one-line summary
+ * that opens to the full raw error, what was kept, then retry or leave. A failed creation is retried or
+ * left; it is not abandoned from here.
+ */
+function CreationFailureRecovery({
+  agentName,
+  failureMessage,
+  isRetrying,
+  leave,
+  onRetry,
+}: {
+  agentName: string;
+  failureMessage: string | null;
+  isRetrying: boolean;
+  leave?: { kind: "other" | "new"; run(): void };
+  onRetry?: () => void;
+}) {
+  const { t } = useLanguage();
+
+  return (
+    <div className="mt-3 flex flex-col gap-4">
+      {failureMessage ? (
+        <details className="group">
+          <summary className="flex min-h-[var(--hit-min)] cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-[var(--r-reading)] bg-[color:var(--status-failed-bg)] px-4 py-2 outline-none focus-visible:shadow-[var(--focus-ring)]">
+            <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-[color:var(--status-failed-fg)]" />
+            <span className="text-[15px] font-medium">{failureSummary(failureMessage, agentName, t)}</span>
+            <span className="inline-flex items-center gap-0.5 text-[13px] font-medium text-[color:var(--status-failed-fg)]">
+              <span aria-hidden="true">·</span>
+              {t("creating.viewErrorDetails")}
+              <ChevronRight aria-hidden="true" className="size-4 transition-transform duration-[var(--dur)] ease-[var(--ease)] group-open:rotate-90" />
+            </span>
+          </summary>
+          <ReadingSurface className="mt-2">
+            <p className="im-code whitespace-pre-wrap text-[color:var(--text-primary)]">{failureMessage}</p>
+          </ReadingSurface>
+        </details>
+      ) : null}
+
+      <p className="flex max-w-[72ch] items-start gap-2 text-[15px] leading-[1.6] text-[color:var(--text-secondary)]">
+        <Info aria-hidden="true" className="mt-1 size-4 shrink-0" />
+        {t("creating.failurePreserved")}
+      </p>
+
+      {onRetry || leave ? (
+        <section aria-label={t("creating.nextSteps")} className="flex flex-wrap gap-3">
+          {onRetry ? (
+            <PillButton disabled={isRetrying} onClick={onRetry} variant="primary">
+              <RefreshCw aria-hidden="true" />
+              {isRetrying ? t("creating.retrying") : t("creating.retry")}
+            </PillButton>
+          ) : null}
+          {leave ? (
+            <PillButton onClick={leave.run} variant="secondary">
+              {leave.kind === "other" ? <ArrowLeft aria-hidden="true" /> : <Plus aria-hidden="true" />}
+              {t(leave.kind === "other" ? "creating.backToOtherCompany" : "creating.createNewCompany")}
+            </PillButton>
+          ) : null}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function durationLabelForStep(
+  type: string,
+  index: number,
+  state: CreationStepState,
+  eventByType: Map<string, CompanyEventSummary>,
+  now: number,
+) {
+  const stepEvent = eventByType.get(type);
+  const start = parseEventTime(stepEvent);
+  const nextType = creationStepTypes[index + 1];
+  const nextEvent = nextType ? eventByType.get(nextType) : undefined;
+  const failedAt = parseEventTime(eventByType.get("company_creation_failed"));
+  const end = state === "complete" ? parseEventTime(nextEvent) : state === "failed" ? failedAt : state === "current" ? now : null;
+  // A step without both real times has no duration; a page-open clock is not one (spec: no invented data).
+  if (start !== null && end !== null && end >= start) return formatStepDuration((end - start) / 1000);
+  return "";
+}
+
+function parseEventTime(event: CompanyEventSummary | undefined) {
+  if (!event?.createdAt) return null;
+  const timestamp = Date.parse(event.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+/** Real time from acceptance to failure (or to now while running), or null when the events do not carry it. */
+function creationElapsedSeconds(events: CompanyEventSummary[], failed: boolean, now: number): number | null {
+  const first = events.find((event) => event.type === "company_creation_accepted") ?? events[0];
+  const failedEvent = [...events].reverse().find((event) => event.type === "company_creation_failed");
+  const start = parseEventTime(first);
+  const end = failed ? parseEventTime(failedEvent) : now;
+  if (start !== null && end !== null && end >= start) return (end - start) / 1000;
+  return null;
+}
+
+/** The wall clock, refreshed every second while `running`; elapsed times are measured against event timestamps. */
+function useNow(running: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  return now;
+}
+
+function formatDuration(seconds: number) {
+  if (seconds >= 60) return formatMinutes(seconds);
+  const rounded = Math.max(0, Math.round(seconds * 10) / 10);
+  if (rounded < 10) return `${rounded.toFixed(1)}s`;
+  return `${Math.round(rounded)}s`;
+}
+
+function formatStepDuration(seconds: number) {
+  if (seconds >= 60) return formatMinutes(seconds);
+  const rounded = Math.max(0, Math.round(seconds * 10) / 10);
+  return `${rounded.toFixed(1)}s`;
+}
+
+/** From one minute on, whole minutes and seconds ("5m 12s"), truncated like a clock rather than rounded up. */
+function formatMinutes(seconds: number) {
+  const whole = Math.floor(seconds);
+  return `${Math.floor(whole / 60)}m ${whole % 60}s`;
+}
+
+/**
+ * A one-line summary built only from what the raw error reliably says: a timeout, or else that the agent
+ * ran into an error. It never guesses a cause; the full message is one click away.
+ */
+function failureSummary(message: string, agentName: string, t: (key: TranslationKey) => string) {
+  if (/timed out/i.test(message)) return t("creating.failureTimedOut");
+  return t("creating.failureAgentError").replace("{agent}", agentName);
 }

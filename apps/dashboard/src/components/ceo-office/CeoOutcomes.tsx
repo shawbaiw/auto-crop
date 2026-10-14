@@ -10,10 +10,11 @@ import { CeoOfficeCard, type CeoOfficeView } from "./CeoOfficeCard";
 
 const OUTCOME_TYPES = new Set<CeoOfficeItemSummary["type"]>(["execution_report", "key_result_met", "stage_change"]);
 
+// Color system v2 §6.3: a stalled report is a risk to look at (caution), not a failure.
 const CLASSIFICATION_TONE = {
-  achieved: "bg-emerald-50 text-emerald-700",
-  stalled: "bg-red-50 text-red-700",
-  waiting: "bg-amber-50 text-amber-800",
+  achieved: "bg-status-success-bg text-status-success",
+  stalled: "bg-status-caution-bg text-status-caution",
+  waiting: "bg-status-neutral-bg text-status-neutral",
 } as const;
 
 /** The outcome cards the timeline posts as work completes, newest first. */
@@ -46,7 +47,7 @@ export function CeoOutcomes({
       {report || reportPreparing ? <FinalReportCard report={report} view={view} /> : null}
       {visionGaps.length > 0 ? <VisionGaps gaps={visionGaps} view={view} /> : null}
       {newCount > 0 ? (
-        <p className="text-xs font-medium text-blue-700" role="status">
+        <p className="text-xs font-medium text-status-running" role="status">
           {t("ceoOffice.outcomesNew").replace("{count}", String(newCount))}
         </p>
       ) : null}
@@ -58,10 +59,11 @@ export function CeoOutcomes({
   );
 }
 
+// A blocking gap waits on the founder; the others are neutral, strategic ones in charcoal text.
 const GAP_TONE: Record<string, string> = {
-  blocking: "bg-amber-50 text-amber-800",
-  strategic: "bg-violet-50 text-violet-700",
-  informational: "bg-slate-100 text-slate-600",
+  blocking: "bg-[color:var(--status-your-turn-bg)] text-[color:var(--status-your-turn-fg)] font-semibold",
+  strategic: "bg-status-neutral-bg text-foreground",
+  informational: "bg-status-neutral-bg text-status-neutral",
 };
 
 /**
@@ -82,7 +84,7 @@ function VisionGaps({ gaps, view }: { gaps: VisionGapSummary[]; view: CeoOfficeV
             <li className="grid gap-1 text-sm" key={gap.id}>
               <p className="break-words">{gap.label}</p>
               <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className={cn("rounded-full px-1.5 py-0.5 font-medium", GAP_TONE[severity])}>{t(`ceoOffice.gapSeverity.${severity}` as TranslationKey)}</span>
+                <span className={cn("rounded-[var(--r-pill)] px-1.5 py-0.5 font-medium", GAP_TONE[severity])}>{t(`ceoOffice.gapSeverity.${severity}` as TranslationKey)}</span>
                 {department ? <span>{departmentName(department, view.ctx.locale)}</span> : null}
               </p>
             </li>
@@ -98,17 +100,17 @@ function FinalReportCard({ report, view }: { report: FinalFounderReportSummary |
   const { t } = useLanguage();
   const { line } = view.ctx;
   return (
-    <Card aria-label={t("ceoOffice.finalReport")} className="grid gap-3 border-l-4 border-l-primary/60 p-4" role="region">
+    <Card aria-label={t("ceoOffice.finalReport")} className="grid gap-3 p-4" role="region">
       <div className="flex flex-wrap items-center gap-2">
         <ClipboardCheck aria-hidden="true" className="size-4 text-muted-foreground" />
         <h3 className="text-sm font-semibold">{t("ceoOffice.finalReport")}</h3>
         {report ? (
-          <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", CLASSIFICATION_TONE[report.classification])}>
+          <span className={cn("rounded-[var(--r-pill)] px-2 py-0.5 text-xs font-medium", CLASSIFICATION_TONE[report.classification])}>
             {t(`ceoOffice.classification.${report.classification}` as TranslationKey)}
           </span>
         ) : null}
         {report && isUnseenSince(report.createdAt, view.lastSeen) ? (
-          <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700">{t("ceoOffice.new")}</span>
+          <span className="rounded-[var(--r-pill)] bg-status-running-bg px-1.5 py-0.5 text-xs font-medium text-status-running">{t("ceoOffice.new")}</span>
         ) : null}
       </div>
       {report ? (

@@ -1,6 +1,8 @@
+import { Check, CircleAlert, CircleSlash, Clock, Eye, Hand, LoaderCircle, type LucideIcon } from "lucide-react";
+import type { StatusTone } from "../ice-mist";
 import type { TranslationKey } from "../../ui/language";
 
-/** The task status groups of dashboard ADR 0002, each with its colour. */
+/** The task status groups of dashboard ADR 0002; their colors and icons follow color system v2 §6.1. */
 export type TaskStatusTone = "running" | "waiting" | "review" | "needsYou" | "failed" | "complete" | "cancelled";
 
 export function taskStatusTone(status: string): TaskStatusTone {
@@ -34,13 +36,50 @@ export const taskStatusToneLabelKey: Record<TaskStatusTone, TranslationKey> = {
   cancelled: "ceoOffice.taskStatus.cancelled",
 };
 
-/** Badge classes: running blue, waiting gray, review violet, needs you amber, failed red, complete green, cancelled struck gray. */
+const yourTurn = "bg-[color:var(--status-your-turn-bg)] text-[color:var(--status-your-turn-fg)] font-semibold";
+
+/**
+ * Badge classes, one color per state: review and needs-you share "your turn" (charcoal) and differ by
+ * icon and text, since both ask the founder to act; waiting and cancelled are neutral.
+ */
 export const taskStatusToneClassName: Record<TaskStatusTone, string> = {
-  running: "bg-blue-50 text-blue-700",
-  waiting: "bg-slate-100 text-slate-600",
-  review: "bg-violet-50 text-violet-700",
-  needsYou: "bg-amber-50 text-amber-800",
-  failed: "bg-red-50 text-red-700",
-  complete: "bg-emerald-50 text-emerald-700",
-  cancelled: "bg-slate-100 text-slate-500 line-through",
+  running: "bg-status-running-bg text-status-running",
+  waiting: "bg-status-neutral-bg text-status-neutral",
+  review: yourTurn,
+  needsYou: yourTurn,
+  failed: "bg-status-failed-bg text-status-failed",
+  complete: "bg-status-success-bg text-status-success",
+  cancelled: "bg-status-neutral-bg text-status-neutral line-through",
+};
+
+export const taskStatusToneIcon: Record<TaskStatusTone, LucideIcon> = {
+  running: LoaderCircle,
+  waiting: Clock,
+  review: Eye,
+  needsYou: Hand,
+  failed: CircleAlert,
+  complete: Check,
+  cancelled: CircleSlash,
+};
+
+/** The Ice Mist StatusTag tone for each group (color system v2 §6.1). */
+export const taskStatusToneTag: Record<TaskStatusTone, StatusTone> = {
+  running: "running",
+  waiting: "queued",
+  review: "yourTurn",
+  needsYou: "yourTurn",
+  failed: "failed",
+  complete: "success",
+  cancelled: "queued",
+};
+
+/** A bare status icon's color, for rows that show the icon without a tag. Your turn is charcoal. */
+export const taskStatusToneIconClassName: Record<TaskStatusTone, string> = {
+  running: "text-status-running-icon",
+  waiting: "text-status-neutral-icon",
+  review: "text-foreground",
+  needsYou: "text-foreground",
+  failed: "text-status-failed-icon",
+  complete: "text-status-success-icon",
+  cancelled: "text-status-neutral-icon",
 };

@@ -21,9 +21,9 @@ export function CompanyFlowPage({ children, eyebrow, headerActions, status, stat
 
   return (
     <ModernAppShell
-      className="mx-auto grid w-full max-w-3xl content-start gap-5"
+      className="mx-auto grid w-full max-w-5xl content-start gap-5"
       header={
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3">
+        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3">
           <span className="text-sm font-semibold text-foreground">{t("menu.app")}</span>
           <div className="flex flex-wrap items-center gap-2">
             {headerActions}

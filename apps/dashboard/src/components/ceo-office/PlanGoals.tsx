@@ -5,9 +5,9 @@ import { useLanguage, type TranslationKey } from "../../ui/language";
 import { resolveLocalizedValue } from "../../ui/language/localizedText";
 
 const STATUS_TONE: Record<string, string> = {
-  met: "bg-emerald-50 text-emerald-700",
-  missed: "bg-red-50 text-red-700",
-  active: "bg-slate-100 text-slate-600",
+  met: "bg-status-success-bg text-status-success",
+  missed: "bg-status-failed-bg text-status-failed",
+  active: "bg-status-neutral-bg text-status-neutral",
 };
 
 /**
@@ -51,7 +51,7 @@ export function PlanGoals({
                   <span className="text-muted-foreground">
                     {serving.length === 0 ? t("ceoOffice.goalNoTasks") : t("ceoOffice.goalTasks").replace("{done}", String(done)).replace("{total}", String(serving.length))}
                   </span>
-                  <span className={cn("rounded-full px-1.5 py-0.5 font-medium", STATUS_TONE[status])}>{t(`ceoOffice.keyResultStatus.${status}` as TranslationKey)}</span>
+                  <span className={cn("rounded-[var(--r-pill)] px-1.5 py-0.5 font-medium", STATUS_TONE[status])}>{t(`ceoOffice.keyResultStatus.${status}` as TranslationKey)}</span>
                 </li>
               );
             })}

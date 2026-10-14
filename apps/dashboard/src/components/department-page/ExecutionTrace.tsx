@@ -1,4 +1,4 @@
-import { ChevronDown, CircleAlert, CircleCheck, CircleDot, LoaderCircle } from "lucide-react";
+import { ChevronDown, CircleAlert, CircleCheck, CircleDot, Clock, LoaderCircle, Pause } from "lucide-react";
 import type {
   CeoOfficeItemSummary,
   ReplanProposalSummary,
@@ -6,11 +6,13 @@ import type {
   TaskSummary,
   WaitStateSummary,
 } from "../../api/client";
-import { Button, Card } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { ReplanProposalCard } from "../replan/ReplanProposalCard";
 import { ReplanRequestForm, type ReplanRequest } from "../replan/ReplanRequestForm";
-import { taskStatusTone, taskStatusToneClassName, taskStatusToneLabelKey } from "../task/taskStatusTone";
+import { TaskStatusBadge } from "../task/TaskStatusBadge";
+import { TaskStatusTag } from "../task/TaskStatusTag";
+import { taskStatusTone, taskStatusToneLabelKey } from "../task/taskStatusTone";
 import { KeyValueList } from "../workbench/KeyValueList";
 import type { CeoOfficeView } from "../ceo-office/CeoOfficeCard";
 import { useLanguage, type TranslationKey } from "../../ui/language";
@@ -89,26 +91,27 @@ export function ExecutionTrace({
   const waits = waitStates.filter((waitState) => waitState.taskId === task.id || waitState.affectedTaskIds.includes(task.id));
 
   return (
-    <Card
+    <div
       aria-label={title}
-      className={cn("grid gap-3 p-4 scroll-mt-4", focused && "ring-2 ring-primary/40", tone === "needsYou" || tone === "failed" ? "border-l-4 border-l-amber-400" : "")}
+      className={cn(
+        // A panel in the workspace (spec §3): translucent warm, a highlight edge, nothing nested inside carries a border.
+        "grid scroll-mt-4 gap-4 rounded-[var(--r-panel)] border border-[color:var(--edge-highlight)] bg-[color:var(--surface-panel)] p-5 transition-shadow duration-[var(--dur)] sm:px-6",
+        focused && "shadow-[var(--focus-ring)]",
+      )}
       id={`trace-${task.id}`}
       role="region"
     >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="grid min-w-0 gap-0.5">
-          <h3 className={cn("text-sm font-semibold leading-snug", tone === "cancelled" && "text-muted-foreground line-through")}>{title}</h3>
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid min-w-0 gap-1">
+          <h3 className={cn("break-words text-[17px] font-semibold normal-case leading-snug", tone === "cancelled" && "text-muted-foreground line-through")}>{title}</h3>
           {state === "settled" && !expanded ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[13px] font-medium text-muted-foreground">
               {t("departmentPage.summary").replace("{status}", statusLabel).replace("{count}", String(stepCount))}
             </p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
-          <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium", taskStatusToneClassName[tone])}>
-            {tone === "running" ? <LoaderCircle aria-hidden="true" className="size-3 animate-spin" /> : null}
-            {statusLabel}
-          </span>
+        <div className="flex shrink-0 items-center gap-1">
+          <TaskStatusTag status={task.status} />
           <Button aria-expanded={expanded} aria-label={t(expanded ? "departmentPage.hideSteps" : "departmentPage.showSteps")} onClick={onToggle} size="icon" variant="ghost">
             <ChevronDown aria-hidden="true" className={cn("transition-transform", expanded && "rotate-180")} />
           </Button>
@@ -116,13 +119,14 @@ export function ExecutionTrace({
       </div>
 
       {holdLine && state !== "settled" ? (
-        <p className={cn("flex items-start gap-1.5 text-sm", state === "stopped" ? "text-amber-900" : "text-muted-foreground")}>
-          <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+        <p className="flex max-w-[72ch] items-start gap-2 text-[15px] leading-relaxed text-muted-foreground">
+          {state === "stopped" ? <Pause aria-hidden="true" className="mt-1 size-4 shrink-0 text-status-neutral-icon" /> : <CircleAlert aria-hidden="true" className="mt-1 size-4 shrink-0 text-foreground" />}
           {holdLine}
         </p>
       ) : null}
       {waits.map((waitState) => (
-        <p className="text-sm text-muted-foreground" key={waitState.id}>
+        <p className="flex max-w-[72ch] items-start gap-2 text-[15px] leading-relaxed text-muted-foreground" key={waitState.id}>
+          <Clock aria-hidden="true" className="mt-1 size-4 shrink-0 text-status-neutral-icon" />
           {t("departmentPage.waitingFor")
             .replace("{reason}", waitState.reason)
             .replace("{time}", new Date(waitState.nextCheckAt).toLocaleString(language))}
@@ -130,10 +134,10 @@ export function ExecutionTrace({
       ))}
 
       {expanded ? (
-        <div className="grid gap-3">
+        <div className="grid gap-4">
           {brief ? (
-            <section aria-label={t("departmentPage.plan")} className="grid gap-1 text-sm">
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("departmentPage.plan")}</h4>
+            <section aria-label={t("departmentPage.plan")} className="grid max-w-[72ch] gap-1 text-[15px] leading-relaxed">
+              <h4 className={sectionHeading}>{t("departmentPage.plan")}</h4>
               <p>{ctx.line(brief.data.purpose)}</p>
               {brief.data.approach ? <p className="text-muted-foreground">{t("ceoOffice.row.approach")}: {ctx.line(brief.data.approach)}</p> : null}
               {brief.data.expectedOutcome ? <p className="text-muted-foreground">{t("ceoOffice.row.expectedOutcome")}: {ctx.line(brief.data.expectedOutcome)}</p> : null}
@@ -155,14 +159,14 @@ export function ExecutionTrace({
           ) : null}
           {subtasks.length > 0 ? (
             <section aria-label={t("departmentPage.subtasks")} className="grid gap-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("departmentPage.subtasks")}</h4>
+              <h4 className={sectionHeading}>{t("departmentPage.subtasks")}</h4>
               {subtasks.map((subtask) => {
                 const subtone = taskStatusTone(subtask.status);
                 return (
-                  <div className="grid gap-1.5 rounded-md border border-border/70 p-2" key={subtask.id}>
+                  <div className="grid gap-1.5 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-3 py-2" key={subtask.id}>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                       <span className={cn(subtone === "cancelled" && "line-through text-muted-foreground")}>{taskTitle(subtask, ctx.locale)}</span>
-                      <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", taskStatusToneClassName[subtone])}>{t(taskStatusToneLabelKey[subtone])}</span>
+                      <TaskStatusBadge status={subtask.status} />
                     </div>
                     <TaskActions handlers={actions} locale={ctx.locale} task={subtask} />
                   </div>
@@ -171,7 +175,7 @@ export function ExecutionTrace({
             </section>
           ) : null}
           <section aria-label={t("departmentPage.steps")} className="grid gap-1">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("departmentPage.steps")}</h4>
+            <h4 className={sectionHeading}>{t("departmentPage.steps")}</h4>
             {latest ? <TraceSteps highlight={state === "stopped" ? failingStepId(latest) : null} run={latest} /> : <p className="text-sm text-muted-foreground">{t("departmentPage.noSteps")}</p>}
           </section>
         </div>
@@ -212,9 +216,12 @@ export function ExecutionTrace({
           ) : null}
         </>
       ) : null}
-    </Card>
+    </div>
   );
 }
+
+/** Plan, Steps and Subtasks: quiet labels, so the task title and its status lead (spec §5.3). */
+const sectionHeading = "text-[13px] font-medium normal-case text-muted-foreground";
 
 function stepLabel(step: TaskProgressEventSummary | undefined, language: "en" | "zh"): string {
   return step ? resolveLocalizedValue(step.labelText, language, step.label) : "";
@@ -223,13 +230,22 @@ function stepLabel(step: TaskProgressEventSummary | undefined, language: "en" | 
 function TraceSteps({ highlight, run }: { highlight: string | null; run: TraceRun }) {
   const { language } = useLanguage();
   return (
-    <ol className="grid gap-1.5">
-      {run.steps.map((step) => (
-        <li className={cn("flex items-start gap-2 text-sm", step.id === highlight && "rounded-md bg-amber-50 px-1.5 py-1")} key={step.id}>
-          <StepIcon status={step.status} />
-          <div className="grid min-w-0 gap-0.5">
+    <ol className="flex flex-col">
+      {run.steps.map((step, index) => (
+        <li className="grid grid-cols-[16px_minmax(0,1fr)] gap-x-3" key={step.id}>
+          {/* Steps hang on one thin line, like the creation trace, rather than standing as separate boxes. */}
+          <span className="relative flex justify-center">
+            {index < run.steps.length - 1 ? <span aria-hidden="true" className="absolute bottom-0 top-[22px] w-px bg-[color:var(--edge-input)]" /> : null}
+            <StepIcon status={step.status} />
+          </span>
+          <div
+            className={cn(
+              "grid min-w-0 gap-0.5 pb-2.5 text-sm leading-relaxed",
+              step.id === highlight && "-ml-1.5 mb-2.5 rounded-[var(--r-reading)] bg-status-running-bg px-1.5 py-0.5",
+            )}
+          >
             <span>{stepLabel(step, language)}</span>
-            {step.detail ? <span className="break-words text-xs text-muted-foreground">{resolveLocalizedValue(step.detailText, language, step.detail)}</span> : null}
+            {step.detail ? <span className="break-words text-[13px] text-muted-foreground">{resolveLocalizedValue(step.detailText, language, step.detail)}</span> : null}
           </div>
         </li>
       ))}
@@ -238,10 +254,11 @@ function TraceSteps({ highlight, run }: { highlight: string | null; run: TraceRu
 }
 
 function StepIcon({ status }: { status: TaskProgressEventSummary["status"] }) {
-  if (status === "complete") return <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-emerald-600" />;
-  if (status === "blocked") return <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-amber-600" />;
-  if (status === "current") return <LoaderCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0 animate-spin text-blue-600" />;
-  return <CircleDot aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-slate-400" />;
+  const icon = "mt-1 size-4 shrink-0";
+  if (status === "complete") return <CircleCheck aria-hidden="true" className={cn(icon, "text-status-success-icon")} />;
+  if (status === "blocked") return <CircleAlert aria-hidden="true" className={cn(icon, "text-foreground")} />;
+  if (status === "current") return <LoaderCircle aria-hidden="true" className={cn(icon, "im-spin text-status-running-icon")} />;
+  return <CircleDot aria-hidden="true" className={cn(icon, "text-status-neutral-icon")} />;
 }
 
 /** The final result stays in view, folded or not: what the work concluded, or what it waits for. */
@@ -259,8 +276,10 @@ function TraceResult({
   const { t } = useLanguage();
   if (task.status === "review" && review) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-violet-50 px-3 py-2 text-sm text-violet-900">
-        {t("departmentPage.waitsForReview")}
+      <div className="im-reading flex flex-wrap items-center gap-3 text-[15px]">
+        {/* The title's tag already says "In review"; the founder overrode color system §6.3's second tag here. */}
+        {/* Wide enough to stay one line; on a phone the button moves under it instead of squeezing it. */}
+        <span className="min-w-0 flex-1 basis-40">{t("departmentPage.waitsForReview")}</span>
         <Button onClick={() => view.onOpenItem(review)} size="sm">{t("departmentPage.openReview")}</Button>
       </div>
     );
@@ -268,9 +287,12 @@ function TraceResult({
   if (task.status !== "complete") return null;
   const conclusion = report ? view.ctx.line(report.data.conclusion) || view.ctx.line(report.data.summaryFallback) : "";
   return (
-    <section aria-label={t("departmentPage.result")} className="grid gap-1 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{t("departmentPage.result")}</h4>
-      <p>{conclusion || t("departmentPage.done")}</p>
+    <section aria-label={t("departmentPage.result")} className="im-reading grid gap-1.5">
+      <h4 className="flex items-center gap-1.5 text-[13px] font-semibold normal-case text-foreground">
+        <CircleCheck aria-hidden="true" className="size-4 text-status-success-icon" />
+        {t("departmentPage.result")}
+      </h4>
+      <p className="max-w-[72ch] break-words text-[15px] leading-relaxed">{conclusion || t("departmentPage.done")}</p>
     </section>
   );
 }

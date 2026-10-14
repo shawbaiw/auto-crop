@@ -100,7 +100,7 @@ export function TaskActions({
         )}
       </div>
       {message ? <p className="text-sm text-muted-foreground" role="status">{message}</p> : null}
-      {error ? <p className="text-sm text-red-700" role="alert">{error}</p> : null}
+      {error ? <p className="text-sm text-status-failed" role="alert">{error}</p> : null}
     </div>
   );
 }

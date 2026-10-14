@@ -5,8 +5,11 @@ export const PLAN_NODE_HEIGHT = 84;
 const COLUMN_GAP = 72;
 const ROW_GAP = 20;
 
-/** One colour per department, in rail order. Enough to tell departments apart; it repeats after eight. */
-export const DEPARTMENT_COLORS = ["#2563eb", "#7c3aed", "#0d9488", "#ea580c", "#db2777", "#65a30d", "#0891b2", "#a16207"];
+/**
+ * One low-saturation color per department, in rail order (color system v2 §5.6), each ≥3.4:1 on warm
+ * white. Only for the small department dot, never for a state. It repeats after eight.
+ */
+export const DEPARTMENT_COLORS = ["#5B7398", "#4F8A86", "#6F8656", "#A9705A", "#86698F", "#8E7440", "#5F8395", "#A06A7A"];
 
 export type PlanNodeLayout = {
   taskId: string;
@@ -62,7 +65,7 @@ export function layoutPlan(tasks: TaskSummary[], departments: DepartmentSummary[
         nodes.push({
           taskId: task.id,
           departmentId: task.departmentId,
-          color: index === undefined ? "#64748b" : DEPARTMENT_COLORS[index % DEPARTMENT_COLORS.length]!,
+          color: index === undefined ? "var(--status-neutral-icon)" : DEPARTMENT_COLORS[index % DEPARTMENT_COLORS.length]!,
           column,
           x: column * (PLAN_NODE_WIDTH + COLUMN_GAP),
           y: row * (PLAN_NODE_HEIGHT + ROW_GAP),

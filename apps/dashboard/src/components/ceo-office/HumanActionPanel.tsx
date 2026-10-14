@@ -55,7 +55,7 @@ export function HumanActionPanel({
           />
         </div>
       ))}
-      {error ? <p className="text-sm text-red-700" role="alert">{error}</p> : null}
+      {error ? <p className="text-sm text-status-failed" role="alert">{error}</p> : null}
       <Button aria-busy={submitting} className="justify-self-end" disabled={submitting || !onConfirm} type="submit">
         {t("ceoOffice.confirmAction")}
       </Button>

@@ -16,8 +16,9 @@ export function AgentOption({ agent, onSelect, selected }: AgentOptionProps) {
     <button
       aria-pressed={selected}
       className={cn(
-        "flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-3 text-left text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-foreground",
-        selected && "border-primary bg-secondary",
+        // A radio card (color system v2 §5.3): chosen is a reading surface with a 2px charcoal edge.
+        "flex items-center justify-between gap-3 rounded-md border border-[color:var(--edge-input)] bg-[color:var(--surface-input)] px-3 py-3 text-left text-foreground transition-colors hover:bg-accent focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-[color:var(--c-mist)] disabled:text-[color:var(--text-disabled)] disabled:hover:bg-[color:var(--c-mist)]",
+        selected && "border-2 border-[color:var(--c-charcoal)] bg-[color:var(--surface-reading)] px-[11px] py-[11px] hover:bg-[color:var(--surface-reading)]",
       )}
       disabled={!agent.detected}
       onClick={() => onSelect(agent.id)}

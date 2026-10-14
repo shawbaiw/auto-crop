@@ -57,14 +57,14 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
           <WorkbenchSection icon={<FileText aria-hidden="true" />} key={taskId} title={titleFor(taskId)}>
             <ul className="grid gap-2">
               {artifacts.map((artifact) => (
-                <li className="grid gap-1 rounded-md border border-border/70 p-3" key={artifact.id}>
+                <li className="grid gap-1 rounded-md bg-muted/60 p-3" key={artifact.id}>
                   <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     {formatArtifactRole(artifact.artifactRole, t)}
                     <span
                       className={
                         artifact.isCurrent
-                          ? "rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
-                          : "rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                          ? "rounded-[var(--r-pill)] bg-status-success-bg px-2 py-0.5 text-xs font-medium text-status-success"
+                          : "rounded-[var(--r-pill)] bg-status-neutral-bg px-2 py-0.5 text-xs font-medium text-status-neutral"
                       }
                     >
                       {t(artifact.isCurrent ? "deliverables.current" : "deliverables.earlier")}

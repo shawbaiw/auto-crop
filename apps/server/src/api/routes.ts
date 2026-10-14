@@ -2955,6 +2955,7 @@ function summarizeCompanyEvent(event: CompanyEvent) {
     message: event.message,
     messageText: localizedSummaryText(event.messageText, event.message),
     status: event.status ?? undefined,
+    createdAt: event.createdAt,
   };
 }
 

@@ -45,7 +45,7 @@ export function ReplanRequestForm({
       <div className="grid gap-1.5">
         <Label htmlFor={modeId}>{`${t("operations.replanMode")} ${taskTitle}`}</Label>
         <select
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="h-9 rounded-md border border-edge-strong bg-[color:var(--surface-input)] px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           id={modeId}
           onChange={(event) => setMode(event.target.value as "auto" | ReplanMode)}
           value={mode}
@@ -60,7 +60,7 @@ export function ReplanRequestForm({
         <Textarea id={noteId} onChange={(event) => setNote(event.target.value)} rows={3} value={note} />
         <p className="text-xs text-muted-foreground">{t("operations.replanNoteHint")}</p>
       </div>
-      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {error ? <Alert variant="danger">{error}</Alert> : null}
       <div>
         <Button disabled={submitting} onClick={() => void submit()}>
           {t("operations.createReplanProposal")}

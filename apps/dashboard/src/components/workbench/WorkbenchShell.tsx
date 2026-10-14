@@ -1,10 +1,10 @@
-import { Menu, Pause, Play } from "lucide-react";
+import { Menu, PanelLeftClose, PanelLeftOpen, Pause, Play, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { Button } from "@/components/ui";
-import { cardClassName } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+import { createPortal } from "react-dom";
+import { AmbientBackground, PillButton } from "../ice-mist";
 import { useLanguage } from "../../ui/language";
 import { LanguageSwitch } from "./LanguageSwitch";
+import type { RailVariant } from "./WorkbenchRail";
 import type { WorkbenchCommand } from "./workbenchCommands";
 
 export type WorkbenchShellProps = {
@@ -13,98 +13,141 @@ export type WorkbenchShellProps = {
   fill?: boolean;
   /** Where the founder is: CEO Office, a department, or a company-wide page. */
   location: string;
+  /** A status beside the location, such as the company being paused. */
+  locationStatus?: ReactNode;
   /** Pause or Resume Operating, from the shared command model. Hidden when it cannot run. */
   operatingCommand: WorkbenchCommand;
   /** A notice about the whole company, such as it being paused. */
   notice?: ReactNode;
   /** Closes the narrow-screen rail when the founder navigates. */
   navigationKey: string;
-  rail: ReactNode;
+  /** The rail in the given form: icons on the collapsed desktop rail, full when expanded or in the phone drawer. */
+  rail(variant: RailVariant): ReactNode;
 };
 
-/**
- * The Workbench frame (dashboard ADR 0002): a left rail and a header with the current location,
- * Pause or Resume Operating, and a language switch. On narrow screens the rail opens over the page.
- */
-export function WorkbenchShell({ children, fill = false, location, navigationKey, notice, operatingCommand, rail }: WorkbenchShellProps) {
-  const { t } = useLanguage();
-  const [railOpen, setRailOpen] = useState(false);
+const railExpandedKey = "auto-crop.workbenchRailExpanded";
 
-  useEffect(() => setRailOpen(false), [navigationKey]);
+/**
+ * The Workbench frame (dashboard ADR 0002) in the Ice Mist shell: a rail and a header with the current
+ * location, Pause or Resume Operating and a language switch, around the cool workspace. The desktop rail
+ * is 80px of icons and expands to full names; on narrow screens the rail opens as a drawer over the page.
+ */
+export function WorkbenchShell({ children, fill = false, location, locationStatus, navigationKey, notice, operatingCommand, rail }: WorkbenchShellProps) {
+  const { t } = useLanguage();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [railExpanded, setRailExpanded] = useState(readRailExpanded);
+
+  useEffect(() => setDrawerOpen(false), [navigationKey]);
   useEffect(() => {
-    if (!railOpen) return;
+    if (!drawerOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setRailOpen(false);
+      if (event.key === "Escape") setDrawerOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [railOpen]);
+  }, [drawerOpen]);
+
+  const toggleRail = () => {
+    setRailExpanded(!railExpanded);
+    writeRailExpanded(!railExpanded);
+  };
+  const pausing = operatingCommand.id === "pause-operating";
 
   return (
-    <div className="modern-dashboard-shell min-h-screen bg-background font-sans text-foreground">
-      <div className="mx-auto grid min-h-screen w-full max-w-[1440px] grid-cols-[minmax(0,1fr)] lg:grid-cols-[260px_minmax(0,1fr)]">
-        <aside className="sticky top-0 hidden h-screen border-r border-border/70 p-3 lg:block">{rail}</aside>
-        {railOpen ? (
-          <div className="fixed inset-0 z-40 lg:hidden">
+    <div className="modern-dashboard-shell font-sans">
+      <AmbientBackground>
+        <div className="im-shell im-workbench" data-fill={fill || undefined}>
+          <aside className="im-workbench-rail" data-expanded={railExpanded || undefined}>
+            {rail(railExpanded ? "full" : "icons")}
             <button
-              aria-label={t("workbench.closeNavigation")}
-              className="absolute inset-0 bg-foreground/20"
-              onClick={() => setRailOpen(false)}
+              aria-label={t(railExpanded ? "workbench.collapseNavigation" : "workbench.expandNavigation")}
+              className="im-rail-toggle"
+              onClick={toggleRail}
+              title={t(railExpanded ? "workbench.collapseNavigation" : "workbench.expandNavigation")}
               type="button"
-            />
-            {/* Choosing any page closes the rail, including the page already open. */}
-            <aside
-              className={cn(cardClassName, "absolute inset-y-0 left-0 w-[min(280px,85vw)] rounded-none p-3")}
-              onClick={(event) => {
-                if ((event.target as HTMLElement).closest("button")) setRailOpen(false);
-              }}
             >
-              {rail}
-            </aside>
-          </div>
-        ) : null}
-        <div className={cn("grid min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]", fill && "h-dvh")}>
-          <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-border/70 bg-background/90 px-4 py-2.5 backdrop-blur sm:px-6">
-            <Button
-              aria-expanded={railOpen}
-              aria-label={t("workbench.openNavigation")}
-              className="lg:hidden"
-              onClick={() => setRailOpen(true)}
-              size="icon"
-              variant="ghost"
-            >
-              <Menu aria-hidden="true" />
-            </Button>
-            <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{location}</h1>
-            <LanguageSwitch />
-            {operatingCommand.enabled ? (
-              <Button
-                aria-label={t(operatingCommand.labelKey)}
-                className={cn(
-                  operatingCommand.id === "pause-operating" && "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100",
-                )}
-                onClick={operatingCommand.run}
-                size="sm"
-                title={operatingCommand.shortcut}
-                variant="outline"
+              {railExpanded ? <PanelLeftClose aria-hidden="true" /> : <PanelLeftOpen aria-hidden="true" />}
+            </button>
+          </aside>
+          <div className="im-workbench-column">
+            <header className="im-workbench-header">
+              <PillButton
+                aria-expanded={drawerOpen}
+                aria-label={t("workbench.openNavigation")}
+                className="im-workbench-menu"
+                data-icon-only=""
+                onClick={() => setDrawerOpen(true)}
               >
-                {operatingCommand.id === "pause-operating" ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
-                <span className="hidden sm:inline">{t(operatingCommand.labelKey)}</span>
-              </Button>
-            ) : null}
-          </header>
-          <main
-            className={cn(
-              "min-w-0 px-4 py-5 sm:px-6",
-              fill ? "flex min-h-0 flex-col gap-3 overflow-hidden py-3 [&>*:last-child]:min-h-0 [&>*:last-child]:flex-1" : "grid content-start gap-4",
-            )}
-          >
-            {notice}
-            {children}
-          </main>
+                <Menu aria-hidden="true" />
+              </PillButton>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                <h1 className="min-w-0 max-w-full truncate text-[22px] font-normal normal-case leading-tight tracking-[-0.01em] sm:text-[30px]">{location}</h1>
+                {locationStatus}
+              </div>
+              <LanguageSwitch />
+              {operatingCommand.enabled ? (
+                <PillButton
+                  aria-label={t(operatingCommand.labelKey)}
+                  data-collapse-label=""
+                  onClick={operatingCommand.run}
+                  title={operatingCommand.shortcut}
+                  // Pausing is a secondary action; resuming a paused company is the one thing to do next.
+                  variant={pausing ? "secondary" : "primary"}
+                >
+                  {pausing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                  <span className="im-pill-label">{t(operatingCommand.labelKey)}</span>
+                </PillButton>
+              ) : null}
+            </header>
+            <main className="im-shell-workspace im-workbench-workspace">
+              {notice}
+              {children}
+            </main>
+          </div>
         </div>
-      </div>
+      </AmbientBackground>
+      {/* In <body>, not the page: the Workbench's enter animation and the shell's blur would make the drawer
+          position against them instead of the screen. */}
+      {drawerOpen
+        ? createPortal(
+            <div className="modern-dashboard-shell im-drawer-layer font-sans">
+              {/* The scrim closes on a click; keyboard users have the close button and Escape. */}
+              <div aria-hidden="true" className="im-scrim" onClick={() => setDrawerOpen(false)} />
+              {/* Choosing any page closes the drawer, including the page already open. */}
+              <aside
+                className="im-drawer"
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest("button")) setDrawerOpen(false);
+                }}
+              >
+                <div className="flex justify-end">
+                  <PillButton aria-label={t("workbench.closeNavigation")} data-icon-only="" variant="secondary">
+                    <X aria-hidden="true" />
+                  </PillButton>
+                </div>
+                {rail("full")}
+              </aside>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
 
+/** Whether the founder left the desktop rail expanded. Storage can be missing or blocked; the rail then starts collapsed. */
+function readRailExpanded(): boolean {
+  try {
+    return window.localStorage.getItem(railExpandedKey) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeRailExpanded(expanded: boolean) {
+  try {
+    window.localStorage.setItem(railExpandedKey, String(expanded));
+  } catch {
+    // Not remembered this time; the rail still toggles.
+  }
+}

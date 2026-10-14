@@ -7,27 +7,31 @@
 }
 
 :root {
-  --background: 210 33% 98%;
-  --foreground: 222 38% 12%;
-  --card: 0 0% 100%;
-  --card-foreground: 222 38% 12%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222 38% 12%;
-  --primary: 222 55% 18%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 214 32% 92%;
-  --secondary-foreground: 222 38% 16%;
-  --muted: 214 32% 93%;
-  --muted-foreground: 218 14% 42%;
-  --accent: 168 58% 90%;
-  --accent-foreground: 180 48% 17%;
-  --destructive: 0 72% 48%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 215 22% 84%;
-  --input: 215 22% 84%;
-  --ring: 184 70% 34%;
+  /* shadcn colors as HSL values of the Ice Mist palette (color system v2 §4.2), so components/ui and
+     pages not yet migrated read the same colors. Keep these in step with the Ice Mist tokens below. */
+  --background: 180 13% 92%; /* --c-mist */
+  --foreground: 220 11% 16%; /* --c-charcoal */
+  --card: 20 12% 95%; /* --c-warm */
+  --card-foreground: 220 11% 16%;
+  --popover: 30 20% 98%; /* --surface-popover */
+  --popover-foreground: 220 11% 16%;
+  --primary: 220 11% 16%; /* charcoal */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 208 30% 89%; /* --c-ice */
+  --secondary-foreground: 220 11% 16%;
+  --muted: 180 13% 92%;
+  --muted-foreground: 210 11% 38%; /* --text-secondary */
+  --accent: 208 30% 89%; /* --c-ice */
+  --accent-foreground: 220 11% 16%;
+  --destructive: 7 62% 43%; /* --status-failed-fg */
+  --destructive-foreground: 0 0% 100%;
+  --border: 210 20% 86%; /* --status-neutral-border */
+  --input: 210 9% 52%; /* --edge-strong */
+  --ring: 214 35% 37%; /* --status-running-fg */
   --radius: 0.5rem;
-  --font-ui: Monaco, "SFMono-Regular", "Courier New", ui-monospace, monospace;
+  --app-font-family: "Geist Variable", Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-ui: var(--app-font-family);
+  --font-mono: "SF Mono", SFMono-Regular, ui-monospace, "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
   --pixel-unit: 2px;
   --border-px: 2px;
   --hard-shadow-offset: 6px;
@@ -84,6 +88,34 @@ p {
   line-height: 1.5;
 }
 
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+}
+
+@keyframes creation-workbench-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.workbench-enter {
+  animation: creation-workbench-fade 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workbench-enter {
+    animation: none;
+  }
+}
+
 /*
  * The legacy element rules below uppercase every button and heading; modern surfaces opt out until P5 removes them.
  * In the base layer with :where() so it beats the legacy element selectors but never a utility like `uppercase`.
@@ -113,4 +145,131 @@ h3 {
   font-size: 0.84rem;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+/*
+ * Ice Mist design tokens (docs/design/ice-mist-ui-spec.md §2–§3; colors from color system v2).
+ * Every Ice Mist component reads its colors, radii and blur from these variables only.
+ * Color says state only; charcoal is the one accent, for the primary action and "your turn".
+ */
+:root {
+  /* Base five colors (fixed by the product owner) */
+  --c-mist: #e9eeee;
+  --c-ice: #dae3eb;
+  --c-cool: #c7d3e0;
+  --c-warm: #f4f2f1;
+  --c-charcoal: #25282e;
+
+  /* Text */
+  --text-primary: var(--c-charcoal);
+  --text-secondary: #56616c; /* warm 5.66 / mist 5.40 / ice 4.87 */
+  --text-on-dark: #ffffff;
+  --text-disabled: #8a949e; /* below 4.5: disabled states and decoration only */
+  /* On --c-cool only charcoal text: --text-secondary reaches just 4.16 there. */
+
+  /* Surfaces */
+  --surface-shell: rgba(244, 242, 241, 0.55); /* the only blurred layer */
+  --surface-panel: rgba(244, 242, 241, 0.72);
+  --surface-reading: rgba(244, 242, 241, 0.94);
+  --surface-input: rgba(244, 242, 241, 0.9);
+  --surface-selected: var(--c-cool);
+
+  --edge-highlight: rgba(255, 255, 255, 0.7);
+  --edge-divider: rgba(37, 40, 46, 0.08);
+  --edge-strong: #7a8590; /* inputs, outlined buttons, neutral icons: warm 3.37 / mist 3.21 */
+  --edge-input: rgba(37, 40, 46, 0.28); /* decoration only (1.75): disabled controls, grouping */
+  --shadow-panel: 0 12px 40px rgba(86, 103, 125, 0.1);
+  /* Cards outside the Ice Mist shell (onboarding); the Workbench workspace turns it off. */
+  --shadow-workbench: 0 18px 45px -32px hsl(220 30% 30% / 0.34);
+
+  --blur-shell: 20px;
+
+  /* Business status: small tags, icons and one-line notices only, never large backgrounds (≤2% of a screen) */
+  --status-success-fg: #0f6b5c;
+  --status-success-bg: #e1f0ec;
+  --status-success-border: #b9dbd2;
+  --status-success-icon: #1c8270;
+  --status-failed-fg: #b13a2a;
+  --status-failed-bg: #fbe8e3;
+  --status-failed-border: #f1c3b8;
+  --status-failed-icon: #c4513f;
+  --status-running-fg: #3d5a80;
+  --status-running-bg: #e3eaf3;
+  --status-running-border: #c3d1e3;
+  --status-running-icon: #4f6e99;
+  /* Caution: nothing failed, but something may be stale or risky. At most one per screen. */
+  --status-caution-fg: #7a5a1e;
+  --status-caution-bg: #f3ecdd;
+  --status-caution-border: #e2d3b3;
+  --status-caution-icon: #9a7428;
+  /* Neutral: waiting, paused, stopped, cancelled */
+  --status-neutral-fg: var(--text-secondary);
+  --status-neutral-bg: var(--c-mist);
+  --status-neutral-border: #d5dce3;
+  --status-neutral-icon: var(--edge-strong);
+  /* Your turn: the founder needs to act (review, decision, Human Action) */
+  --status-your-turn-fg: var(--text-on-dark);
+  --status-your-turn-bg: var(--c-charcoal);
+
+  --surface-popover: #fbfaf9; /* dialogs, menus, tooltips (opaque) */
+  --scrim: rgba(37, 40, 46, 0.32);
+  --text-selection: rgba(61, 90, 128, 0.18);
+  --danger-solid-hover: #9e3324; /* the final confirm of a destructive action */
+
+  /* Radii */
+  --r-shell: 32px;
+  --r-panel: 24px;
+  --r-reading: 18px;
+  --r-textarea: 22px;
+  --r-pill: 999px; /* short controls only */
+
+  /* Spacing and sizes */
+  --page-gutter: 28px;
+  --nav-width: 80px;
+  --nav-width-expanded: 248px;
+  --panel-padding: 30px;
+  --module-gap: 24px;
+  --aside-width: 312px;
+  --hit-min: 44px;
+
+  /* Type: Geist Mono for file paths, commands and error codes only (12–13px) */
+  --font-code: "Geist Mono Variable", var(--font-mono);
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur: 200ms;
+  --focus-ring: 0 0 0 3px rgba(61, 90, 128, 0.35);
+}
+
+::selection {
+  background: var(--text-selection);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --surface-shell: rgba(244, 242, 241, 0.92);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --surface-shell: var(--c-warm);
+    --surface-panel: var(--c-warm);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}
+
+/* The spec sizes the desktop layout; phones keep the same materials with tighter spacing. */
+@media (max-width: 640px) {
+  :root {
+    --page-gutter: 12px;
+    --panel-padding: 20px;
+    --module-gap: 16px;
+  }
 }

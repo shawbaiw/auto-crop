@@ -238,6 +238,7 @@ export type CompanyEventSummary = {
   message: string;
   messageText?: CompleteLocalizedText;
   status?: string;
+  createdAt?: string;
 };
 export type VisionGapSummary = VisionGap;
 export type HumanActionSummary = HumanAction;
@@ -752,6 +753,8 @@ export function createApiClient(baseUrl = "", options: { requestTimeoutMs?: numb
       events.addEventListener("deliverable_missing", listener);
       events.addEventListener("company_creation_accepted", listener);
       events.addEventListener("company_creation_agent_started", listener);
+      events.addEventListener("company_creation_blueprint_parsed", listener);
+      events.addEventListener("company_creation_records_created", listener);
       events.addEventListener("company_creation_completed", listener);
       events.addEventListener("company_creation_failed", listener);
       events.addEventListener("company_report_ready", listener);

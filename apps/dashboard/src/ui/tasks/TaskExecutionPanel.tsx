@@ -65,7 +65,7 @@ export function TaskExecutionPanel({ task }: { task: TaskSummary }) {
       try { const latest = await context.client.getTaskExecution(task.id); setView(latest.task); context.update(latest.task); } catch { /* Preserve the actionable original error. */ }
     } finally { setBusy(false); }
   }
-  return <section aria-label={zh ? "执行状态与预算" : "Execution status and budget"} className="grid gap-2 rounded-md border border-border/70 bg-muted/30 p-3 text-sm">
+  return <section aria-label={zh ? "执行状态与预算" : "Execution status and budget"} className="grid gap-2 rounded-md bg-muted/60 p-3 text-sm">
     <p>{zh ? "执行阶段" : "Phase"}: {phases[execution.phase ?? ""] ?? execution.phase ?? "unknown"} · {execution.status}</p>
     <p>{zh ? "健康状态" : "Health"}: {healthNames[execution.health?.state ?? "unknown"] ?? execution.health?.state ?? "unknown"}</p>
     <p className="text-muted-foreground">{healthExplanation ?? (zh ? "等待独立监督者采样；没有观测不代表失败。" : "Awaiting independent supervision; missing observation is not failure.")}</p>
@@ -100,6 +100,6 @@ export function TaskExecutionPanel({ task }: { task: TaskSummary }) {
         <Button disabled={busy} onClick={() => setForm(null)} size="sm" variant="ghost">{zh ? "返回" : "Back"}</Button>
       </div>
     </div>}
-    {error && <p className="text-red-700" role="alert">{error}</p>}
+    {error && <p className="text-status-failed" role="alert">{error}</p>}
   </section>;
 }
