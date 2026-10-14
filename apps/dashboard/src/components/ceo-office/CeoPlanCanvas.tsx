@@ -75,7 +75,10 @@ export function CeoPlanCanvas({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2">
+    // Goals, a canvas of at least min-h-64 and the legend can be taller than the tab on a short phone
+    // screen; the tab then scrolls on its own, like Outcomes, instead of running under the composer.
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain">
+
       <PlanGoals keyResults={keyResults} locale={locale} objectives={objectives} tasks={tasks} />
       <div aria-label={t("ceoOffice.planCanvas")} className="min-h-64 flex-1 overflow-hidden rounded-[var(--r-panel)] border border-[color:var(--edge-highlight)] bg-[color:var(--c-mist)]" role="region">
         <ReactFlow

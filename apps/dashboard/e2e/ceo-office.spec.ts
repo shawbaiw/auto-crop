@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { ceoOfficeCompany, mockCeoOfficeApi } from "./ceoOfficeFixture";
 
 test("CEO Office keeps a fixed viewport, follows new cards, and preserves history reading", async ({ page }, testInfo) => {
   let count = 30;
@@ -64,4 +65,20 @@ test("CEO Office keeps a fixed viewport, follows new cards, and preserves histor
   await expect.poll(async () => (await metrics()).historyHeight).toBeGreaterThan(80);
   expect((await metrics()).documentHeight).toBeLessThanOrEqual(845);
   await page.screenshot({ path: testInfo.outputPath("ceo-office-mobile.png") });
+});
+
+test("the Plan tab scrolls inside its own area on a short phone screen, so the composer never covers the plan", async ({ page }) => {
+  await page.addInitScript((id) => localStorage.setItem("auto-crop.currentCompanyId", id), ceoOfficeCompany.id);
+  await mockCeoOfficeApi(page);
+  await page.setViewportSize({ width: 390, height: 667 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Plan" }).click();
+  const composerTop = async () => (await page.getByRole("textbox", { name: "Message to the CEO" }).boundingBox())!.y;
+  // Goals, canvas and legend are taller than the tab here: the tab ends above the composer and scrolls on its own.
+  const tab = (await page.getByRole("tabpanel", { name: "Plan" }).boundingBox())!;
+  expect(tab.y + tab.height).toBeLessThanOrEqual(await composerTop());
+  const legend = page.getByRole("list", { name: "Departments" });
+  await legend.scrollIntoViewIfNeeded();
+  const box = (await legend.boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(await composerTop());
 });
