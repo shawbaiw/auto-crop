@@ -38,22 +38,14 @@ export function CompanyCreationLoading({
   leave,
 }: CompanyCreationLoadingProps) {
   const { language, t } = useLanguage();
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const now = useNow(!isFailed);
   const titleId = "company-creation-dialog-title";
   const traceId = "company-creation-trace";
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setElapsedSeconds((current) => current + 1);
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, []);
-
   const agentName = selectedAgent?.name ?? selectedAgentId ?? t("creating.selectedAgent");
   const policyName = formatPermissionMode(permissionMode, t);
-  const trace = creationTrace(events, isFailed, t, elapsedSeconds);
-  const traceElapsedSeconds = creationElapsedSeconds(events, isFailed, elapsedSeconds);
+  const trace = creationTrace(events, isFailed, t, now);
+  const traceElapsedSeconds = creationElapsedSeconds(events, isFailed, now);
   const failedEvent = [...events].reverse().find((event) => event.type === "company_creation_failed");
   const failureMessage = failedEvent ? resolveLocalizedValue(failedEvent.messageText, language, failedEvent.message) : null;
 
@@ -69,7 +61,7 @@ export function CompanyCreationLoading({
           <Panel aria-labelledby={titleId} className="flex flex-col gap-[var(--module-gap)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className="min-w-0 break-words text-[17px] font-semibold">{companyName}</span>
-              {isFailed ? <StatusTag tone="failed">{t("creating.failed")}</StatusTag> : <StatusTag tone="running">{t("creating.statusText")}</StatusTag>}
+              {isFailed ? <StatusTag tone="failed">{t("creating.failed")}</StatusTag> : <StatusTag spin={false} tone="running">{t("creating.statusText")}</StatusTag>}
             </div>
 
             <div className="flex flex-col gap-3">
@@ -129,7 +121,7 @@ const creationStepTypes = [
   "company_creation_completed",
 ] as const;
 
-function creationTrace(events: CompanyEventSummary[], failed: boolean, t: (key: TranslationKey) => string, elapsedSeconds: number): CreationStep[] {
+function creationTrace(events: CompanyEventSummary[], failed: boolean, t: (key: TranslationKey) => string, now: number): CreationStep[] {
   const eventTypes = new Set(events.map((event) => event.type));
   const eventByType = new Map(events.map((event) => [event.type, event]));
   const completed = new Set<string>();
@@ -156,7 +148,7 @@ function creationTrace(events: CompanyEventSummary[], failed: boolean, t: (key: 
       type,
       label: t(creationStepLabelKeys[type]),
       state,
-      durationLabel: durationLabelForStep(type, index, state, eventByType, elapsedSeconds),
+      durationLabel: durationLabelForStep(type, index, state, eventByType, now),
     };
   });
 }
@@ -189,7 +181,7 @@ function CreationTraceStep({ children, isLast, step }: { children?: ReactNode; i
         <div
           className={cn(
             "flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1",
-            isCurrent && "-mx-3 -mt-1.5 rounded-[var(--r-reading)] border border-[color:var(--edge-highlight)] bg-[color:var(--surface-reading)] px-3 py-1.5",
+            isCurrent && "-ml-2 -mt-1.5 rounded-[var(--r-reading)] border border-[color:var(--edge-highlight)] bg-[color:var(--surface-reading)] py-1.5 pl-2 pr-3",
           )}
         >
           <span
@@ -305,17 +297,16 @@ function durationLabelForStep(
   index: number,
   state: CreationStepState,
   eventByType: Map<string, CompanyEventSummary>,
-  elapsedSeconds: number,
+  now: number,
 ) {
   const stepEvent = eventByType.get(type);
   const start = parseEventTime(stepEvent);
   const nextType = creationStepTypes[index + 1];
   const nextEvent = nextType ? eventByType.get(nextType) : undefined;
   const failedAt = parseEventTime(eventByType.get("company_creation_failed"));
-  const end = state === "complete" ? parseEventTime(nextEvent) : state === "failed" ? failedAt : null;
+  const end = state === "complete" ? parseEventTime(nextEvent) : state === "failed" ? failedAt : state === "current" ? now : null;
+  // A step without both real times has no duration; a page-open clock is not one (spec: no invented data).
   if (start !== null && end !== null && end >= start) return formatStepDuration((end - start) / 1000);
-  if (state === "current") return formatStepDuration(elapsedSeconds);
-  // A failed step without both timestamps has no real duration; the page clock is not one (spec: no invented data).
   return "";
 }
 
@@ -325,15 +316,28 @@ function parseEventTime(event: CompanyEventSummary | undefined) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-/** Real time from acceptance to failure, or null when the events do not carry it; never the page clock. */
-function creationElapsedSeconds(events: CompanyEventSummary[], failed: boolean, elapsedSeconds: number): number | null {
-  if (!failed) return elapsedSeconds;
+/** Real time from acceptance to failure (or to now while running), or null when the events do not carry it. */
+function creationElapsedSeconds(events: CompanyEventSummary[], failed: boolean, now: number): number | null {
   const first = events.find((event) => event.type === "company_creation_accepted") ?? events[0];
   const failedEvent = [...events].reverse().find((event) => event.type === "company_creation_failed");
   const start = parseEventTime(first);
-  const end = parseEventTime(failedEvent);
+  const end = failed ? parseEventTime(failedEvent) : now;
   if (start !== null && end !== null && end >= start) return (end - start) / 1000;
   return null;
+}
+
+/** The wall clock, refreshed every second while `running`; elapsed times are measured against event timestamps. */
+function useNow(running: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  return now;
 }
 
 function formatDuration(seconds: number) {

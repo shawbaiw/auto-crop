@@ -261,7 +261,8 @@ describe("Dashboard App", () => {
     expect(screen.getByRole("region", { name: "Creating Company" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Company Creation Trace" })).toBeInTheDocument();
     expect(document.querySelector("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("Running for")).toBeInTheDocument();
+    // Before the server accepts the request there is no event timestamp, so no elapsed time is shown.
+    expect(screen.queryByText("Running for")).not.toBeInTheDocument();
     expect(screen.getAllByText("Pricing Page Studio").length).toBeGreaterThan(0);
     expect(screen.getByText("Codex")).toBeInTheDocument();
     expect(screen.getByText("Accept creation request")).toBeInTheDocument();

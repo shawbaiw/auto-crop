@@ -1,6 +1,6 @@
 import "../test/setup";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CompanyEventSummary } from "../api/client";
 import { LanguageProvider } from "../ui/language";
 import { CompanyCreationLoading } from "./CompanyCreationLoading";
@@ -37,5 +37,53 @@ describe("CompanyCreationLoading failure summary", () => {
 
     expect(screen.getByText("Timed out")).toBeInTheDocument();
     expect(screen.queryByText("Codex ran into an error")).not.toBeInTheDocument();
+  });
+});
+
+function renderCreating(events: CompanyEventSummary[]) {
+  render(
+    <LanguageProvider>
+      <CompanyCreationLoading
+        companyName="Pricing Page Studio"
+        events={events}
+        permissionMode="balanced"
+        selectedAgent={{ id: "codex", name: "Codex", capabilities: ["code"], detected: true }}
+      />
+    </LanguageProvider>,
+  );
+}
+
+describe("CompanyCreationLoading real elapsed time", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("times the run from acceptance and the current step from its own start, ticking every second", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date("2026-08-17T00:01:05.000Z"));
+    renderCreating([
+      { type: "company_creation_accepted", companyId: "company_1", message: "Company Creation accepted.", status: "creating", createdAt: "2026-08-17T00:00:00.000Z" },
+      { type: "company_creation_agent_started", companyId: "company_1", message: "CEO agent started.", status: "creating", createdAt: "2026-08-17T00:00:00.300Z" },
+    ]);
+
+    expect(screen.getByText("Running for").nextElementSibling).toHaveTextContent("65s");
+    expect(screen.getByText("64.7s")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(screen.getByText("Running for").nextElementSibling).toHaveTextContent("66s");
+    expect(screen.getByText("65.7s")).toBeInTheDocument();
+  });
+
+  it("shows no elapsed time at all when the events carry no timestamps, never a page-open clock", () => {
+    renderCreating([
+      { type: "company_creation_accepted", companyId: "company_1", message: "Company Creation accepted.", status: "creating" },
+      { type: "company_creation_agent_started", companyId: "company_1", message: "CEO agent started.", status: "creating" },
+    ]);
+
+    expect(screen.queryByText("Running for")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^\d+(\.\d)?s$/)).not.toBeInTheDocument();
   });
 });

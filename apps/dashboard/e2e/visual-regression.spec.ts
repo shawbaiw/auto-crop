@@ -72,6 +72,8 @@ for (const viewport of viewports) {
   test(`captures modern creation loading screenshots on ${viewport.name}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ height: viewport.height, width: viewport.width });
 
+    // Elapsed time is measured from the event timestamps, so the clock is pinned to 65s after acceptance.
+    await page.clock.setFixedTime(new Date("2026-08-17T00:01:05.000Z"));
     for (const outcome of ["creating", "creation_failed"] as const) {
       await page.addInitScript((companyId) => window.localStorage.setItem("auto-crop.currentCompanyId", companyId), company.id);
       await mockApi(page, {
