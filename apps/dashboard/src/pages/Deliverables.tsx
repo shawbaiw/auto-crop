@@ -44,7 +44,7 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
 
   return (
     <div className="grid gap-4">
-      <p className="max-w-[72ch] text-[15px] leading-relaxed text-muted-foreground">{t("deliverables.intro")}</p>
+      <p className="max-w-[72ch] text-[15px] leading-relaxed text-foreground">{t("deliverables.intro")}</p>
 
       {deliveredTaskIds.length === 0 ? (
         <p className="rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3 text-[15px] text-muted-foreground">{t("deliverables.empty")}</p>

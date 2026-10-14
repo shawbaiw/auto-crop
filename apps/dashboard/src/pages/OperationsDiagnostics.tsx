@@ -40,7 +40,7 @@ export function OperationsDiagnostics({
 
   return (
     <div className="grid gap-4">
-      <p className="max-w-[72ch] text-[15px] leading-relaxed text-muted-foreground">{t("diagnostics.intro")}</p>
+      <p className="max-w-[72ch] text-[15px] leading-relaxed text-foreground">{t("diagnostics.intro")}</p>
 
       <WorkbenchSection icon={<ListChecks aria-hidden="true" />} title={t("diagnostics.taskFlow")}>
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
