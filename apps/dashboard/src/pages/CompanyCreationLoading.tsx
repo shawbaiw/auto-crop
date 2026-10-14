@@ -341,14 +341,22 @@ function useNow(running: boolean) {
 }
 
 function formatDuration(seconds: number) {
+  if (seconds >= 60) return formatMinutes(seconds);
   const rounded = Math.max(0, Math.round(seconds * 10) / 10);
   if (rounded < 10) return `${rounded.toFixed(1)}s`;
   return `${Math.round(rounded)}s`;
 }
 
 function formatStepDuration(seconds: number) {
+  if (seconds >= 60) return formatMinutes(seconds);
   const rounded = Math.max(0, Math.round(seconds * 10) / 10);
   return `${rounded.toFixed(1)}s`;
+}
+
+/** From one minute on, whole minutes and seconds ("5m 12s"), truncated like a clock rather than rounded up. */
+function formatMinutes(seconds: number) {
+  const whole = Math.floor(seconds);
+  return `${Math.floor(whole / 60)}m ${whole % 60}s`;
 }
 
 /**

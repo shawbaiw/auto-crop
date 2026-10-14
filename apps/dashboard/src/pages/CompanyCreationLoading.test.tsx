@@ -66,15 +66,34 @@ describe("CompanyCreationLoading real elapsed time", () => {
       { type: "company_creation_agent_started", companyId: "company_1", message: "CEO agent started.", status: "creating", createdAt: "2026-08-17T00:00:00.300Z" },
     ]);
 
-    expect(screen.getByText("Running for").nextElementSibling).toHaveTextContent("65s");
-    expect(screen.getByText("64.7s")).toBeInTheDocument();
+    expect(screen.getByText("Running for").nextElementSibling).toHaveTextContent("1m 5s");
+    expect(screen.getByText("1m 4s")).toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(1000);
     });
 
-    expect(screen.getByText("Running for").nextElementSibling).toHaveTextContent("66s");
-    expect(screen.getByText("65.7s")).toBeInTheDocument();
+    expect(screen.getByText("Running for").nextElementSibling).toHaveTextContent("1m 6s");
+    expect(screen.getByText("1m 5s")).toBeInTheDocument();
+  });
+
+  it("keeps seconds under a minute and switches to minutes and seconds from one minute", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date("2026-08-17T00:00:59.000Z"));
+    renderCreating([
+      { type: "company_creation_accepted", companyId: "company_1", message: "Company Creation accepted.", status: "creating", createdAt: "2026-08-17T00:00:00.000Z" },
+      { type: "company_creation_agent_started", companyId: "company_1", message: "CEO agent started.", status: "creating", createdAt: "2026-08-17T00:00:00.300Z" },
+    ]);
+
+    expect(screen.getByText("Running for").nextElementSibling).toHaveTextContent("59s");
+    expect(screen.getByText("58.7s")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(253_000);
+    });
+
+    expect(screen.getByText("Running for").nextElementSibling).toHaveTextContent("5m 12s");
+    expect(screen.getByText("5m 11s")).toBeInTheDocument();
   });
 
   it("shows no elapsed time at all when the events carry no timestamps, never a page-open clock", () => {
@@ -84,6 +103,6 @@ describe("CompanyCreationLoading real elapsed time", () => {
     ]);
 
     expect(screen.queryByText("Running for")).not.toBeInTheDocument();
-    expect(screen.queryByText(/^\d+(\.\d)?s$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^(\d+m )?\d+(\.\d)?s$/)).not.toBeInTheDocument();
   });
 });
