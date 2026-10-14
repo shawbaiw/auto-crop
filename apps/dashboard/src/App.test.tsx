@@ -3369,7 +3369,9 @@ describe("Dashboard App", () => {
       expect(screen.getByText("Failed · Create landing page — Timed out before producing review-ready proof.")).toBeInTheDocument();
 
       await openPage(user, "Deliverables");
-      expect(screen.getByText("File · .auto-crop/workspaces/task_1/index.html")).toBeInTheDocument();
+      // The path is set in monospace after its evidence type (color system v2 §5.1).
+      expect(screen.getByText(".auto-crop/workspaces/task_1/index.html")).toHaveClass("im-code");
+      expect(screen.getByText(".auto-crop/workspaces/task_1/index.html").parentElement).toHaveTextContent("File · .auto-crop/workspaces/task_1/index.html");
     } finally {
       restoreStorage();
     }
@@ -3927,7 +3929,8 @@ describe("Workbench", () => {
     const delivered = screen.getByRole("region", { name: "Validate the prototype" });
     expect(within(delivered).getByText("Current version")).toBeInTheDocument();
     expect(within(delivered).getByText("Prototype page captured.")).toBeInTheDocument();
-    expect(within(delivered).getByText("File · prototype/index.html")).toBeInTheDocument();
+    expect(within(delivered).getByText("prototype/index.html")).toHaveClass("im-code");
+    expect(within(delivered).getByText("prototype/index.html").parentElement).toHaveTextContent("File · prototype/index.html");
     expect(screen.getByRole("region", { name: "Review notes" })).toHaveTextContent("Ready for next cycle");
     expect(screen.queryByRole("button", { name: /load/i })).not.toBeInTheDocument();
   });

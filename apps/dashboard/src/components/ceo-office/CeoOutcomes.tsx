@@ -1,7 +1,6 @@
-import { ClipboardCheck } from "lucide-react";
+import { ClipboardCheck, Sparkle } from "lucide-react";
 import type { CeoOfficeItemSummary, FinalFounderReportSummary, VisionGapSummary } from "../../api/client";
-import { Card } from "@/components/ui";
-import { cn } from "@/lib/utils";
+import { StatusTag, type StatusTone } from "../ice-mist";
 import { KeyValueList } from "../workbench/KeyValueList";
 import { isUnseenSince } from "../../ui/ceoOutcomes/lastSeen";
 import { useLanguage, type TranslationKey } from "../../ui/language";
@@ -11,11 +10,15 @@ import { CeoOfficeCard, type CeoOfficeView } from "./CeoOfficeCard";
 const OUTCOME_TYPES = new Set<CeoOfficeItemSummary["type"]>(["execution_report", "key_result_met", "stage_change"]);
 
 // Color system v2 §6.3: a stalled report is a risk to look at (caution), not a failure.
-const CLASSIFICATION_TONE = {
-  achieved: "bg-status-success-bg text-status-success",
-  stalled: "bg-status-caution-bg text-status-caution",
-  waiting: "bg-status-neutral-bg text-status-neutral",
-} as const;
+const CLASSIFICATION_TONE: Record<FinalFounderReportSummary["classification"], StatusTone> = {
+  achieved: "success",
+  stalled: "caution",
+  waiting: "queued",
+};
+
+// Ice Mist panel material, as on the Execution Trace: no shadow inside the workspace.
+const PANEL = "grid gap-4 rounded-[var(--r-panel)] border border-[color:var(--edge-highlight)] bg-[color:var(--surface-panel)] p-5 sm:px-6";
+const PANEL_TITLE = "text-[17px] font-semibold normal-case leading-snug";
 
 /** The outcome cards the timeline posts as work completes, newest first. */
 export function outcomeItems(items: CeoOfficeItemSummary[]): CeoOfficeItemSummary[] {
@@ -47,8 +50,10 @@ export function CeoOutcomes({
       {report || reportPreparing ? <FinalReportCard report={report} view={view} /> : null}
       {visionGaps.length > 0 ? <VisionGaps gaps={visionGaps} view={view} /> : null}
       {newCount > 0 ? (
-        <p className="text-xs font-medium text-status-running" role="status">
-          {t("ceoOffice.outcomesNew").replace("{count}", String(newCount))}
+        <p role="status">
+          <StatusTag icon={Sparkle} tone="running">
+            {t("ceoOffice.outcomesNew").replace("{count}", String(newCount))}
+          </StatusTag>
         </p>
       ) : null}
       {outcomes.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">{t("ceoOffice.outcomesEmpty")}</p> : null}
@@ -60,10 +65,10 @@ export function CeoOutcomes({
 }
 
 // A blocking gap waits on the founder; the others are neutral, strategic ones in charcoal text.
-const GAP_TONE: Record<string, string> = {
-  blocking: "bg-[color:var(--status-your-turn-bg)] text-[color:var(--status-your-turn-fg)] font-semibold",
-  strategic: "bg-status-neutral-bg text-foreground",
-  informational: "bg-status-neutral-bg text-status-neutral",
+const GAP_TONE: Record<string, { tone: StatusTone; className?: string }> = {
+  blocking: { tone: "yourTurn" },
+  strategic: { tone: "queued", className: "text-foreground" },
+  informational: { tone: "queued" },
 };
 
 /**
@@ -74,24 +79,26 @@ function VisionGaps({ gaps, view }: { gaps: VisionGapSummary[]; view: CeoOfficeV
   const { t } = useLanguage();
   const ordered = [...gaps].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return (
-    <Card aria-label={t("ceoOffice.visionGaps")} className="grid gap-2 p-4" role="region">
-      <h3 className="text-sm font-semibold">{t("ceoOffice.visionGaps")}</h3>
+    <section aria-label={t("ceoOffice.visionGaps")} className={PANEL} role="region">
+      <h3 className={PANEL_TITLE}>{t("ceoOffice.visionGaps")}</h3>
       <ul className="grid gap-2">
         {ordered.map((gap) => {
           const department = view.departmentsById.get(gap.departmentId);
           const severity = gap.severity in GAP_TONE ? gap.severity : "informational";
           return (
-            <li className="grid gap-1 text-sm" key={gap.id}>
-              <p className="break-words">{gap.label}</p>
-              <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className={cn("rounded-[var(--r-pill)] px-1.5 py-0.5 font-medium", GAP_TONE[severity])}>{t(`ceoOffice.gapSeverity.${severity}` as TranslationKey)}</span>
+            <li className="grid gap-2 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3" key={gap.id}>
+              <p className="max-w-[72ch] break-words text-[15px] leading-relaxed">{gap.label}</p>
+              <p className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+                <StatusTag className={GAP_TONE[severity]!.className} tone={GAP_TONE[severity]!.tone}>
+                  {t(`ceoOffice.gapSeverity.${severity}` as TranslationKey)}
+                </StatusTag>
                 {department ? <span>{departmentName(department, view.ctx.locale)}</span> : null}
               </p>
             </li>
           );
         })}
       </ul>
-    </Card>
+    </section>
   );
 }
 
@@ -100,22 +107,23 @@ function FinalReportCard({ report, view }: { report: FinalFounderReportSummary |
   const { t } = useLanguage();
   const { line } = view.ctx;
   return (
-    <Card aria-label={t("ceoOffice.finalReport")} className="grid gap-3 p-4" role="region">
+    <section aria-label={t("ceoOffice.finalReport")} className={PANEL} role="region">
       <div className="flex flex-wrap items-center gap-2">
-        <ClipboardCheck aria-hidden="true" className="size-4 text-muted-foreground" />
-        <h3 className="text-sm font-semibold">{t("ceoOffice.finalReport")}</h3>
+        <ClipboardCheck aria-hidden="true" className="size-[18px] text-status-neutral-icon" />
+        <h3 className={PANEL_TITLE}>{t("ceoOffice.finalReport")}</h3>
         {report ? (
-          <span className={cn("rounded-[var(--r-pill)] px-2 py-0.5 text-xs font-medium", CLASSIFICATION_TONE[report.classification])}>
-            {t(`ceoOffice.classification.${report.classification}` as TranslationKey)}
-          </span>
+          <StatusTag tone={CLASSIFICATION_TONE[report.classification]}>{t(`ceoOffice.classification.${report.classification}` as TranslationKey)}</StatusTag>
         ) : null}
         {report && isUnseenSince(report.createdAt, view.lastSeen) ? (
-          <span className="rounded-[var(--r-pill)] bg-status-running-bg px-1.5 py-0.5 text-xs font-medium text-status-running">{t("ceoOffice.new")}</span>
+          <StatusTag icon={Sparkle} tone="running">
+            {t("ceoOffice.new")}
+          </StatusTag>
         ) : null}
       </div>
       {report ? (
-        <>
+        <div className="im-reading grid gap-4">
           <KeyValueList
+            className="max-w-[72ch] gap-y-2 text-[15px] leading-relaxed"
             items={[
               { label: t("ceoOffice.report.vision"), value: line(report.sections.vision) },
               { label: t("ceoOffice.report.actualResult"), value: line(report.sections.actualResult) },
@@ -125,17 +133,17 @@ function FinalReportCard({ report, view }: { report: FinalFounderReportSummary |
             ]}
           />
           {report.sections.departmentContributions.length > 0 ? (
-            <section aria-label={t("ceoOffice.report.contributions")} className="grid gap-1 text-sm">
-              <h4 className="font-medium">{t("ceoOffice.report.contributions")}</h4>
+            <section aria-label={t("ceoOffice.report.contributions")} className="grid max-w-[72ch] gap-1 text-[15px] leading-relaxed">
+              <h4 className="text-[13px] font-medium normal-case text-muted-foreground">{t("ceoOffice.report.contributions")}</h4>
               {report.sections.departmentContributions.map((contribution, index) => (
                 <p key={index}>{line(contribution)}</p>
               ))}
             </section>
           ) : null}
-        </>
+        </div>
       ) : (
-        <p className="text-sm text-muted-foreground">{t("ceoOffice.finalReportPreparing")}</p>
+        <p className="max-w-[72ch] text-[15px] leading-relaxed text-muted-foreground">{t("ceoOffice.finalReportPreparing")}</p>
       )}
-    </Card>
+    </section>
   );
 }

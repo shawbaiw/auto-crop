@@ -513,6 +513,34 @@
   --rail-surface: var(--surface-popover);
 }
 
+/* The Plan canvas zoom controls: a small warm-white pill instead of React Flow's shadowed box. */
+.react-flow__controls.im-flow-controls {
+  overflow: hidden;
+  border: 1px solid var(--status-neutral-border);
+  border-radius: var(--r-pill);
+  background: var(--c-warm);
+  box-shadow: none;
+}
+
+.react-flow .im-flow-controls.react-flow__controls .react-flow__controls-button {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  transition: background-color var(--dur) var(--ease);
+}
+
+.react-flow .im-flow-controls.react-flow__controls .react-flow__controls-button:hover {
+  background: var(--c-ice);
+}
+
+.react-flow .im-flow-controls.react-flow__controls .react-flow__controls-button svg {
+  max-width: 12px;
+  max-height: 12px;
+  fill: currentColor;
+}
+
 @media (max-width: 1023px) {
   .im-workbench-rail {
     display: none;

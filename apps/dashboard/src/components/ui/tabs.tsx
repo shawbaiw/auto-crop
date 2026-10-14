@@ -9,7 +9,8 @@ export const TabsList = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.List
-    className={cn("inline-flex h-9 items-center gap-1 rounded-lg bg-muted p-1 text-muted-foreground", className)}
+    // A capsule of choices on a warm panel; the chosen one is cool blue, as the rail's current page is.
+    className={cn("inline-flex h-11 items-center gap-1 rounded-[var(--r-pill)] border border-[color:var(--edge-highlight)] bg-[color:var(--surface-panel)] p-1 text-muted-foreground", className)}
     ref={ref}
     {...props}
   />
@@ -22,7 +23,7 @@ export const TabsTrigger = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.Trigger
     className={cn(
-      "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:text-[color:var(--text-disabled)] data-[state=active]:bg-card data-[state=active]:text-foreground",
+      "relative inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--r-pill)] px-4 text-sm font-medium transition-colors before:absolute before:inset-x-0 before:-inset-y-1 before:content-[''] hover:bg-[color:var(--c-ice)] hover:text-foreground focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:pointer-events-none disabled:text-[color:var(--text-disabled)] data-[state=active]:bg-selected data-[state=active]:font-semibold data-[state=active]:text-foreground",
       className,
     )}
     ref={ref}
