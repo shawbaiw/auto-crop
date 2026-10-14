@@ -1,4 +1,4 @@
-import { ChevronDown, CircleAlert, CircleCheck, CircleDot, Clock, Eye, LoaderCircle, Pause } from "lucide-react";
+import { ChevronDown, CircleAlert, CircleCheck, CircleDot, Clock, LoaderCircle, Pause } from "lucide-react";
 import type {
   CeoOfficeItemSummary,
   ReplanProposalSummary,
@@ -10,7 +10,6 @@ import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { ReplanProposalCard } from "../replan/ReplanProposalCard";
 import { ReplanRequestForm, type ReplanRequest } from "../replan/ReplanRequestForm";
-import { StatusTag } from "../ice-mist";
 import { TaskStatusBadge } from "../task/TaskStatusBadge";
 import { TaskStatusTag } from "../task/TaskStatusTag";
 import { taskStatusTone, taskStatusToneLabelKey } from "../task/taskStatusTone";
@@ -278,9 +277,7 @@ function TraceResult({
   if (task.status === "review" && review) {
     return (
       <div className="im-reading flex flex-wrap items-center gap-3 text-[15px]">
-        <StatusTag icon={Eye} tone="yourTurn">
-          {t("ceoOffice.taskStatus.review")}
-        </StatusTag>
+        {/* The title's tag already says "In review"; the founder overrode color system §6.3's second tag here. */}
         {/* Wide enough to stay one line; on a phone the button moves under it instead of squeezing it. */}
         <span className="min-w-0 flex-1 basis-40">{t("departmentPage.waitsForReview")}</span>
         <Button onClick={() => view.onOpenItem(review)} size="sm">{t("departmentPage.openReview")}</Button>
