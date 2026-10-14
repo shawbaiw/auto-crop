@@ -209,7 +209,7 @@ function RequirementList({ requirements }: { requirements: ReplanRequirementSumm
     <ul className="grid gap-1">
       {requirements.map((requirement) => (
         <li key={requirement.id}>
-          <code className="rounded bg-muted px-1 text-xs">{requirement.id}</code> {requirement.description}
+          <code className="rounded-[var(--r-pill)] bg-muted px-1.5 text-xs">{requirement.id}</code> {requirement.description}
         </li>
       ))}
     </ul>

@@ -45,7 +45,7 @@ export function DecisionPanel({
     <section aria-label={t("ceoOffice.decisions")} className="grid gap-4">
       <ul className="grid gap-2">
         {item.data.options.map((option) => (
-          <li className="grid gap-2 rounded-md border border-border/70 p-3" key={option.label}>
+          <li className="grid gap-2 rounded-[var(--r-reading)] border border-border/70 p-3" key={option.label}>
             <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
               {option.label}
               {option.recommended ? (

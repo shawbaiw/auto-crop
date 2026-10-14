@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectTokenRadii } from "./iceMistGuards";
 
 const viewports = [
   { height: 900, name: "desktop", width: 1440 },
@@ -99,6 +100,7 @@ for (const viewport of viewports) {
 
 async function expectModernPage(page: Page) {
   await expect(page.locator(".crt-viewport")).toHaveCount(0);
+  await expectTokenRadii(page);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 }

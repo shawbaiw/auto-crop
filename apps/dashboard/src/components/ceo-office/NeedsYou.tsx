@@ -51,7 +51,7 @@ export function NeedsYou({
     <div className="grid content-start gap-4">
       <dl aria-label={t("ceoOffice.overview")} className="grid grid-cols-4 gap-2 lg:grid-cols-2">
         {counts.map((count) => (
-          <div className="grid gap-0.5 rounded-md bg-muted/60 px-2.5 py-2" key={count.key}>
+          <div className="grid gap-0.5 rounded-[var(--r-reading)] bg-muted/60 px-2.5 py-2" key={count.key}>
             <dt className="truncate text-xs text-muted-foreground">{t(count.key)}</dt>
             <dd className="m-0 flex items-center gap-1.5 text-lg font-semibold text-foreground">
               <span aria-hidden="true" className={`size-2 shrink-0 rounded-[var(--r-pill)] ${count.dot}`} />
@@ -61,7 +61,7 @@ export function NeedsYou({
         ))}
       </dl>
       {message ? (
-        <p className="rounded-md bg-status-success-bg px-3 py-2 text-sm text-status-success" role="status">
+        <p className="rounded-[var(--r-reading)] bg-status-success-bg px-3 py-2 text-sm text-status-success" role="status">
           {message}
         </p>
       ) : null}

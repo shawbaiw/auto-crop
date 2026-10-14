@@ -50,7 +50,7 @@ function PageCrashed({ error, onRetry }: { error: Error; onRetry(): void }) {
       <p className="text-sm text-muted-foreground">{t("workbench.pageCrashedBody")}</p>
       <details className="text-sm">
         <summary className="cursor-pointer text-muted-foreground">{t("workbench.details")}</summary>
-        <pre className="mt-2 whitespace-pre-wrap break-words rounded-md bg-muted p-2 text-xs">{error.message || String(error)}</pre>
+        <pre className="mt-2 whitespace-pre-wrap break-words rounded-[var(--r-reading)] bg-muted p-2 text-xs">{error.message || String(error)}</pre>
       </details>
       <div>
         <Button onClick={onRetry} variant="outline">

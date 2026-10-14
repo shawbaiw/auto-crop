@@ -17,7 +17,7 @@ export function EvidenceDetails({ businessArtifacts, proofs }: { businessArtifac
       <div className="mt-2 grid gap-2">
         {proofs.length === 0 ? <p className="text-muted-foreground">{t("ceoOffice.reviewNoProof")}</p> : null}
         {proofs.map((proof) => (
-          <div className="grid gap-0.5 rounded-md bg-muted/60 px-3 py-2" key={proof.id}>
+          <div className="grid gap-0.5 rounded-[var(--r-reading)] bg-muted/60 px-3 py-2" key={proof.id}>
             <p>{resolveLocalizedValue(proof.summaryText, language, proof.summary)}</p>
             <p className="break-all text-xs text-muted-foreground">{`${formatProofType(proof.type, t)} · ${proof.uri}`}</p>
           </div>

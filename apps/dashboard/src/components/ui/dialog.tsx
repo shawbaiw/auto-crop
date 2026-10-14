@@ -15,8 +15,8 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-foreground/25" />
     <DialogPrimitive.Content
       className={cn(
-        // Portaled outside the Workbench, so it opts into the modern shell rules itself.
-        "fixed left-1/2 top-1/2 z-50 grid font-sans max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-lg border border-border/80 bg-card p-5 text-card-foreground shadow-lg focus-visible:outline-none",
+        // Portaled outside the Workbench, so it sets its own font.
+        "fixed left-1/2 top-1/2 z-50 grid font-sans max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-[var(--r-panel)] border border-border/80 bg-card p-5 text-card-foreground shadow-lg focus-visible:outline-none",
         className,
       )}
       ref={ref}
@@ -25,7 +25,7 @@ export const DialogContent = React.forwardRef<
       {children}
       <DialogPrimitive.Close
         aria-label={closeLabel}
-        className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="absolute right-3 top-3 rounded-[var(--r-pill)] p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <X aria-hidden="true" className="size-4" />
       </DialogPrimitive.Close>
