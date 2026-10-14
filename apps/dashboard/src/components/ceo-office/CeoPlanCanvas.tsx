@@ -5,7 +5,8 @@ import type { DepartmentSummary, KeyResultSummary, ObjectiveSummary, TaskSummary
 import { cn } from "@/lib/utils";
 import { useLanguage } from "../../ui/language";
 import { departmentName, taskTitle } from "../../ui/language/localizedNames";
-import { taskStatusTone, taskStatusToneClassName, taskStatusToneLabelKey } from "../task/taskStatusTone";
+import { TaskStatusBadge } from "../task/TaskStatusBadge";
+import { taskStatusTone, taskStatusToneLabelKey } from "../task/taskStatusTone";
 import { PlanGoals } from "./PlanGoals";
 import { DEPARTMENT_COLORS, layoutPlan, PLAN_NODE_HEIGHT, PLAN_NODE_WIDTH } from "./planLayout";
 
@@ -134,10 +135,7 @@ function TaskNodeView({ data }: NodeProps<TaskNode>) {
       <p className={cn("line-clamp-2 text-xs font-semibold leading-snug", tone === "cancelled" && "line-through text-muted-foreground")}>{data.title}</p>
       <div className="flex items-center justify-between gap-2 text-[11px]">
         <span className="truncate text-muted-foreground">{data.departmentLabel}</span>
-        <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 font-medium", taskStatusToneClassName[tone])}>
-          {tone === "running" ? <span aria-hidden="true" className="size-2 animate-spin rounded-full border border-current border-t-transparent" /> : null}
-          {t(taskStatusToneLabelKey[tone])}
-        </span>
+        <TaskStatusBadge className="px-1.5 text-[11px]" status={data.status} />
       </div>
       <Handle className="!opacity-0" isConnectable={false} position={Position.Right} type="source" />
     </div>

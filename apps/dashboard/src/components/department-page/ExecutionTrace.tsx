@@ -10,7 +10,8 @@ import { Button, Card } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { ReplanProposalCard } from "../replan/ReplanProposalCard";
 import { ReplanRequestForm, type ReplanRequest } from "../replan/ReplanRequestForm";
-import { taskStatusTone, taskStatusToneClassName, taskStatusToneLabelKey } from "../task/taskStatusTone";
+import { TaskStatusBadge } from "../task/TaskStatusBadge";
+import { taskStatusTone, taskStatusToneLabelKey } from "../task/taskStatusTone";
 import { KeyValueList } from "../workbench/KeyValueList";
 import type { CeoOfficeView } from "../ceo-office/CeoOfficeCard";
 import { useLanguage, type TranslationKey } from "../../ui/language";
@@ -105,10 +106,7 @@ export function ExecutionTrace({
           ) : null}
         </div>
         <div className="flex items-center gap-2">
-          <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium", taskStatusToneClassName[tone])}>
-            {tone === "running" ? <LoaderCircle aria-hidden="true" className="size-3 animate-spin" /> : null}
-            {statusLabel}
-          </span>
+          <TaskStatusBadge status={task.status} />
           <Button aria-expanded={expanded} aria-label={t(expanded ? "departmentPage.hideSteps" : "departmentPage.showSteps")} onClick={onToggle} size="icon" variant="ghost">
             <ChevronDown aria-hidden="true" className={cn("transition-transform", expanded && "rotate-180")} />
           </Button>
@@ -162,7 +160,7 @@ export function ExecutionTrace({
                   <div className="grid gap-1.5 rounded-md border border-border/70 p-2" key={subtask.id}>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                       <span className={cn(subtone === "cancelled" && "line-through text-muted-foreground")}>{taskTitle(subtask, ctx.locale)}</span>
-                      <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", taskStatusToneClassName[subtone])}>{t(taskStatusToneLabelKey[subtone])}</span>
+                      <TaskStatusBadge status={subtask.status} />
                     </div>
                     <TaskActions handlers={actions} locale={ctx.locale} task={subtask} />
                   </div>
