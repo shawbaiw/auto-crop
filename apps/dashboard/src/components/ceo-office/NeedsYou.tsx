@@ -130,7 +130,7 @@ export function NeedsYou({
 
 /** Each thing that needs the founder: a lighter reading surface in the panel, never a bordered card in a card. */
 const row = "grid gap-1 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] p-3";
-const sectionHeading = "flex items-center gap-2 text-[13px] font-semibold normal-case text-foreground [&_svg]:size-4";
+const sectionHeading = "flex items-center gap-2 text-[13px] font-semibold text-foreground [&_svg]:size-4";
 
 /** A task's state as a bare icon: your turn in charcoal, a failure in coral, so the column is never all alarm. */
 function TaskIcon({ status }: { status: string }) {
@@ -148,7 +148,7 @@ export function NeedsYouFrame({ children, count, wide }: { children: ReactNode; 
   if (wide) {
     return (
       <aside aria-label={t("ceoOffice.needsYou")} className={cn(panel, "min-h-0 overflow-y-auto p-5")}>
-        <h2 className="mb-4 text-[17px] font-semibold normal-case">{t("ceoOffice.needsYou")}</h2>
+        <h2 className="mb-4 text-[17px] font-semibold leading-tight">{t("ceoOffice.needsYou")}</h2>
         {children}
       </aside>
     );

@@ -65,7 +65,7 @@ export function Settings({
                 <li key={item.id}>
                   <button
                     aria-current={isCurrent ? "true" : undefined}
-                    className="grid w-full gap-1.5 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3 text-left normal-case transition-colors duration-[var(--dur)] hover:bg-[color:var(--c-ice)] focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:cursor-default disabled:hover:bg-[color:var(--surface-reading)]"
+                    className="grid w-full gap-1.5 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3 text-left transition-colors duration-[var(--dur)] hover:bg-[color:var(--c-ice)] focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:cursor-default disabled:hover:bg-[color:var(--surface-reading)]"
                     disabled={isCurrent}
                     onClick={() => onOpenCompany(item.id)}
                     type="button"

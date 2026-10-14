@@ -120,7 +120,7 @@ export function WorkbenchRail({ ceoPendingCount, companyName, companyStatus, dep
   return (
     <nav aria-label={t("workbench.navigation")} className="im-rail" data-variant="full">
       <div className="im-rail-company">
-        <h2 className="break-words text-base font-semibold normal-case leading-tight">{companyName}</h2>
+        <h2 className="break-words text-base font-semibold leading-tight">{companyName}</h2>
         <CompanyStatus status={companyStatus} />
       </div>
       <RailItem entry={ceoOffice} variant="full" />

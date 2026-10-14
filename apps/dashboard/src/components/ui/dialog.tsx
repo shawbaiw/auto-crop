@@ -16,7 +16,7 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       className={cn(
         // Portaled outside the Workbench, so it opts into the modern shell rules itself.
-        "modern-dashboard-shell fixed left-1/2 top-1/2 z-50 grid font-sans max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-lg border border-border/80 bg-card p-5 text-card-foreground shadow-lg focus-visible:outline-none",
+        "fixed left-1/2 top-1/2 z-50 grid font-sans max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-lg border border-border/80 bg-card p-5 text-card-foreground shadow-lg focus-visible:outline-none",
         className,
       )}
       ref={ref}

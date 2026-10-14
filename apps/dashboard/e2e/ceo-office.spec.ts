@@ -82,3 +82,14 @@ test("the Plan tab scrolls inside its own area on a short phone screen, so the c
   const box = (await legend.boundingBox())!;
   expect(box.y + box.height).toBeLessThanOrEqual(await composerTop());
 });
+
+test("an element without its own focus style shows the Ice Mist focus ring", async ({ page }) => {
+  await page.addInitScript((id) => localStorage.setItem("auto-crop.currentCompanyId", id), ceoOfficeCompany.id);
+  await mockCeoOfficeApi(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  // The fold for earlier days is a bare <summary>; keyboard focus must still be visible on it.
+  const summary = page.locator("details summary").filter({ hasText: /2026/ }).last();
+  await summary.focus();
+  await expect(summary).toHaveCSS("box-shadow", "rgba(61, 90, 128, 0.35) 0px 0px 0px 3px");
+});

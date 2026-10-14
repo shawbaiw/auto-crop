@@ -50,7 +50,7 @@ export function CompanyCreationLoading({
   const failureMessage = failedEvent ? resolveLocalizedValue(failedEvent.messageText, language, failedEvent.message) : null;
 
   return (
-    <div className="modern-dashboard-shell">
+    <div>
       <AmbientBackground>
         <div className="mx-auto flex w-full max-w-[920px] flex-col gap-[var(--module-gap)]">
           <header className="flex min-h-[var(--hit-min)] flex-wrap items-center justify-between gap-3">
@@ -65,7 +65,7 @@ export function CompanyCreationLoading({
             </div>
 
             <div className="flex flex-col gap-3">
-              <h1 className="break-words text-[34px] font-[350] normal-case leading-[1.1] tracking-[-0.02em] sm:text-[42px]" id={titleId}>
+              <h1 className="break-words text-[34px] font-[350] leading-[1.1] tracking-[-0.02em] sm:text-[42px]" id={titleId}>
                 {isFailed ? t("creating.failureTitle") : t("creating.status")}
               </h1>
               <dl className="flex flex-wrap items-center gap-x-6 gap-y-1 text-[13px] font-medium text-[color:var(--text-secondary)]">
@@ -90,7 +90,7 @@ export function CompanyCreationLoading({
             </div>
 
             <section aria-labelledby={traceId} className="flex flex-col gap-4 border-t border-[color:var(--edge-divider)] pt-[var(--module-gap)]">
-              <h2 className="text-[13px] font-medium normal-case text-[color:var(--text-secondary)]" id={traceId}>
+              <h2 className="text-[13px] font-medium leading-tight text-[color:var(--text-secondary)]" id={traceId}>
                 {t("creating.trace")}
               </h2>
               <ol className="flex flex-col">

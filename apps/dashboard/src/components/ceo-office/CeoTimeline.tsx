@@ -66,7 +66,7 @@ export function CeoTimeline({ companyId, items, view }: { companyId: string; ite
           {groups.map((group, index) =>
             index === groups.length - 1 ? (
               <section aria-label={group.label} className="grid gap-4" key={group.key}>
-                <h3 className="text-center text-[13px] font-medium normal-case text-muted-foreground">{group.label}</h3>
+                <h3 className="text-center text-[13px] font-medium text-muted-foreground">{group.label}</h3>
                 {group.items.map((item) => (
                   <CeoOfficeCard item={item} key={item.id} view={view} />
                 ))}

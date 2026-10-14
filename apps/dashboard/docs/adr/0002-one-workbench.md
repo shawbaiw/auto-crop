@@ -112,6 +112,10 @@ The three legacy pages overlapped. Counts of blocked work, Human Actions and Wai
   - The department's "Needs you" is the CEO Office list filtered to the department.
   - The answers to a Department Intake are cards under the traces.
   - No Retro component, theme or CSS rule is left. The legacy element rules and tokens in `styles.css` remain for P5.
+- P5 legacy CSS removed on 2026-10-14:
+  - `styles.css` no longer uppercases buttons and headings, sizes headings or squares off controls, and the legacy tokens are gone. Every heading sets its own size and line height, so the `modern-dashboard-shell` opt-out and the `normal-case` classes went with them.
+  - Every focusable element shows the Ice Mist focus ring unless it styles its own focus. The legacy focus rule read tokens that no longer existed, so it removed focus outlines altogether.
+  - Root ADR 0047, the agent execution trace, is still to come.
 - The P4 steps run on a short-lived branch that is rebased often and merged once, so no page is delivered half legacy and half modern (ADR 0001).
 
 ## Considered Options

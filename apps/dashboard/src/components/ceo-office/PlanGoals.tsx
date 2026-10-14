@@ -34,7 +34,7 @@ export function PlanGoals({
     <section aria-label={t("ceoOffice.planGoals")} className="grid max-h-48 shrink-0 gap-3 overflow-y-auto rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3">
       {[...objectives].sort((a, b) => a.priority - b.priority).map((objective) => (
         <div className="grid gap-1.5" key={objective.id}>
-          <h3 className="flex items-center gap-1.5 text-[15px] font-semibold normal-case">
+          <h3 className="flex items-center gap-1.5 text-[15px] font-semibold">
             <Target aria-hidden="true" className="size-4 text-status-neutral-icon" />
             {resolveLocalizedValue(objective.titleText, locale, objective.title)}
           </h3>

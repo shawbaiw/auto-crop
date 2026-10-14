@@ -103,7 +103,7 @@ export function ExecutionTrace({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="grid min-w-0 gap-1">
-          <h3 className={cn("break-words text-[17px] font-semibold normal-case leading-snug", tone === "cancelled" && "text-muted-foreground line-through")}>{title}</h3>
+          <h3 className={cn("break-words text-[17px] font-semibold leading-snug", tone === "cancelled" && "text-muted-foreground line-through")}>{title}</h3>
           {state === "settled" && !expanded ? (
             <p className="text-[13px] font-medium text-muted-foreground">
               {t("departmentPage.summary").replace("{status}", statusLabel).replace("{count}", String(stepCount))}
@@ -221,7 +221,7 @@ export function ExecutionTrace({
 }
 
 /** Plan, Steps and Subtasks: quiet labels, so the task title and its status lead (spec §5.3). */
-const sectionHeading = "text-[13px] font-medium normal-case text-muted-foreground";
+const sectionHeading = "text-[13px] font-medium text-muted-foreground";
 
 function stepLabel(step: TaskProgressEventSummary | undefined, language: "en" | "zh"): string {
   return step ? resolveLocalizedValue(step.labelText, language, step.label) : "";
@@ -288,7 +288,7 @@ function TraceResult({
   const conclusion = report ? view.ctx.line(report.data.conclusion) || view.ctx.line(report.data.summaryFallback) : "";
   return (
     <section aria-label={t("departmentPage.result")} className="im-reading grid gap-1.5">
-      <h4 className="flex items-center gap-1.5 text-[13px] font-semibold normal-case text-foreground">
+      <h4 className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
         <CircleCheck aria-hidden="true" className="size-4 text-status-success-icon" />
         {t("departmentPage.result")}
       </h4>
