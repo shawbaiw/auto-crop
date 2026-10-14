@@ -91,7 +91,7 @@ export function CeoPlanCanvas({
           onNodeClick={(_, node) => onOpenDepartment(tasks.find((task) => task.id === node.id)?.departmentId ?? "")}
         >
           <Background color="var(--c-cool)" gap={20} size={1} />
-          <Controls className="im-flow-controls" orientation="horizontal" showInteractive={false} />
+          <Controls className="im-flow-controls" orientation="horizontal" position="top-right" showInteractive={false} />
         </ReactFlow>
       </div>
       <ul aria-label={t("ceoOffice.planLegend")} className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
