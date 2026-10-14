@@ -348,7 +348,7 @@ describe("Dashboard App", () => {
     await fillReadyToCreate(user);
     await user.click(screen.getByRole("button", { name: /create company/i }));
 
-    expect(await screen.findByText("temporary model failure")).toBeInTheDocument();
+    expect(await screen.findByText("Codex ran into an error")).toBeInTheDocument();
     // A failed creation is retried or left, never abandoned from this page.
     expect(screen.queryByRole("button", { name: "Stop and abandon this company" })).not.toBeInTheDocument();
     expect(screen.queryByRole("progressbar", { name: "CEO agent blueprint generation in progress" })).not.toBeInTheDocument();

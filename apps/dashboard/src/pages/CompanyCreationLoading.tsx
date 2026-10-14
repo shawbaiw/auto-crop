@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ChevronRight, Circle, Info, LoaderCircle, Plus, RefreshCw } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Circle, CircleAlert, Info, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { AgentSummary, CompanyEventSummary } from "../api/client";
 import { AmbientBackground, Panel, PillButton, ReadingSurface, StatusTag } from "../components/ice-mist";
@@ -105,7 +105,7 @@ export function CompanyCreationLoading({
                 {trace.map((step, index) => (
                   <CreationTraceStep isLast={index === trace.length - 1} key={step.type} step={step}>
                     {step.state === "failed" ? (
-                      <CreationFailureRecovery failureMessage={failureMessage} isRetrying={isRetrying} leave={leave} onRetry={onRetry} />
+                      <CreationFailureRecovery agentName={agentName} failureMessage={failureMessage} isRetrying={isRetrying} leave={leave} onRetry={onRetry} />
                     ) : null}
                   </CreationTraceStep>
                 ))}
@@ -237,43 +237,39 @@ function StepIcon({ state }: { state: CreationStepState }) {
 }
 
 /**
- * The recovery area under the failed step (spec §5.2, trimmed by the product owner): the reason on one
- * line, the full raw message in the technical details, what was kept, then retry or leave. A failed
- * creation is retried or left; it is not abandoned from here.
+ * The recovery area under the failed step (spec §5.2, trimmed by the product owner): a one-line summary
+ * that opens to the full raw error, what was kept, then retry or leave. A failed creation is retried or
+ * left; it is not abandoned from here.
  */
 function CreationFailureRecovery({
+  agentName,
   failureMessage,
   isRetrying,
   leave,
   onRetry,
 }: {
+  agentName: string;
   failureMessage: string | null;
   isRetrying: boolean;
   leave?: { kind: "other" | "new"; run(): void };
   onRetry?: () => void;
 }) {
   const { t } = useLanguage();
-  const nextStepsId = "company-creation-next-steps";
-  const reason = failureMessage ? failureReason(failureMessage) : null;
 
   return (
     <div className="mt-3 flex flex-col gap-4">
-      {reason ? (
-        <p className="flex min-w-0 items-baseline gap-2 rounded-[var(--r-reading)] bg-[color:var(--status-failed-bg)] px-4 py-2.5 text-[15px] leading-[1.6]">
-          <span className="shrink-0 text-[13px] font-medium text-[color:var(--status-failed-fg)]">{t("creating.failureReason")}</span>
-          <span className="min-w-0 truncate" title={reason}>
-            {reason}
-          </span>
-        </p>
-      ) : null}
-
       {failureMessage ? (
         <details className="group">
-          <summary className="inline-flex min-h-[var(--hit-min)] cursor-pointer list-none items-center gap-1 rounded-[var(--r-pill)] text-[13px] font-medium text-[color:var(--text-secondary)] outline-none transition-colors duration-[var(--dur)] ease-[var(--ease)] hover:text-[color:var(--text-primary)] focus-visible:shadow-[var(--focus-ring)]">
-            <ChevronRight aria-hidden="true" className="size-4 transition-transform duration-[var(--dur)] ease-[var(--ease)] group-open:rotate-90" />
-            {t("creating.technicalDetails")}
+          <summary className="flex min-h-[var(--hit-min)] cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-[var(--r-reading)] bg-[color:var(--status-failed-bg)] px-4 py-2 outline-none focus-visible:shadow-[var(--focus-ring)]">
+            <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-[color:var(--status-failed-fg)]" />
+            <span className="text-[15px] font-medium">{failureSummary(failureMessage, agentName, t)}</span>
+            <span className="inline-flex items-center gap-0.5 text-[13px] font-medium text-[color:var(--status-failed-fg)]">
+              <span aria-hidden="true">·</span>
+              {t("creating.viewErrorDetails")}
+              <ChevronRight aria-hidden="true" className="size-4 transition-transform duration-[var(--dur)] ease-[var(--ease)] group-open:rotate-90" />
+            </span>
           </summary>
-          <ReadingSurface className="mt-1">
+          <ReadingSurface className="mt-2">
             <p className="im-code whitespace-pre-wrap text-[color:var(--text-primary)]">{failureMessage}</p>
           </ReadingSurface>
         </details>
@@ -285,24 +281,19 @@ function CreationFailureRecovery({
       </p>
 
       {onRetry || leave ? (
-        <section aria-labelledby={nextStepsId} className="flex flex-col gap-3">
-          <h4 className="text-[13px] font-medium normal-case text-[color:var(--text-secondary)]" id={nextStepsId}>
-            {t("creating.nextSteps")}
-          </h4>
-          <div className="flex flex-wrap gap-3">
-              {onRetry ? (
-                <PillButton disabled={isRetrying} onClick={onRetry} variant="primary">
-                  <RefreshCw aria-hidden="true" />
-                  {isRetrying ? t("creating.retrying") : t("creating.retry")}
-                </PillButton>
-              ) : null}
-              {leave ? (
-                <PillButton onClick={leave.run} variant="secondary">
-                  {leave.kind === "other" ? <ArrowLeft aria-hidden="true" /> : <Plus aria-hidden="true" />}
-                  {t(leave.kind === "other" ? "creating.backToOtherCompany" : "creating.createNewCompany")}
-                </PillButton>
-              ) : null}
-          </div>
+        <section aria-label={t("creating.nextSteps")} className="flex flex-wrap gap-3">
+          {onRetry ? (
+            <PillButton disabled={isRetrying} onClick={onRetry} variant="primary">
+              <RefreshCw aria-hidden="true" />
+              {isRetrying ? t("creating.retrying") : t("creating.retry")}
+            </PillButton>
+          ) : null}
+          {leave ? (
+            <PillButton onClick={leave.run} variant="secondary">
+              {leave.kind === "other" ? <ArrowLeft aria-hidden="true" /> : <Plus aria-hidden="true" />}
+              {t(leave.kind === "other" ? "creating.backToOtherCompany" : "creating.createNewCompany")}
+            </PillButton>
+          ) : null}
         </section>
       ) : null}
     </div>
@@ -356,7 +347,11 @@ function formatStepDuration(seconds: number) {
   return `${rounded.toFixed(1)}s`;
 }
 
-/** The known reason without the server's "Company Creation failed:" prefix, which the header tag already says. */
-function failureReason(message: string) {
-  return message.replace(/^Company Creation failed:\s*/i, "");
+/**
+ * A one-line summary built only from what the raw error reliably says: a timeout, or else that the agent
+ * ran into an error. It never guesses a cause; the full message is one click away.
+ */
+function failureSummary(message: string, agentName: string, t: (key: TranslationKey) => string) {
+  if (/timed out/i.test(message)) return t("creating.failureTimedOut");
+  return t("creating.failureAgentError").replace("{agent}", agentName);
 }
