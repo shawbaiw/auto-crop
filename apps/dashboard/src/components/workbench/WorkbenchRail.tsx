@@ -119,7 +119,7 @@ function RailItem({
         aria-describedby={description ? descriptionId : undefined}
         className={cn(
           "flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          active && "bg-secondary font-medium",
+          active && "bg-selected font-medium hover:bg-selected",
         )}
         onClick={onClick}
         type="button"
@@ -131,13 +131,13 @@ function RailItem({
             {workingAgents.map((agent) => (
               <span className="relative inline-flex" key={agent.id}>
                 <AgentIcon agentId={agent.id} className="size-3.5" decorative name={agent.name} />
-                <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-blue-500 motion-safe:animate-pulse" />
+                <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-[var(--r-pill)] bg-status-running-icon" />
               </span>
             ))}
           </span>
         ) : null}
         {pendingCount > 0 ? (
-          <span aria-hidden="true" className="rounded-full bg-amber-100 px-1.5 text-xs font-medium text-amber-800">
+          <span aria-hidden="true" className="rounded-[var(--r-pill)] bg-[color:var(--status-your-turn-bg)] px-1.5 text-xs font-semibold text-[color:var(--status-your-turn-fg)]">
             {pendingCount}
           </span>
         ) : null}

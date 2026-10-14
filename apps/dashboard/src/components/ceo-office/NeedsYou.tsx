@@ -36,11 +36,12 @@ export function NeedsYou({
   const { t } = useLanguage();
   const planned = tasks.filter((task) => task.taskKind !== "department_subtask");
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
-  const counts: Array<{ key: TranslationKey; value: string; tone: string }> = [
-    { key: "ceoOffice.countDone", value: `${planned.filter((task) => task.status === "complete").length}/${planned.length}`, tone: "text-emerald-700" },
-    { key: "ceoOffice.countRunning", value: String(planned.filter((task) => task.status === "running" || task.status === "retrying").length), tone: "text-blue-700" },
-    { key: "ceoOffice.countStuck", value: String(planned.filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed").length), tone: "text-amber-800" },
-    { key: "ceoOffice.countWaitingFor", value: String(waitStates.length), tone: "text-slate-600" },
+  // Numbers stay charcoal; a small dot in the state's icon color says which state each counts.
+  const counts: Array<{ key: TranslationKey; value: string; dot: string }> = [
+    { key: "ceoOffice.countDone", value: `${planned.filter((task) => task.status === "complete").length}/${planned.length}`, dot: "bg-status-success-icon" },
+    { key: "ceoOffice.countRunning", value: String(planned.filter((task) => task.status === "running" || task.status === "retrying").length), dot: "bg-status-running-icon" },
+    { key: "ceoOffice.countStuck", value: String(planned.filter((task) => task.status === "blocked" || task.status === "needs_replan" || task.status === "failed").length), dot: "bg-[color:var(--status-your-turn-bg)]" },
+    { key: "ceoOffice.countWaitingFor", value: String(waitStates.length), dot: "bg-status-neutral-icon" },
   ];
   const empty = cards.items.length === 0 && cards.plans.length === 0 && cards.tasks.length === 0;
 
@@ -50,12 +51,15 @@ export function NeedsYou({
         {counts.map((count) => (
           <div className="grid gap-0.5 rounded-md bg-muted/60 px-2.5 py-2" key={count.key}>
             <dt className="truncate text-xs text-muted-foreground">{t(count.key)}</dt>
-            <dd className={`m-0 text-lg font-semibold ${count.tone}`}>{count.value}</dd>
+            <dd className="m-0 flex items-center gap-1.5 text-lg font-semibold text-foreground">
+              <span aria-hidden="true" className={`size-2 shrink-0 rounded-[var(--r-pill)] ${count.dot}`} />
+              {count.value}
+            </dd>
           </div>
         ))}
       </dl>
       {message ? (
-        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">
+        <p className="rounded-md bg-status-success-bg px-3 py-2 text-sm text-status-success" role="status">
           {message}
         </p>
       ) : null}
@@ -65,7 +69,7 @@ export function NeedsYou({
         if (sectionItems.length === 0) return null;
         return (
           <section aria-label={t(`ceoOffice.${section.key}` as TranslationKey)} className="grid gap-2" key={section.key}>
-            <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-800 [&_svg]:size-3.5">
+            <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-foreground [&_svg]:size-3.5">
               {section.icon}
               {t(`ceoOffice.${section.key}` as TranslationKey)}
             </h3>
@@ -77,14 +81,14 @@ export function NeedsYou({
       })}
       {cards.tasks.length > 0 ? (
         <section aria-label={t("ceoOffice.waitsOnYou")} className="grid gap-2">
-          <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-800 [&_svg]:size-3.5">
+          <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-foreground [&_svg]:size-3.5">
             <CircleArrowRight aria-hidden="true" />
             {t("ceoOffice.waitsOnYou")}
           </h3>
           {cards.tasks.map(({ task, kind }) => {
             const department = view.departmentsById.get(task.departmentId);
             return (
-              <article className="grid gap-1 rounded-lg border border-l-4 border-border/80 border-l-amber-400 bg-card p-3 shadow-workbench" key={task.id}>
+              <article className="grid gap-1 rounded-lg border border-border/80 bg-card p-3 shadow-workbench" key={task.id}>
                 <p className="text-sm font-medium leading-snug">{taskTitle(task, view.ctx.locale)}</p>
                 {department ? <p className="text-xs text-muted-foreground">{departmentName(department, view.ctx.locale)}</p> : null}
                 <p className="text-sm text-foreground/80">{t(`ceoOffice.waitsOnYouReason.${kind}` as TranslationKey)}</p>
@@ -98,14 +102,14 @@ export function NeedsYou({
       ) : null}
       {cards.plans.length > 0 ? (
         <section aria-label={t("ceoOffice.newPlans")} className="grid gap-2">
-          <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-800 [&_svg]:size-3.5">
+          <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-foreground [&_svg]:size-3.5">
             <GitBranchPlus aria-hidden="true" />
             {t("ceoOffice.newPlans")}
           </h3>
           {cards.plans.map((proposal) => {
             const task = tasksById.get(proposal.sourceTaskId);
             return (
-              <article className="grid gap-2 rounded-lg border border-l-4 border-border/80 border-l-amber-400 bg-card p-3 shadow-workbench" key={proposal.id}>
+              <article className="grid gap-2 rounded-lg border border-border/80 bg-card p-3 shadow-workbench" key={proposal.id}>
                 <p className="text-sm">{t("ceoOffice.newPlanCard").replace("{task}", task ? taskTitle(task, view.ctx.locale) : proposal.sourceTaskId)}</p>
                 <Button className="justify-self-start" onClick={() => view.onOpenTask(proposal.sourceTaskId)} size="sm" variant="outline">
                   {t("ceoOffice.openNewPlan")}
@@ -124,7 +128,7 @@ function NeedsYouCard({ item, view }: { item: CeoOfficeItemSummary; view: CeoOff
   const title = view.ctx.localize(item.titleText, item.title);
   const department = item.departmentId ? view.departmentsById.get(item.departmentId) : undefined;
   return (
-    <article className="grid gap-1 rounded-lg border border-l-4 border-border/80 border-l-amber-400 bg-card p-3 shadow-workbench">
+    <article className="grid gap-1 rounded-lg border border-border/80 bg-card p-3 shadow-workbench">
       <p className="text-sm font-medium leading-snug">{title}</p>
       {department ? <p className="text-xs text-muted-foreground">{departmentName(department, view.ctx.locale)}</p> : null}
       <Button

@@ -100,6 +100,6 @@ export function TaskExecutionPanel({ task }: { task: TaskSummary }) {
         <Button disabled={busy} onClick={() => setForm(null)} size="sm" variant="ghost">{zh ? "返回" : "Back"}</Button>
       </div>
     </div>}
-    {error && <p className="text-red-700" role="alert">{error}</p>}
+    {error && <p className="text-status-failed" role="alert">{error}</p>}
   </section>;
 }

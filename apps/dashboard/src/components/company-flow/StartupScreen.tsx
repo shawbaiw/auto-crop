@@ -24,7 +24,7 @@ export function StartupScreen({ error, failed, onRetry }: StartupScreenProps) {
       <Card className="grid gap-4 p-4 sm:p-5">
         {failed ? (
           <>
-            <Alert role="status" variant="destructive">
+            <Alert role="status" variant="danger">
               <AlertTitle>{t("startup.failed")}</AlertTitle>
               {error ? <AlertDescription>{error}</AlertDescription> : null}
             </Alert>

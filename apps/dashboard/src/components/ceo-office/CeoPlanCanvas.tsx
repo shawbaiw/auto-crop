@@ -65,8 +65,8 @@ export function CeoPlanCanvas({
     const flowEdges: Edge[] = layout.edges.map((edge) => ({
       ...edge,
       type: "smoothstep",
-      markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-      style: { strokeWidth: 1.5 },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "var(--edge-strong)" },
+      style: { strokeWidth: 1.5, stroke: "var(--edge-strong)" },
     }));
     return { nodes: flowNodes, edges: flowEdges };
   }, [departments, departmentsById, locale, t, tasks]);
@@ -78,7 +78,7 @@ export function CeoPlanCanvas({
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <PlanGoals keyResults={keyResults} locale={locale} objectives={objectives} tasks={tasks} />
-      <div aria-label={t("ceoOffice.planCanvas")} className="min-h-64 flex-1 overflow-hidden rounded-lg border border-border/80 bg-card" ref={containerRef} role="region">
+      <div aria-label={t("ceoOffice.planCanvas")} className="min-h-64 flex-1 overflow-hidden rounded-lg border border-border/80 bg-[color:var(--c-mist)]" ref={containerRef} role="region">
         <ReactFlow
           edges={edges}
           edgesFocusable={false}
@@ -91,14 +91,14 @@ export function CeoPlanCanvas({
           onInit={(instance) => showPlanStart(instance, nodes, containerRef.current)}
           onNodeClick={(_, node) => onOpenDepartment(tasks.find((task) => task.id === node.id)?.departmentId ?? "")}
         >
-          <Background gap={20} size={1} />
+          <Background color="var(--c-cool)" gap={20} size={1} />
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
       <ul aria-label={t("ceoOffice.planLegend")} className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
         {departments.map((department, index) => (
           <li className="flex items-center gap-1.5" key={department.id}>
-            <span aria-hidden="true" className="size-2.5 rounded-sm" style={{ backgroundColor: DEPARTMENT_COLORS[index % DEPARTMENT_COLORS.length] }} />
+            <span aria-hidden="true" className="size-2 rounded-[var(--r-pill)]" style={{ backgroundColor: DEPARTMENT_COLORS[index % DEPARTMENT_COLORS.length] }} />
             {departmentName(department, locale)}
           </li>
         ))}
@@ -127,14 +127,17 @@ function TaskNodeView({ data }: NodeProps<TaskNode>) {
   const tone = taskStatusTone(data.status);
   return (
     <div
-      className="grid cursor-pointer content-between gap-1 rounded-md border border-border/80 bg-background px-3 py-2 text-left shadow-sm"
-      style={{ width: PLAN_NODE_WIDTH, height: PLAN_NODE_HEIGHT, borderLeft: `4px solid ${data.color}` }}
+      className="grid cursor-pointer content-between gap-1 rounded-md border border-status-neutral-border bg-card px-3 py-2 text-left"
+      style={{ width: PLAN_NODE_WIDTH, height: PLAN_NODE_HEIGHT }}
       title={data.label}
     >
       <Handle className="!opacity-0" isConnectable={false} position={Position.Left} type="target" />
       <p className={cn("line-clamp-2 text-xs font-semibold leading-snug", tone === "cancelled" && "line-through text-muted-foreground")}>{data.title}</p>
       <div className="flex items-center justify-between gap-2 text-[11px]">
-        <span className="truncate text-muted-foreground">{data.departmentLabel}</span>
+        <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+          <span aria-hidden="true" className="size-2 shrink-0 rounded-[var(--r-pill)]" style={{ backgroundColor: data.color }} />
+          <span className="truncate">{data.departmentLabel}</span>
+        </span>
         <TaskStatusBadge className="px-1.5 text-[11px]" status={data.status} />
       </div>
       <Handle className="!opacity-0" isConnectable={false} position={Position.Right} type="source" />

@@ -51,7 +51,7 @@ export function Settings({
       <WorkbenchSection icon={<Building2 aria-hidden="true" />} title={t("settings.allCompanies")}>
         {companiesLoadState === "loading" ? <Alert role="status">{t("settings.loadingCompanies")}</Alert> : null}
         {companiesLoadState === "failed" ? (
-          <Alert role="status" variant="destructive">
+          <Alert role="status" variant="danger">
             <AlertTitle>{t("settings.companiesFailed")}</AlertTitle>
             {companiesLoadError ? <AlertDescription>{companiesLoadError}</AlertDescription> : null}
           </Alert>

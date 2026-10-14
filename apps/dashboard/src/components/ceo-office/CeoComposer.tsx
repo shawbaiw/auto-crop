@@ -89,7 +89,7 @@ export function CeoComposer({
       <p className="text-xs text-muted-foreground" id={hintId}>
         {stopped ? t("ceoOffice.composerStopped") : companyStatus === "paused" ? t("ceoOffice.composerPaused") : copy?.hint ?? t("ceoOffice.composerHint")}
       </p>
-      {error ? <p className="text-xs text-red-700" role="alert">{error}</p> : null}
+      {error ? <p className="text-xs text-status-failed" role="alert">{error}</p> : null}
     </form>
   );
 }

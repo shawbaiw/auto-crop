@@ -62,7 +62,7 @@ export function WorkbenchFrame({ agents, ceoOfficeItems, children, commands, com
         );
   const notice =
     company.status === "paused" ? (
-      <Alert className="border-amber-300 bg-amber-50 text-amber-900" role="status">
+      <Alert role="status">
         {t("app.companyPaused")}
       </Alert>
     ) : company.status === "stopped" ? (

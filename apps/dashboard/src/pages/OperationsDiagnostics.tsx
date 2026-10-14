@@ -44,18 +44,18 @@ export function OperationsDiagnostics({
 
       <WorkbenchSection icon={<ListChecks aria-hidden="true" />} title={t("diagnostics.taskFlow")}>
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Stat label={t("diagnostics.countRunning")} tone="text-blue-700" value={counts.running} />
-          <Stat label={t("diagnostics.countWaiting")} tone="text-slate-600" value={counts.waiting} />
-          <Stat label={t("diagnostics.countReview")} tone="text-violet-700" value={counts.review} />
-          <Stat label={t("diagnostics.countNeedsYou")} tone="text-amber-700" value={counts.needsYou} />
-          <Stat label={t("diagnostics.countFailed")} tone="text-red-700" value={counts.failed} />
-          <Stat label={t("diagnostics.countComplete")} tone="text-emerald-700" value={counts.complete} />
+          <Stat label={t("diagnostics.countRunning")} dot="bg-status-running-icon" value={counts.running} />
+          <Stat label={t("diagnostics.countWaiting")} dot="bg-status-neutral-icon" value={counts.waiting} />
+          <Stat label={t("diagnostics.countReview")} dot="bg-[color:var(--status-your-turn-bg)]" value={counts.review} />
+          <Stat label={t("diagnostics.countNeedsYou")} dot="bg-[color:var(--status-your-turn-bg)]" value={counts.needsYou} />
+          <Stat label={t("diagnostics.countFailed")} dot="bg-status-failed-icon" value={counts.failed} />
+          <Stat label={t("diagnostics.countComplete")} dot="bg-status-success-icon" value={counts.complete} />
           <Stat
             label={t("diagnostics.needsYourAction")}
-            tone="text-amber-700"
+            dot="bg-[color:var(--status-your-turn-bg)]"
             value={humanActions.filter((action) => action.status === "pending").length}
           />
-          <Stat label={t("diagnostics.waitingFor")} tone="text-slate-600" value={waitStates.length} />
+          <Stat label={t("diagnostics.waitingFor")} dot="bg-status-neutral-icon" value={waitStates.length} />
         </dl>
       </WorkbenchSection>
 
@@ -89,11 +89,15 @@ export function OperationsDiagnostics({
 }
 
 
-function Stat({ label, tone, value }: { label: string; tone: string; value: number }) {
+/** A count in charcoal, after a small dot in its state's icon color (color system v2 §5.5). */
+function Stat({ dot, label, value }: { dot: string; label: string; value: number }) {
   return (
     <div className="grid gap-0.5 rounded-md bg-muted/60 px-3 py-2">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={`m-0 text-xl font-semibold ${tone}`}>{value}</dd>
+      <dd className="m-0 flex items-center gap-2 text-xl font-semibold text-foreground">
+        <span aria-hidden="true" className={`size-2 shrink-0 rounded-[var(--r-pill)] ${dot}`} />
+        {value}
+      </dd>
     </div>
   );
 }

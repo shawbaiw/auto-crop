@@ -1054,16 +1054,12 @@ describe("Dashboard App", () => {
     expect(timeline).not.toHaveTextContent("ready_for_check_in");
     expect(timeline).not.toHaveTextContent("awaiting_founder_decision");
 
-    // Cards that still need the founder carry the amber of "needs you"; routine ones stay quiet.
-    expect(
-      within(timeline).getByRole("button", { name: "Open Needs your decision: Choose pricing path" }).closest("article"),
-    ).toHaveClass("border-l-amber-400");
-    expect(
-      within(timeline).getByRole("button", { name: "Open Stuck: Recover launch proof" }).closest("article"),
-    ).toHaveClass("border-l-amber-400");
-    expect(
-      within(timeline).getByRole("button", { name: "Open Waiting: Monitor first import" }).closest("article"),
-    ).not.toHaveClass("border-l-amber-400");
+    // Cards that still need the founder carry a "your turn" tag; routine ones stay quiet.
+    const yourTurnTag = (name: string) =>
+      within(timeline).getByRole("button", { name }).closest("article")!.querySelector('[data-tone="yourTurn"]');
+    expect(yourTurnTag("Open Needs your decision: Choose pricing path")).toHaveTextContent("Needs your decision");
+    expect(yourTurnTag("Open Stuck: Recover launch proof")).toHaveTextContent("Stuck");
+    expect(yourTurnTag("Open Waiting: Monitor first import")).toBeNull();
 
     // Opening the Decision card shows the options, trade-offs, rationale, and status as business language.
     await user.click(within(timeline).getByRole("button", { name: "Open Needs your decision: Choose pricing path" }));

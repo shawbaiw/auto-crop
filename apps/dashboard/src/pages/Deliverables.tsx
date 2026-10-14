@@ -63,8 +63,8 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
                     <span
                       className={
                         artifact.isCurrent
-                          ? "rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
-                          : "rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                          ? "rounded-[var(--r-pill)] bg-status-success-bg px-2 py-0.5 text-xs font-medium text-status-success"
+                          : "rounded-[var(--r-pill)] bg-status-neutral-bg px-2 py-0.5 text-xs font-medium text-status-neutral"
                       }
                     >
                       {t(artifact.isCurrent ? "deliverables.current" : "deliverables.earlier")}

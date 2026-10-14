@@ -29,7 +29,7 @@ The three legacy pages overlapped. Counts of blocked work, Human Actions and Wai
 
 - **Center column**, with tabs:
   - **Timeline**: today's CEO Office Items. Each item links to its department page.
-  - **Plan**: a React Flow canvas. Tasks are laid out left to right in dependency order and colored by department. It can be panned and zoomed.
+  - **Plan**: a React Flow canvas. Tasks are laid out left to right in dependency order, each marked with a small dot in its department's color. It can be panned and zoomed.
   - **Outcomes**: every outcome card, the same cards that are posted into the timeline as each outcome completes. A stopped company opens on this tab, with the Final Founder Report pinned first.
 - **Composer**: docked at the bottom of the center column. It is text only.
 - **Right column, "Needs you"**: overview counts, then the cards for reviews, decisions, Human Actions and new plans. On narrow screens it becomes a collapsible section above the timeline.
@@ -58,20 +58,7 @@ The three legacy pages overlapped. Counts of blocked work, Human Actions and Wai
 
 **Visual language**
 
-- **Task status colors**:
-  - running: blue, with a spinner;
-  - waiting: gray;
-  - review: violet;
-  - needs you or blocked: amber;
-  - failed: red;
-  - complete: green;
-  - cancelled: gray with a strike-through.
-- **Company status colors**:
-  - active: green;
-  - paused: amber;
-  - stopped: gray;
-  - creating: blue;
-  - creation failed: red.
+- **Task and company status colors** follow the Ice Mist color system, section 6 ([`docs/design/color-system.md`](../../../../docs/design/color-system.md)), which replaced the earlier palette on 2026-10-14. Color says state only: review and needs-you share charcoal "your turn" and differ by icon and text, paused and stopped are neutral, and amber is not used.
 - **Raw codes and execution details** (phase, health, budget, stop reason) are collapsed under "Details" below a plain sentence.
 - **Agent icons** come from Simple Icons. An agent without an icon shows a generic bot icon with its initials.
 - **Copy** follows root ADR 0045.

@@ -11,8 +11,6 @@ const alertVariants = cva("flex items-start gap-2 rounded-md border px-3 py-3 te
       success: "border-status-success-border bg-status-success-bg text-status-success",
       caution: "border-status-caution-border bg-status-caution-bg text-status-caution",
       danger: "border-status-failed-border bg-status-failed-bg text-status-failed",
-      /** Deprecated name for danger, until the pages move over. */
-      destructive: "border-status-failed-border bg-status-failed-bg text-status-failed",
     },
   },
   defaultVariants: {
@@ -25,7 +23,6 @@ const alertIcons: Record<NonNullable<AlertProps["variant"]>, { icon: LucideIcon;
   success: { icon: CircleCheck, color: "text-status-success-icon" },
   caution: { icon: TriangleAlert, color: "text-status-caution-icon" },
   danger: { icon: CircleAlert, color: "text-status-failed-icon" },
-  destructive: { icon: CircleAlert, color: "text-status-failed-icon" },
 };
 
 export type AlertProps = React.HTMLAttributes<HTMLDivElement> & VariantProps<typeof alertVariants>;

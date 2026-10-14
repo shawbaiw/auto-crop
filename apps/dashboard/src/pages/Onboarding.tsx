@@ -75,7 +75,7 @@ export function Onboarding(props: OnboardingProps) {
             />
           </div>
           {props.companyNameError ? (
-            <Alert role="alert" variant="destructive">
+            <Alert role="alert" variant="danger">
               {props.companyNameError}
             </Alert>
           ) : null}
@@ -93,7 +93,7 @@ export function Onboarding(props: OnboardingProps) {
           <div className="grid gap-2">
             {props.agentLoadState === "loading" ? <Alert role="status">{t("onboarding.scanningAgents")}</Alert> : null}
             {props.agentLoadState === "failed" ? (
-              <Alert role="status" variant="destructive">
+              <Alert role="status" variant="danger">
                 {t("onboarding.apiDisconnected")}
               </Alert>
             ) : null}
@@ -110,7 +110,7 @@ export function Onboarding(props: OnboardingProps) {
             ))}
           </div>
           {props.agentSelectionError ? (
-            <Alert role="alert" variant="destructive">
+            <Alert role="alert" variant="danger">
               {props.agentSelectionError}
             </Alert>
           ) : null}
@@ -150,7 +150,7 @@ export function Onboarding(props: OnboardingProps) {
             />
           </div>
           {props.founderVisionError ? (
-            <Alert role="alert" variant="destructive">
+            <Alert role="alert" variant="danger">
               {props.founderVisionError}
             </Alert>
           ) : null}
@@ -177,7 +177,7 @@ export function Onboarding(props: OnboardingProps) {
             </RadioGroup>
           </div>
           {props.createError ? (
-            <Alert role="alert" variant="destructive">
+            <Alert role="alert" variant="danger">
               {props.createError}
             </Alert>
           ) : null}

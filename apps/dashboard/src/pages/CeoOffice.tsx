@@ -149,7 +149,7 @@ export function CeoOffice({
               <TabsTrigger value="plan">{t("ceoOffice.plan")}</TabsTrigger>
               <TabsTrigger value="outcomes">
                 {t("ceoOffice.outcomes")}
-                {newOutcomes > 0 ? <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-semibold text-white">{newOutcomes}</span> : null}
+                {newOutcomes > 0 ? <span className="rounded-[var(--r-pill)] bg-status-running-bg px-1.5 text-[10px] font-semibold text-status-running">{newOutcomes}</span> : null}
               </TabsTrigger>
             </TabsList>
             {ceoAgent ? <p className="truncate text-xs text-muted-foreground">{t("ceoOffice.ceoAgent").replace("{agent}", ceoAgent.name)}</p> : null}

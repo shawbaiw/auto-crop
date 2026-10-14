@@ -60,7 +60,7 @@ export function ReplanRequestForm({
         <Textarea id={noteId} onChange={(event) => setNote(event.target.value)} rows={3} value={note} />
         <p className="text-xs text-muted-foreground">{t("operations.replanNoteHint")}</p>
       </div>
-      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {error ? <Alert variant="danger">{error}</Alert> : null}
       <div>
         <Button disabled={submitting} onClick={() => void submit()}>
           {t("operations.createReplanProposal")}

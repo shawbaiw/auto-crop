@@ -80,13 +80,11 @@ export function WorkbenchShell({ children, fill = false, location, navigationKey
             {operatingCommand.enabled ? (
               <Button
                 aria-label={t(operatingCommand.labelKey)}
-                className={cn(
-                  operatingCommand.id === "pause-operating" && "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100",
-                )}
                 onClick={operatingCommand.run}
                 size="sm"
                 title={operatingCommand.shortcut}
-                variant="outline"
+                // Pausing is a secondary action; resuming a paused company is the one thing to do next.
+                variant={operatingCommand.id === "resume-operating" ? "default" : "outline"}
               >
                 {operatingCommand.id === "pause-operating" ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
                 <span className="hidden sm:inline">{t(operatingCommand.labelKey)}</span>

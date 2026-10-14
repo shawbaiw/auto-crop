@@ -49,7 +49,7 @@ export function StopOperatingConfirm({ command, companyName, explanation, label,
             <Label htmlFor={confirmId}>{t("settings.stopConfirmLabel").replace("{name}", companyName)}</Label>
             <Input autoComplete="off" id={confirmId} onChange={(event) => setTypedName(event.target.value)} value={typedName} />
           </div>
-          {error ? <Alert variant="destructive">{error}</Alert> : null}
+          {error ? <Alert variant="danger">{error}</Alert> : null}
           <div className="flex flex-wrap gap-2">
             <Button disabled={typedName.trim() !== companyName || stopping} onClick={() => void stop()} variant="destructive">
               <OctagonX aria-hidden="true" />

@@ -1,6 +1,7 @@
-import { Bot, CircleAlert, User } from "lucide-react";
+import { Bot, CircleAlert, Eye, Hand, User } from "lucide-react";
 import type { CeoOfficeItemSummary, CompanySummary, DepartmentSummary } from "../../api/client";
 import { Button } from "@/components/ui";
+import { StatusTag } from "../ice-mist";
 import { cn } from "@/lib/utils";
 import { isUnseenSince } from "../../ui/ceoOutcomes/lastSeen";
 import { useLanguage, type TranslationKey } from "../../ui/language";
@@ -40,10 +41,7 @@ export function CeoOfficeCard({ item, view }: { item: CeoOfficeItemSummary; view
   const typeLabel = formatCeoOfficeItemType(item.type, ctx.t);
   return (
     <article
-      className={cn(
-        "grid gap-1.5 rounded-lg border border-border/80 bg-card p-3 shadow-workbench",
-        needsFounder(item) && "border-l-4 border-l-amber-400",
-      )}
+      className="grid gap-1.5 rounded-lg border border-border/80 bg-card p-3 shadow-workbench"
     >
       <CardMeta item={item} typeLabel={typeLabel} view={view} />
       <button
@@ -82,7 +80,13 @@ function CardMeta({ item, typeLabel, view }: { item: CeoOfficeItemSummary; typeL
   const name = department ? departmentName(department, view.ctx.locale) : null;
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-      <span className={cn("font-medium", needsFounder(item) ? "text-amber-800" : "text-foreground/70")}>{typeLabel}</span>
+      {needsFounder(item) ? (
+        <StatusTag icon={item.type === "approval_request" ? Eye : Hand} tone="yourTurn">
+          {typeLabel}
+        </StatusTag>
+      ) : (
+        <span className="font-medium text-foreground/70">{typeLabel}</span>
+      )}
       {department && name ? (
         <Button
           aria-label={t("ceoOffice.openDepartment").replace("{department}", name)}
@@ -95,7 +99,7 @@ function CardMeta({ item, typeLabel, view }: { item: CeoOfficeItemSummary; typeL
       ) : null}
       <time dateTime={item.occurredAt}>{formatTimelineRelativeTime(item.occurredAt, language)}</time>
       {isUnseenSince(item.occurredAt, view.lastSeen) ? (
-        <span className="rounded-full bg-blue-50 px-1.5 py-0.5 font-medium text-blue-700">{t("ceoOffice.new")}</span>
+        <span className="rounded-[var(--r-pill)] bg-status-running-bg px-1.5 py-0.5 font-medium text-status-running">{t("ceoOffice.new")}</span>
       ) : null}
     </div>
   );
@@ -128,7 +132,7 @@ function FounderIntakeCard({ item, view }: { item: Extract<CeoOfficeItemSummary,
       </div>
       {source ? <p className="text-xs text-muted-foreground">{t("ceoOffice.intakePassedOnFrom").replace("{source}", source)}</p> : null}
       <p className="whitespace-pre-wrap break-words text-sm">{item.data.body}</p>
-      {waiting ? <p className="text-xs text-muted-foreground motion-safe:animate-pulse">{t(waiting).replace("{agent}", speaker)}</p> : null}
+      {waiting ? <p className="text-xs text-muted-foreground">{t(waiting).replace("{agent}", speaker)}</p> : null}
     </article>
   );
 }
@@ -149,10 +153,10 @@ function IntakeOutcomeCard({ item, view }: { item: Extract<CeoOfficeItemSummary,
   return (
     <article
       aria-label={`${speaker}: ${headline}`}
-      className={cn("grid max-w-[min(40rem,95%)] gap-1.5 rounded-lg border border-border/80 bg-card p-3 shadow-workbench", failed && "border-l-4 border-l-red-400")}
+      className="grid max-w-[min(40rem,95%)] gap-1.5 rounded-lg border border-border/80 bg-card p-3 shadow-workbench"
     >
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {failed ? <CircleAlert aria-hidden="true" className="size-3.5 text-red-600" /> : <Bot aria-hidden="true" className="size-3.5" />}
+        {failed ? <CircleAlert aria-hidden="true" className="size-3.5 text-status-failed-icon" /> : <Bot aria-hidden="true" className="size-3.5" />}
         <span className="font-medium text-foreground/70">{speaker}</span>
         <time dateTime={item.occurredAt}>{formatTimelineRelativeTime(item.occurredAt, language)}</time>
       </div>

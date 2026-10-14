@@ -1,4 +1,4 @@
-import { ChevronDown, CircleAlert, CircleCheck, CircleDot, LoaderCircle } from "lucide-react";
+import { ChevronDown, CircleAlert, CircleCheck, CircleDot, Eye, LoaderCircle, Pause } from "lucide-react";
 import type {
   CeoOfficeItemSummary,
   ReplanProposalSummary,
@@ -10,6 +10,7 @@ import { Button, Card } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { ReplanProposalCard } from "../replan/ReplanProposalCard";
 import { ReplanRequestForm, type ReplanRequest } from "../replan/ReplanRequestForm";
+import { StatusTag } from "../ice-mist";
 import { TaskStatusBadge } from "../task/TaskStatusBadge";
 import { taskStatusTone, taskStatusToneLabelKey } from "../task/taskStatusTone";
 import { KeyValueList } from "../workbench/KeyValueList";
@@ -92,7 +93,7 @@ export function ExecutionTrace({
   return (
     <Card
       aria-label={title}
-      className={cn("grid gap-3 p-4 scroll-mt-4", focused && "ring-2 ring-primary/40", tone === "needsYou" || tone === "failed" ? "border-l-4 border-l-amber-400" : "")}
+      className={cn("grid gap-3 p-4 scroll-mt-4 transition-shadow duration-[var(--dur)]", focused && "shadow-[var(--focus-ring)]")}
       id={`trace-${task.id}`}
       role="region"
     >
@@ -114,8 +115,8 @@ export function ExecutionTrace({
       </div>
 
       {holdLine && state !== "settled" ? (
-        <p className={cn("flex items-start gap-1.5 text-sm", state === "stopped" ? "text-amber-900" : "text-muted-foreground")}>
-          <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+        <p className="flex items-start gap-1.5 text-sm text-muted-foreground">
+          {state === "stopped" ? <Pause aria-hidden="true" className="mt-0.5 size-4 shrink-0" /> : <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />}
           {holdLine}
         </p>
       ) : null}
@@ -223,7 +224,7 @@ function TraceSteps({ highlight, run }: { highlight: string | null; run: TraceRu
   return (
     <ol className="grid gap-1.5">
       {run.steps.map((step) => (
-        <li className={cn("flex items-start gap-2 text-sm", step.id === highlight && "rounded-md bg-amber-50 px-1.5 py-1")} key={step.id}>
+        <li className={cn("flex items-start gap-2 text-sm", step.id === highlight && "rounded-md bg-status-running-bg px-1.5 py-1")} key={step.id}>
           <StepIcon status={step.status} />
           <div className="grid min-w-0 gap-0.5">
             <span>{stepLabel(step, language)}</span>
@@ -236,10 +237,10 @@ function TraceSteps({ highlight, run }: { highlight: string | null; run: TraceRu
 }
 
 function StepIcon({ status }: { status: TaskProgressEventSummary["status"] }) {
-  if (status === "complete") return <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-emerald-600" />;
-  if (status === "blocked") return <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-amber-600" />;
-  if (status === "current") return <LoaderCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0 animate-spin text-blue-600" />;
-  return <CircleDot aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-slate-400" />;
+  if (status === "complete") return <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-status-success-icon" />;
+  if (status === "blocked") return <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-foreground" />;
+  if (status === "current") return <LoaderCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0 animate-spin text-status-running-icon" />;
+  return <CircleDot aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-status-neutral-icon" />;
 }
 
 /** The final result stays in view, folded or not: what the work concluded, or what it waits for. */
@@ -257,8 +258,11 @@ function TraceResult({
   const { t } = useLanguage();
   if (task.status === "review" && review) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-violet-50 px-3 py-2 text-sm text-violet-900">
-        {t("departmentPage.waitsForReview")}
+      <div className="im-reading flex flex-wrap items-center gap-2 text-sm">
+        <StatusTag icon={Eye} tone="yourTurn">
+          {t("ceoOffice.taskStatus.review")}
+        </StatusTag>
+        <span className="min-w-0 flex-1">{t("departmentPage.waitsForReview")}</span>
         <Button onClick={() => view.onOpenItem(review)} size="sm">{t("departmentPage.openReview")}</Button>
       </div>
     );
@@ -266,8 +270,11 @@ function TraceResult({
   if (task.status !== "complete") return null;
   const conclusion = report ? view.ctx.line(report.data.conclusion) || view.ctx.line(report.data.summaryFallback) : "";
   return (
-    <section aria-label={t("departmentPage.result")} className="grid gap-1 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{t("departmentPage.result")}</h4>
+    <section aria-label={t("departmentPage.result")} className="im-reading grid gap-1 text-sm">
+      <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-foreground">
+        <CircleCheck aria-hidden="true" className="size-3.5 text-status-success-icon" />
+        {t("departmentPage.result")}
+      </h4>
       <p>{conclusion || t("departmentPage.done")}</p>
     </section>
   );

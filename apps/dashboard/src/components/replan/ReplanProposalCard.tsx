@@ -55,7 +55,7 @@ export function ReplanProposalCard({
   }
 
   return (
-    <Card className={cn("grid gap-4 p-4", stale && "border-amber-300")}>
+    <Card className="grid gap-4 p-4">
       <div className="flex flex-wrap items-start gap-2">
         <p className="min-w-0 flex-1 text-sm font-medium">
           {sourceTask ? title(sourceTask.id) : t("operations.unknownTask")} —{" "}
@@ -68,7 +68,7 @@ export function ReplanProposalCard({
           </span>
         ) : null}
       </div>
-      {stale ? <Alert className="border-amber-300 bg-amber-50 text-amber-900">{t("operations.replanStale")}</Alert> : null}
+      {stale ? <Alert variant="caution">{t("operations.replanStale")}</Alert> : null}
       <KeyValueList
         items={[
           { label: t("operations.proposalSource"), value: t(proposal.proposalSource === "planner_agent" ? "operations.generatedByPlanner" : "operations.generatedByTemplate") },
@@ -91,7 +91,7 @@ export function ReplanProposalCard({
       ) : mode === "split" ? (
         <SplitChanges proposal={proposal} sourceTask={sourceTask} tasks={tasks} language={language} t={t} />
       ) : null}
-      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {error ? <Alert variant="danger">{error}</Alert> : null}
       {pending ? (
         <div className="grid gap-3 border-t border-border/70 pt-3">
           <div>
@@ -159,7 +159,7 @@ function RevisionChanges({ proposal, title, t }: { proposal: ReplanProposalSumma
                 const was = field.read(before);
                 const will = field.read(after);
                 return (
-                  <tr className={was === will ? undefined : "replan-diff__changed bg-amber-50"} key={field.key}>
+                  <tr className={was === will ? undefined : "replan-diff__changed bg-status-running-bg"} key={field.key}>
                     <th scope="row">{t(field.key)}</th>
                     <td>{was}</td>
                     <td>{will}</td>
@@ -171,7 +171,7 @@ function RevisionChanges({ proposal, title, t }: { proposal: ReplanProposalSumma
         ) : (
           <p className="text-sm text-muted-foreground">{t("operations.notAvailable")}</p>
         )}
-        {proposal.capabilitiesChanged ? <p className="text-sm text-amber-800">{t("operations.replanCapabilitiesChanged")}</p> : null}
+        {proposal.capabilitiesChanged ? <p className="text-sm text-status-caution">{t("operations.replanCapabilitiesChanged")}</p> : null}
       </section>
       <section className="grid gap-2">
         <h3 className="text-sm font-semibold">{t("operations.replanRequirementChanges")}</h3>
@@ -186,7 +186,7 @@ function RevisionChanges({ proposal, title, t }: { proposal: ReplanProposalSumma
               </tr>
             </thead>
             <tbody>
-              <tr className="replan-diff__changed bg-amber-50">
+              <tr className="replan-diff__changed bg-status-running-bg">
                 <td><RequirementList requirements={change.before} /></td>
                 <td><RequirementList requirements={change.after} /></td>
               </tr>
