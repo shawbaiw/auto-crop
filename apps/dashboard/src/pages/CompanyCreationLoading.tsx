@@ -181,7 +181,7 @@ function CreationTraceStep({ children, isLast, step }: { children?: ReactNode; i
         <div
           className={cn(
             "flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1",
-            isCurrent && "-ml-2 -mt-1.5 rounded-[var(--r-reading)] border border-[color:var(--edge-highlight)] bg-[color:var(--surface-reading)] py-1.5 pl-2 pr-3",
+            isCurrent && "-ml-2 -mt-1.5 rounded-[var(--r-reading)] border border-[color:var(--edge-divider)] bg-[color:var(--surface-reading)] py-1.5 pl-2 pr-3",
           )}
         >
           <span
