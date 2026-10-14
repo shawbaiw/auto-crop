@@ -166,7 +166,7 @@ export function Onboarding(props: OnboardingProps) {
             >
               {permissionOptions.map((option) => (
                 <Label
-                  className="flex cursor-pointer items-center gap-3 rounded-md border border-border bg-background px-3 py-3 font-normal transition-colors hover:bg-accent has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-secondary"
+                  className="flex cursor-pointer items-center gap-3 rounded-[var(--r-reading)] border border-border bg-background px-3 py-3 font-normal transition-colors hover:bg-accent has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-secondary"
                   htmlFor={`permission-mode-${option.value}`}
                   key={option.value}
                 >
@@ -203,7 +203,7 @@ function StepProgress({ step }: { step: OnboardingStep }) {
   return (
     <div aria-hidden="true" className="grid grid-cols-3 gap-2">
       {onboardingSteps.map((id, index) => (
-        <span className={cn("h-1 rounded-full bg-border", index <= current && "bg-primary")} key={id} />
+        <span className={cn("h-1 rounded-[var(--r-pill)] bg-border", index <= current && "bg-primary")} key={id} />
       ))}
     </div>
   );

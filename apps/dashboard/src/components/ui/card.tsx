@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /** Shared by Card and by semantic surfaces (aside, main) that cannot render a div. */
-export const cardClassName = "rounded-lg border border-border/80 bg-card text-card-foreground shadow-workbench";
+export const cardClassName = "rounded-[var(--r-panel)] border border-border/80 bg-card text-card-foreground shadow-workbench";
 
 export type CardProps = React.HTMLAttributes<HTMLDivElement>;
 

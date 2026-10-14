@@ -33,7 +33,7 @@ export function AgentIcon({ agentId, className, decorative = false, name }: Agen
   return (
     <span className={cn("relative inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground", className)} {...a11y}>
       <Bot aria-hidden="true" className="size-4" />
-      <span className="absolute -bottom-1 -right-1.5 rounded bg-muted px-0.5 text-[8px] font-semibold leading-none text-foreground">
+      <span className="absolute -bottom-1 -right-1.5 rounded-[var(--r-pill)] bg-muted px-0.5 text-[8px] font-semibold leading-none text-foreground">
         {initials(name)}
       </span>
     </span>

@@ -28,7 +28,7 @@ export function ReturnReasonFields({
       <div className="grid gap-1.5">
         <Label htmlFor={reasonId}>{t("ceoOffice.returnReason")}</Label>
         <select
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="h-9 rounded-[var(--r-pill)] border border-input bg-background px-4 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           id={reasonId}
           onChange={(event) => onReasonChange(event.target.value as CeoReviewReturnReason | "")}
           value={reason}

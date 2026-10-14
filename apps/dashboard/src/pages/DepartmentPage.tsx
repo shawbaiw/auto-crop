@@ -189,7 +189,7 @@ export function DepartmentPage(props: DepartmentPageProps) {
             ))}
             {messages.length > 0 ? (
               <section aria-label={t("departmentPage.messages")} className="grid gap-3 pt-2">
-                <h2 className="text-[13px] font-medium normal-case text-muted-foreground">{t("departmentPage.messages")}</h2>
+                <h2 className="text-[13px] font-medium leading-tight text-muted-foreground">{t("departmentPage.messages")}</h2>
                 {messages.map((item) => (
                   <CeoOfficeCard item={item} key={item.id} view={view} />
                 ))}

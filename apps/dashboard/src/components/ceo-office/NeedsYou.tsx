@@ -51,7 +51,7 @@ export function NeedsYou({
     <div className="grid content-start gap-4">
       <dl aria-label={t("ceoOffice.overview")} className="grid grid-cols-4 gap-2 lg:grid-cols-2">
         {counts.map((count) => (
-          <div className="grid gap-0.5 rounded-md bg-muted/60 px-2.5 py-2" key={count.key}>
+          <div className="grid gap-0.5 rounded-[var(--r-reading)] bg-muted/60 px-2.5 py-2" key={count.key}>
             <dt className="truncate text-xs text-muted-foreground">{t(count.key)}</dt>
             <dd className="m-0 flex items-center gap-1.5 text-lg font-semibold text-foreground">
               <span aria-hidden="true" className={`size-2 shrink-0 rounded-[var(--r-pill)] ${count.dot}`} />
@@ -61,7 +61,7 @@ export function NeedsYou({
         ))}
       </dl>
       {message ? (
-        <p className="rounded-md bg-status-success-bg px-3 py-2 text-sm text-status-success" role="status">
+        <p className="rounded-[var(--r-reading)] bg-status-success-bg px-3 py-2 text-sm text-status-success" role="status">
           {message}
         </p>
       ) : null}
@@ -130,7 +130,7 @@ export function NeedsYou({
 
 /** Each thing that needs the founder: a lighter reading surface in the panel, never a bordered card in a card. */
 const row = "grid gap-1 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] p-3";
-const sectionHeading = "flex items-center gap-2 text-[13px] font-semibold normal-case text-foreground [&_svg]:size-4";
+const sectionHeading = "flex items-center gap-2 text-[13px] font-semibold text-foreground [&_svg]:size-4";
 
 /** A task's state as a bare icon: your turn in charcoal, a failure in coral, so the column is never all alarm. */
 function TaskIcon({ status }: { status: string }) {
@@ -148,7 +148,7 @@ export function NeedsYouFrame({ children, count, wide }: { children: ReactNode; 
   if (wide) {
     return (
       <aside aria-label={t("ceoOffice.needsYou")} className={cn(panel, "min-h-0 overflow-y-auto p-5")}>
-        <h2 className="mb-4 text-[17px] font-semibold normal-case">{t("ceoOffice.needsYou")}</h2>
+        <h2 className="mb-4 text-[17px] font-semibold leading-tight">{t("ceoOffice.needsYou")}</h2>
         {children}
       </aside>
     );

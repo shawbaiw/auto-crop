@@ -2,7 +2,7 @@ import { Eye, Layers, Pause, RotateCcw } from "lucide-react";
 import { AmbientBackground, AppShell, Panel, PillButton, ReadingSurface, StatusTag } from "@/components/ice-mist";
 
 const meta = "text-[13px] font-medium text-[color:var(--text-secondary)]";
-const panelTitle = "text-[17px] font-semibold";
+const panelTitle = "text-[17px] font-semibold leading-tight";
 const body = "max-w-[72ch] text-[15px] leading-[1.6]";
 
 /** Dev-only gallery of the Ice Mist foundation components (spec §7 stage 1). Served at /dev/ice-mist. */
@@ -13,13 +13,13 @@ export function IceMistDevPage() {
         <div className="flex flex-col gap-[var(--module-gap)]">
           <header className="flex flex-col gap-2">
             <p className={meta}>Ice Mist · 阶段 1 设计基础</p>
-            <h1 className="text-[30px] font-normal normal-case leading-tight">组件测试页</h1>
+            <h1 className="text-[30px] font-normal leading-tight">组件测试页</h1>
           </header>
 
           <div className="grid gap-[var(--module-gap)] lg:grid-cols-[minmax(0,1fr)_var(--aside-width)]">
             <div className="flex min-w-0 flex-col gap-[var(--module-gap)]">
               <Panel aria-labelledby="im-type" className="flex flex-col gap-4">
-                <h2 className={`${panelTitle} normal-case`} id="im-type">
+                <h2 className={panelTitle} id="im-type">
                   Panel · 字体层级
                 </h2>
                 <p className="text-[42px] font-[350] leading-[1.1] tracking-[-0.02em]">正在建立你的公司</p>
@@ -39,7 +39,7 @@ export function IceMistDevPage() {
               </Panel>
 
               <Panel aria-labelledby="im-buttons" className="flex flex-col gap-4">
-                <h2 className={`${panelTitle} normal-case`} id="im-buttons">
+                <h2 className={panelTitle} id="im-buttons">
                   PillButton
                 </h2>
                 <div className="flex flex-wrap items-center gap-3">
@@ -63,7 +63,7 @@ export function IceMistDevPage() {
             </div>
 
             <Panel aria-labelledby="im-status" className="flex flex-col gap-4">
-              <h2 className={`${panelTitle} normal-case`} id="im-status">
+              <h2 className={panelTitle} id="im-status">
                 StatusTag
               </h2>
               <ul className="flex flex-col gap-3">

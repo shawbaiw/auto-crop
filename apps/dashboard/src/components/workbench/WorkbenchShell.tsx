@@ -54,7 +54,7 @@ export function WorkbenchShell({ children, fill = false, location, locationStatu
   const pausing = operatingCommand.id === "pause-operating";
 
   return (
-    <div className="modern-dashboard-shell font-sans">
+    <div className="font-sans">
       <AmbientBackground>
         <div className="im-shell im-workbench" data-fill={fill || undefined}>
           <aside className="im-workbench-rail" data-expanded={railExpanded || undefined}>
@@ -81,7 +81,7 @@ export function WorkbenchShell({ children, fill = false, location, locationStatu
                 <Menu aria-hidden="true" />
               </PillButton>
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-                <h1 className="min-w-0 max-w-full truncate text-[22px] font-normal normal-case leading-tight tracking-[-0.01em] sm:text-[30px]">{location}</h1>
+                <h1 className="min-w-0 max-w-full truncate text-[22px] font-normal leading-tight tracking-[-0.01em] sm:text-[30px]">{location}</h1>
                 {locationStatus}
               </div>
               <LanguageSwitch />
@@ -110,7 +110,7 @@ export function WorkbenchShell({ children, fill = false, location, locationStatu
           position against them instead of the screen. */}
       {drawerOpen
         ? createPortal(
-            <div className="modern-dashboard-shell im-drawer-layer font-sans">
+            <div className="im-drawer-layer font-sans">
               {/* The scrim closes on a click; keyboard users have the close button and Escape. */}
               <div aria-hidden="true" className="im-scrim" onClick={() => setDrawerOpen(false)} />
               {/* Choosing any page closes the drawer, including the page already open. */}

@@ -71,7 +71,7 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
                 </li>
               ))}
             </ul>
-            <h3 className="text-[13px] font-medium normal-case text-muted-foreground">{t("deliverables.evidence")}</h3>
+            <h3 className="text-[13px] font-medium text-muted-foreground">{t("deliverables.evidence")}</h3>
             <EvidenceList evidence={evidence} language={language} t={t} />
           </WorkbenchSection>
         );
@@ -81,7 +81,7 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
         <WorkbenchSection icon={<Paperclip aria-hidden="true" />} title={t("deliverables.otherEvidence")}>
           {[...groupByTask(looseEvidence)].map(([taskId, items]) => (
             <div className="grid gap-1" key={taskId}>
-              <h3 className="text-[15px] font-semibold normal-case">{titleFor(taskId)}</h3>
+              <h3 className="text-[15px] font-semibold">{titleFor(taskId)}</h3>
               <EvidenceList evidence={items} language={language} t={t} />
             </div>
           ))}

@@ -131,7 +131,6 @@
   border-radius: var(--r-pill);
   font-size: 15px;
   font-weight: 500;
-  text-transform: none;
   white-space: nowrap;
   cursor: pointer;
   transition:

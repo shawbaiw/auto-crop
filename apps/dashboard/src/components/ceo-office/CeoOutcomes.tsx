@@ -18,7 +18,7 @@ const CLASSIFICATION_TONE: Record<FinalFounderReportSummary["classification"], S
 
 // Ice Mist panel material, as on the Execution Trace: no shadow inside the workspace.
 const PANEL = "grid gap-4 rounded-[var(--r-panel)] border border-[color:var(--edge-highlight)] bg-[color:var(--surface-panel)] p-5 sm:px-6";
-const PANEL_TITLE = "text-[17px] font-semibold normal-case leading-snug";
+const PANEL_TITLE = "text-[17px] font-semibold leading-snug";
 
 /** The outcome cards the timeline posts as work completes, newest first. */
 export function outcomeItems(items: CeoOfficeItemSummary[]): CeoOfficeItemSummary[] {
@@ -134,7 +134,7 @@ function FinalReportCard({ report, view }: { report: FinalFounderReportSummary |
           />
           {report.sections.departmentContributions.length > 0 ? (
             <section aria-label={t("ceoOffice.report.contributions")} className="grid max-w-[72ch] gap-1 text-[15px] leading-relaxed">
-              <h4 className="text-[13px] font-medium normal-case text-muted-foreground">{t("ceoOffice.report.contributions")}</h4>
+              <h4 className="text-[13px] font-medium text-muted-foreground">{t("ceoOffice.report.contributions")}</h4>
               {report.sections.departmentContributions.map((contribution, index) => (
                 <p key={index}>{line(contribution)}</p>
               ))}

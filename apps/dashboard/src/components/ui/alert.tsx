@@ -4,7 +4,7 @@ import { CircleAlert, CircleCheck, Info, TriangleAlert, type LucideIcon } from "
 import { cn } from "@/lib/utils";
 
 /** One-line notices in a state's colors (color system v2 §5.4); the icon says which kind. */
-const alertVariants = cva("flex items-start gap-2 rounded-md border px-3 py-3 text-sm", {
+const alertVariants = cva("flex items-start gap-2 rounded-[var(--r-reading)] border px-3 py-3 text-sm", {
   variants: {
     variant: {
       info: "border-status-running-border bg-status-running-bg text-status-running",

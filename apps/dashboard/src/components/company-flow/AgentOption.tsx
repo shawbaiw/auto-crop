@@ -17,7 +17,7 @@ export function AgentOption({ agent, onSelect, selected }: AgentOptionProps) {
       aria-pressed={selected}
       className={cn(
         // A radio card (color system v2 §5.3): chosen is a reading surface with a 2px charcoal edge.
-        "flex items-center justify-between gap-3 rounded-md border border-[color:var(--edge-input)] bg-[color:var(--surface-input)] px-3 py-3 text-left text-foreground transition-colors hover:bg-accent focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-[color:var(--c-mist)] disabled:text-[color:var(--text-disabled)] disabled:hover:bg-[color:var(--c-mist)]",
+        "flex items-center justify-between gap-3 rounded-[var(--r-reading)] border border-[color:var(--edge-input)] bg-[color:var(--surface-input)] px-3 py-3 text-left text-foreground transition-colors hover:bg-accent focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-[color:var(--c-mist)] disabled:text-[color:var(--text-disabled)] disabled:hover:bg-[color:var(--c-mist)]",
         selected && "border-2 border-[color:var(--c-charcoal)] bg-[color:var(--surface-reading)] px-[11px] py-[11px] hover:bg-[color:var(--surface-reading)]",
       )}
       disabled={!agent.detected}
