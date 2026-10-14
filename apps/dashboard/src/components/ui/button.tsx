@@ -2,8 +2,12 @@ import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
+/**
+ * Ice Mist buttons (color system v2 §5.2): every size is a capsule. The small sizes keep their visual
+ * height for dense rows; an invisible ::before stretches each hit area to at least 44px (spec §6).
+ */
 const buttonVariants = cva(
-  "inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium normal-case tracking-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:border disabled:border-[color:var(--edge-input)] disabled:bg-[color:var(--surface-input)] disabled:text-[color:var(--text-disabled)] disabled:shadow-none [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "relative inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-[var(--r-pill)] px-4 py-2 text-sm font-medium normal-case tracking-normal transition-colors before:absolute before:inset-x-0 before:-inset-y-1 before:content-[''] focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:pointer-events-none disabled:border disabled:border-[color:var(--edge-input)] disabled:bg-[color:var(--surface-input)] disabled:text-[color:var(--text-disabled)] disabled:shadow-none [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -17,9 +21,9 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-6",
-        icon: "size-9 p-0",
+        sm: "h-8 px-3.5 text-xs before:-inset-y-1.5",
+        lg: "h-11 px-6 before:inset-y-0",
+        icon: "size-9 p-0 before:-inset-x-1",
       },
     },
     defaultVariants: {
