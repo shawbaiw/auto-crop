@@ -14,6 +14,8 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:bg-[color:color-mix(in_srgb,var(--c-charcoal)_88%,var(--text-on-dark))]",
         // The final confirm of a destructive action; its entry point is an outlined danger action.
         destructive: "bg-destructive text-destructive-foreground hover:bg-[color:var(--danger-solid-hover)]",
+        // The entry point of a destructive action: terracotta outline, filled only on hover.
+        danger: "border border-[color:color-mix(in_srgb,var(--status-failed-fg)_45%,transparent)] bg-transparent text-status-failed hover:bg-status-failed-bg",
         outline: "border border-edge-strong bg-[color:var(--surface-input)] text-foreground hover:bg-[color:var(--c-warm)]",
         secondary: "border border-edge-strong bg-[color:var(--surface-input)] text-foreground hover:bg-[color:var(--c-warm)]",
         ghost: "text-foreground hover:bg-accent hover:text-accent-foreground disabled:border-transparent disabled:bg-transparent",

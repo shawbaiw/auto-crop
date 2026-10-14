@@ -40,7 +40,7 @@ export function OperationsDiagnostics({
 
   return (
     <div className="grid gap-4">
-      <p className="text-sm text-muted-foreground">{t("diagnostics.intro")}</p>
+      <p className="max-w-[72ch] text-[15px] leading-relaxed text-muted-foreground">{t("diagnostics.intro")}</p>
 
       <WorkbenchSection icon={<ListChecks aria-hidden="true" />} title={t("diagnostics.taskFlow")}>
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -60,16 +60,16 @@ export function OperationsDiagnostics({
       </WorkbenchSection>
 
       <WorkbenchSection icon={<AlertTriangle aria-hidden="true" />} title={t("diagnostics.stuck")}>
-        {stuckTasks.length === 0 ? <p className="text-sm text-muted-foreground">{t("diagnostics.noStuck")}</p> : null}
+        {stuckTasks.length === 0 ? <p className="text-[15px] text-muted-foreground">{t("diagnostics.noStuck")}</p> : null}
         <ul className="grid gap-2">
           {stuckTasks.map((task) => (
-            <li className="grid gap-1 rounded-md bg-muted/60 p-3" key={task.id}>
-              <p className="text-sm">
+            <li className="grid gap-1.5 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3" key={task.id}>
+              <p className="max-w-[72ch] break-words text-[15px] leading-relaxed">
                 {stuckSentence(task, language, t)}
               </p>
-              <details className="text-sm">
+              <details className="text-[13px]">
                 <summary className="cursor-pointer text-muted-foreground">{t("workbench.details")}</summary>
-                <KeyValueList className="mt-2" items={taskDetails(task, t)} />
+                <KeyValueList className="mt-2 text-[13px]" items={taskDetails(task, t)} />
               </details>
             </li>
           ))}
@@ -92,8 +92,8 @@ export function OperationsDiagnostics({
 /** A count in charcoal, after a small dot in its state's icon color (color system v2 §5.5). */
 function Stat({ dot, label, value }: { dot: string; label: string; value: number }) {
   return (
-    <div className="grid gap-0.5 rounded-md bg-muted/60 px-3 py-2">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
+    <div className="grid gap-1 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3">
+      <dt className="text-[13px] text-muted-foreground">{label}</dt>
       <dd className="m-0 flex items-center gap-2 text-xl font-semibold text-foreground">
         <span aria-hidden="true" className={`size-2 shrink-0 rounded-[var(--r-pill)] ${dot}`} />
         {value}

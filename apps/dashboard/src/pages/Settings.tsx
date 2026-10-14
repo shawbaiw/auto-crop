@@ -1,7 +1,8 @@
-import { Building2, Languages, Plus, RefreshCw } from "lucide-react";
+import { Building2, Check, Languages, Plus, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
 import type { CompanyListItem, CompanySummary } from "../api/client";
 import { Alert, AlertDescription, AlertTitle, Button } from "../components/ui";
+import { StatusTag } from "../components/ice-mist";
 import { CompanyStatus } from "../components/workbench/CompanyStatus";
 import { LanguageSwitch } from "../components/workbench/LanguageSwitch";
 import { StopOperatingConfirm } from "../components/workbench/StopOperatingConfirm";
@@ -42,7 +43,7 @@ export function Settings({
     <div className="grid gap-4">
       <WorkbenchSection icon={<Building2 aria-hidden="true" />} title={t("settings.currentCompany")}>
         <div className="grid gap-1">
-          <p className="break-words text-base font-semibold">{company.name}</p>
+          <p className="break-words text-[15px] font-semibold">{company.name}</p>
           <CompanyStatus status={company.status} />
         </div>
         <StopOperatingConfirm command={stopCommand} companyName={company.name} />
@@ -64,20 +65,20 @@ export function Settings({
                 <li key={item.id}>
                   <button
                     aria-current={isCurrent ? "true" : undefined}
-                    className="grid w-full gap-1 rounded-md bg-muted/60 px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-muted/60"
+                    className="grid w-full gap-1.5 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3 text-left normal-case transition-colors duration-[var(--dur)] hover:bg-[color:var(--c-ice)] focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:cursor-default disabled:hover:bg-[color:var(--surface-reading)]"
                     disabled={isCurrent}
                     onClick={() => onOpenCompany(item.id)}
                     type="button"
                   >
-                    <span className="flex flex-wrap items-center gap-2 font-medium">
+                    <span className="flex flex-wrap items-center gap-2 text-[15px] font-medium">
                       {item.name}
                       {isCurrent ? (
-                        <span className="rounded-[var(--r-pill)] bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
+                        <StatusTag icon={Check} tone="queued">
                           {t("settings.current")}
-                        </span>
+                        </StatusTag>
                       ) : null}
                     </span>
-                    <span className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    <span className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
                       <CompanyStatus status={item.status} />
                       <span>
                         {item.taskCount} {t("settings.tasks")}

@@ -1,6 +1,6 @@
-import { FileText, MessageSquareText, Paperclip } from "lucide-react";
+import { FileText, History, MessageSquareText, Paperclip } from "lucide-react";
 import type { BusinessArtifactSummary, ProofSummary, ReviewSummary, TaskSummary } from "../api/client";
-import { Card } from "../components/ui";
+import { StatusTag } from "../components/ice-mist";
 import { WorkbenchSection } from "../components/workbench/WorkbenchSection";
 import { KeyValueList } from "../components/workbench/KeyValueList";
 import { useLanguage, type TranslationKey } from "../ui/language";
@@ -44,10 +44,10 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
 
   return (
     <div className="grid gap-4">
-      <p className="text-sm text-muted-foreground">{t("deliverables.intro")}</p>
+      <p className="max-w-[72ch] text-[15px] leading-relaxed text-muted-foreground">{t("deliverables.intro")}</p>
 
       {deliveredTaskIds.length === 0 ? (
-        <Card className="p-5 text-sm text-muted-foreground">{t("deliverables.empty")}</Card>
+        <p className="rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3 text-[15px] text-muted-foreground">{t("deliverables.empty")}</p>
       ) : null}
 
       {deliveredTaskIds.map((taskId) => {
@@ -57,27 +57,21 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
           <WorkbenchSection icon={<FileText aria-hidden="true" />} key={taskId} title={titleFor(taskId)}>
             <ul className="grid gap-2">
               {artifacts.map((artifact) => (
-                <li className="grid gap-1 rounded-md bg-muted/60 p-3" key={artifact.id}>
-                  <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                <li className="grid gap-1.5 rounded-[var(--r-reading)] bg-[color:var(--surface-reading)] px-4 py-3" key={artifact.id}>
+                  <p className="flex flex-wrap items-center gap-2 text-[15px] font-medium">
                     {formatArtifactRole(artifact.artifactRole, t)}
-                    <span
-                      className={
-                        artifact.isCurrent
-                          ? "rounded-[var(--r-pill)] bg-status-success-bg px-2 py-0.5 text-xs font-medium text-status-success"
-                          : "rounded-[var(--r-pill)] bg-status-neutral-bg px-2 py-0.5 text-xs font-medium text-status-neutral"
-                      }
-                    >
+                    <StatusTag icon={artifact.isCurrent ? undefined : History} tone={artifact.isCurrent ? "success" : "queued"}>
                       {t(artifact.isCurrent ? "deliverables.current" : "deliverables.earlier")}
-                    </span>
+                    </StatusTag>
                   </p>
-                  <details className="text-sm">
+                  <details className="text-[13px]">
                     <summary className="cursor-pointer text-muted-foreground">{t("workbench.details")}</summary>
-                    <KeyValueList className="mt-2" items={artifactDetails(artifact, t)} />
+                    <KeyValueList className="mt-2 text-[13px]" items={artifactDetails(artifact, t)} />
                   </details>
                 </li>
               ))}
             </ul>
-            <h3 className="text-sm font-semibold">{t("deliverables.evidence")}</h3>
+            <h3 className="text-[13px] font-medium normal-case text-muted-foreground">{t("deliverables.evidence")}</h3>
             <EvidenceList evidence={evidence} language={language} t={t} />
           </WorkbenchSection>
         );
@@ -87,7 +81,7 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
         <WorkbenchSection icon={<Paperclip aria-hidden="true" />} title={t("deliverables.otherEvidence")}>
           {[...groupByTask(looseEvidence)].map(([taskId, items]) => (
             <div className="grid gap-1" key={taskId}>
-              <h3 className="text-sm font-semibold">{titleFor(taskId)}</h3>
+              <h3 className="text-[15px] font-semibold normal-case">{titleFor(taskId)}</h3>
               <EvidenceList evidence={items} language={language} t={t} />
             </div>
           ))}
@@ -95,8 +89,8 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
       ) : null}
 
       <WorkbenchSection icon={<MessageSquareText aria-hidden="true" />} title={t("deliverables.reviews")}>
-        {reviews.length === 0 ? <p className="text-sm text-muted-foreground">{t("deliverables.noReviews")}</p> : null}
-        <ul className="grid gap-2 text-sm">
+        {reviews.length === 0 ? <p className="text-[15px] text-muted-foreground">{t("deliverables.noReviews")}</p> : null}
+        <ul className="grid max-w-[72ch] gap-2 text-[15px] leading-relaxed">
           {reviews.map((review) => (
             <li className="break-words" key={review.id}>
               {review.summary}
@@ -110,14 +104,16 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
 
 function EvidenceList({ evidence, language, t }: { evidence: ProofSummary[]; language: "en" | "zh"; t: (key: TranslationKey) => string }) {
   if (evidence.length === 0) {
-    return <p className="text-sm text-muted-foreground">{t("deliverables.noEvidence")}</p>;
+    return <p className="text-[15px] text-muted-foreground">{t("deliverables.noEvidence")}</p>;
   }
   return (
-    <ul className="grid gap-1.5 text-sm">
+    <ul className="grid max-w-[72ch] gap-2 text-[15px] leading-relaxed">
       {evidence.map((item) => (
         <li className="grid gap-0.5" key={item.id}>
           <span className="break-words">{resolveLocalizedValue(item.summaryText, language, item.summary)}</span>
-          <span className="break-all text-xs text-muted-foreground">{`${formatProofType(item.type, t)} · ${item.uri}`}</span>
+          <span className="text-[13px] text-muted-foreground">
+            {formatProofType(item.type, t)} · <span className="im-code">{item.uri}</span>
+          </span>
         </li>
       ))}
     </ul>

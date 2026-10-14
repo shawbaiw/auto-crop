@@ -41,8 +41,8 @@ export function StopOperatingConfirm({ command, companyName, explanation, label,
   }
 
   return (
-    <div className="grid gap-3 border-t border-border/70 pt-3">
-      <p className="text-sm text-muted-foreground">{explanation ?? t("settings.stopExplanation")}</p>
+    <div className="mt-3 grid gap-4 border-t border-[color:var(--edge-divider)] pt-6">
+      <p className="max-w-[72ch] text-[15px] leading-relaxed text-muted-foreground">{explanation ?? t("settings.stopExplanation")}</p>
       {confirming ? (
         <div className="grid gap-3">
           <div className="grid gap-1.5">
@@ -69,7 +69,7 @@ export function StopOperatingConfirm({ command, companyName, explanation, label,
         </div>
       ) : (
         <div>
-          <Button onClick={() => setConfirming(true)} variant="outline">
+          <Button onClick={() => setConfirming(true)} variant="danger">
             <OctagonX aria-hidden="true" />
             {label ?? t(command.labelKey)}
           </Button>
