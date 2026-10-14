@@ -57,7 +57,7 @@ export function Deliverables({ businessArtifacts, proof, reviews, tasks }: Deliv
           <WorkbenchSection icon={<FileText aria-hidden="true" />} key={taskId} title={titleFor(taskId)}>
             <ul className="grid gap-2">
               {artifacts.map((artifact) => (
-                <li className="grid gap-1 rounded-md border border-border/70 p-3" key={artifact.id}>
+                <li className="grid gap-1 rounded-md bg-muted/60 p-3" key={artifact.id}>
                   <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     {formatArtifactRole(artifact.artifactRole, t)}
                     <span

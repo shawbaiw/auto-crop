@@ -1,9 +1,12 @@
+import { Pause } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import type { AgentSummary, CeoOfficeItemSummary, CompanySummary, DepartmentSummary, ReplanProposalSummary, TaskSummary } from "../../api/client";
 import { Alert } from "@/components/ui";
+import { StatusTag } from "../ice-mist";
 import { deriveNeedsYou, needsYouByDepartment, needsYouCount } from "../ceo-office/deriveNeedsYou";
 import { useLanguage } from "../../ui/language";
 import { departmentName } from "../../ui/language/localizedNames";
+import { formatCompanyStatus } from "../../ui/tasks/formatDisplayValue";
 import { PageErrorBoundary } from "./PageErrorBoundary";
 import { operatingCommand, type WorkbenchCommands } from "./workbenchCommands";
 import { serializeLocation, type WorkbenchLocation } from "./workbenchLocation";
@@ -73,10 +76,17 @@ export function WorkbenchFrame({ agents, ceoOfficeItems, children, commands, com
     <WorkbenchShell
       fill={location.page === "ceo-office" || location.page === "department"}
       location={title}
+      locationStatus={
+        company.status === "paused" ? (
+          <StatusTag icon={Pause} tone="queued">
+            {formatCompanyStatus("paused", t)}
+          </StatusTag>
+        ) : null
+      }
       navigationKey={serializeLocation(location)}
       notice={notice}
       operatingCommand={operatingCommand(commands)}
-      rail={
+      rail={(variant) => (
         <WorkbenchRail
           ceoPendingCount={needsYouCount(needsYou)}
           companyName={company.name}
@@ -84,8 +94,9 @@ export function WorkbenchFrame({ agents, ceoOfficeItems, children, commands, com
           departments={railDepartments}
           location={location}
           onNavigate={onNavigate}
+          variant={variant}
         />
-      }
+      )}
     >
       <PageErrorBoundary resetKey={serializeLocation(location)}>{children}</PageErrorBoundary>
     </WorkbenchShell>

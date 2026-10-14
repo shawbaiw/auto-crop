@@ -81,7 +81,7 @@ export default {
         ],
       },
       boxShadow: {
-        workbench: "0 18px 45px -32px hsl(220 30% 30% / 0.34)",
+        workbench: "var(--shadow-workbench)",
       },
       keyframes: {
         "progress-indeterminate": {

@@ -8,7 +8,7 @@ export type ComposerInputProps = TextareaProps;
 export const ComposerInput = React.forwardRef<HTMLTextAreaElement, ComposerInputProps>(({ className, ...props }, ref) => (
   <Textarea
     className={cn(
-      "min-h-36 resize-y rounded-xl border-border/70 bg-card/80 px-4 py-3 text-base leading-relaxed shadow-workbench backdrop-blur",
+      "min-h-36 resize-y rounded-xl border-border/70 bg-card/80 px-4 py-3 text-base leading-relaxed shadow-workbench",
       className,
     )}
     ref={ref}

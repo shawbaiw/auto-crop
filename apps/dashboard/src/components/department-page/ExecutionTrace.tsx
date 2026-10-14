@@ -158,7 +158,7 @@ export function ExecutionTrace({
               {subtasks.map((subtask) => {
                 const subtone = taskStatusTone(subtask.status);
                 return (
-                  <div className="grid gap-1.5 rounded-md border border-border/70 p-2" key={subtask.id}>
+                  <div className="grid gap-1.5 rounded-md bg-muted/60 p-2" key={subtask.id}>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                       <span className={cn(subtone === "cancelled" && "line-through text-muted-foreground")}>{taskTitle(subtask, ctx.locale)}</span>
                       <TaskStatusBadge status={subtask.status} />

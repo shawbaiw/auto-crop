@@ -179,6 +179,8 @@ h3 {
   --edge-strong: #7a8590; /* inputs, outlined buttons, neutral icons: warm 3.37 / mist 3.21 */
   --edge-input: rgba(37, 40, 46, 0.28); /* decoration only (1.75): disabled controls, grouping */
   --shadow-panel: 0 12px 40px rgba(86, 103, 125, 0.1);
+  /* Cards outside the Ice Mist shell (onboarding); the Workbench workspace turns it off. */
+  --shadow-workbench: 0 18px 45px -32px hsl(220 30% 30% / 0.34);
 
   --blur-shell: 20px;
 
@@ -224,6 +226,7 @@ h3 {
   /* Spacing and sizes */
   --page-gutter: 28px;
   --nav-width: 80px;
+  --nav-width-expanded: 248px;
   --panel-padding: 30px;
   --module-gap: 24px;
   --aside-width: 312px;

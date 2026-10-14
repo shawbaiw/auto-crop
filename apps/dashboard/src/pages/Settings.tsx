@@ -64,7 +64,7 @@ export function Settings({
                 <li key={item.id}>
                   <button
                     aria-current={isCurrent ? "true" : undefined}
-                    className="grid w-full gap-1 rounded-md border border-border bg-background px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-background"
+                    className="grid w-full gap-1 rounded-md bg-muted/60 px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-muted/60"
                     disabled={isCurrent}
                     onClick={() => onOpenCompany(item.id)}
                     type="button"
@@ -72,7 +72,7 @@ export function Settings({
                     <span className="flex flex-wrap items-center gap-2 font-medium">
                       {item.name}
                       {isCurrent ? (
-                        <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
+                        <span className="rounded-[var(--r-pill)] bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
                           {t("settings.current")}
                         </span>
                       ) : null}

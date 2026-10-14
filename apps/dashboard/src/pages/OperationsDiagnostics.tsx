@@ -63,7 +63,7 @@ export function OperationsDiagnostics({
         {stuckTasks.length === 0 ? <p className="text-sm text-muted-foreground">{t("diagnostics.noStuck")}</p> : null}
         <ul className="grid gap-2">
           {stuckTasks.map((task) => (
-            <li className="grid gap-1 rounded-md border border-border/70 p-3" key={task.id}>
+            <li className="grid gap-1 rounded-md bg-muted/60 p-3" key={task.id}>
               <p className="text-sm">
                 {stuckSentence(task, language, t)}
               </p>
