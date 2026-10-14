@@ -3,16 +3,17 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium normal-case tracking-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium normal-case tracking-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:border disabled:border-[color:var(--edge-input)] disabled:bg-[color:var(--surface-input)] disabled:text-[color:var(--text-disabled)] disabled:shadow-none [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90",
-        destructive: "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
-        outline: "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
-        secondary: "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
-        link: "h-auto px-0 py-0 text-primary underline-offset-4 hover:underline",
+        default: "bg-primary text-primary-foreground hover:bg-[color:color-mix(in_srgb,var(--c-charcoal)_88%,var(--text-on-dark))]",
+        // The final confirm of a destructive action; its entry point is an outlined danger action.
+        destructive: "bg-destructive text-destructive-foreground hover:bg-[color:var(--danger-solid-hover)]",
+        outline: "border border-edge-strong bg-[color:var(--surface-input)] text-foreground hover:bg-[color:var(--c-warm)]",
+        secondary: "border border-edge-strong bg-[color:var(--surface-input)] text-foreground hover:bg-[color:var(--c-warm)]",
+        ghost: "text-foreground hover:bg-accent hover:text-accent-foreground disabled:border-transparent disabled:bg-transparent",
+        link: "h-auto px-0 py-0 text-foreground underline underline-offset-4 hover:text-status-running disabled:border-transparent disabled:bg-transparent",
       },
       size: {
         default: "h-9 px-4 py-2",

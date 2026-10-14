@@ -1,4 +1,4 @@
-import { Layers, RotateCcw } from "lucide-react";
+import { Eye, Layers, Pause, RotateCcw } from "lucide-react";
 import { AmbientBackground, AppShell, Panel, PillButton, ReadingSurface, StatusTag } from "@/components/ice-mist";
 
 const meta = "text-[13px] font-medium text-[color:var(--text-secondary)]";
@@ -76,16 +76,28 @@ export function IceMistDevPage() {
                   <span className={meta}>failed</span>
                 </li>
                 <li className="flex items-center justify-between gap-3">
-                  <StatusTag tone="waiting">待审核</StatusTag>
-                  <span className={meta}>waiting</span>
-                </li>
-                <li className="flex items-center justify-between gap-3">
                   <StatusTag tone="running">运行中</StatusTag>
                   <span className={meta}>running</span>
                 </li>
+                <li className="flex items-center justify-between gap-3">
+                  <StatusTag tone="caution">方案已过期</StatusTag>
+                  <span className={meta}>caution · 同屏最多一处</span>
+                </li>
+                <li className="flex items-center justify-between gap-3">
+                  <StatusTag icon={Eye} tone="yourTurn">待审核</StatusTag>
+                  <span className={meta}>yourTurn · Eye</span>
+                </li>
+                <li className="flex items-center justify-between gap-3">
+                  <StatusTag tone="yourTurn">需要你处理</StatusTag>
+                  <span className={meta}>yourTurn</span>
+                </li>
                 <li className="flex items-center justify-between gap-3 border-t border-[color:var(--edge-divider)] pt-3">
                   <StatusTag tone="queued">排队中</StatusTag>
-                  <span className={meta}>queued · 无彩色</span>
+                  <span className={meta}>queued</span>
+                </li>
+                <li className="flex items-center justify-between gap-3">
+                  <StatusTag icon={Pause} tone="queued">已暂停</StatusTag>
+                  <span className={meta}>queued · Pause</span>
                 </li>
               </ul>
             </Panel>

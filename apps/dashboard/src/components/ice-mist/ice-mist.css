@@ -104,9 +104,10 @@
 
 .im-tag[data-tone="success"] { color: var(--status-success-fg); background: var(--status-success-bg); }
 .im-tag[data-tone="failed"] { color: var(--status-failed-fg); background: var(--status-failed-bg); }
-.im-tag[data-tone="waiting"] { color: var(--status-waiting-fg); background: var(--status-waiting-bg); }
 .im-tag[data-tone="running"] { color: var(--status-running-fg); background: var(--status-running-bg); }
-.im-tag[data-tone="queued"] { color: var(--text-secondary); background: var(--surface-input); }
+.im-tag[data-tone="caution"] { color: var(--status-caution-fg); background: var(--status-caution-bg); }
+.im-tag[data-tone="queued"] { color: var(--status-neutral-fg); background: var(--status-neutral-bg); }
+.im-tag[data-tone="yourTurn"] { color: var(--status-your-turn-fg); background: var(--status-your-turn-bg); font-weight: 600; }
 
 .im-spin {
   animation: im-spin 1s linear infinite;
@@ -162,7 +163,7 @@
 
 .im-pill[data-variant="secondary"] {
   color: var(--text-primary);
-  border-color: var(--edge-input);
+  border-color: var(--edge-strong);
   background: var(--surface-input);
 }
 
